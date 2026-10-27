@@ -315,22 +315,31 @@ class ReleaseHost(InventoryHost):
         services = inventory['services']
         targets = [name for name in services if name == 'api' or name in WRITERS or name.endswith('-worker')]
         require(set(targets).issubset(WRITERS), 'writer_markina_sem_classificacao')
+        # The legacy facial search process is Python PID 1 and has no SIGTERM
+        # handler. Stop its producers first, then require an empty durable search
+        # queue before using Python's default SIGINT/KeyboardInterrupt shutdown.
+        targets.sort(key=lambda name: (name == 'face-search-worker', name != 'api'))
         for name in targets:
             item = services[name]
             ident = item['container_id']
             require(self.inspect(ident)['Image'] == item['image'], 'writer_image_mudou')
+            if name == 'face-search-worker':
+                self.wait_for_face_search_idle()
+                require(self.inspect(ident)['Image'] == item['image'], 'writer_image_mudou')
+            stop_signal = 'SIGINT' if name == 'face-search-worker' else 'SIGTERM'
             attempted = self.journal.get('attempted', [])
             if name not in attempted:
                 attempted.append(name)
-            self.record('writer-stop-requested', attempted=attempted)
+            self.record('writer-stop-requested', attempted=attempted, stop_signal=stop_signal)
             print(f'writer_stop_requested={name}', flush=True)
             self.command(['docker', 'update', '--restart=no', ident])
-            self.command(['docker', 'kill', '--signal=SIGTERM', ident])
+            self.command(['docker', 'kill', '--signal=' + stop_signal, ident])
             deadline = time.monotonic() + 120
             while True:
                 d = self.inspect(ident)['State']
                 if d['Status'] != 'running':
-                    require(d['Status'] == 'exited' and d.get('ExitCode') in (0, 143),
+                    allowed_exit_codes = (130,) if stop_signal == 'SIGINT' else (0, 143)
+                    require(d['Status'] == 'exited' and d.get('ExitCode') in allowed_exit_codes,
                             'writer_nao_encerrou_graciosamente')
                     stopped.append(name)
                     self.record('writer-stopped', stopped=stopped)
@@ -341,6 +350,25 @@ class ReleaseHost(InventoryHost):
                     raise InventoryError('timeout_parada_graciosa_sem_sigkill')
                 time.sleep(0.5)
         return stopped
+
+    def wait_for_face_search_idle(self) -> None:
+        print('writer_idle_wait=face-search-worker', flush=True)
+        deadline = time.monotonic() + 120
+        while True:
+            pending = self.pg_scalar(
+                "SELECT (SELECT count(*) FROM facial_job "
+                "WHERE kind IN ('search', 'search_gemma') AND status IN ('queued', 'processing')) "
+                "+ (SELECT count(*) FROM facial_search_notification_outbox "
+                "WHERE status IN ('queued', 'processing'))"
+            )
+            if pending == 0:
+                self.record('face-search-queue-idle')
+                print('writer_idle_confirmed=face-search-worker', flush=True)
+                return
+            if time.monotonic() >= deadline:
+                print('writer_idle_timeout=face-search-worker', flush=True)
+                raise InventoryError('fila_face_search_nao_ociosa')
+            time.sleep(1)
 
     def pg_scalar(self, sql: str) -> int:
         db_id = self.inventory_data['services']['db']['container_id']

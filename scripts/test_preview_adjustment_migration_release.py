@@ -237,6 +237,54 @@ class PreviewMigrationReleaseHostTests(unittest.TestCase):
         self.assertEqual(output.getvalue(),
                          'writer_stop_requested=api\nwriter_stop_completed=api\n')
 
+    def test_legacy_face_search_uses_sigint_only_after_durable_queue_is_idle(self):
+        host = release.ReleaseHost()
+        image = 'sha256:' + 'a' * 64
+        data = {'services': {
+            'api': {'container_id': 'api-container', 'image': image,
+                    'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'face-search-worker': {'container_id': 'facial-container', 'image': image,
+                                   'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+        }}
+        host.journal = {}
+        commands = []
+        host.inspect = lambda ident: {'Image': image,
+                                      'State': {'Status': 'exited',
+                                                'ExitCode': 130 if ident == 'facial-container' else 143}}
+        host.command = lambda args, **_kwargs: commands.append(args)
+        host.pg_scalar = lambda _sql: 0
+        host.record = lambda *_args, **_kwargs: None
+
+        self.assertEqual(host.stop_writers(data), ['api', 'face-search-worker'])
+        stop_commands = [args for args in commands if args[1:3] == ['kill', '--signal=SIGINT']]
+        self.assertEqual(stop_commands, [['docker', 'kill', '--signal=SIGINT', 'facial-container']])
+
+    def test_legacy_face_search_is_not_interrupted_with_pending_durable_work(self):
+        host = release.ReleaseHost()
+        image = 'sha256:' + 'a' * 64
+        data = {'services': {
+            'api': {'container_id': 'api-container', 'image': image,
+                    'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'face-search-worker': {'container_id': 'facial-container', 'image': image,
+                                   'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+        }}
+        host.journal = {}
+        commands = []
+        host.inspect = lambda _ident: {'Image': image,
+                                       'State': {'Status': 'exited', 'ExitCode': 143}}
+        host.command = lambda args, **_kwargs: commands.append(args)
+        host.pg_scalar = lambda _sql: 1
+        host.record = lambda *_args, **_kwargs: None
+
+        with patch.object(release.time, 'monotonic', side_effect=[0, 0, 121]), \
+                patch.object(release.time, 'sleep'), \
+                patch('sys.stdout', new_callable=io.StringIO) as output, \
+                self.assertRaisesRegex(release.InventoryError, 'fila_face_search_nao_ociosa'):
+            host.stop_writers(data)
+
+        self.assertNotIn(['docker', 'kill', '--signal=SIGINT', 'facial-container'], commands)
+        self.assertIn('writer_idle_timeout=face-search-worker\n', output.getvalue())
+
     def test_writer_stop_timeout_names_only_the_fixed_service(self):
         host = release.ReleaseHost()
         item = {'container_id': 'private-container-id', 'image': 'sha256:' + 'a' * 64,
