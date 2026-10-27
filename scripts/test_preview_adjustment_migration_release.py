@@ -49,20 +49,22 @@ class PreviewMigrationReleaseHostTests(unittest.TestCase):
             host.fetch_candidate()
         self.assertEqual(output.getvalue(), 'candidate_fetch_result=failed;categoria=rede_indisponivel\n')
 
-    def test_fetch_head_option_fallback_requires_explicit_unsupported_option(self):
+    def test_fetch_head_option_fallback_is_locale_independent_and_requires_exact_flag(self):
         self.assertTrue(release.ReleaseHost.fetch_head_option_unsupported(
-            b"error: unknown option `--no-write-fetch-head'"))
+            b"error: unknown option `--no-write-fetch-head'", 129))
         self.assertTrue(release.ReleaseHost.fetch_head_option_unsupported(
-            'usage: git fetch --no-write-fetch-head origin <sha>'))
+            'uso: git fetch --no-write-fetch-head origin <sha>', 129))
+        self.assertTrue(release.ReleaseHost.fetch_head_option_unsupported(
+            'erro: opção desconhecida --no-write-fetch-head', 129))
         self.assertFalse(release.ReleaseHost.fetch_head_option_unsupported(
-            b"fatal: couldn't find remote ref --no-write-fetch-head"))
+            b"fatal: couldn't find remote ref --no-write-fetch-head", 128))
         self.assertFalse(release.ReleaseHost.fetch_head_option_unsupported(
-            b'opaque private server response'))
+            b'opaque private server response', 129))
 
     def test_candidate_fetch_retries_without_optional_flag_only_on_unsupported_option(self):
         host = release.ReleaseHost()
         rejected = release.subprocess.CompletedProcess(
-            ['git', 'fetch'], 129, stderr=b"error: unknown option `--no-write-fetch-head'")
+            ['git', 'fetch'], 129, stderr='erro: opção desconhecida --no-write-fetch-head'.encode())
         accepted = release.subprocess.CompletedProcess(['git', 'fetch'], 0, stderr=b'')
         with patch('scripts.preview_adjustment_migration_release.subprocess.run',
                    side_effect=[rejected, accepted]) as run, \
@@ -75,12 +77,12 @@ class PreviewMigrationReleaseHostTests(unittest.TestCase):
         self.assertEqual(output.getvalue(),
                          'candidate_fetch_compatibility=retry_com_fetch_head_padrao\n'
                          'candidate_fetch_result=success\n')
-        self.assertNotIn('unknown option', output.getvalue())
+        self.assertNotIn('opção desconhecida', output.getvalue())
 
     def test_fetch_fallback_failure_keeps_fixed_diagnostics(self):
         host = release.ReleaseHost()
         rejected = release.subprocess.CompletedProcess(
-            ['git', 'fetch'], 129, stderr=b"error: unknown option `--no-write-fetch-head'")
+            ['git', 'fetch'], 129, stderr='erro: opção desconhecida --no-write-fetch-head'.encode())
         denied = release.subprocess.CompletedProcess(
             ['git', 'fetch'], 128, stderr=b'Permission denied private-host')
         with patch('scripts.preview_adjustment_migration_release.subprocess.run',

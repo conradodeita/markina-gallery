@@ -98,18 +98,15 @@ class ReleaseHost(InventoryHost):
         return 'outro'
 
     @staticmethod
-    def fetch_head_option_unsupported(stderr: bytes | str | None) -> bool:
-        """Recognize only an explicit Git rejection of the optional HEAD flag."""
+    def fetch_head_option_unsupported(stderr: bytes | str | None, returncode: int) -> bool:
+        """Recognize an exit-129 rejection naming the optional HEAD flag, independent of locale."""
         if isinstance(stderr, bytes):
             message = stderr.decode('utf-8', errors='replace').lower()
         elif isinstance(stderr, str):
             message = stderr.lower()
         else:
             return False
-        option_names = ('--no-write-fetch-head', '--write-fetch-head')
-        rejection_phrases = ('unknown option', 'unrecognized option', 'unknown switch', 'usage:')
-        return any(option in message for option in option_names) and any(
-            phrase in message for phrase in rejection_phrases)
+        return returncode == 129 and '--no-write-fetch-head' in message
 
     def fetch_candidate(self) -> None:
         base_args = ['git', 'fetch', '--quiet', '--no-tags']
@@ -125,10 +122,11 @@ class ReleaseHost(InventoryHost):
         except OSError:
             print('candidate_fetch_result=failed;categoria=outro', flush=True)
             raise InventoryError('candidate_fetch_falhou;categoria=outro') from None
-        if result.returncode != 0 and self.fetch_head_option_unsupported(result.stderr):
-            # Older Git clients may reject this metadata-only flag. Retry only
-            # when stderr identifies that exact incompatibility; this uses
-            # Git's default FETCH_HEAD behavior and changes no refs or branches.
+        if result.returncode != 0 and self.fetch_head_option_unsupported(result.stderr, result.returncode):
+            # Git clients may reject this metadata-only flag with localized or
+            # version-specific wording. Retry only when exit 129 and stderr
+            # names this exact optional flag; the fixed-SHA fetch has no refspec
+            # destination and changes no refs or branches.
             print('candidate_fetch_compatibility=retry_com_fetch_head_padrao', flush=True)
             try:
                 result = subprocess.run(base_args + ['origin', TARGET_SHA], cwd=ROOT,
