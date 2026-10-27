@@ -38,6 +38,14 @@ def main():
         path.write_text(json.dumps(config))
         command = ['docker', 'compose', '-p', project, '-f', str(path), '--profile', '*']
         run(*command, 'up', '-d', '--no-deps', '--no-build', '--pull', 'never', 'api', 'web')
+        # Reproduce the standalone manifest observed after retirement.
+        consolidated = Path(directory) / 'active.compose.json'
+        consolidated.write_text(run(*command, 'config', '--format', 'json'))
+        command = ['docker', 'compose', '-p', project, '-f', str(consolidated), '--profile', '*']
+        for name in ('api', 'web'):
+            ident = run(*command, 'ps', '-q', name)
+            expected = inspect(ident)['Config']['Labels']['com.docker.compose.config-hash']
+            assert run(*command, 'config', '--hash', name).split() == [name, expected]
         historic = []
         for index, service in enumerate(['api'] * 3 + ['web'] * 3 + ['migrate', 'legacy-a', 'legacy-b']):
             args = ['docker', 'run', '-d', '--name', project + '-history-' + str(index),
@@ -68,9 +76,10 @@ def main():
         run(*command, 'run', '--rm', '--no-deps', '-T', 'api', 'true')
         preserved()
         # A candidate configuration forces real replacement, using the production flags.
+        config = json.loads(consolidated.read_text())
         for service in config['services'].values():
             service['environment'] = {'SYNTHETIC_CANDIDATE': '1'}
-        path.write_text(json.dumps(config))
+        consolidated.write_text(json.dumps(config))
         run(*command, 'up', '-d', '--no-deps', '--no-build', '--pull', 'never', 'api', 'web')
         preserved()
         for index in (7, 8):

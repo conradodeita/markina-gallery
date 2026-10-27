@@ -13,6 +13,8 @@ A PR #296 já integrou o limite de intensidade de prévias até 100% e a migrati
 - Validar schema, saúde e smoke tests após a operação, preservar evidências e não executar downgrade/restauração automática após o início da migration.
 - Manter o release API/web comum recusando migrations e não alterar serviços, dados ou infraestrutura de terceiros.
 - Reconciliar históricos encerrados fora dos alvos Compose com identidade no fingerprint e verificações de preservação antes/depois das operações, mediante prova real do Compose 2.35.1 em runner descartável; manter recusa de duplicidade ativa e de históricos selecionáveis.
+- Usar a ordem do manifesto efetivamente ativo de API/web, inclusive manifesto consolidado no diretório operacional, validando hashes Compose contra os containers; referências históricas dos serviços preservados continuam vinculadas ao fingerprint sem exigir arquivos aposentados que não serão usados.
+- Oferecer preparação protegida de backup online 0089, sem parar/recriar serviços, antes do preflight de release. O inventário desta preparação valida os demais gates e permanece explicitamente inapto ao release até o backup existir e passar pela verificação normal.
 
 ## Capabilities
 

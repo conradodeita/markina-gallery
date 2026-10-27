@@ -20,7 +20,7 @@ from preview_adjustment_migration_inventory import (
     BACKUPS, BASE_SCHEMA, COMPOSE_VERSION, PROJECT, ROOT, STATE, TARGET_SCHEMA, TARGET_SHA,
     Host as InventoryHost, InventoryError, historical_identity, require, validate_inventory,
 )
-from preview_adjustment_migration_release_flow import execute
+from preview_adjustment_migration_release_flow import execute, prepare_backup
 
 PUBLIC_URL = 'https://markina.pickyourpic.com.br'
 ENV_FILE = ROOT / 'docker/.env.homolog'
@@ -96,8 +96,8 @@ class ReleaseHost(InventoryHost):
         finally:
             os.close(fd)
 
-    def inventory(self, support_sha: str) -> dict[str, Any]:
-        value = super().inventory(support_sha)
+    def inventory(self, support_sha: str, *, include_backup: bool = True) -> dict[str, Any]:
+        value = super().inventory(support_sha, include_backup=include_backup)
         self.inventory_data = value
         return value
 
@@ -109,12 +109,7 @@ class ReleaseHost(InventoryHost):
         require(self.run('docker', 'compose', 'version', '--short').lstrip('v') == COMPOSE_VERSION,
                 'compose_version_nao_validada')
         require(ENV_FILE.is_file() and not ENV_FILE.is_symlink(), 'env_file_homolog_ausente')
-        api_files = inventory['services']['api']['compose_files']
-        require(api_files and api_files[0].endswith('docker-compose.yml'), 'compose_base_nao_identificado')
-        command = ['docker', 'compose', '--env-file', str(ENV_FILE), '-p', PROJECT,
-                   '-f', str(ROOT / 'docker/docker-compose.yml')]
-        for raw in api_files[1:]:
-            command += ['-f', raw]
+        command = self.target_compose_command(inventory['services'])[:-2]
         if image_overlay:
             command += ['-f', str(image_overlay)]
         return command + ['--profile', '*']
@@ -265,7 +260,14 @@ class ReleaseHost(InventoryHost):
         require(other_sessions == 0, 'sessao_de_escrita_ou_transacao_aberta')
         self.record('writers-idle', stopped=stopped)
 
-    def backup_and_verify(self, inventory: dict[str, Any]) -> dict[str, Any]:
+    def ensure_backup_directory(self) -> None:
+        require(BACKUPS.parent.resolve(strict=True) == BACKUPS.parent, 'raiz_backup_insegura')
+        BACKUPS.mkdir(mode=0o700, exist_ok=True)
+        info = BACKUPS.lstat()
+        require(stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+                and stat.S_IMODE(info.st_mode) & 0o022 == 0, 'diretorio_backup_inseguro')
+
+    def backup_and_verify(self, inventory: dict[str, Any], *, record: bool = True) -> dict[str, Any]:
         require(inventory['database_revision'] == BASE_SCHEMA, 'schema_origem_divergente_antes_backup')
         directory = BACKUPS
         require(directory.is_dir() and not directory.is_symlink(), 'diretorio_backup_inseguro')
@@ -309,7 +311,8 @@ class ReleaseHost(InventoryHost):
                 stream.write(f'{key}={value}\n')
             stream.flush()
             os.fsync(stream.fileno())
-        self.record('backup-verified', backup=result)
+        if record:
+            self.record('backup-verified', backup=result)
         return result
 
     def assert_backup(self, backup: dict[str, Any], _inventory: dict[str, Any]) -> None:
@@ -471,12 +474,18 @@ class ReleaseHost(InventoryHost):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('inventory', 'release'))
+    parser.add_argument('mode', choices=('inventory', 'release', 'prepare-backup'))
     parser.add_argument('--support-sha', required=True)
     parser.add_argument('--approval-fingerprint', default='')
     args = parser.parse_args()
     host = ReleaseHost()
     try:
+        if args.mode == 'prepare-backup':
+            backup = prepare_backup(host, args.support_sha)
+            print('preview_migration_backup_prepare=success')
+            print('backup_sanitizado=' + json.dumps({key: backup[key] for key in
+                  ('schema', 'sha256', 'bytes', 'format', 'restorable')}, sort_keys=True))
+            return 0
         if args.mode == 'inventory':
             with host.lock():
                 value = host.inventory(args.support_sha)

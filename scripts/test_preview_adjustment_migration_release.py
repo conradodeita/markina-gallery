@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,14 +28,39 @@ class PreviewMigrationReleaseHostTests(unittest.TestCase):
             with self.assertRaisesRegex(release.InventoryError, 'runtime_parou'):
                 host.wait_healthy('id')
 
-    def test_compose_uses_original_base_to_preserve_relative_environment_files(self):
+    def test_compose_uses_exact_active_standalone_manifest_and_order(self):
         host = release.ReleaseHost()
         host.run = lambda *_args: '2.35.1'
+        data = valid_inventory()
+        active = '/var/lib/markina-gallery/deploy-state/retire-approved/active.compose.json'
+        for name in ('api', 'web'):
+            data['services'][name]['compose_files'] = [active]
         with patch.object(release.Path, 'is_file', return_value=True), \
                 patch.object(release.Path, 'is_symlink', return_value=False):
-            command = host.compose_command(valid_inventory(), Path('/candidate'), Path('/candidate/overlay.json'))
-        self.assertIn(str(release.ROOT / 'docker/docker-compose.yml'), command)
+            command = host.compose_command(data, Path('/candidate'), Path('/candidate/overlay.json'))
+        self.assertIn(active, command)
+        self.assertNotIn(str(release.ROOT / 'docker/docker-compose.yml'), command)
         self.assertNotIn('/candidate/docker/docker-compose.yml', command)
+
+    @unittest.skipIf(os.name == 'nt', 'Permissões POSIX são verificadas no runner Linux, inclusive Python 3.8')
+    def test_online_backup_creates_private_verifiable_manifest_without_release_journal(self):
+        host = release.ReleaseHost()
+        host.pg_scalar = lambda *_args: 1
+        data = valid_inventory()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            def command(args, **kwargs):
+                if 'pg_dump' in args[-1]:
+                    kwargs['stdout'].write(b'synthetic-pg-dump')
+            with patch.object(release, 'BACKUPS', directory), \
+                    patch.object(release.subprocess, 'run', side_effect=command), \
+                    patch.object(host, 'record') as record:
+                result = host.backup_and_verify(data, record=False)
+            record.assert_not_called()
+            archive = Path(result['path'])
+            self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
+            self.assertTrue(archive.with_name(archive.name + '.manifest').is_file())
+            self.assertEqual(result['schema'], '20261025_0089')
 
     def test_publish_pins_version_and_refuses_dirty_checkout_before_switch(self):
         host = release.ReleaseHost()
