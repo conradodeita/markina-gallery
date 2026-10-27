@@ -61,6 +61,9 @@ jobs:
     needs: [ci-scope]
     if: ${{ needs.ci-scope.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -104,6 +107,14 @@ jobs:
           ruff check scripts/reset_homolog_owner.py
       - name: Contratos de distribuição e cobertura backend
         run: python -m unittest scripts.test_backend_ci -v
+      - name: Validar reutilização de CI com a main atual
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python -m unittest scripts.test_verify_main_ci_evidence scripts.test_fast_preview_release -q
+          python scripts/verify_main_ci_evidence.py --sha "$CI_BASE_SHA"
 
   backend-tests:
     needs: [ci-scope]
