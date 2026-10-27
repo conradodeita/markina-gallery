@@ -131,15 +131,16 @@ jobs:
           echo "7bdb2ce2916e5dd0354e5d129892bf96fdcdb1a9ab8eed69b9173e131db4c230  $DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum --check
           chmod 700 "$DOCKER_CONFIG/cli-plugins/docker-compose"
           python scripts/prove_preview_compose_preservation.py
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.8"
       - name: Compatibilidade dos helpers operacionais com Python do host
-        run: >-
-          python -m unittest scripts.test_preview_historical_containers
-          scripts.test_preview_adjustment_migration_inventory
-          scripts.test_preview_adjustment_migration_release_flow
-          scripts.test_preview_adjustment_migration_release -q
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          image='docker.io/library/python:3.8.20-slim-bookworm@sha256:1d52838af602b4b5a831beb13a0e4d073280665ea7be7f69ce2382f29c5a613f'
+          docker pull "$image"
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+            -v "$PWD:/workspace:ro" -w /workspace "$image" python -B -m unittest \
+            scripts.test_preview_historical_containers scripts.test_preview_adjustment_migration_inventory \
+            scripts.test_preview_adjustment_migration_release_flow scripts.test_preview_adjustment_migration_release -q
 
   backend-tests:
     needs: [ci-scope]
