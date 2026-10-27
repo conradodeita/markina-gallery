@@ -75,3 +75,7 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 #### Scenario: Histórico muda ou versão diverge
 - **WHEN** um histórico desaparece, reinicia ou muda de metadados, ou o Compose não é 2.35.1
 - **THEN** o fluxo falha fechado; antes da DDL nenhum banco é alterado, depois da DDL mantém a barreira e exige recuperação
+
+#### Scenario: Arquivo Compose referenciado está ausente ou inseguro
+- **WHEN** um path Compose do runtime não pode ser validado
+- **THEN** o inventário permanece inapto e informa categorias sanitizadas de todos os paths, consumidores reconhecidos, schema e saúde observados e disponibilidade independente do backup, sem imprimir paths arbitrários, segredos, valores de configuração ou fingerprint de release
