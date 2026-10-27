@@ -39,7 +39,7 @@ O sistema SHALL oferecer uma operação manual protegida que instale atomicament
 - **THEN** a instalação falha fechada, não altera `authorized_keys` nem serviços e não inicia preflight ou release
 ### Requirement: Diagnóstico sanitizado de serviço duplicado no inventário 0090
 
-O inventário 0090 SHALL continuar recusando nomes de serviço ausentes ou duplicados, incluindo containers parados. Para duplicidade web SHALL informar classificações normalizadas de nome canônico, one-off, número Compose, política de restart e igualdade de imagem, sem revelar nomes brutos, IDs, digests, variáveis de ambiente ou payloads de clientes.
+O inventário 0090 SHALL continuar recusando nomes de serviço ausentes ou duplicados, incluindo containers parados. Para duplicidade web SHALL informar classificações normalizadas de identidade e estado, prefixo hexadecimal do container e versão numérica do Compose, sem revelar nomes brutos, digests, caminhos de montagens, variáveis de ambiente ou payloads de clientes. A saída não autoriza limpeza nem constitui fingerprint de release.
 
 #### Scenario: Containers com nome de serviço repetido
 - **WHEN** dois ou mais containers do projeto compartilham o mesmo serviço

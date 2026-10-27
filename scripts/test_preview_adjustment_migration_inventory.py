@@ -126,6 +126,32 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
         self.assertNotIn('sha256:', message)
         self.assertNotIn('approval_fingerprint', message)
 
+    def test_web_inspection_outputs_only_bounded_identifiers_and_categories(self):
+        from preview_adjustment_migration_inventory import InventoryError, validate_service_identity
+
+        active = {'Id': 'a' * 64, 'Name': '/markina-gallery-web-1', 'Image': 'sha256:' + 'a' * 64,
+                  'State': {'ExitCode': 0}, 'Mounts': [{'RW': True, 'Source': '/secret/path'}],
+                  'Config': {'Image': 'markina-gallery-web', 'Labels': {'com.docker.compose.oneoff': 'False'}},
+                  'HostConfig': {'RestartPolicy': {'Name': 'no'}}}
+        old = {'Id': 'b' * 64, 'Name': '/secret-container-name', 'Image': 'sha256:' + 'b' * 64,
+               'State': {'ExitCode': 137}, 'Mounts': [{'RW': False, 'Source': '/secret/backup'}],
+               'Config': {'Image': 'secret/test:private', 'Labels': {}},
+               'HostConfig': {'RestartPolicy': {'Name': 'no'}}}
+        with self.assertRaises(InventoryError) as error:
+            validate_service_identity('web', {'web': {'status': 'running'}}, 'exited', active, old, 'v2.32.4')
+        message = str(error.exception)
+        self.assertIn('"id_prefixo":"bbbbbbbbbbbb"', message)
+        self.assertIn('"montagens_gravaveis":"0"', message)
+        self.assertIn('"codigo_saida":"137"', message)
+        self.assertIn('"referencia_imagem":"nome_sugere_teste"', message)
+        self.assertIn('"compose_version":"v2.32.4"', message)
+        self.assertNotIn('secret', message)
+        self.assertNotIn('b' * 64, message)
+        with self.assertRaises(InventoryError) as error:
+            validate_service_identity('web', {'web': {'status': 'running'}}, 'exited', active, old, 'secret')
+        self.assertNotIn('secret', str(error.exception))
+        self.assertIn('"compose_version":"desconhecida"', str(error.exception))
+
     def test_complete_minimized_inventory_has_deterministic_fingerprint(self):
         data = valid_inventory()
         ready, reason, fingerprint = validate_inventory(data)
