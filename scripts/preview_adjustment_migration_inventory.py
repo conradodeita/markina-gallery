@@ -142,6 +142,12 @@ def canonical_fingerprint(value: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def canonical_mounts(mounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a deterministic copy for identity hashing; never reorder Compose input."""
+    return sorted(mounts, key=lambda mount: json.dumps(
+        mount, sort_keys=True, separators=(',', ':')))
+
+
 def historical_identity(container: dict[str, Any]) -> dict[str, Any]:
     """Bind preserved Docker metadata without disclosing labels, mounts or environment."""
     labels = container.get('Config', {}).get('Labels') or {}
@@ -169,13 +175,15 @@ def historical_identity(container: dict[str, Any]) -> dict[str, Any]:
     require(isinstance(mounts, list) and len(mounts) <= 100
             and all(isinstance(mount, dict) and type(mount.get('RW')) is bool for mount in mounts),
             'historico_montagens_invalidas')
+    identity_mounts = canonical_mounts(mounts)
     metadata = {key: container[key] for key in fields}
+    metadata['Mounts'] = identity_mounts
     # Health logs/counters are diagnostic records, not execution identity of an
     # exited container. Keep every other State field so restarts/exits still bind.
     metadata['State'] = {key: value for key, value in state.items() if key != 'Health'}
     operational_values = {
         'Name': container['Name'], 'Image': image, 'Config': container['Config'],
-        'HostConfig': container['HostConfig'], 'Mounts': mounts,
+        'HostConfig': container['HostConfig'], 'Mounts': identity_mounts,
         'State_without_Health': metadata['State'], 'NetworkSettings': container['NetworkSettings']}
     field_hashes = {key: canonical_fingerprint(operational_values[key])
                     for key in HISTORICAL_OPERATIONAL_FIELDS}
@@ -207,7 +215,8 @@ def historical_field_hashes(containers: list[dict[str, Any]]) -> list[dict[str, 
             continue
         identity = historical_identity(item)
         fields = ('Name', 'Image', 'Config', 'HostConfig', 'Mounts', 'State', 'NetworkSettings')
-        hashes = {key: canonical_fingerprint(item[key]) for key in fields}
+        hashes = {key: canonical_fingerprint(item[key]) for key in fields if key != 'Mounts'}
+        hashes['Mounts'] = identity['fields_sha256']['Mounts']
         hashes['State_without_Health'] = canonical_fingerprint(
             {key: value for key, value in item['State'].items() if key != 'Health'})
         result.append({'id_prefixo': identity['container_id'][:12], 'campos_sha256': hashes,

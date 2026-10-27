@@ -71,6 +71,41 @@ class HistoricalContainerTests(unittest.TestCase):
                 changed[field]['changed'] = True
             self.assertNotEqual(inventory.historical_identity(changed), baseline)
 
+    def test_mount_order_is_canonicalized_without_ignoring_mount_changes(self):
+        original = container()
+        original['Mounts'] = [
+            {'Type': 'bind', 'Source': '/synthetic/one', 'Destination': '/one',
+             'RW': True, 'PrivateExtension': {'mode': 'alpha'}},
+            {'Type': 'volume', 'Name': 'synthetic-two', 'Destination': '/two',
+             'RW': False, 'PrivateExtension': {'mode': 'beta'}},
+        ]
+        reordered = copy.deepcopy(original)
+        reordered['Mounts'].reverse()
+
+        self.assertEqual(inventory.historical_identity(original),
+                         inventory.historical_identity(reordered))
+        hashes = inventory.historical_field_hashes([original, reordered])
+        self.assertEqual(hashes[0]['campos_sha256']['Mounts'],
+                         hashes[1]['campos_sha256']['Mounts'])
+        self.assertEqual(hashes[0]['montagens_sanitizadas'],
+                         hashes[1]['montagens_sanitizadas'])
+
+        changed_component = copy.deepcopy(reordered)
+        changed_component['Mounts'][0]['Destination'] = '/synthetic/changed'
+        self.assertNotEqual(inventory.historical_identity(changed_component),
+                            inventory.historical_identity(original))
+
+        changed_unknown_field = copy.deepcopy(reordered)
+        changed_unknown_field['Mounts'][0]['PrivateExtension']['mode'] = 'changed'
+        self.assertNotEqual(inventory.historical_identity(changed_unknown_field),
+                            inventory.historical_identity(original))
+
+        added_mount = copy.deepcopy(reordered)
+        added_mount['Mounts'].append({'Type': 'tmpfs', 'Destination': '/three', 'RW': True})
+        self.assertNotEqual(inventory.historical_identity(added_mount),
+                            inventory.historical_identity(original))
+        self.assertEqual(original['Mounts'][0]['Source'], '/synthetic/one')
+
     def test_mount_component_diagnostics_hash_values_without_disclosing_paths(self):
         item = container()
         item['Mounts'][0].update({'Type': 'bind', 'Name': 'private-volume', 'Driver': 'local',
