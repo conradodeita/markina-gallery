@@ -19,6 +19,11 @@
 
 ## 4. Publicação protegida
 
+- [ ] 4.15 Reconciliar o manifesto ativo observado em #40518739264: validar e usar ordem API/web consolidada, comparar config-hash com runtime, preservar referências antigas e identidades dos demais serviços sem carregar override RAW ausente. Cobrir configurações divergentes, ordem e arquivo inseguro; provar operação com manifesto independente em runner.
+- [ ] 4.16 Implementar preparação protegida de backup online 0089 com finalidade separada, lock, gates comuns, diretório/arquivo seguros, recibo verificável e estado revalidado; impedir que inventário sem backup autorize release, provar ausência de stop/DDL/publicação e executar somente após CI/instalação do helper correspondente.
+
+Evidência local das tasks4.15–4.16: 56 testes coletados, 55 passaram e um teste de permissões POSIX foi reservado ao runner Linux; Ruff F/E9, sintaxe Bash, política de release e OpenSpec strict passaram. O ensaio real Compose foi ampliado para manifesto consolidado/config-hash e substituirá a suposição de arquivo base obrigatório. Falta CI do novo SHA e validação protegida no host; tasks permanecem abertas.
+
 - [ ] 4.14 Diagnosticar arquivos Compose referenciados pelo runtime: wrapper corrigido instalado em #40512119869; preflight #40512533928 avançou além da reconciliação de containers e falhou em `compose_path_ausente_ou_inseguro`. Acrescentar diagnóstico sanitizado de todos os paths referenciados (somente identidade conhecida, presença/tipo/raiz, consumidores e hash do path), schema observado, saúde resumida e disponibilidade independente do backup; manter recusa e não reconstruir nem ignorar arquivos. Validar casos ausente, symlink, raiz externa e metadados privados antes de instalar nova leitura.
 
 - [ ] 4.13 Corrigir compatibilidade com Python do host: preflight otimizado #40506203197 recusou antes de mutações porque `str.removeprefix` não existe no intérprete do servidor. Usar normalização compatível e acrescentar execução dos testes stdlib no Python 3.8 em runner descartável; manter exigência exata de Compose 2.35.1 e todos os guards. Wrapper otimizado instalado com sucesso em #40506017793 (`root:root:755`); nenhum deploy/migration foi iniciado. Não atualizar o Python do servidor.

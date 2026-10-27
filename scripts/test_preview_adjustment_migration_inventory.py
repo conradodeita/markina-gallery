@@ -57,6 +57,47 @@ def valid_inventory():
 
 
 class PreviewMigrationInventoryTests(unittest.TestCase):
+    def test_standalone_target_manifest_allows_old_non_target_provenance_but_binds_target_files(self):
+        data = valid_inventory()
+        active = '/var/lib/markina-gallery/deploy-state/retire-approved/active.compose.json'
+        for name in ('api', 'web'):
+            data['services'][name]['compose_files'] = [active]
+        data['services']['nginx']['compose_files'] = ['/old/docker-compose.raw-development.yml']
+        data['compose_order'] = [active]
+        data['compose_files'] = {active: 'f' * 64}
+        self.assertTrue(validate_inventory(data)[0])
+        original = canonical_fingerprint(data)
+        data['services']['nginx']['compose_files'] = ['/changed/provenance.yml']
+        self.assertNotEqual(canonical_fingerprint(data), original)
+        data['services']['web']['compose_files'] = ['docker/docker-compose.yml']
+        self.assertEqual(validate_inventory(data)[1], 'ordem_compose_ativa_invalida')
+        data['services']['web']['compose_files'] = [active]
+        data['compose_files']['docker/extra.yml'] = 'a' * 64
+        self.assertEqual(validate_inventory(data)[1], 'manifesto_alvo_incompleto')
+
+    def test_compose_config_hash_must_match_runtime_for_both_targets(self):
+        from preview_adjustment_migration_inventory import Host, InventoryError
+        host = Host()
+        data = valid_inventory()
+        def run(*args):
+            name = args[-1]
+            return name + ' ' + data['services'][name]['config_hash']
+        host.run = run
+        host.assert_target_compose_matches(data['services'])
+        host.run = lambda *_args: 'api ' + 'f' * 64
+        with self.assertRaisesRegex(InventoryError, 'manifesto_alvo_diverge'):
+            host.assert_target_compose_matches(data['services'])
+
+    def test_backup_preparation_never_authorizes_release_without_verified_backup(self):
+        from preview_adjustment_migration_inventory import validate_backup_preparation
+        data = valid_inventory()
+        self.assertFalse(validate_backup_preparation(data)[0])
+        data['backup'] = None
+        self.assertTrue(validate_backup_preparation(data)[0])
+        self.assertEqual(validate_inventory(data)[1], 'backup_nao_verificavel')
+        data['services']['api']['health'] = 'starting'
+        self.assertFalse(validate_backup_preparation(data)[0])
+
     def test_compose_failure_diagnoses_all_paths_and_backup_without_leaking_unknown_paths(self):
         from preview_adjustment_migration_inventory import Host, InventoryError
         with tempfile.TemporaryDirectory() as temporary:

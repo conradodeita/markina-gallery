@@ -13,6 +13,15 @@ def section(text, name, next_name):
 
 
 class FastPreviewReleaseTests(unittest.TestCase):
+    def test_backup_is_separate_protected_authorized_main_only_operation(self):
+        backup = section(FAST, 'preview-adjustment-migration-backup', 'preview-adjustment-migration-scope')
+        for required in ("github.ref == 'refs/heads/main'", 'inputs.authorization_confirmed == true',
+                         'environment: production', 'ci-evidence', 'preview-adjustment-migration-scope',
+                         '--mode prepare-backup', "--support-sha '$GITHUB_SHA'"):
+            self.assertIn(required, backup)
+        self.assertNotIn('--mode release', backup)
+        self.assertNotIn('alembic', backup)
+
     def test_manual_main_only_and_no_automatic_trigger(self):
         header = FAST.split('\njobs:\n', 1)[0]
         self.assertIn('  workflow_dispatch:', header)

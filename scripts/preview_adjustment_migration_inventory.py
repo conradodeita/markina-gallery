@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path('/opt/markina-gallery')
 STATE = Path('/var/lib/markina-gallery/deploy-state')
-BACKUPS = Path('/var/lib/markina-gallery/backups')
+BACKUPS = STATE / 'preview-adjustment-backups'
 PROJECT = 'markina-gallery'
 PUBLIC_URL = 'https://markina.pickyourpic.com.br'
 BASE_SHA = 'c1944189761799be96eeeb921cad9906484d8b09'
@@ -206,6 +206,15 @@ def select_candidate_ci(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def validate_inventory(value: dict[str, Any]) -> tuple[bool, str, str | None]:
+    return _validate_inventory(value, require_backup=True)
+
+
+def validate_backup_preparation(value: dict[str, Any]) -> tuple[bool, str, str | None]:
+    """This purpose cannot approve release when the backup is absent."""
+    return _validate_inventory(value, require_backup=False)
+
+
+def _validate_inventory(value: dict[str, Any], *, require_backup: bool) -> tuple[bool, str, str | None]:
     fields = {'host', 'project', 'root', 'repository', 'support_sha', 'target_sha', 'main_sha',
               'checkout_sha', 'active_sha', 'checkout_clean', 'database_revision', 'migration_chain',
               'public_url', 'nginx_bind', 'ci', 'services', 'compose_files', 'compose_order',
@@ -276,18 +285,24 @@ def validate_inventory(value: dict[str, Any]) -> tuple[bool, str, str | None]:
             return False, 'runtime_markina_divergente', None
     compose = value['compose_files']
     order = value['compose_order']
-    if (not isinstance(compose, dict) or 'docker/docker-compose.yml' not in compose
+    if (not isinstance(compose, dict) or not compose
             or any(not isinstance(path, str) or not path.startswith(('docker/', '/var/lib/markina-gallery/deploy-state/'))
                    or not isinstance(digest, str) or not SHA256.fullmatch(digest) for path, digest in compose.items())):
         return False, 'compose_ativo_invalido', None
-    if (not isinstance(order, list) or not order or not order[0].endswith('docker/docker-compose.yml')
+    if (not isinstance(order, list) or not order
             or any(not isinstance(path, str) or not path for path in order)
-            or any(item['compose_files'] != order for item in services.values())):
+            or any(services[name]['compose_files'] != order for name in ('api', 'web'))):
         return False, 'ordem_compose_ativa_invalida', None
+    normalized_order = [path[len(str(ROOT)) + 1:] if path.startswith(str(ROOT) + '/') else path for path in order]
+    if len(set(order)) != len(order) or set(normalized_order) != set(compose):
+        return False, 'manifesto_alvo_incompleto', None
     if value['pending_markers'] != []:
         return False, 'operacao_producao_pendente', None
     backup = value['backup']
-    if (not isinstance(backup, dict) or set(backup) != {'schema', 'sha256', 'bytes', 'format', 'restorable'}
+    if not require_backup:
+        if backup is not None:
+            return False, 'finalidade_preparacao_backup_divergente', None
+    elif (not isinstance(backup, dict) or set(backup) != {'schema', 'sha256', 'bytes', 'format', 'restorable'}
             or backup['schema'] != BASE_SCHEMA or not isinstance(backup['sha256'], str)
             or not SHA256.fullmatch(backup['sha256'])
             or not isinstance(backup['bytes'], int) or isinstance(backup['bytes'], bool) or backup['bytes'] <= 0
@@ -295,7 +310,8 @@ def validate_inventory(value: dict[str, Any]) -> tuple[bool, str, str | None]:
         return False, 'backup_nao_verificavel', None
     if value['https_health'] != {'healthz': 200, 'api_health': 200, 'web': 200}:
         return False, 'smoke_https_falhou', None
-    return True, 'inventario_apto_a_apresentacao', canonical_fingerprint(value)
+    reason = 'inventario_apto_a_apresentacao' if require_backup else 'inventario_apto_somente_a_preparacao_backup'
+    return True, reason, canonical_fingerprint(value)
 
 
 class Host:
@@ -410,6 +426,20 @@ class Host:
                                    'ordem_compose_igual_api': item['compose_files'] == services['api']['compose_files']}
                              for name, item in services.items() if name in KNOWN_SERVICES}}
 
+    def target_compose_command(self, services: dict[str, Any]) -> list[str]:
+        order = services['api']['compose_files']
+        require(order and order == services['web']['compose_files'], 'ordem_compose_ativa_invalida')
+        command = ['docker', 'compose', '--env-file', str(ROOT / 'docker/.env.homolog'), '-p', PROJECT]
+        for raw in order:
+            command += ['-f', raw]
+        return command + ['--profile', '*']
+
+    def assert_target_compose_matches(self, services: dict[str, Any]) -> None:
+        command = self.target_compose_command(services)
+        for name in ('api', 'web'):
+            fields = self.run(*command, 'config', '--hash', name).split()
+            require(fields == [name, services[name]['config_hash']], 'manifesto_alvo_diverge_do_runtime')
+
     def backup(self, db_container_id: str) -> dict[str, Any]:
         manifests = sorted(BACKUPS.glob('*.manifest'), key=lambda p: p.stat().st_mtime_ns, reverse=True)
         for manifest in manifests[:20]:
@@ -502,7 +532,7 @@ class Host:
                 'cadeia_migration_alvo_divergente')
         return source
 
-    def inventory(self, support_sha: str) -> dict[str, Any]:
+    def inventory(self, support_sha: str, *, include_backup: bool = True) -> dict[str, Any]:
         require(socket.gethostname() == 'clearbudget-vnic' and ROOT.resolve() == ROOT, 'host_ou_raiz_divergente')
         require(SHA1.fullmatch(support_sha), 'support_sha_invalido')
         repository = self.run('git', 'remote', 'get-url', 'origin')
@@ -561,7 +591,8 @@ class Host:
         schema_out = self.run('docker', 'exec', 'markina-gallery-api-1', 'python', '-B', '-m', 'alembic', 'current')
         schema_matches = re.findall(r'(?m)^([0-9]{8}_[0-9]{4})(?:\s|$)', schema_out)
         try:
-            compose = self.compose_files(services)
+            compose = self.compose_files({name: services[name] for name in ('api', 'web')})
+            self.assert_target_compose_matches(services)
         except InventoryError:
             report = self.compose_failure_report(services, schema_matches, checkout, active_sha, clean, len(historical))
             print('diagnostico_preflight=' + json.dumps(report, sort_keys=True, separators=(',', ':')))
@@ -589,7 +620,7 @@ class Host:
             'ci': self.candidate_ci(),
             'services': services, 'compose_files': compose,
             'compose_order': services.get('api', {}).get('compose_files', []), 'pending_markers': pending,
-            'backup': self.backup(services['db']['container_id']), 'https_health': https,
+            'backup': self.backup(services['db']['container_id']) if include_backup else None, 'https_health': https,
             'historical_containers': historical, 'compose_version': COMPOSE_VERSION}
         return value
 

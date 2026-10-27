@@ -77,5 +77,27 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **THEN** o fluxo falha fechado; antes da DDL nenhum banco é alterado, depois da DDL mantém a barreira e exige recuperação
 
 #### Scenario: Arquivo Compose referenciado está ausente ou inseguro
-- **WHEN** um path Compose do runtime não pode ser validado
+- **WHEN** um path Compose necessário à operação API/web não pode ser validado
 - **THEN** o inventário permanece inapto e informa categorias sanitizadas de todos os paths, consumidores reconhecidos, schema e saúde observados e disponibilidade independente do backup, sem imprimir paths arbitrários, segredos, valores de configuração ou fingerprint de release
+
+### Requirement: Manifesto ativo por serviço no release 0090
+O fluxo SHALL validar a ordem de arquivos efetivamente usada por API/web, inclusive manifesto consolidado em deploy-state, e comparar seus hashes Compose com os containers ativos. SHALL usar esses mesmos arquivos nas operações aprovadas. Referências antigas dos demais serviços SHALL permanecer vinculadas ao fingerprint como proveniência, sem serem carregadas pelo release. Os serviços preservados SHALL manter identidade, configuração, estado e proteção contra recriação.
+
+#### Scenario: Nginx preservado referencia override aposentado
+- **WHEN** somente Nginx referencia um arquivo RAW removido, enquanto API/web compartilham manifesto consolidado seguro cujos hashes correspondem ao runtime
+- **THEN** o fluxo usa somente o manifesto API/web, mantém Nginx preservado e não restaura o override nem inicia serviços aposentados
+
+#### Scenario: Manifesto diverge do runtime
+- **WHEN** API/web usam ordens diferentes, um arquivo necessário está ausente/inseguro ou o hash Compose difere do container
+- **THEN** nenhuma preparação de backup, parada ou publicação é autorizada
+
+### Requirement: Preparação protegida de backup antes do preflight 0090
+O sistema SHALL oferecer operação manual protegida para criar backup online consistente de schema0089, após validar os demais gates sob lock. Esta finalidade SHALL manter backup null no inventário inicial e SHALL NOT autorizar release. A operação SHALL verificar permissões, checksum e listagem pg_restore, revalidar schema e estado e registrar evidência sanitizada. SHALL NOT parar serviços, executar DDL, alterar configuração ou criar journal de release.
+
+#### Scenario: Backup inicial ainda ausente
+- **WHEN** CI/SHA/escopo, manifesto, runtime, saúde e schema0089 são válidos e a preparação protegida foi autorizada
+- **THEN** o fluxo cria somente dump e manifesto seguros e o preflight normal pode verificar esse backup posteriormente
+
+#### Scenario: Inventário sem backup chega ao release
+- **WHEN** o inventário tem backup null ou não verificável
+- **THEN** o validador de release recusa antes de qualquer mutação, mesmo que a preparação de backup tenha sido autorizada

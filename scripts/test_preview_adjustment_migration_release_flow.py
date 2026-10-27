@@ -4,10 +4,13 @@ import copy
 import sys
 import unittest
 from pathlib import Path
+from contextlib import nullcontext
+from unittest.mock import patch
+import io
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preview_adjustment_migration_inventory import canonical_fingerprint  # noqa: E402
-from preview_adjustment_migration_release_flow import ReleaseError, execute  # noqa: E402
+from preview_adjustment_migration_release_flow import ReleaseError, execute, prepare_backup  # noqa: E402
 from test_preview_adjustment_migration_inventory import valid_inventory  # noqa: E402
 
 
@@ -95,6 +98,50 @@ class FakeHost:
 
 
 class PreviewMigrationReleaseFlowTests(unittest.TestCase):
+    def backup_host(self):
+        host = FakeHost()
+        host.value['backup'] = None
+        host.lock = nullcontext
+        def collect(_sha, *, include_backup):
+            self.assertFalse(include_backup)
+            host.event('inventory')
+            return copy.deepcopy(host.value)
+        host.inventory = collect
+        host.ensure_backup_directory = lambda: host.event('backup-directory')
+        host.database_revision_before_ddl = lambda: '20261025_0089'
+        def dump(_inventory, *, record):
+            self.assertFalse(record)
+            host.event('online-backup')
+            return {'sha256': 'f' * 64}
+        host.backup_and_verify = dump
+        return host
+
+    def test_backup_preparation_calls_no_maintenance_writers_ddl_or_journal(self):
+        host = self.backup_host()
+        with patch('sys.stdout', new_callable=io.StringIO):
+            prepare_backup(host, 'a' * 40)
+        self.assertEqual(host.events, ['inventory', 'backup-directory', 'online-backup',
+                                      'backup-verified', 'inventory', 'historical-preserved'])
+
+    def test_backup_preparation_refuses_bad_inventory_before_creating_anything(self):
+        host = self.backup_host()
+        host.value['https_health']['web'] = 503
+        with self.assertRaises(ReleaseError):
+            prepare_backup(host, 'a' * 40)
+        self.assertEqual(host.events, ['inventory'])
+
+    def test_online_backup_detects_state_change_without_entering_release(self):
+        host = self.backup_host()
+        def dump(_inventory, *, record):
+            host.value['services']['web']['started_at'] = 'changed'
+            return {'sha256': 'f' * 64}
+        host.backup_and_verify = dump
+        with patch('sys.stdout', new_callable=io.StringIO), \
+                self.assertRaisesRegex(ReleaseError, 'inventario_mudou_durante_preparacao'):
+            prepare_backup(host, 'a' * 40)
+        self.assertNotIn('migration', host.events)
+        self.assertNotIn('journal-start', host.events)
+
     def test_historical_change_stops_before_maintenance_or_ddl(self):
         host = FakeHost(fail='historical-preserved')
         with self.assertRaises(ReleaseError):

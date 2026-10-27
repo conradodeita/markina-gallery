@@ -2,12 +2,37 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import json
 
-from preview_adjustment_migration_inventory import TARGET_SCHEMA, canonical_fingerprint, validate_inventory
+from preview_adjustment_migration_inventory import (
+    BASE_SCHEMA, TARGET_SCHEMA, canonical_fingerprint, validate_backup_preparation, validate_inventory,
+)
 
 
 class ReleaseError(RuntimeError):
     pass
+
+
+def prepare_backup(host, support_sha: str):
+    """Only an online dump and manifest; never enter release/DDL callbacks."""
+    with host.lock():
+        initial = host.inventory(support_sha, include_backup=False)
+        ready, reason, fingerprint = validate_backup_preparation(initial)
+        if not ready:
+            raise ReleaseError(reason)
+        print('inventario_preparacao_backup=' + json.dumps(initial, sort_keys=True))
+        if host.database_revision_before_ddl() != BASE_SCHEMA:
+            raise ReleaseError('schema_origem_divergente_antes_backup')
+        host.ensure_backup_directory()
+        backup = host.backup_and_verify(initial, record=False)
+        host.assert_backup(backup, initial)
+        refreshed = host.inventory(support_sha, include_backup=False)
+        if canonical_fingerprint(refreshed) != fingerprint:
+            raise ReleaseError('inventario_mudou_durante_preparacao_backup')
+        if host.database_revision_before_ddl() != BASE_SCHEMA:
+            raise ReleaseError('schema_mudou_durante_preparacao_backup')
+        host.assert_historical_preserved(initial)
+        return backup
 
 
 def execute(host, support_sha: str, approval_fingerprint: str) -> None:

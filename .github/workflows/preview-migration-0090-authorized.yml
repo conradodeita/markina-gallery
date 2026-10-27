@@ -9,6 +9,7 @@ on:
         required: true
         options:
           - preview-adjustment-migration-wrapper-install
+          - preview-adjustment-migration-backup
           - preview-adjustment-migration-preflight
           - preview-adjustment-migration-release
       authorization_confirmed:
@@ -38,8 +39,41 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
 
+  preview-adjustment-migration-backup:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'preview-adjustment-migration-backup' && inputs.authorization_confirmed == true }}"
+    needs: [ci-evidence, preview-adjustment-migration-scope]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Preparar somente backup online do schema 0089
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_PUBLIC_BASE_URL; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"; known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          remote_command="cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode prepare-backup --support-sha '$GITHUB_SHA'"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" "$remote_command" < scripts/deploy-prod-preview-adjustment-migration.sh
+
   preview-adjustment-migration-scope:
-    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'preview-adjustment-migration-wrapper-install' || inputs.operation == 'preview-adjustment-migration-preflight' || inputs.operation == 'preview-adjustment-migration-release') }}"
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'preview-adjustment-migration-wrapper-install' || inputs.operation == 'preview-adjustment-migration-backup' || inputs.operation == 'preview-adjustment-migration-preflight' || inputs.operation == 'preview-adjustment-migration-release') }}"
     needs: [ci-evidence]
     runs-on: ubuntu-latest
     permissions:

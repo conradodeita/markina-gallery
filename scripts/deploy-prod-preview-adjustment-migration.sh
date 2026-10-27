@@ -7,20 +7,28 @@ umask 077
 readonly EXPECTED_REPOSITORY="conradodeita/markina-gallery"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly TARGET_SHA="0dd015a62447e0c8d4c6af16b381140c8118f2ec"
-readonly INVENTORY_BLOB_SHA="061761625c8c9f42997868b358a70b56ef4a93ea"
-readonly FLOW_BLOB_SHA="c55d6c4f7f4c8d1fb603c032db461410ad3f9d28"
-readonly RELEASE_BLOB_SHA="94af99fa84d002f30a304733fce4847a44363185"
+readonly INVENTORY_BLOB_SHA="f8746444ffba02e0a19ff871322571310222e458"
+readonly FLOW_BLOB_SHA="a7c0e8fbf424aeb9251b6bb40a493c0ca3a6deca"
+readonly RELEASE_BLOB_SHA="6000164d001170aadfdc1f3fd08729c76f979c47"
 
 fail() { echo "preview-adjustment-migration: $*" >&2; exit 1; }
 
 [[ "${MARKINA_EXPECTED_REPOSITORY:-}" == "$EXPECTED_REPOSITORY" ]] || fail "repositório divergente"
 [[ "${MARKINA_PUBLIC_BASE_URL:-}" == "$PUBLIC_URL" ]] || fail "domínio divergente"
-[[ "$#" == 6 && "$1" == --mode && "$2" == release && "$3" == --support-sha \
-  && "$5" == --approval-fingerprint ]] || fail "argumentos não permitidos"
+mode=""
+approval_fingerprint=""
+if [[ "$#" == 4 && "$1" == --mode && "$2" == prepare-backup && "$3" == --support-sha ]]; then
+  mode=prepare-backup
+elif [[ "$#" == 6 && "$1" == --mode && "$2" == release && "$3" == --support-sha \
+  && "$5" == --approval-fingerprint ]]; then
+  mode=release
+  approval_fingerprint="$6"
+  [[ "$approval_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint ausente ou inválido"
+else
+  fail "argumentos não permitidos"
+fi
 support_sha="$4"
-approval_fingerprint="$6"
 [[ "$support_sha" =~ ^[0-9a-f]{40}$ ]] || fail "SHA de suporte inválido"
-[[ "$approval_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint ausente ou inválido"
 
 cd /opt/markina-gallery
 [[ "$(pwd -P)" == /opt/markina-gallery ]] || fail "raiz de projeto inesperada"
@@ -45,6 +53,11 @@ fetch_pinned preview_adjustment_migration_inventory.py "$INVENTORY_BLOB_SHA"
 fetch_pinned preview_adjustment_migration_release_flow.py "$FLOW_BLOB_SHA"
 fetch_pinned preview_adjustment_migration_release.py "$RELEASE_BLOB_SHA"
 
-PYTHONPATH="$temporary" MARKINA_APPROVAL_FINGERPRINT="$approval_fingerprint" \
-  python3 -B "$temporary/preview_adjustment_migration_release.py" release \
-    --support-sha "$support_sha" --approval-fingerprint "$approval_fingerprint"
+if [[ "$mode" == prepare-backup ]]; then
+  PYTHONPATH="$temporary" python3 -B "$temporary/preview_adjustment_migration_release.py" prepare-backup \
+    --support-sha "$support_sha"
+else
+  PYTHONPATH="$temporary" MARKINA_APPROVAL_FINGERPRINT="$approval_fingerprint" \
+    python3 -B "$temporary/preview_adjustment_migration_release.py" release \
+      --support-sha "$support_sha" --approval-fingerprint "$approval_fingerprint"
+fi
