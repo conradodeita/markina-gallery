@@ -78,6 +78,12 @@ O preflight somente-leitura #40554411511 falhou antes de gerar fingerprint ou in
 
 Decisão: pedir explicitamente `per_page=1` para limitar o payload sem alterar a prova de ancestralidade. O inventário continuará exigindo `status` `ahead` ou `identical`, base igual ao SHA alvo e merge base igual ao SHA alvo; limite de bytes, origem HTTPS/API e validação da migration permanecem. Resposta malformada, excessiva ou divergente continua falhando fechada antes de fingerprint e release. Como o helper é carregado por SHA de blob, atualizar em conjunto os pins do wrapper read-only e do executor de release, sem alterar comandos permitidos ou a chave SSH.
 
+## Compatibilidade do fetch Git no host — 2026-10-27
+
+O release #40572085318 falhou na subfase `fetch` com código de saída 129, antes de manutenção ou DDL. O log não contém stderr por política de privacidade; portanto a causa específica não está confirmada. O preflight somente-leitura posterior #40572749648 confirmou schema `20261025_0089`, backup verificável, 13/13 serviços saudáveis, nove históricos e HTTPS 200, sem estado de release pendente.
+
+Decisão: manter o fetch do SHA integral, sem tags e sem atualizar refs/branches. Se e somente se o stderr privado indicar explicitamente que o cliente Git não reconheceu `--no-write-fetch-head`, repetir o mesmo fetch sem essa opção metadata-only, preservando o comportamento padrão de `FETCH_HEAD`; registrar apenas um marcador fixo de compatibilidade. Outras falhas seguem a classificação sanitizada e bloqueiam o release. Testar o gatilho positivo, rejeições não relacionadas, sucesso do retry e falha sanitizada do retry. Esta hipótese não comprova a causa do código 129 original; a próxima execução é a primeira evidência operacional desta correção.
+
 ## Oscilação da ordem dos mounts em containers históricos — 2026-10-27
 
 Os preflights somente-leitura #40562896158 e #40563170202 passaram os gates, mas produziram fingerprints distintos. A comparação campo a campo isolou um container histórico encerrado, com divergência apenas nos hashes `Mounts` e `metadata_sha256`; as três entradas `montagens_sanitizadas` desse container formaram um multiconjunto idêntico nos dois runs (mesmos tipos, acesso e hashes de Source, Destination, Name, Driver, Mode e Propagation). A evidência aponta para mudança da ordem de serialização, mas o guard atual hash-eia o array na ordem retornada.
