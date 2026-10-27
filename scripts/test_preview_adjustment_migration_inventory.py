@@ -169,6 +169,16 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
         self.assertEqual(records[0]['servico'], 'web')
         self.assertEqual(records[0]['estado'], 'exited')
         self.assertEqual(records[0]['montagens_gravaveis'], '1')
+        self.assertEqual(records[0]['rotulo_config_hash'], 'ausente')
+        labelled = container('c' * 64)
+        labelled['Config']['Labels']['com.docker.compose.config-hash'] = 'private-invalid'
+        labelled['Config']['Labels']['com.docker.compose.oneoff'] = 'private-invalid'
+        labelled['Config']['Labels']['com.docker.compose.container-number'] = 'private-invalid'
+        classified = sanitized_container_summary([labelled])[0]
+        self.assertEqual(classified['rotulo_config_hash'], 'presente')
+        self.assertEqual(classified['rotulo_oneoff'], 'presente')
+        self.assertEqual(classified['rotulo_numero'], 'presente')
+        self.assertNotIn('private', str(classified))
         self.assertNotIn('private', str(records))
         self.assertNotIn('secret', str(records))
         with self.assertRaisesRegex(InventoryError, 'projeto_container_divergente'):

@@ -53,6 +53,10 @@ O inventário 0090 SHALL continuar recusando nomes de serviço ausentes ou dupli
 - **WHEN** o preflight detecta um conflito web e todos os objetos consultados pertencem ao projeto Markina
 - **THEN** o relatório lista até 100 objetos com metadados limitados e prefixos únicos, sem nomes brutos ou caminhos e sem afirmar que um container pode ser removido
 
+#### Scenario: Rótulos Compose de containers históricos
+- **WHEN** o relatório sanitizado inclui containers parados
+- **THEN** informa a presença ou ausência dos rótulos config-hash, one-off e número Compose sem expor seus valores brutos
+
 #### Scenario: Nome ausente ou desconhecido
 - **WHEN** o rótulo do serviço está ausente ou não integra a lista reconhecida
 - **THEN** o diagnóstico informa somente uma categoria genérica, preservando a recusa e sem imprimir o rótulo bruto

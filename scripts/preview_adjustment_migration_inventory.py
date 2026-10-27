@@ -100,6 +100,9 @@ def sanitized_container_summary(containers: list[dict[str, Any]]) -> list[dict[s
         seen.add(prefix)
         result.append({'servico': safe_name, 'estado': safe_state, 'id_prefixo': prefix,
                        'oneoff': data['oneoff'], 'restart': data['restart'],
+                       'rotulo_config_hash': 'presente' if 'com.docker.compose.config-hash' in labels else 'ausente',
+                       'rotulo_oneoff': 'presente' if 'com.docker.compose.oneoff' in labels else 'ausente',
+                       'rotulo_numero': 'presente' if 'com.docker.compose.container-number' in labels else 'ausente',
                        'referencia_imagem': data['referencia_imagem'],
                        'codigo_saida': data['codigo_saida'], 'montagens_gravaveis': data['montagens_gravaveis']})
     return sorted(result, key=lambda row: (row['servico'], row['estado'], row['id_prefixo']))
