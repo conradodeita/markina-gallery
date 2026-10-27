@@ -152,6 +152,34 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
         self.assertNotIn('secret', str(error.exception))
         self.assertIn('"compose_version":"desconhecida"', str(error.exception))
 
+    def test_container_summary_is_project_bound_sanitized_and_unambiguous(self):
+        from preview_adjustment_migration_inventory import InventoryError, sanitized_container_summary
+
+        def container(ident, project=PROJECT):
+            return {'Id': ident, 'Name': '/private-name', 'Image': 'sha256:' + 'f' * 64,
+                    'Config': {'Image': 'secret/test:private', 'Env': ['PASSWORD=private-secret'],
+                               'Labels': {'com.docker.compose.project': project,
+                                          'com.docker.compose.service': 'web'}},
+                    'State': {'Status': 'exited', 'ExitCode': 0},
+                    'Mounts': [{'RW': True, 'Source': '/private-path'}],
+                    'HostConfig': {'RestartPolicy': {'Name': 'no'}}}
+
+        records = sanitized_container_summary([container('b' * 64), container('a' * 64)])
+        self.assertEqual([row['id_prefixo'] for row in records], ['a' * 12, 'b' * 12])
+        self.assertEqual(records[0]['servico'], 'web')
+        self.assertEqual(records[0]['estado'], 'exited')
+        self.assertEqual(records[0]['montagens_gravaveis'], '1')
+        self.assertNotIn('private', str(records))
+        self.assertNotIn('secret', str(records))
+        with self.assertRaisesRegex(InventoryError, 'projeto_container_divergente'):
+            sanitized_container_summary([container('a' * 64, project='firefly_telegram')])
+        with self.assertRaisesRegex(InventoryError, 'identidade_container_ambigua'):
+            sanitized_container_summary([container('a' * 64), container('a' * 12 + 'b' * 52)])
+        with self.assertRaisesRegex(InventoryError, 'identidade_container_ambigua'):
+            sanitized_container_summary([container('not-a-docker-id')])
+        with self.assertRaisesRegex(InventoryError, 'muitos_containers_markina'):
+            sanitized_container_summary([container('a' * 64)] * 101)
+
     def test_complete_minimized_inventory_has_deterministic_fingerprint(self):
         data = valid_inventory()
         ready, reason, fingerprint = validate_inventory(data)
