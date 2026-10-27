@@ -105,6 +105,27 @@ class PreviewMigrationInventoryTests(unittest.TestCase):
         self.assertEqual(str(error.exception), 'servico_markina_duplicado;servico=desconhecido;'
                          'contagem_ao_menos=2;estados=desconhecido,desconhecido')
 
+    def test_duplicate_web_diagnostic_classifies_without_leaking_raw_values(self):
+        from preview_adjustment_migration_inventory import InventoryError, validate_service_identity
+
+        active = {'Name': '/markina-gallery-web-1', 'Image': 'sha256:' + 'a' * 64,
+                  'Config': {'Labels': {'com.docker.compose.oneoff': 'False',
+                                        'com.docker.compose.container-number': '1'}},
+                  'HostConfig': {'RestartPolicy': {'Name': 'unless-stopped'}}}
+        stopped = {'Name': 'PRIVATE-NAME', 'Image': 'sha256:' + 'b' * 64,
+                   'Config': {'Labels': {'com.docker.compose.oneoff': 'PRIVATE-LABEL',
+                                         'com.docker.compose.container-number': 'PRIVATE-NUMBER'}},
+                   'HostConfig': {'RestartPolicy': {'Name': 'PRIVATE-RESTART'}}}
+        with self.assertRaises(InventoryError) as error:
+            validate_service_identity('web', {'web': {'status': 'running'}}, 'exited', active, stopped)
+        message = str(error.exception)
+        self.assertIn('estados=running,exited;diagnostico=', message)
+        self.assertIn('"mesma_imagem":"nao"', message)
+        self.assertIn('"nome_canonico":"sim"', message)
+        self.assertNotIn('PRIVATE', message)
+        self.assertNotIn('sha256:', message)
+        self.assertNotIn('approval_fingerprint', message)
+
     def test_complete_minimized_inventory_has_deterministic_fingerprint(self):
         data = valid_inventory()
         ready, reason, fingerprint = validate_inventory(data)
