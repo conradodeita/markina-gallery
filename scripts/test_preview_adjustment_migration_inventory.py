@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -56,6 +57,52 @@ def valid_inventory():
 
 
 class PreviewMigrationInventoryTests(unittest.TestCase):
+    def test_compose_failure_diagnoses_all_paths_and_backup_without_leaking_unknown_paths(self):
+        from preview_adjustment_migration_inventory import Host, InventoryError
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'docker').mkdir()
+            present = root / 'docker/docker-compose.yml'
+            present.write_text('private-value-must-not-print')
+            absent = root / 'docker/docker-compose.raw-development.yml'
+            private = root / 'private-sensitive-path.yml'
+            outside = str(root.parent / 'private-outside-sensitive.yml')
+            data = valid_inventory()
+            paths = [str(present), str(absent), str(private), outside]
+            for service in data['services'].values():
+                service['compose_files'] = paths
+            host = Host()
+            with patch('preview_adjustment_migration_inventory.ROOT', root), \
+                    patch('preview_adjustment_migration_inventory.STATE', root / 'state'), \
+                    patch.object(host, 'backup', return_value=data['backup']):
+                report = host.compose_failure_report(data['services'], [BASE_SCHEMA], 'a' * 40, 'b' * 40, True, 9)
+            self.assertTrue(report['backup']['apto'])
+            self.assertEqual(report['schema'], BASE_SCHEMA)
+            self.assertEqual(len(report['compose_paths']), 4)
+            self.assertIn({'categoria': 'docker/docker-compose.raw-development.yml', 'estado': 'ausente',
+                           'path_sha256': __import__('hashlib').sha256(str(absent).encode()).hexdigest(),
+                           'servicos': sorted(data['services'])}, report['compose_paths'])
+            self.assertNotIn('private', str(report))
+            self.assertNotIn(temporary, str(report))
+            with patch.object(host, 'backup', side_effect=InventoryError('private-backup-error')):
+                report = host.compose_failure_report(data['services'], ['private-schema'], 'bad', 'bad', False, 9)
+            self.assertEqual(report['backup'], {'apto': False, 'criterio': 'backup_0089_nao_verificado'})
+            self.assertNotIn('private', str(report))
+
+    def test_compose_guard_still_refuses_missing_and_symlink_paths(self):
+        from preview_adjustment_migration_inventory import Host, InventoryError
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            absent = root / 'docker-compose.yml'
+            with self.assertRaisesRegex(InventoryError, 'compose_path_ausente_ou_inseguro'):
+                Host().compose_files({'api': {'compose_files': [str(absent)]}})
+            # Synthetic lstat avoids requiring Windows symlink privileges.
+            import stat
+            with patch.object(Path, 'resolve', return_value=absent), \
+                    patch.object(Path, 'lstat', return_value=type('Info', (), {'st_mode': stat.S_IFLNK})()):
+                with self.assertRaisesRegex(InventoryError, 'compose_path_inseguro'):
+                    Host().compose_files({'api': {'compose_files': [str(absent)]}})
+
     def test_candidate_chain_fetches_pinned_migration_and_rejects_divergence(self):
         from preview_adjustment_migration_inventory import Host, InventoryError, MIGRATION
 

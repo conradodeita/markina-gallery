@@ -19,6 +19,8 @@
 
 ## 4. Publicação protegida
 
+- [ ] 4.14 Diagnosticar arquivos Compose referenciados pelo runtime: wrapper corrigido instalado em #40512119869; preflight #40512533928 avançou além da reconciliação de containers e falhou em `compose_path_ausente_ou_inseguro`. Acrescentar diagnóstico sanitizado de todos os paths referenciados (somente identidade conhecida, presença/tipo/raiz, consumidores e hash do path), schema observado, saúde resumida e disponibilidade independente do backup; manter recusa e não reconstruir nem ignorar arquivos. Validar casos ausente, symlink, raiz externa e metadados privados antes de instalar nova leitura.
+
 - [ ] 4.13 Corrigir compatibilidade com Python do host: preflight otimizado #40506203197 recusou antes de mutações porque `str.removeprefix` não existe no intérprete do servidor. Usar normalização compatível e acrescentar execução dos testes stdlib no Python 3.8 em runner descartável; manter exigência exata de Compose 2.35.1 e todos os guards. Wrapper otimizado instalado com sucesso em #40506017793 (`root:root:755`); nenhum deploy/migration foi iniciado. Não atualizar o Python do servidor.
 
 Follow-up do CI #40506476203: `setup-python` não disponibiliza Python 3.8 no Ubuntu 26.04 do runner; a execução dos testes de compatibilidade nem começou. A validação foi ajustada para imagem oficial Python 3.8.20 com digest fixado (registry consultado em 2026-10-27), somente no runner descartável, repositório read-only, rede desabilitada durante testes e temporários em tmpfs. Não altera runtime de produção nem executa containers locais. Prova real Compose passou nesse run; novo SHA ainda exige seus checks.

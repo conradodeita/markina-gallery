@@ -355,6 +355,61 @@ class Host:
             result[name] = hashlib.sha256(resolved.read_bytes()).hexdigest()
         return result
 
+    def compose_failure_report(self, services: dict[str, Any], schemas: list[str],
+                               checkout: str, active_sha: str, clean: bool, historical_count: int) -> dict[str, Any]:
+        """Collect independent read-only blockers, never arbitrary paths or config values."""
+        known = {'docker-compose.yml', 'docker-compose.raw-development.yml',
+                 'docker-compose.preview-adjustment.yml', 'docker-compose.system-monitor.yml',
+                 'docker-compose.local.yml'}
+        paths = sorted({path for service in services.values() for path in service['compose_files']})
+        require(len(paths) <= 100, 'muitos_paths_compose')
+        checks = []
+        for raw in paths:
+            path = Path(raw)
+            category = 'fora_raizes_aprovadas'
+            for root, kind in ((ROOT, 'repositorio'), (STATE, 'deploy_state')):
+                try:
+                    relative = path.relative_to(root)
+                    category = kind
+                    break
+                except ValueError:
+                    continue
+            name = (relative.as_posix() if category == 'repositorio'
+                    and relative.parent == Path('docker') and relative.name in known else category)
+            state = 'nao_consultado'
+            if category != 'fora_raizes_aprovadas':
+                try:
+                    info = path.lstat()
+                    if stat.S_ISLNK(info.st_mode):
+                        state = 'symlink'
+                    elif not stat.S_ISREG(info.st_mode):
+                        state = 'nao_regular'
+                    else:
+                        resolved = path.resolve(strict=True)
+                        state = ('regular' if any(root == resolved or root in resolved.parents
+                                                 for root in (ROOT, STATE)) else 'resolve_fora_raizes')
+                except FileNotFoundError:
+                    state = 'ausente'
+                except OSError:
+                    state = 'inacessivel'
+            checks.append({'categoria': name, 'estado': state,
+                           'path_sha256': hashlib.sha256(raw.encode()).hexdigest(),
+                           'servicos': sorted(name for name, service in services.items()
+                                              if name in KNOWN_SERVICES and raw in service['compose_files'])})
+        try:
+            backup = {'apto': True, 'evidencia': self.backup(services['db']['container_id'])}
+        except InventoryError:
+            backup = {'apto': False, 'criterio': 'backup_0089_nao_verificado'}
+        return {'compose_paths': checks, 'schema': schemas[0] if len(schemas) == 1
+                and re.fullmatch(r'[0-9]{8}_[0-9]{4}', schemas[0]) else 'nao_unico',
+                'checkout_sha': checkout if SHA1.fullmatch(checkout) else 'invalido',
+                'active_sha': active_sha if SHA1.fullmatch(active_sha) else 'invalido',
+                'checkout_clean': clean, 'historicos': historical_count, 'backup': backup,
+                'servicos': {name: {'saudavel': item['health'] == 'healthy',
+                                   'versao_igual_api': item['version'] == active_sha,
+                                   'ordem_compose_igual_api': item['compose_files'] == services['api']['compose_files']}
+                             for name, item in services.items() if name in KNOWN_SERVICES}}
+
     def backup(self, db_container_id: str) -> dict[str, Any]:
         manifests = sorted(BACKUPS.glob('*.manifest'), key=lambda p: p.stat().st_mtime_ns, reverse=True)
         for manifest in manifests[:20]:
@@ -505,7 +560,12 @@ class Host:
         self.candidate_commit_chain(support_sha)
         schema_out = self.run('docker', 'exec', 'markina-gallery-api-1', 'python', '-B', '-m', 'alembic', 'current')
         schema_matches = re.findall(r'(?m)^([0-9]{8}_[0-9]{4})(?:\s|$)', schema_out)
-        compose = self.compose_files(services)
+        try:
+            compose = self.compose_files(services)
+        except InventoryError:
+            report = self.compose_failure_report(services, schema_matches, checkout, active_sha, clean, len(historical))
+            print('diagnostico_preflight=' + json.dumps(report, sort_keys=True, separators=(',', ':')))
+            raise
         pending = [name for name in PENDING_MARKERS
                    if (STATE / name).exists() or (STATE / name).is_symlink()]
         https = {}
