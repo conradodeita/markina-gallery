@@ -105,6 +105,12 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **AND** nunca registra IDs de containers, saída de processo, logs do serviço ou outros dados privados
 - **AND** um timeout continua bloqueando backup final e DDL e executa a recuperação pré-DDL
 
+#### Scenario: Worker facial legado só é interrompido ocioso
+- **WHEN** a API e todos os produtores estão parados, a identidade e a imagem inventariadas permanecem iguais, e não há jobs faciais de busca nem notificações em `queued`/`processing`
+- **THEN** o executor pode enviar `SIGINT` somente ao `face-search-worker` legado e aceitar somente a saída `130` desse serviço
+- **AND** qualquer trabalho pendente, divergência, timeout ou saída diferente bloqueia a DDL e recupera os mesmos containers
+- **AND** o executor SHALL NOT usar `SIGKILL` nem aplicar essa exceção aos demais writers
+
 #### Scenario: Cliente Git rejeita opção metadata-only
 - **WHEN** o `git fetch` com `--no-write-fetch-head` retorna código de saída 129, independentemente do texto localizado do stderr privado
 - **THEN** o executor repete uma única vez o fetch do mesmo SHA integral, sem tags e sem atualizar refs/branches, usando o comportamento padrão de `FETCH_HEAD`
