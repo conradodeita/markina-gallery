@@ -98,15 +98,9 @@ class ReleaseHost(InventoryHost):
         return 'outro'
 
     @staticmethod
-    def fetch_head_option_unsupported(stderr: bytes | str | None, returncode: int) -> bool:
-        """Recognize an exit-129 rejection naming the optional HEAD flag, independent of locale."""
-        if isinstance(stderr, bytes):
-            message = stderr.decode('utf-8', errors='replace').lower()
-        elif isinstance(stderr, str):
-            message = stderr.lower()
-        else:
-            return False
-        return returncode == 129 and '--no-write-fetch-head' in message
+    def fetch_usage_error_requires_compatibility_retry(returncode: int) -> bool:
+        """Retry one fixed-SHA fetch without the optional flag after Git usage exit 129."""
+        return returncode == 129
 
     def fetch_candidate(self) -> None:
         base_args = ['git', 'fetch', '--quiet', '--no-tags']
@@ -122,11 +116,10 @@ class ReleaseHost(InventoryHost):
         except OSError:
             print('candidate_fetch_result=failed;categoria=outro', flush=True)
             raise InventoryError('candidate_fetch_falhou;categoria=outro') from None
-        if result.returncode != 0 and self.fetch_head_option_unsupported(result.stderr, result.returncode):
-            # Git clients may reject this metadata-only flag with localized or
-            # version-specific wording. Retry only when exit 129 and stderr
-            # names this exact optional flag; the fixed-SHA fetch has no refspec
-            # destination and changes no refs or branches.
+        if result.returncode != 0 and self.fetch_usage_error_requires_compatibility_retry(result.returncode):
+            # Git usage errors can vary by version and locale. Retry exactly once
+            # without the optional metadata-only flag; the fixed-SHA fetch has
+            # no refspec destination and changes no refs or branches.
             print('candidate_fetch_compatibility=retry_com_fetch_head_padrao', flush=True)
             try:
                 result = subprocess.run(base_args + ['origin', TARGET_SHA], cwd=ROOT,

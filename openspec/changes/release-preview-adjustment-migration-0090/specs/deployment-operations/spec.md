@@ -100,9 +100,9 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **AND** SHALL recuperar os serviços Markina anteriores, confirmar que a migration não começou e manter o release bloqueado até a causa ser corrigida
 
 #### Scenario: Cliente Git rejeita opção metadata-only
-- **WHEN** o `git fetch` falha e o stderr privado identifica explicitamente que o cliente Git não reconhece `--no-write-fetch-head`
+- **WHEN** o `git fetch` com `--no-write-fetch-head` retorna código de saída 129, independentemente do texto localizado do stderr privado
 - **THEN** o executor repete uma única vez o fetch do mesmo SHA integral, sem tags e sem atualizar refs/branches, usando o comportamento padrão de `FETCH_HEAD`
-- **AND** registra somente um marcador fixo de compatibilidade, sem expor stderr
+- **AND** o retry não depende de texto do stderr, registra somente um marcador fixo de compatibilidade e não expõe stderr
 - **AND** qualquer falha do retry permanece sanitizada, recupera os serviços anteriores e impede manutenção/DDL
 
 #### Scenario: Comparação de ancestralidade com payload limitado
