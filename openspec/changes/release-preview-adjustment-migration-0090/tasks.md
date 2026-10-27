@@ -19,6 +19,10 @@
 
 ## 4. Publicação protegida
 
+- [ ] 4.17 Diagnosticar falha da preparação #40525892665: inventário completo passou, manifesto consolidado correspondeu aos hashes ativos e schema0089/saúde/HTTPS foram confirmados, mas o handler exibiu apenas categoria genérica. Preservar critérios sanitizados de ReleaseError, emitir fases fixas da preparação e classe/linha local dos erros inesperados sem mensagens brutas, traceback, variáveis ou paths privados. Conferir por preflight somente-leitura se o backup chegou a existir antes de repetir preparação. Nenhum writer foi parado nem DDL iniciado.
+
+- [ ] 4.18 Estabilizar assinatura operacional dos históricos sem dispensar preservação: comparação dos inventários #40530149752 e #40530796813 mostrou mudança apenas em metadata_sha256 dos containers RAW/Gemma aposentados; todos os outros campos iguais. Release #40530796813 recusou com categoria genérica e preflight posterior #40531316705 confirmou schema0089, backupválido e nenhuma pendência. Excluir registros voláteis de Health da assinatura de execução de históricos exited, manter todos os campos estáveis, configuração/montagens/redes e expor somente hashes por campo para verificar estabilidade. Não afirmar que a causa exata foi comprovada antes de conferir esses hashes no host. Testar drift operacional recusado e variação de Health inofensiva; instalar somente após CI verde.
+
 - [ ] 4.15 Reconciliar o manifesto ativo observado em #40518739264: validar e usar ordem API/web consolidada, comparar config-hash com runtime, preservar referências antigas e identidades dos demais serviços sem carregar override RAW ausente. Cobrir configurações divergentes, ordem e arquivo inseguro; provar operação com manifesto independente em runner.
 - [ ] 4.16 Implementar preparação protegida de backup online 0089 com finalidade separada, lock, gates comuns, diretório/arquivo seguros, recibo verificável e estado revalidado; impedir que inventário sem backup autorize release, provar ausência de stop/DDL/publicação e executar somente após CI/instalação do helper correspondente.
 

@@ -76,6 +76,10 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **WHEN** um histórico desaparece, reinicia ou muda de metadados, ou o Compose não é 2.35.1
 - **THEN** o fluxo falha fechado; antes da DDL nenhum banco é alterado, depois da DDL mantém a barreira e exige recuperação
 
+#### Scenario: Diagnóstico volátil de saúde em container encerrado
+- **WHEN** apenas logs, contadores ou diagnóstico de Health mudam em um histórico ainda encerrado
+- **THEN** a assinatura operacional permanece baseada em identidade, configuração, restart, montagens, redes e campos estáveis de execução/encerramento, sem vincular o fingerprint aos registros voláteis de Health; hashes sanitizados por campo permitem conferir a diferença sem expor conteúdo
+
 #### Scenario: Arquivo Compose referenciado está ausente ou inseguro
 - **WHEN** um path Compose necessário à operação API/web não pode ser validado
 - **THEN** o inventário permanece inapto e informa categorias sanitizadas de todos os paths, consumidores reconhecidos, schema e saúde observados e disponibilidade independente do backup, sem imprimir paths arbitrários, segredos, valores de configuração ou fingerprint de release
@@ -101,3 +105,7 @@ O sistema SHALL oferecer operação manual protegida para criar backup online co
 #### Scenario: Inventário sem backup chega ao release
 - **WHEN** o inventário tem backup null ou não verificável
 - **THEN** o validador de release recusa antes de qualquer mutação, mesmo que a preparação de backup tenha sido autorizada
+
+#### Scenario: Preparação falha sem diagnóstico operacional suficiente
+- **WHEN** a preparação do backup falha
+- **THEN** o executor informa a última fase fixa, critérios controlados de recusa e classe/linha local de falhas inesperadas sem expor mensagens brutas, traceback, variáveis, caminhos ou conteúdo privado; a falha continua impedindo release
