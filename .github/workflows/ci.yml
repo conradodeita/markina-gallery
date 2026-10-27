@@ -131,14 +131,20 @@ jobs:
           [[ "$exit_code" == 130 ]]
       - name: Contratos de distribuição e cobertura backend
         run: python -m unittest scripts.test_backend_ci -v
-      - name: Validar reutilização de CI com a main atual
+      - name: Reutilizar CI verde da main ou validar integralmente esta PR
         if: ${{ github.event_name == 'pull_request' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          set -Eeuo pipefail
           python -m unittest scripts.test_verify_main_ci_evidence scripts.test_fast_preview_release -q
-          python scripts/verify_main_ci_evidence.py --sha "$CI_BASE_SHA"
+          if python scripts/verify_main_ci_evidence.py --sha "$CI_BASE_SHA"; then
+            echo "ci_reuse_evidence=available"
+          else
+            echo "::notice::CI verde da base indisponível; os jobs completos desta PR continuam sendo exigidos."
+            echo "ci_reuse_evidence=unavailable_full_pr_validation=required"
+          fi
       - name: Reconciliação e preservação dos containers históricos 0090
         run: |
           python -m unittest scripts.test_preview_historical_containers -v

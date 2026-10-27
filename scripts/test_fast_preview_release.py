@@ -35,6 +35,15 @@ class FastPreviewReleaseTests(unittest.TestCase):
         evidence = FAST.split('      - name: Conferir CI de push da main para o SHA de suporte\n', 1)[1].split('\n  preview-adjustment-migration-scope:', 1)[0]
         self.assertIn('shell: bash', evidence)
 
+    def test_pull_request_falls_back_to_its_full_checks_when_main_ci_is_not_green(self):
+        step = ORIGINAL.split('      - name: Reutilizar CI verde da main ou validar integralmente esta PR\n', 1)[1]
+        step = step.split('      - name: Reconciliação e preservação dos containers históricos 0090\n', 1)[0]
+        self.assertIn('if python scripts/verify_main_ci_evidence.py --sha "$CI_BASE_SHA"; then', step)
+        self.assertIn('os jobs completos desta PR continuam sendo exigidos', step)
+        self.assertIn('ci_reuse_evidence=unavailable_full_pr_validation=required', step)
+        self.assertIn('preview-adjustment-migration-wrapper-install', FAST)
+        self.assertIn('scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"', FAST)
+
     def test_sensitive_jobs_require_scope_environment_and_authorization(self):
         wrapper = section(FAST, 'preview-adjustment-migration-wrapper-install',
                           'preview-adjustment-migration-preflight')

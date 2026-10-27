@@ -85,4 +85,6 @@ Evidência operacional da terceira tentativa: release #40582632304 chegou à apr
 
 O CI push/main #40596722154 falhou somente na prova de SIGINT porque o sinal podia alcançar o container antes da prontidão do interpretador. A suíte de PR passou. Corrigir a sincronização com um marcador temporário de prontidão criado pelo PID 1 e registrar seu exit code para diagnóstico; repetir CI antes de novo release.
 
+A PR #320 confirmou `python_pid1_sigint_exit_code=130`; seu único gate vermelho era a ausência de CI verde da main usada como evidência reutilizável, pois o SHA base estava falho na própria prova. Ajustar a CI de PR para tratar essa evidência opcional como cache miss somente quando todos os jobs completos da PR continuam exigidos; manter o verificador do workflow protegido de produção estrito.
+
 Nenhum código de worker ou imagem facial será alterado no release 0090: o fluxo publicado substitui API/web e preserva os demais runtimes. A estratégia usa apenas interrupção do processo facial legado comprovadamente ocioso; os testes locais e remotos ainda precisam validar a ordem, a saída 130 e a falha fechada com fila pendente.
