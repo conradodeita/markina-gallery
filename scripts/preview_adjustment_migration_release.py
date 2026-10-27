@@ -135,7 +135,19 @@ class ReleaseHost(InventoryHost):
     def assert_historical_preserved(self, inventory: dict[str, Any]) -> None:
         for previous in inventory['historical_containers']:
             current = historical_identity(self.inspect(previous['container_id']))
-            require(current == previous, 'container_historico_mudou')
+            if current != previous:
+                old_fields = previous.get('fields_sha256', {})
+                new_fields = current.get('fields_sha256', {})
+                changed = sorted(key for key in set(old_fields) | set(new_fields)
+                                 if old_fields.get(key) != new_fields.get(key))
+                prefix = previous['container_id'][:12]
+                print('historico_drift_operacional=' + json.dumps(
+                    {'id_prefixo': prefix, 'campos': changed}, sort_keys=True, separators=(',', ':')),
+                    flush=True)
+                if changed:
+                    raise InventoryError('container_historico_mudou;id_prefixo=' + prefix
+                                         + ';campos=' + ','.join(changed))
+                require(False, 'container_historico_mudou')
 
     def preserve_images(self, inventory: dict[str, Any]) -> dict[str, str]:
         previous = {}
@@ -150,14 +162,19 @@ class ReleaseHost(InventoryHost):
         return previous
 
     def stage_candidate(self, inventory: dict[str, Any]) -> dict[str, str]:
+        print('candidate_build_phase=workspace', flush=True)
         self.work = Path(tempfile.mkdtemp(prefix='preview-adjustment-0090-', dir=STATE))
         self.work.rmdir()
+        print('candidate_build_phase=fetch', flush=True)
         self.command(['git', 'fetch', '--quiet', '--no-tags', '--no-write-fetch-head', 'origin', TARGET_SHA],
                      timeout=300)
+        print('candidate_build_phase=worktree', flush=True)
         self.command(['git', 'worktree', 'add', '--detach', str(self.work), TARGET_SHA], timeout=180)
         self.worktree_added = True
+        print('candidate_build_phase=compose-diff', flush=True)
         require(self.run('git', 'diff', '--name-only', inventory['checkout_sha'], TARGET_SHA, '--', 'docker') == '',
                 'compose_candidato_diferente_do_ativo')
+        print('candidate_build_phase=overlay', flush=True)
         build_overlay = self.work / 'preview-migration-build.compose.json'
         tags = {service: f'markina-gallery-preview-migration:{service}-{TARGET_SHA[:12]}'
                 for service in ('api', 'web')}
@@ -167,7 +184,9 @@ class ReleaseHost(InventoryHost):
         os.chmod(build_overlay, 0o600)
         self.record('candidate-worktree-ready', work=str(self.work), candidate_tags=tags)
         cmd = self.compose_command(inventory, self.work, build_overlay)
+        print('candidate_build_phase=compose-build', flush=True)
         self.command(cmd + ['build', 'api', 'web'], timeout=1800, app_version=True)
+        print('candidate_build_phase=image-verification', flush=True)
         images = {name: self.run('docker', 'image', 'inspect', '--format', '{{.Id}}', tag)
                   for name, tag in tags.items()}
         require(all(re.fullmatch(r'sha256:[0-9a-f]{64}', image) for image in images.values()),
@@ -177,6 +196,7 @@ class ReleaseHost(InventoryHost):
                     == self.run('docker', 'image', 'inspect', '--format', '{{.Os}}/{{.Architecture}}',
                                 inventory['services'][service]['image']), 'arquitetura_candidata_divergente')
         self.record('candidate-images-built', candidate_images=images)
+        print('candidate_build_phase=complete', flush=True)
         return images
 
     @staticmethod

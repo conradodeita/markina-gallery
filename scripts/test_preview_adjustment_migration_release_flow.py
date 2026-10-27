@@ -10,6 +10,7 @@ import io
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preview_adjustment_migration_inventory import canonical_fingerprint  # noqa: E402
+from preview_adjustment_migration_inventory import InventoryError  # noqa: E402
 from preview_adjustment_migration_release_flow import ReleaseError, execute, prepare_backup  # noqa: E402
 from test_preview_adjustment_migration_inventory import valid_inventory  # noqa: E402
 
@@ -188,6 +189,21 @@ class PreviewMigrationReleaseFlowTests(unittest.TestCase):
         self.assertEqual(host.events[-2:], ['recover-before-ddl', 'journal-finish'])
         self.assertNotIn('maintenance-on', host.events)
         self.assertNotIn('migration', host.events)
+
+    def test_controlled_operational_failure_is_not_replaced_by_generic_release_error(self):
+        host = FakeHost()
+        def fail_after_build(_inventory):
+            host.events.append('historical-drift')
+            raise InventoryError('container_historico_mudou;id_prefixo=595b4ccd203e;campos=Mounts')
+        host.assert_historical_preserved = fail_after_build
+        with patch('sys.stdout', new_callable=io.StringIO) as output, \
+                self.assertRaisesRegex(InventoryError, 'campos=Mounts'):
+            execute(host, 'a' * 40, canonical_fingerprint(host.value))
+        self.assertNotIn('maintenance-on', host.events)
+        self.assertNotIn('migration', host.events)
+        self.assertEqual(host.events[-2:], ['recover-before-ddl', 'journal-finish'])
+        self.assertIn('release_phase=assert-historical-after-build', output.getvalue())
+        self.assertNotIn('synthetic failure', output.getvalue())
 
     def test_failure_after_ddl_keeps_fence_and_never_runs_automatic_rollback(self):
         host = FakeHost(fail='publish')

@@ -80,6 +80,14 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **WHEN** apenas logs, contadores ou diagnóstico de Health mudam em um histórico ainda encerrado
 - **THEN** a assinatura operacional permanece baseada em identidade, configuração, restart, montagens, redes e campos estáveis de execução/encerramento, sem vincular o fingerprint aos registros voláteis de Health; hashes sanitizados por campo permitem conferir a diferença sem expor conteúdo
 
+#### Scenario: Drift em componente operacional de montagem
+- **WHEN** a montagem de um container histórico muda entre o preflight e a revalidação após o build
+- **THEN** o release informa somente o prefixo do ID e os nomes fixos dos campos divergentes, mantém os hashes operacionais no fingerprint e aborta antes de ativar manutenção ou iniciar DDL
+
+#### Scenario: Diagnóstico de montagem sem revelar paths
+- **WHEN** o preflight registra detalhes comparáveis das montagens históricas
+- **THEN** informa tipos reconhecidos, acesso somente leitura/escrita e hashes dos componentes Source, Destination, Name, Driver, Mode e Propagation, sem revelar valores ou paths brutos
+
 #### Scenario: Arquivo Compose referenciado está ausente ou inseguro
 - **WHEN** um path Compose necessário à operação API/web não pode ser validado
 - **THEN** o inventário permanece inapto e informa categorias sanitizadas de todos os paths, consumidores reconhecidos, schema e saúde observados e disponibilidade independente do backup, sem imprimir paths arbitrários, segredos, valores de configuração ou fingerprint de release
