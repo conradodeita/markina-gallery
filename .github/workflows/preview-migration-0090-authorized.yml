@@ -33,6 +33,7 @@ jobs:
       - name: Conferir contrato do fluxo protegido
         run: python -m unittest scripts.test_fast_preview_release -q
       - name: Conferir CI de push da main para o SHA de suporte
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"

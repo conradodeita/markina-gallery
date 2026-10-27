@@ -23,6 +23,8 @@ class FastPreviewReleaseTests(unittest.TestCase):
         self.assertIn('actions: read', FAST)
         self.assertNotIn('actions: write', FAST)
         self.assertIn('scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"', FAST)
+        evidence = FAST.split('      - name: Conferir CI de push da main para o SHA de suporte\n', 1)[1].split('\n  preview-adjustment-migration-scope:', 1)[0]
+        self.assertIn('shell: bash', evidence)
 
     def test_sensitive_jobs_require_scope_environment_and_authorization(self):
         wrapper = section(FAST, 'preview-adjustment-migration-wrapper-install',
