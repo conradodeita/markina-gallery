@@ -39,10 +39,10 @@ O sistema SHALL oferecer uma operação manual protegida que instale atomicament
 - **THEN** a instalação falha fechada, não altera `authorized_keys` nem serviços e não inicia preflight ou release
 ### Requirement: Diagnóstico sanitizado de serviço duplicado no inventário 0090
 
-O inventário 0090 SHALL continuar recusando nomes de serviço ausentes ou duplicados, incluindo containers parados. Para duplicidade web SHALL informar classificações normalizadas de identidade e estado, prefixo hexadecimal do container e versão numérica do Compose, sem revelar nomes brutos, digests, caminhos de montagens, variáveis de ambiente ou payloads de clientes. A saída não autoriza limpeza nem constitui fingerprint de release.
+O inventário 0090 SHALL recusar serviços ativos desconhecidos ou duplicados. Históricos SHALL estar encerrados, sem restart automático e fora da seleção API/web do Compose 2.35.1. Seus IDs e hashes de metadados SHALL integrar o fingerprint, sem expor dados privados nem autorizar remoção. Esta classificação substitui a recusa incondicional de nomes repetidos entre ativos e históricos.
 
 #### Scenario: Containers com nome de serviço repetido
-- **WHEN** dois ou mais containers do projeto compartilham o mesmo serviço
+- **WHEN** dois ou mais containers ativos do projeto compartilham o mesmo serviço, ou um histórico pode ser selecionado para substituição API/web
 - **THEN** o inventário falha fechado e informa o serviço conhecido, a quantidade e os estados, sem gerar fingerprint
 
 #### Scenario: Identidade sanitizada de web duplicado
@@ -60,3 +60,18 @@ O inventário 0090 SHALL continuar recusando nomes de serviço ausentes ou dupli
 #### Scenario: Nome ausente ou desconhecido
 - **WHEN** o rótulo do serviço está ausente ou não integra a lista reconhecida
 - **THEN** o diagnóstico informa somente uma categoria genérica, preservando a recusa e sem imprimir o rótulo bruto
+
+### Requirement: Preservação verificável dos containers históricos no release 0090
+O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar serviços explícitos com `--no-deps`. SHALL comparar identidade, imagem, estado, configuração, restart, montagens e redes dos históricos antes da manutenção, antes da DDL e antes de liberar tráfego. Divergências SHALL interromper o fluxo. A preservação SHALL ser comprovada em runner descartável sem acessar o daemon compartilhado ou produção.
+
+#### Scenario: Prova real isolada
+- **WHEN** o CI executa `run --rm --no-deps` e `up --no-deps` com substituição real de API/web
+- **THEN** históricos API/web sem rótulos Compose, migration parada, serviços fora do modelo e seus arquivos sintéticos montados permanecem intactos
+
+#### Scenario: Históricos preservados
+- **WHEN** os históricos são inequivocamente classificados e suas assinaturas permanecem iguais em todas as verificações
+- **THEN** somente os serviços ativos aprovados participam da operação, sem iniciar migrate ou remover órfãos
+
+#### Scenario: Histórico muda ou versão diverge
+- **WHEN** um histórico desaparece, reinicia ou muda de metadados, ou o Compose não é 2.35.1
+- **THEN** o fluxo falha fechado; antes da DDL nenhum banco é alterado, depois da DDL mantém a barreira e exige recuperação

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,69 @@ from test_preview_adjustment_migration_inventory import valid_inventory  # noqa:
 
 
 class PreviewMigrationReleaseHostTests(unittest.TestCase):
+    def test_health_starting_is_waited_for_but_timeout_or_exit_fails(self):
+        host = release.ReleaseHost()
+        starting = {'State': {'Status': 'running', 'Health': {'Status': 'starting'}}}
+        healthy = {'State': {'Status': 'running', 'Health': {'Status': 'healthy'}}}
+        with patch.object(host, 'inspect', side_effect=[starting, healthy]), patch.object(release.time, 'sleep'):
+            self.assertEqual(host.wait_healthy('id'), healthy)
+        with patch.object(host, 'inspect', return_value=starting), \
+                patch.object(release.time, 'monotonic', side_effect=[0, 121]):
+            with self.assertRaisesRegex(release.InventoryError, 'nao_retornou_saudavel'):
+                host.wait_healthy('id')
+        with patch.object(host, 'inspect', return_value={'State': {'Status': 'exited'}}):
+            with self.assertRaisesRegex(release.InventoryError, 'runtime_parou'):
+                host.wait_healthy('id')
+
+    def test_compose_uses_original_base_to_preserve_relative_environment_files(self):
+        host = release.ReleaseHost()
+        host.run = lambda *_args: '2.35.1'
+        with patch.object(release.Path, 'is_file', return_value=True), \
+                patch.object(release.Path, 'is_symlink', return_value=False):
+            command = host.compose_command(valid_inventory(), Path('/candidate'), Path('/candidate/overlay.json'))
+        self.assertIn(str(release.ROOT / 'docker/docker-compose.yml'), command)
+        self.assertNotIn('/candidate/docker/docker-compose.yml', command)
+
+    def test_publish_pins_version_and_refuses_dirty_checkout_before_switch(self):
+        host = release.ReleaseHost()
+        host.inventory_data = valid_inventory()
+        calls = []
+        host.command = lambda args, **kwargs: calls.append(args)
+        host.record = lambda *_args, **_kwargs: None
+        host.compose_command = lambda *_args: ['docker', 'compose']
+        host.run = lambda *args: '' if 'status' in args else host.inventory_data['checkout_sha']
+        with tempfile.TemporaryDirectory() as temporary:
+            host.work = Path(temporary)
+            host.publish_api_web({'api': 'sha256:' + 'a' * 64, 'web': 'sha256:' + 'b' * 64})
+            data = json.loads((host.work / 'preview-migration-release.compose.json').read_text())
+        self.assertEqual(data['services']['api']['environment']['APP_VERSION'], release.TARGET_SHA)
+        self.assertEqual(calls[0], ['git', 'switch', '--detach', release.TARGET_SHA])
+        self.assertIn('--no-deps', calls[1])
+        host.run = lambda *_args: 'dirty'
+        calls.clear()
+        with self.assertRaisesRegex(release.InventoryError, 'checkout_mudou'):
+            host.publish_api_web({})
+        self.assertEqual(calls, [])
+
+    def test_published_staging_is_not_deleted(self):
+        host = release.ReleaseHost()
+        host.journal = {'phase': 'published'}
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary)
+            journal = state / 'journal.json'
+            journal.write_text('{}')
+            host.work = state / 'retained'
+            host.work.mkdir()
+            (host.work / 'overlay.json').write_text('{}')
+            host.worktree_added = True
+            with patch.object(release, 'STATE', state), patch.object(release, 'JOURNAL', journal), \
+                    patch.object(release.os, 'open', return_value=5), patch.object(release.os, 'fsync'), \
+                    patch.object(release.os, 'close'), patch.object(host, 'command') as command:
+                host.finish_journal()
+            command.assert_not_called()
+            self.assertTrue((host.work / 'overlay.json').is_file())
+            self.assertFalse(journal.exists())
+
     def test_maintenance_barrier_allows_only_health_paths(self):
         source = 'server {\n    listen 80;\n    location / { proxy_pass http://web; }\n}'
         generated = release.ReleaseHost.maintenance_configuration(source)

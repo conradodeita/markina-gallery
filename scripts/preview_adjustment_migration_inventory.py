@@ -33,6 +33,7 @@ KNOWN_SERVICES = REQUIRED_SERVICES | {'migrate', 'seed-admin', 'evolution-api', 
                                      'evolution-redis', 'face-search-worker', 'face-index-worker',
                                      'face-maintenance-worker', 'preview-adjustment-worker'}
 DOCKER_STATES = {'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'}
+COMPOSE_VERSION = '2.35.1'
 PENDING_MARKERS = ('web-in-flight.sha', 'app-in-flight.sha', 'app-rollback-in-flight.sha',
                    'web-pending.identity', 'infinitepay-retirement-in-flight.sha',
                    'pillow-in-flight.json', 'orders-in-flight.json',
@@ -139,6 +140,60 @@ def canonical_fingerprint(value: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def historical_identity(container: dict[str, Any]) -> dict[str, str]:
+    """Bind preserved Docker metadata without disclosing labels, mounts or environment."""
+    labels = container.get('Config', {}).get('Labels') or {}
+    require(labels.get('com.docker.compose.project') == PROJECT, 'projeto_container_divergente')
+    ident, image = container.get('Id'), container.get('Image')
+    require(isinstance(ident, str) and SHA256.fullmatch(ident)
+            and isinstance(image, str) and IMAGE.fullmatch(image), 'historico_identidade_invalida')
+    state = container.get('State', {})
+    require(state.get('Status') == 'exited' and state.get('Running') is False
+            and state.get('Paused') is False and state.get('Restarting') is False,
+            'historico_nao_encerrado')
+    require(container.get('HostConfig', {}).get('RestartPolicy') == {'Name': 'no', 'MaximumRetryCount': 0},
+            'historico_restart_nao_permitido')
+    service = labels.get('com.docker.compose.service')
+    require(isinstance(service, str) and re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]*', service),
+            'historico_servico_ausente_ou_invalido')
+    if service in ('api', 'web'):
+        require(all(key not in labels for key in ('com.docker.compose.config-hash',
+                'com.docker.compose.oneoff', 'com.docker.compose.container-number')),
+                'historico_alvo_selecionavel_pelo_compose')
+        require(container.get('Name') != f'/{PROJECT}-{service}-1', 'historico_ocupa_nome_ativo')
+    fields = ('Name', 'Image', 'Config', 'HostConfig', 'Mounts', 'State', 'NetworkSettings')
+    require(all(key in container for key in fields), 'historico_metadados_incompletos')
+    return {'container_id': ident, 'image': image, 'status': 'exited',
+            'metadata_sha256': canonical_fingerprint({key: container[key] for key in fields})}
+
+
+def partition_containers(containers: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    require(len(containers) <= 100, 'muitos_containers_markina')
+    active, historical = [], []
+    ids, services = set(), set()
+    for item in containers:
+        labels = item.get('Config', {}).get('Labels') or {}
+        require(labels.get('com.docker.compose.project') == PROJECT, 'projeto_container_divergente')
+        ident = item.get('Id')
+        require(isinstance(ident, str) and SHA256.fullmatch(ident) and ident not in ids,
+                'identidade_container_ambigua')
+        ids.add(ident)
+        if item.get('State', {}).get('Status') == 'exited':
+            historical.append(historical_identity(item))
+            continue
+        require(item.get('State', {}).get('Status') == 'running', 'estado_container_nao_reconciliavel')
+        service = labels.get('com.docker.compose.service')
+        require(service in KNOWN_SERVICES and service not in ('migrate', 'seed-admin'),
+                'servico_ativo_nao_reconhecido')
+        require(service not in services, 'servico_ativo_duplicado')
+        require(labels.get('com.docker.compose.oneoff') == 'False'
+                and labels.get('com.docker.compose.container-number') == '1'
+                and item.get('Name') == f'/{PROJECT}-{service}-1', 'identidade_ativa_nao_canonica')
+        services.add(service)
+        active.append(item)
+    return active, sorted(historical, key=lambda item: item['container_id'])
+
+
 def select_candidate_ci(runs: list[dict[str, Any]]) -> dict[str, Any]:
     relevant = [run for run in runs if run.get('path') == '.github/workflows/ci.yml'
                 and run.get('head_sha') == TARGET_SHA and run.get('event') == 'push'
@@ -154,7 +209,7 @@ def validate_inventory(value: dict[str, Any]) -> tuple[bool, str, str | None]:
     fields = {'host', 'project', 'root', 'repository', 'support_sha', 'target_sha', 'main_sha',
               'checkout_sha', 'active_sha', 'checkout_clean', 'database_revision', 'migration_chain',
               'public_url', 'nginx_bind', 'ci', 'services', 'compose_files', 'compose_order',
-              'pending_markers', 'backup', 'https_health'}
+              'pending_markers', 'backup', 'https_health', 'historical_containers', 'compose_version'}
     if not isinstance(value, dict) or set(value) != fields:
         return False, 'inventario_com_campos_ausentes_ou_extras', None
     for name in ('support_sha', 'target_sha', 'main_sha', 'checkout_sha', 'active_sha'):
@@ -163,6 +218,7 @@ def validate_inventory(value: dict[str, Any]) -> tuple[bool, str, str | None]:
     for name, expected in (('host', 'clearbudget-vnic'), ('project', PROJECT), ('root', str(ROOT)),
                            ('repository', 'conradodeita/markina-gallery'),
                            ('target_sha', TARGET_SHA), ('main_sha', value['support_sha']),
+                           ('active_sha', BASE_SHA),
                            ('checkout_sha', value['active_sha']), ('checkout_clean', True),
                            ('database_revision', BASE_SCHEMA), ('public_url', PUBLIC_URL),
                            ('nginx_bind', '127.0.0.1:8080->80/tcp')):
@@ -179,11 +235,27 @@ def validate_inventory(value: dict[str, Any]) -> tuple[bool, str, str | None]:
     services = value['services']
     if not isinstance(services, dict) or not REQUIRED_SERVICES.issubset(services) or not services:
         return False, 'servicos_incompletos', None
+    if value['compose_version'] != COMPOSE_VERSION:
+        return False, 'compose_version_nao_validada', None
+    historical = value['historical_containers']
+    if not isinstance(historical, list) or len(historical) > 100:
+        return False, 'historicos_invalidos', None
+    historical_ids = set()
+    for item in historical:
+        if (not isinstance(item, dict) or set(item) != {'container_id', 'image', 'status', 'metadata_sha256'}
+                or not isinstance(item['container_id'], str) or not SHA256.fullmatch(item['container_id'])
+                or item['container_id'] in historical_ids or item['status'] != 'exited'
+                or not isinstance(item['image'], str) or not IMAGE.fullmatch(item['image'])
+                or not isinstance(item['metadata_sha256'], str) or not SHA256.fullmatch(item['metadata_sha256'])):
+            return False, 'historicos_invalidos', None
+        historical_ids.add(item['container_id'])
     for name, item in services.items():
         if not isinstance(name, str) or not isinstance(item, dict) or set(item) != {
                 'container_id', 'image', 'status', 'health', 'config_hash', 'version', 'compose_files',
                 'ports', 'restart_policy', 'started_at'}:
             return False, 'identidade_servico_incompleta', None
+        if item['container_id'] in historical_ids:
+            return False, 'identidade_ativa_historica_sobreposta', None
         expected_ports = {'80/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '8080'}]} if name == 'nginx' else {}
         if (not isinstance(item['container_id'], str) or not SHA256.fullmatch(item['container_id'])
                 or not isinstance(item['image'], str) or not IMAGE.fullmatch(item['image'])
@@ -389,6 +461,14 @@ class Host:
         ids = self.run('docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
         require(len(ids) <= 100, 'muitos_containers_markina')
         containers = [self.inspect(ident) for ident in ids]
+        compose_version = self.run('docker', 'compose', 'version', '--short').removeprefix('v')
+        require(compose_version == COMPOSE_VERSION, 'compose_version_nao_validada')
+        try:
+            containers, historical = partition_containers(containers)
+        except InventoryError:
+            print('inventario_containers_markina=' + json.dumps(sanitized_container_summary(containers),
+                  sort_keys=True, separators=(',', ':')))
+            raise
         services: dict[str, Any] = {}
         web_diagnostic: dict[str, Any] | None = None
         active_sha = ''
@@ -449,7 +529,8 @@ class Host:
             'ci': self.candidate_ci(),
             'services': services, 'compose_files': compose,
             'compose_order': services.get('api', {}).get('compose_files', []), 'pending_markers': pending,
-            'backup': self.backup(services['db']['container_id']), 'https_health': https}
+            'backup': self.backup(services['db']['container_id']), 'https_health': https,
+            'historical_containers': historical, 'compose_version': COMPOSE_VERSION}
         return value
 
 

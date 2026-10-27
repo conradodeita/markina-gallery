@@ -43,6 +43,9 @@ class FakeHost:
     def assert_support_sha(self, _support_sha):
         self.event('support-current')
 
+    def assert_historical_preserved(self, _inventory):
+        self.event('historical-preserved')
+
     def maintenance(self, enabled):
         self.event('maintenance-on' if enabled else 'maintenance-off')
 
@@ -92,6 +95,24 @@ class FakeHost:
 
 
 class PreviewMigrationReleaseFlowTests(unittest.TestCase):
+    def test_historical_change_stops_before_maintenance_or_ddl(self):
+        host = FakeHost(fail='historical-preserved')
+        with self.assertRaises(ReleaseError):
+            execute(host, 'a' * 40, canonical_fingerprint(host.value))
+        self.assertNotIn('migration', host.events)
+        self.assertNotIn('maintenance-on', host.events)
+
+    def test_historical_change_after_ddl_keeps_fence(self):
+        host = FakeHost()
+        def verify(_inventory):
+            if 'publish' in host.events:
+                raise RuntimeError('historical changed')
+        host.assert_historical_preserved = verify
+        with self.assertRaises(ReleaseError):
+            execute(host, 'a' * 40, canonical_fingerprint(host.value))
+        self.assertIn('interrupted-receipt', host.events)
+        self.assertNotIn('maintenance-off', host.events)
+
     def test_approved_release_orders_backup_ddl_runtime_and_ingress(self):
         host = FakeHost()
         execute(host, 'a' * 40, canonical_fingerprint(host.value))

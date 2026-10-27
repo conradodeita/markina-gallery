@@ -104,6 +104,22 @@ jobs:
           ruff check scripts/reset_homolog_owner.py
       - name: Contratos de distribuição e cobertura backend
         run: python -m unittest scripts.test_backend_ci -v
+      - name: Reconciliação e preservação dos containers históricos 0090
+        run: |
+          python -m unittest scripts.test_preview_historical_containers -v
+          ruff check --select F,E9 scripts/preview_adjustment_migration_*.py scripts/prove_preview_compose_preservation.py
+      - name: Provar preservação com Compose 2.35.1 em runner descartável
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/preview-compose-proof"
+          mkdir -p "$DOCKER_CONFIG/cli-plugins"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            https://github.com/docker/compose/releases/download/v2.35.1/docker-compose-linux-x86_64 \
+            -o "$DOCKER_CONFIG/cli-plugins/docker-compose"
+          echo "7bdb2ce2916e5dd0354e5d129892bf96fdcdb1a9ab8eed69b9173e131db4c230  $DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum --check
+          chmod 700 "$DOCKER_CONFIG/cli-plugins/docker-compose"
+          python scripts/prove_preview_compose_preservation.py
 
   backend-tests:
     needs: [ci-scope]

@@ -35,12 +35,14 @@ def execute(host, support_sha: str, approval_fingerprint: str) -> None:
             previous = host.preserve_images(initial)
             candidate = host.stage_candidate(initial)
             host.assert_support_sha(support_sha)
+            host.assert_historical_preserved(initial)
             host.maintenance(True)
             barrier = True
             stopped = host.stop_writers(initial)
             host.assert_writers_idle(initial, stopped)
             backup = host.backup_and_verify(initial)
             host.assert_backup(backup, initial)
+            host.assert_historical_preserved(initial)
             migration_started = True
             host.apply_migration(candidate['api'], TARGET_SCHEMA)
             if host.database_revision() != TARGET_SCHEMA:
@@ -48,6 +50,7 @@ def execute(host, support_sha: str, approval_fingerprint: str) -> None:
             host.publish_api_web(candidate)
             host.start_writers(initial, stopped)
             host.assert_runtime(candidate, initial, previous, stopped)
+            host.assert_historical_preserved(initial)
             host.maintenance(False)
             barrier = False
             host.assert_https_healthy()

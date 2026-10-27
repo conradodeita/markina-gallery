@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from preview_adjustment_migration_inventory import (
-    BASE_SCHEMA, PROJECT, ROOT, STATE, TARGET_SCHEMA, TARGET_SHA,
-    Host as InventoryHost, InventoryError, canonical_fingerprint, require, validate_inventory,
+    BACKUPS, BASE_SCHEMA, COMPOSE_VERSION, PROJECT, ROOT, STATE, TARGET_SCHEMA, TARGET_SHA,
+    Host as InventoryHost, InventoryError, historical_identity, require, validate_inventory,
 )
 from preview_adjustment_migration_release_flow import execute
 
@@ -49,6 +49,7 @@ class ReleaseHost(InventoryHost):
             return subprocess.run(args, cwd=ROOT, input=input_data, stdout=stdout, stdin=stdin,
                                   stderr=subprocess.DEVNULL, timeout=timeout, check=True,
                                   env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0',
+                                       'COMPOSE_REMOVE_ORPHANS': 'false', 'COMPOSE_IGNORE_ORPHANS': 'true',
                                        **({'APP_VERSION': TARGET_SHA} if app_version else {})})
         except (OSError, subprocess.SubprocessError):
             raise InventoryError('acao_operacional_falhou; verificar recibo privado') from None
@@ -81,10 +82,12 @@ class ReleaseHost(InventoryHost):
 
     def finish_journal(self) -> None:
         require(JOURNAL.is_file() and not JOURNAL.is_symlink(), 'recibo_intermediario_ausente')
-        if self.work and self.worktree_added:
+        # Successful containers refer to this overlay in their Compose labels.
+        published = self.journal.get('phase') == 'published'
+        if self.work and self.worktree_added and not published:
             self.command(['git', 'worktree', 'remove', '--force', str(self.work)], timeout=120)
             self.worktree_added = False
-        if self.work and self.work.exists():
+        if self.work and self.work.exists() and not published:
             shutil.rmtree(self.work)
         JOURNAL.unlink()
         fd = os.open(str(STATE), os.O_RDONLY)
@@ -103,16 +106,23 @@ class ReleaseHost(InventoryHost):
         require(len(current) == 2 and current[0] == support_sha, 'main_mudou_apos_aprovacao')
 
     def compose_command(self, inventory: dict[str, Any], root: Path, image_overlay: Path | None = None):
+        require(self.run('docker', 'compose', 'version', '--short').removeprefix('v') == COMPOSE_VERSION,
+                'compose_version_nao_validada')
         require(ENV_FILE.is_file() and not ENV_FILE.is_symlink(), 'env_file_homolog_ausente')
         api_files = inventory['services']['api']['compose_files']
         require(api_files and api_files[0].endswith('docker-compose.yml'), 'compose_base_nao_identificado')
         command = ['docker', 'compose', '--env-file', str(ENV_FILE), '-p', PROJECT,
-                   '-f', str(root / 'docker/docker-compose.yml')]
+                   '-f', str(ROOT / 'docker/docker-compose.yml')]
         for raw in api_files[1:]:
             command += ['-f', raw]
         if image_overlay:
             command += ['-f', str(image_overlay)]
         return command + ['--profile', '*']
+
+    def assert_historical_preserved(self, inventory: dict[str, Any]) -> None:
+        for previous in inventory['historical_containers']:
+            current = historical_identity(self.inspect(previous['container_id']))
+            require(current == previous, 'container_historico_mudou')
 
     def preserve_images(self, inventory: dict[str, Any]) -> dict[str, str]:
         previous = {}
@@ -133,10 +143,13 @@ class ReleaseHost(InventoryHost):
                      timeout=300)
         self.command(['git', 'worktree', 'add', '--detach', str(self.work), TARGET_SHA], timeout=180)
         self.worktree_added = True
+        require(self.run('git', 'diff', '--name-only', inventory['checkout_sha'], TARGET_SHA, '--', 'docker') == '',
+                'compose_candidato_diferente_do_ativo')
         build_overlay = self.work / 'preview-migration-build.compose.json'
         tags = {service: f'markina-gallery-preview-migration:{service}-{TARGET_SHA[:12]}'
                 for service in ('api', 'web')}
-        build_overlay.write_text(json.dumps({'services': {name: {'image': tag}
+        build_overlay.write_text(json.dumps({'services': {name: {'image': tag,
+            'build': {'context': str(self.work / ('backend' if name == 'api' else 'frontend'))}}
             for name, tag in tags.items()}}, sort_keys=True), encoding='utf-8')
         os.chmod(build_overlay, 0o600)
         self.record('candidate-worktree-ready', work=str(self.work), candidate_tags=tags)
@@ -189,9 +202,11 @@ class ReleaseHost(InventoryHost):
         self.command(['docker', 'exec', nginx_id, 'nginx', '-t'])
         self.command(['docker', 'exec', nginx_id, 'nginx', '-s', 'reload'])
         if enabled:
-            require(self.run('curl', '--silent', '--max-time', '3', '--output', '/dev/null',
-                             '--write-out', '%{http_code}', 'http://127.0.0.1:8080/admin') == '503',
-                    'barreira_de_ingress_nao_confirmada')
+            deadline = time.monotonic() + 5
+            while self.run('curl', '--silent', '--max-time', '3', '--output', '/dev/null',
+                           '--write-out', '%{http_code}', 'http://127.0.0.1:8080/admin') != '503':
+                require(time.monotonic() < deadline, 'barreira_de_ingress_nao_confirmada')
+                time.sleep(0.1)
             self.barrier = True
             self.record('maintenance-active', maintenance_backup=str(backup))
         else:
@@ -260,7 +275,7 @@ class ReleaseHost(InventoryHost):
         require(shutil.disk_usage(directory).free > required_space, 'espaco_backup_insuficiente')
         stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
         archive = directory / f'preview-adjustment-0090-{stamp}-{TARGET_SHA[:12]}.dump'
-        manifest = archive.with_suffix('.manifest')
+        manifest = archive.with_name(archive.name + '.manifest')
         require(not archive.exists() and not manifest.exists(), 'backup_nome_ja_existe')
         db_id = inventory['services']['db']['container_id']
         command = ['docker', 'exec', db_id, 'sh', '-ceu',
@@ -304,7 +319,8 @@ class ReleaseHost(InventoryHost):
     def apply_migration(self, api_image: str, revision: str) -> None:
         require(revision == TARGET_SCHEMA, 'revision_migration_nao_permitida')
         overlay = self.work / 'preview-migration-release.compose.json'
-        overlay.write_text(json.dumps({'services': {'api': {'image': api_image}}},
+        overlay.write_text(json.dumps({'services': {'api': {'image': api_image,
+                                      'environment': {'APP_VERSION': TARGET_SHA}}}},
                                       sort_keys=True), encoding='utf-8')
         os.chmod(overlay, 0o600)
         cmd = self.compose_command(self.inventory_data, self.work, overlay)
@@ -317,8 +333,13 @@ class ReleaseHost(InventoryHost):
         return self.database_revision_before_ddl()
 
     def publish_api_web(self, candidate: dict[str, str]) -> None:
+        require(self.run('git', 'status', '--porcelain') == ''
+                and self.run('git', 'rev-parse', 'HEAD') == self.inventory_data['checkout_sha'],
+                'checkout_mudou_antes_publicacao')
+        self.command(['git', 'switch', '--detach', TARGET_SHA])
         overlay = self.work / 'preview-migration-release.compose.json'
-        overlay.write_text(json.dumps({'services': {name: {'image': image}
+        overlay.write_text(json.dumps({'services': {name: {'image': image,
+            **({'environment': {'APP_VERSION': TARGET_SHA}} if name == 'api' else {})}
             for name, image in candidate.items()}}, sort_keys=True), encoding='utf-8')
         os.chmod(overlay, 0o600)
         self.record('publishing-api-web', candidate_images=candidate)
@@ -338,11 +359,12 @@ class ReleaseHost(InventoryHost):
 
     def assert_runtime(self, candidate: dict[str, str], inventory: dict[str, Any], previous: dict[str, str],
                        stopped: list[str]) -> None:
+        require(self.run('git', 'rev-parse', 'HEAD') == TARGET_SHA, 'checkout_candidato_divergente')
         for service, image in candidate.items():
             ids = self.run('docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + PROJECT,
                            '--filter', 'label=com.docker.compose.service=' + service).split()
             require(len(ids) == 1, 'runtime_candidato_ausente_ou_duplicado')
-            d = self.inspect(ids[0])
+            d = self.wait_healthy(ids[0])
             require(d['Image'] == image and d['State']['Status'] == 'running'
                     and d['State'].get('Health', {}).get('Status') == 'healthy', 'runtime_candidato_nao_saudavel')
             require(d['HostConfig']['RestartPolicy'] == inventory['services'][service]['restart_policy'],
@@ -353,7 +375,8 @@ class ReleaseHost(InventoryHost):
         for name, before in inventory['services'].items():
             if name in ('api', 'web'):
                 continue
-            current = self.inspect(before['container_id'])
+            current = (self.wait_healthy(before['container_id']) if before['health'] == 'healthy'
+                       else self.inspect(before['container_id']))
             require(current['Id'] == before['container_id'] and current['Image'] == before['image'],
                     'servico_markina_preservado_divergente')
             require(current['State']['Status'] == 'running', 'servico_markina_nao_retornado')
@@ -372,15 +395,33 @@ class ReleaseHost(InventoryHost):
         require(self.database_revision() == TARGET_SCHEMA, 'schema_pos_release_divergente')
         self.record('runtime-verified', previous_images=previous)
 
+    def wait_healthy(self, ident: str) -> dict[str, Any]:
+        deadline = time.monotonic() + 120
+        while True:
+            current = self.inspect(ident)
+            require(current['State']['Status'] == 'running', 'runtime_parou_durante_healthcheck')
+            health = current['State'].get('Health', {}).get('Status')
+            if health == 'healthy':
+                return current
+            require(health in ('starting', 'unhealthy') and time.monotonic() < deadline,
+                    'runtime_nao_retornou_saudavel')
+            time.sleep(1)
+
     def assert_https_healthy(self) -> None:
         for path in ('/healthz', '/api/health', '/'):
-            code = self.run('curl', '--proto', '=https', '--tlsv1.2', '--silent', '--show-error',
-                '--max-time', '15', '--output', '/dev/null', '--write-out', '%{http_code}', PUBLIC_URL + path)
-            require(code == '200', 'smoke_https_falhou')
+            deadline = time.monotonic() + 20
+            while True:
+                code = self.run('curl', '--proto', '=https', '--tlsv1.2', '--silent', '--show-error',
+                    '--max-time', '15', '--output', '/dev/null', '--write-out', '%{http_code}', PUBLIC_URL + path)
+                if code == '200':
+                    break
+                require(time.monotonic() < deadline, 'smoke_https_falhou')
+                time.sleep(0.5)
 
     def write_success_receipt(self, fingerprint: str, candidate: dict[str, str], backup: dict[str, Any]) -> None:
         value = {'format': 1, 'fingerprint': fingerprint, 'target_sha': TARGET_SHA,
                  'schema': TARGET_SCHEMA, 'candidate_images': candidate,
+                 'retained_worktree': str(self.work),
                  'backup': {key: backup[key] for key in ('schema', 'sha256', 'bytes', 'format')},
                  'https_health': {'healthz': 200, 'api_health': 200, 'web': 200}}
         require(not RECEIPT.exists() and not RECEIPT.is_symlink(), 'recibo_release_ja_existe')
@@ -390,6 +431,7 @@ class ReleaseHost(InventoryHost):
             stream.write('\n')
             stream.flush()
             os.fsync(stream.fileno())
+        self.record('published')
 
     def write_interrupted_receipt(self, fingerprint: str, candidate: dict[str, str], backup: Any) -> None:
         if not self.barrier:
