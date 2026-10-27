@@ -1,5 +1,6 @@
 """Fail-closed classification and preservation of stopped release resources."""
 import copy
+import io
 import unittest
 from unittest.mock import patch
 
@@ -60,6 +61,7 @@ class HistoricalContainerTests(unittest.TestCase):
     def test_fingerprint_covers_each_preserved_field(self):
         original = container()
         baseline = inventory.historical_identity(original)
+        self.assertEqual(set(baseline['fields_sha256']), set(inventory.HISTORICAL_OPERATIONAL_FIELDS))
         for field in ('Config', 'HostConfig', 'Mounts', 'State', 'NetworkSettings'):
             changed = copy.deepcopy(original)
             if field == 'Mounts':
@@ -67,6 +69,22 @@ class HistoricalContainerTests(unittest.TestCase):
             else:
                 changed[field]['changed'] = True
             self.assertNotEqual(inventory.historical_identity(changed), baseline)
+
+    def test_mount_component_diagnostics_hash_values_without_disclosing_paths(self):
+        item = container()
+        item['Mounts'][0].update({'Type': 'bind', 'Name': 'private-volume', 'Driver': 'local',
+                                  'Mode': 'rw', 'Propagation': 'rprivate'})
+        diagnostic = inventory.historical_mount_diagnostics(item['Mounts'])
+        rendered = str(diagnostic)
+        for private_value in ('/synthetic/private', '/data', 'private-volume', 'rprivate'):
+            self.assertNotIn(private_value, rendered)
+        self.assertEqual(diagnostic[0]['type'], 'bind')
+        self.assertEqual(diagnostic[0]['rw'], 'sim')
+        self.assertRegex(diagnostic[0]['Source_sha256'], r'^[0-9a-f]{64}$')
+        changed = copy.deepcopy(item)
+        changed['Mounts'][0]['Source'] = '/synthetic/other-private'
+        changed_diagnostic = inventory.historical_mount_diagnostics(changed['Mounts'])
+        self.assertNotEqual(diagnostic[0]['Source_sha256'], changed_diagnostic[0]['Source_sha256'])
 
     def test_exited_health_diagnostics_are_separate_from_operational_preservation(self):
         original = container()
@@ -94,6 +112,31 @@ class HistoricalContainerTests(unittest.TestCase):
         data['compose_version'] = '5.6.1'
         self.assertFalse(inventory.validate_inventory(data)[0])
 
+    def test_inventory_rejects_incomplete_per_field_historical_hashes(self):
+        data = valid_inventory()
+        data['historical_containers'] = [inventory.historical_identity(container())]
+        self.assertTrue(inventory.validate_inventory(data)[0])
+        del data['historical_containers'][0]['fields_sha256']['Mounts']
+        self.assertEqual(inventory.validate_inventory(data)[1], 'historicos_invalidos')
+
+    def test_candidate_build_failure_reports_fixed_subphase_without_path(self):
+        import tempfile
+        from pathlib import Path
+        from scripts.preview_adjustment_migration_release import ReleaseHost
+        from scripts.preview_adjustment_migration_inventory import InventoryError
+        with tempfile.TemporaryDirectory() as temporary:
+            host = ReleaseHost()
+            def fail_fetch(args, **_kwargs):
+                self.assertEqual(args[:3], ['git', 'fetch', '--quiet'])
+                raise InventoryError('acao_operacional_falhou;verificar_recibo_privado')
+            host.command = fail_fetch
+            with patch('scripts.preview_adjustment_migration_release.STATE', Path(temporary)), \
+                    patch('sys.stdout', new_callable=io.StringIO) as output, \
+                    self.assertRaises(InventoryError):
+                host.stage_candidate({'checkout_sha': 'a' * 40, 'services': {}})
+            self.assertIn('candidate_build_phase=fetch', output.getvalue())
+            self.assertNotIn(temporary, output.getvalue())
+
     def test_release_refuses_missing_restarted_or_changed_history(self):
         from scripts.preview_adjustment_migration_release import ReleaseHost
         host = ReleaseHost()
@@ -101,12 +144,20 @@ class HistoricalContainerTests(unittest.TestCase):
         data = {'historical_containers': [inventory.historical_identity(original)]}
         host.inspect = lambda _id: original
         host.assert_historical_preserved(data)
-        for field, value in [('Mounts', []), ('State', {'Status': 'running'})]:
+        for field, value in [('State', {'Status': 'running'})]:
             changed = copy.deepcopy(original)
             changed[field] = value
             host.inspect = lambda _id: changed
             with self.assertRaises(RuntimeError):
                 host.assert_historical_preserved(data)
+        changed = copy.deepcopy(original)
+        changed['Mounts'][0]['Source'] = '/synthetic/changed-private'
+        host.inspect = lambda _id: changed
+        with patch('sys.stdout', new_callable=io.StringIO) as output, \
+                self.assertRaisesRegex(RuntimeError, 'campos=Mounts'):
+            host.assert_historical_preserved(data)
+        self.assertIn('"campos":["Mounts"]', output.getvalue())
+        self.assertNotIn('/synthetic/changed-private', output.getvalue())
         host.inspect = lambda _id: (_ for _ in ()).throw(RuntimeError('missing'))
         with self.assertRaises(RuntimeError):
             host.assert_historical_preserved(data)

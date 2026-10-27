@@ -5,7 +5,8 @@ from contextlib import nullcontext
 import json
 
 from preview_adjustment_migration_inventory import (
-    BASE_SCHEMA, TARGET_SCHEMA, canonical_fingerprint, validate_backup_preparation, validate_inventory,
+    BASE_SCHEMA, TARGET_SCHEMA, InventoryError, canonical_fingerprint, validate_backup_preparation,
+    validate_inventory,
 )
 
 
@@ -65,10 +66,13 @@ def execute(host, support_sha: str, approval_fingerprint: str) -> None:
         backup = None
         try:
             # Build and preserve every replacement image before closing ingress.
+            print('release_phase=preserve-images', flush=True)
             previous = host.preserve_images(initial)
             print('release_phase=build', flush=True)
             candidate = host.stage_candidate(initial)
+            print('release_phase=assert-support-sha', flush=True)
             host.assert_support_sha(support_sha)
+            print('release_phase=assert-historical-after-build', flush=True)
             host.assert_historical_preserved(initial)
             print('release_phase=maintenance', flush=True)
             host.maintenance(True)
@@ -107,6 +111,6 @@ def execute(host, support_sha: str, approval_fingerprint: str) -> None:
                 # Once Alembic is invoked, preserve schema and backup, retain the
                 # maintenance fence, and require a separately reviewed recovery.
                 host.write_interrupted_receipt(current_fingerprint, candidate, backup)
-            if isinstance(exc, ReleaseError):
+            if isinstance(exc, (ReleaseError, InventoryError)):
                 raise
             raise ReleaseError('release_falhou; consulte recibo operacional privado') from exc

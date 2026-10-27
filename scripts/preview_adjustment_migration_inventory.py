@@ -34,6 +34,8 @@ KNOWN_SERVICES = REQUIRED_SERVICES | {'migrate', 'seed-admin', 'evolution-api', 
                                      'face-maintenance-worker', 'preview-adjustment-worker'}
 DOCKER_STATES = {'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'}
 COMPOSE_VERSION = '2.35.1'
+HISTORICAL_OPERATIONAL_FIELDS = ('Name', 'Image', 'Config', 'HostConfig', 'Mounts',
+                                 'State_without_Health', 'NetworkSettings')
 PENDING_MARKERS = ('web-in-flight.sha', 'app-in-flight.sha', 'app-rollback-in-flight.sha',
                    'web-pending.identity', 'infinitepay-retirement-in-flight.sha',
                    'pillow-in-flight.json', 'orders-in-flight.json',
@@ -140,7 +142,7 @@ def canonical_fingerprint(value: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def historical_identity(container: dict[str, Any]) -> dict[str, str]:
+def historical_identity(container: dict[str, Any]) -> dict[str, Any]:
     """Bind preserved Docker metadata without disclosing labels, mounts or environment."""
     labels = container.get('Config', {}).get('Labels') or {}
     require(labels.get('com.docker.compose.project') == PROJECT, 'projeto_container_divergente')
@@ -163,12 +165,39 @@ def historical_identity(container: dict[str, Any]) -> dict[str, str]:
         require(container.get('Name') != f'/{PROJECT}-{service}-1', 'historico_ocupa_nome_ativo')
     fields = ('Name', 'Image', 'Config', 'HostConfig', 'Mounts', 'State', 'NetworkSettings')
     require(all(key in container for key in fields), 'historico_metadados_incompletos')
+    mounts = container['Mounts']
+    require(isinstance(mounts, list) and len(mounts) <= 100
+            and all(isinstance(mount, dict) and type(mount.get('RW')) is bool for mount in mounts),
+            'historico_montagens_invalidas')
     metadata = {key: container[key] for key in fields}
     # Health logs/counters are diagnostic records, not execution identity of an
     # exited container. Keep every other State field so restarts/exits still bind.
     metadata['State'] = {key: value for key, value in state.items() if key != 'Health'}
+    operational_values = {
+        'Name': container['Name'], 'Image': image, 'Config': container['Config'],
+        'HostConfig': container['HostConfig'], 'Mounts': mounts,
+        'State_without_Health': metadata['State'], 'NetworkSettings': container['NetworkSettings']}
+    field_hashes = {key: canonical_fingerprint(operational_values[key])
+                    for key in HISTORICAL_OPERATIONAL_FIELDS}
     return {'container_id': ident, 'image': image, 'status': 'exited',
-            'metadata_sha256': canonical_fingerprint(metadata)}
+            'metadata_sha256': canonical_fingerprint(metadata), 'fields_sha256': field_hashes}
+
+
+def historical_mount_diagnostics(mounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expose comparable mount components as hashes and fixed categories only."""
+    result = []
+    allowed_types = {'bind', 'volume', 'tmpfs', 'image', 'npipe'}
+    hashed_fields = ('Source', 'Destination', 'Name', 'Driver', 'Mode', 'Propagation')
+    for mount in mounts:
+        require(isinstance(mount, dict) and type(mount.get('RW')) is bool,
+                'historico_montagens_invalidas')
+        kind = mount.get('Type')
+        safe_kind = kind if isinstance(kind, str) and kind in allowed_types else 'outro'
+        hashes = {f'{field}_sha256': canonical_fingerprint(mount[field]) if field in mount else None
+                  for field in hashed_fields}
+        result.append({'type': safe_kind,
+                       'rw': 'sim' if mount['RW'] else 'nao', **hashes})
+    return sorted(result, key=lambda item: json.dumps(item, sort_keys=True, separators=(',', ':')))
 
 
 def historical_field_hashes(containers: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -181,7 +210,8 @@ def historical_field_hashes(containers: list[dict[str, Any]]) -> list[dict[str, 
         hashes = {key: canonical_fingerprint(item[key]) for key in fields}
         hashes['State_without_Health'] = canonical_fingerprint(
             {key: value for key, value in item['State'].items() if key != 'Health'})
-        result.append({'id_prefixo': identity['container_id'][:12], 'campos_sha256': hashes})
+        result.append({'id_prefixo': identity['container_id'][:12], 'campos_sha256': hashes,
+                       'montagens_sanitizadas': historical_mount_diagnostics(item['Mounts'])})
     return sorted(result, key=lambda row: row['id_prefixo'])
 
 
@@ -269,11 +299,16 @@ def _validate_inventory(value: dict[str, Any], *, require_backup: bool) -> tuple
         return False, 'historicos_invalidos', None
     historical_ids = set()
     for item in historical:
-        if (not isinstance(item, dict) or set(item) != {'container_id', 'image', 'status', 'metadata_sha256'}
+        if (not isinstance(item, dict) or set(item) != {
+                'container_id', 'image', 'status', 'metadata_sha256', 'fields_sha256'}
                 or not isinstance(item['container_id'], str) or not SHA256.fullmatch(item['container_id'])
                 or item['container_id'] in historical_ids or item['status'] != 'exited'
                 or not isinstance(item['image'], str) or not IMAGE.fullmatch(item['image'])
-                or not isinstance(item['metadata_sha256'], str) or not SHA256.fullmatch(item['metadata_sha256'])):
+                or not isinstance(item['metadata_sha256'], str) or not SHA256.fullmatch(item['metadata_sha256'])
+                or not isinstance(item['fields_sha256'], dict)
+                or set(item['fields_sha256']) != set(HISTORICAL_OPERATIONAL_FIELDS)
+                or not all(isinstance(value, str) and SHA256.fullmatch(value)
+                           for value in item['fields_sha256'].values())):
             return False, 'historicos_invalidos', None
         historical_ids.add(item['container_id'])
     for name, item in services.items():
