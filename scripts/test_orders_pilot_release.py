@@ -32,6 +32,7 @@ class CliContractTests(unittest.TestCase):
 
     def test_inventory_0090_uses_sanitized_live_gate_matrix(self):
         sha = 'a' * 40
+        checkout_sha = 'b' * 40
         active_sha = release.LIVE_MINIMUM_SHA
         pair = {'tenant_id': str(release.uuid4()), 'client_id': str(release.uuid4())}
         matrix = {'preference_tenants': 3, 'pix_enabled': 2, 'mercadopago_enabled': 2,
@@ -39,11 +40,15 @@ class CliContractTests(unittest.TestCase):
                   'mp_enabled_unavailable': 0, 'mp_disabled': 1}
         ids = {name: str(index).zfill(64) for index, name in enumerate(sorted(release.SERVICES), 1)}
 
+        git_calls = []
+
         def run(*args, **kwargs):
+            if args and args[0] == 'git':
+                git_calls.append(args)
             if args == ('git', 'remote', 'get-url', 'origin'):
                 return release.REPOSITORY
             if args == ('git', 'rev-parse', 'HEAD'):
-                return sha
+                return checkout_sha
             if args == ('git', 'status', '--porcelain'):
                 return ''
             if args[:2] == ('git', 'merge-base'):
@@ -89,6 +94,9 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(data['inventory_kind'], 'mercadopago-live-gate-read-only')
         self.assertEqual(data['tenant_configuration_matrix'], matrix)
         self.assertEqual(data['live_gate'], 'false')
+        self.assertEqual(data['main_sha'], sha)
+        self.assertEqual(data['checkout_sha'], checkout_sha)
+        self.assertIn(('git', 'merge-base', '--is-ancestor', checkout_sha, sha), git_calls)
         self.assertEqual(data['active_sha'], active_sha)
         self.assertEqual(data['test_allowlist_pairs'], 1)
         self.assertEqual(data['test_allowlist_pair_fingerprint'], release.fingerprint(pair))
