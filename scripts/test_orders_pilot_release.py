@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -29,6 +30,17 @@ class CliContractTests(unittest.TestCase):
               self.assertRaisesRegex(release.GateError, 'candidato_nao_e_main')):
             release.main()
         inventory.assert_not_called()
+
+    def test_operational_command_failure_reports_only_fixed_stage(self):
+        host = release.Host()
+        with (patch.object(release.subprocess, 'run', side_effect=subprocess.CalledProcessError(
+                1, ['docker', 'exec'], stderr='sensitive output')),
+              self.assertRaisesRegex(release.GateError,
+                                     'comando_operacional_falhou:read_tenant_configuration_matrix') as caught):
+            host.run('docker', 'exec', 'private-container', 'psql',
+                     diagnostic_stage='read_tenant_configuration_matrix')
+        self.assertNotIn('sensitive output', str(caught.exception))
+        self.assertNotIn('private-container', str(caught.exception))
 
     def test_inventory_0090_uses_sanitized_live_gate_matrix(self):
         sha = 'a' * 40
@@ -59,7 +71,7 @@ class CliContractTests(unittest.TestCase):
                 return 'valid'
             raise AssertionError(args)
 
-        def inspect(ident):
+        def inspect(ident, diagnostic_stage=None):
             name = next(name for name, value in ids.items() if value == ident)
             env = []
             if name == 'api':
