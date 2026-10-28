@@ -54,6 +54,11 @@
 - Correção local: após status anormal, consultar somente `git rev-parse --is-shallow-repository` e `git cat-file -e` para cada commit; a mensagem pública informa estados booleanos de repositório raso e presença dos objetos, nunca os SHAs nem saída textual. A guarda continua fail-closed.
 - O run falhou antes de gerar inventário/fingerprint e não alterou gate, serviços, banco, credenciais ou pagamentos. Testes focados, CI, instalação e nova execução read-only ainda pendentes.
 
+## Falha isolada do teste Vitest — 28/10/2026
+
+- Run de instalação `40670222739`, após CI das alterações locais, falhou no teste `checkout.test.tsx` “atualiza o carrinho quando polling recupera a confirmação”; `homolog-inventory-policy` e o contexto legado falharam como consequência. Nenhum job de instalação ou preflight de produção executou.
+- O cenário foi reproduzido localmente. Correção test-only: usar spy call-through para manter os timers de `waitFor` e capturar somente o callback de polling do pagamento. O teste isolado passou após essa mudança; não altera o comportamento do checkout. Lint, arquivo completo, CI e novo workflow protegido ainda pendentes.
+
 ## Limites ainda não validados
 
 - O estado do gate no runtime publicado ainda não foi confirmado pelo inventário atual compatível; a execução anterior falhou antes dessa leitura. Não alterar o gate até a task operacional 2.1 produzir inventário e plano exatos.

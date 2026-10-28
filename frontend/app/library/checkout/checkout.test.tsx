@@ -173,17 +173,17 @@ describe("Checkout Transparente Orders", () => {
   it("atualiza o carrinho quando polling recupera a confirmação", async () => {
     const pending = { ...prepared, state: "verification_required" };
     const fetch = mockFetch(undefined, pending);
-    let poll: (() => void) | null = null;
-    const timer = vi.spyOn(window, "setInterval").mockImplementation((handler, delay, ...args) => {
-      if (typeof handler === "function" && delay === 10_000) poll = () => handler(...args);
-      return 0 as unknown as ReturnType<typeof window.setInterval>;
-    });
+    const timer = vi.spyOn(window, "setInterval");
+    const poll = () => {
+      const interval = timer.mock.calls.find(([, delay]) => delay === 10_000);
+      if (interval && typeof interval[0] === "function") interval[0](...interval.slice(2));
+    };
     const changed = vi.fn();
     window.addEventListener("client-cart-changed", changed);
     try {
       render(<CheckoutPage />);
       await screen.findByText("Verificando pagamento");
-      await waitFor(() => expect(poll).not.toBeNull());
+      await waitFor(() => expect(timer.mock.calls.some(([, delay]) => delay === 10_000)).toBe(true));
       pending.state = "confirmed"; pending.active = false;
       await act(async () => {
         poll?.();
