@@ -42,6 +42,26 @@ class CliContractTests(unittest.TestCase):
         self.assertNotIn('sensitive output', str(caught.exception))
         self.assertNotIn('private-container', str(caught.exception))
 
+    def test_inventory_reports_only_validated_git_shas_for_checkout_lineage_mismatch(self):
+        checkout_sha = 'b' * 40
+        main_sha = 'a' * 40
+
+        def run(*args, **kwargs):
+            if args == ('git', 'remote', 'get-url', 'origin'):
+                return release.REPOSITORY
+            if args == ('git', 'rev-parse', 'HEAD'):
+                return checkout_sha
+            if args == ('git', 'merge-base', '--is-ancestor', checkout_sha, main_sha):
+                return 1
+            raise AssertionError(args)
+
+        with (patch.object(release.Host, 'run', side_effect=run),
+              patch.object(release.Host, 'main_sha', return_value=main_sha),
+              self.assertRaisesRegex(release.GateError,
+                  f'checkout_fora_da_main_history:checkout_sha={checkout_sha};main_sha={main_sha}') as caught):
+            release.Host().live_gate_inventory()
+        self.assertNotIn('private-container', str(caught.exception))
+
     def test_inventory_0090_uses_sanitized_live_gate_matrix(self):
         sha = 'a' * 40
         checkout_sha = 'b' * 40
@@ -64,7 +84,7 @@ class CliContractTests(unittest.TestCase):
             if args == ('git', 'status', '--porcelain'):
                 return ''
             if args[:2] == ('git', 'merge-base'):
-                return ''
+                return 0 if kwargs.get('check') is False else ''
             if args[:3] == ('docker', 'ps', '-q'):
                 return ' '.join(ids.values())
             if args[:3] == ('docker', 'exec', ids['api']):
