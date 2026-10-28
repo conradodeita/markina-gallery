@@ -118,6 +118,12 @@ O release SHALL fixar Compose 2.35.1, desabilitar remoção de órfãos e usar s
 - **AND** a reconciliação automática de políticas, que ocorre somente na inicialização do worker de indexação, não é tratada como produtor recorrente durante seu loop
 - **AND** o executor SHALL NOT usar `SIGKILL` nem aplicar essa exceção a outros writers
 
+#### Scenario: Worker de ajuste de prévias legado só é interrompido ocioso
+- **WHEN** API, worker genérico e todos os produtores faciais foram parados, a identidade e a imagem inventariadas permanecem iguais e não há registros `preview_adjustment` em `queued` ou `processing`
+- **THEN** o executor confirma novamente a identidade e a imagem antes de enviar `SIGINT` somente ao `preview-adjustment-worker` legado, aceitando exclusivamente a saída `130`
+- **AND** aguarda a fila por até 120 segundos; trabalho pendente, timeout, divergência ou saída inesperada bloqueia a DDL e recupera os mesmos containers
+- **AND** o executor SHALL NOT usar `SIGKILL` nem aplicar essa exceção a outros writers
+
 #### Scenario: Cliente Git rejeita opção metadata-only
 - **WHEN** o `git fetch` com `--no-write-fetch-head` retorna código de saída 129, independentemente do texto localizado do stderr privado
 - **THEN** o executor repete uma única vez o fetch do mesmo SHA integral, sem tags e sem atualizar refs/branches, usando o comportamento padrão de `FETCH_HEAD`

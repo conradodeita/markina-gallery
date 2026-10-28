@@ -307,7 +307,8 @@ class PreviewMigrationReleaseHostTests(unittest.TestCase):
         idle_checks = []
 
         def inspect(ident):
-            code = 130 if ident in {'index-container', 'search-container', 'maintenance-container'} else 143
+            code = 130 if ident in {'index-container', 'search-container', 'maintenance-container',
+                                    'preview-container'} else 143
             return {'Image': image, 'State': {'Status': 'exited', 'ExitCode': code}}
 
         def check_idle(sql):
@@ -321,18 +322,104 @@ class PreviewMigrationReleaseHostTests(unittest.TestCase):
 
         stopped = host.stop_writers(data)
         signals = [(args[-1], args[2]) for args in commands if args[1] == 'kill']
-        self.assertEqual(stopped, ['api', 'preview-adjustment-worker', 'worker',
-                                   'face-index-worker', 'face-maintenance-worker', 'face-search-worker'])
+        self.assertEqual(stopped, ['api', 'worker', 'face-index-worker', 'face-maintenance-worker',
+                                   'face-search-worker', 'preview-adjustment-worker'])
         self.assertEqual(signals, [
             ('api-container', '--signal=SIGTERM'),
-            ('preview-container', '--signal=SIGTERM'),
             ('worker-container', '--signal=SIGTERM'),
             ('index-container', '--signal=SIGINT'),
             ('maintenance-container', '--signal=SIGINT'),
             ('search-container', '--signal=SIGINT'),
+            ('preview-container', '--signal=SIGINT'),
         ])
         self.assertEqual(sum("kind='index'" in sql for sql in idle_checks), 1)
         self.assertEqual(sum("'purge', 'cleanup'" in sql for sql in idle_checks), 1)
+        self.assertEqual(sum("FROM preview_adjustment WHERE status IN ('queued', 'processing')" in sql
+                             for sql in idle_checks), 1)
+
+    def test_preview_adjustment_worker_waits_until_producers_stop_and_queue_is_idle(self):
+        host = release.ReleaseHost()
+        image = 'sha256:' + 'a' * 64
+        data = {'services': {
+            'api': {'container_id': 'api-container', 'image': image,
+                    'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'worker': {'container_id': 'worker-container', 'image': image,
+                       'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'face-search-worker': {'container_id': 'search-container', 'image': image,
+                                   'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'preview-adjustment-worker': {'container_id': 'preview-container', 'image': image,
+                                          'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+        }}
+        host.journal = {}
+        commands = []
+        queries = []
+
+        def inspect(ident):
+            exit_code = 130 if ident in {'search-container', 'preview-container'} else 143
+            return {'Image': image, 'State': {'Status': 'exited', 'ExitCode': exit_code}}
+
+        host.inspect = inspect
+        host.command = lambda args, **_kwargs: commands.append(args)
+        host.pg_scalar = lambda sql: queries.append(sql) or 0
+        host.record = lambda *_args, **_kwargs: None
+
+        self.assertEqual(host.stop_writers(data), [
+            'api', 'worker', 'face-search-worker', 'preview-adjustment-worker'])
+        self.assertIn("FROM preview_adjustment WHERE status IN ('queued', 'processing')", queries[-1])
+        self.assertEqual(commands[-2:], [
+            ['docker', 'update', '--restart=no', 'preview-container'],
+            ['docker', 'kill', '--signal=SIGINT', 'preview-container'],
+        ])
+
+    def test_preview_adjustment_worker_pending_queue_fails_before_signal(self):
+        host = release.ReleaseHost()
+        image = 'sha256:' + 'a' * 64
+        data = {'services': {
+            'api': {'container_id': 'api-container', 'image': image,
+                    'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'worker': {'container_id': 'worker-container', 'image': image,
+                       'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'preview-adjustment-worker': {'container_id': 'preview-container', 'image': image,
+                                          'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+        }}
+        host.journal = {}
+        commands = []
+        host.inspect = lambda _ident: {'Image': image,
+                                       'State': {'Status': 'exited', 'ExitCode': 143}}
+        host.command = lambda args, **_kwargs: commands.append(args)
+        host.pg_scalar = lambda _sql: 1
+        host.record = lambda *_args, **_kwargs: None
+
+        with patch.object(release.time, 'monotonic', side_effect=[0, 0, 0, 121]), \
+                patch.object(release.time, 'sleep'), \
+                patch('sys.stdout', new_callable=io.StringIO) as output, \
+                self.assertRaisesRegex(release.InventoryError, 'fila_preview_adjustment_nao_ociosa'):
+            host.stop_writers(data)
+
+        self.assertNotIn(['docker', 'kill', '--signal=SIGINT', 'preview-container'], commands)
+        self.assertIn('writer_idle_timeout=preview-adjustment-worker\n', output.getvalue())
+
+    def test_preview_adjustment_worker_accepts_only_sigint_exit_130(self):
+        host = release.ReleaseHost()
+        image = 'sha256:' + 'a' * 64
+        data = {'services': {
+            'api': {'container_id': 'api-container', 'image': image,
+                    'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+            'preview-adjustment-worker': {'container_id': 'preview-container', 'image': image,
+                                          'restart_policy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
+        }}
+        host.journal = {}
+        commands = []
+        host.inspect = lambda ident: {'Image': image,
+                                      'State': {'Status': 'exited', 'ExitCode': 143}}
+        host.command = lambda args, **_kwargs: commands.append(args)
+        host.pg_scalar = lambda _sql: 0
+        host.record = lambda *_args, **_kwargs: None
+
+        with self.assertRaisesRegex(release.InventoryError, 'writer_nao_encerrou_graciosamente'):
+            host.stop_writers(data)
+
+        self.assertIn(['docker', 'kill', '--signal=SIGINT', 'preview-container'], commands)
 
     def test_legacy_face_index_pending_work_fails_before_signaling_index_worker(self):
         host = release.ReleaseHost()
