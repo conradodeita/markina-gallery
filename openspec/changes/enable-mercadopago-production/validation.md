@@ -23,6 +23,12 @@
 - O job falhou fechado, sem alterar gate, serviços, configuração, banco ou pagamentos. Evidência precisa ser atualizada após correção e nova execução; a task 2.1 permanece pendente.
 - Correção local para nova execução: a rota Orders agora compara o checkout remoto limpo com o SHA de `main` por ancestralidade e continua exigindo que o SHA-alvo recebido corresponda exatamente à ponta de `main`; imports usados apenas por preparação/release foram adiados para essas rotas, evitando dependência do helper de um checkout de produto anterior. O pin `ORDERS_SCRIPT_BLOB_SHA` foi recalculado para o helper revisado. Em `codex/fix-orders-live-inventory-checkout`, `python -m unittest test_orders_pilot_release -q` passou (**44 testes, 1 skip existente**), `python test_production_release_workflow_policy.py` passou e Ruff passou nos dois arquivos Python. `openspec validate enable-mercadopago-production --strict` também passou. A nova CI e o inventário remoto ainda não foram concluídos; a task permanece pendente.
 
+## Nova tentativa e diagnóstico seguro — 28/10/2026
+
+- Run `40627798409`, candidato `main` SHA `19a07e62614a52a0cd8df58e8685d2c3f40d0b78`: todos os gates gerais de CI e a política de inventário passaram. O job `orders-pilot-preflight` falhou na etapa `Inventário Orders read-only` com `orders-release: comando_operacional_falhou`, sem expor a etapa nem a causa do subprocesso.
+- Não há fingerprint nem inventário emitido; a task 2.1 segue pendente. O comando terminou em modo somente leitura e nenhum gate, serviço, configuração, banco, credencial ou pagamento foi alterado.
+- Correção em andamento: acrescentar ao helper rótulos estáticos de etapa em falhas operacionais, sem propagar argumentos ou saída do subprocesso; o próximo CI/preflight deverá permitir identificar o comando que falha mantendo a saída sanitizada.
+
 ## Limites ainda não validados
 
 - O estado do gate no runtime publicado ainda não foi confirmado pelo inventário atual compatível; a execução anterior falhou antes dessa leitura. Não alterar o gate até a task operacional 2.1 produzir inventário e plano exatos.

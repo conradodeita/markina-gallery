@@ -263,7 +263,7 @@ class Host:
             'overlay_sha256': overlay_hash,
             'receipt_sha256': receipt_hash}
 
-    def run(self, *args, data=None, timeout=60, binary=False):
+    def run(self, *args, data=None, timeout=60, binary=False, diagnostic_stage=None):
         if getattr(self, 'deadline', None) is not None:
             timeout = min(timeout, self.deadline - time.monotonic())
             require(timeout > 0, 'janela_de_manutencao_excedida')
@@ -272,19 +272,26 @@ class Host:
                                     timeout=timeout, cwd=ROOT, check=True,
                                     env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'})
         except (subprocess.SubprocessError, OSError):
-            raise GateError('comando_operacional_falhou') from None
+            # Report only a fixed operation label; never echo command arguments,
+            # process output, environment values, or database query contents.
+            stage = diagnostic_stage if isinstance(diagnostic_stage, str) and re.fullmatch(
+                r'[a-z][a-z0-9_]{0,63}', diagnostic_stage) else None
+            code = 'comando_operacional_falhou' + (':' + stage if stage else '')
+            raise GateError(code) from None
         return result.stdout if binary else result.stdout.strip()
 
-    def inspect(self, ident):
-        return json.loads(self.run('docker', 'inspect', ident))[0]
+    def inspect(self, ident, diagnostic_stage=None):
+        return json.loads(self.run('docker', 'inspect', ident, diagnostic_stage=diagnostic_stage))[0]
 
-    def pg(self, sql, db='markina-gallery-db-1'):
+    def pg(self, sql, db='markina-gallery-db-1', diagnostic_stage=None):
         command = 'exec psql -X -q -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
         return json.loads(self.run('docker', 'exec', '-i', db, 'sh', '-c', command,
-                                  data="BEGIN READ ONLY; SET LOCAL statement_timeout='15s'; " + sql + '; ROLLBACK;'))
+                                  data="BEGIN READ ONLY; SET LOCAL statement_timeout='15s'; " + sql + '; ROLLBACK;',
+                                  diagnostic_stage=diagnostic_stage))
 
-    def schema(self, db='markina-gallery-db-1'):
-        return self.pg("SELECT coalesce(json_agg(version_num),'[]'::json) FROM alembic_version", db)
+    def schema(self, db='markina-gallery-db-1', diagnostic_stage=None):
+        return self.pg("SELECT coalesce(json_agg(version_num),'[]'::json) FROM alembic_version", db,
+                       diagnostic_stage=diagnostic_stage)
 
     def financial(self, db='markina-gallery-db-1'):
         result = {}
@@ -302,9 +309,10 @@ class Host:
                 '(SELECT ' + column + ' state,count(*) n FROM ' + table + ' GROUP BY ' + column + ') q')
         return result
 
-    def health(self):
+    def health(self, diagnostic_stage=None):
         return [int(self.run('curl', '--proto', '=https', '--tlsv1.2', '--silent', '--show-error',
-                             '--max-time', '10', '--output', '/dev/null', '--write-out', '%{http_code}', ORIGIN + p))
+                             '--max-time', '10', '--output', '/dev/null', '--write-out', '%{http_code}', ORIGIN + p,
+                             diagnostic_stage=diagnostic_stage))
                 for p in ('/healthz', '/api/health', '/')]
 
     def public_ready(self):
@@ -326,7 +334,7 @@ class Host:
 
     def inventory(self):
         require(socket.gethostname() == 'clearbudget-vnic' and ROOT.resolve() == ROOT, 'host_ou_raiz_divergente')
-        current_schema = self.schema()
+        current_schema = self.schema(diagnostic_stage='read_schema')
         if current_schema == [LIVE_SCHEMA]:
             return self.live_gate_inventory()
         _, pair, orders_identity = self.published_orders()
@@ -391,24 +399,27 @@ class Host:
 
     def live_gate_inventory(self):
         """Snapshot read-only of the deployed 0090 runtime, with tenant counts only."""
-        require(self.run('git', 'remote', 'get-url', 'origin') in {
+        require(self.run('git', 'remote', 'get-url', 'origin', diagnostic_stage='read_repository_origin') in {
             REPOSITORY, REPOSITORY[:-4], 'git@github.com:conradodeita/markina-gallery.git'},
             'repositorio_divergente')
-        main_sha = self.main_sha()
-        checkout_sha = self.run('git', 'rev-parse', 'HEAD')
+        main_sha = self.main_sha(diagnostic_stage='read_remote_main')
+        checkout_sha = self.run('git', 'rev-parse', 'HEAD', diagnostic_stage='read_checkout_sha')
         require(SHA.fullmatch(main_sha) and SHA.fullmatch(checkout_sha), 'sha_invalido')
         # The inventory script is fetched from the exact current-main SHA and its
         # blob is pinned by the forced-command wrapper. The deployed source tree
         # may legitimately lag support-only commits; it must remain clean and be
         # an ancestor of that reviewed candidate.
-        self.run('git', 'merge-base', '--is-ancestor', checkout_sha, main_sha)
-        require(not self.run('git', 'status', '--porcelain'), 'checkout_sujo')
+        self.run('git', 'merge-base', '--is-ancestor', checkout_sha, main_sha,
+                 diagnostic_stage='verify_checkout_ancestry')
+        require(not self.run('git', 'status', '--porcelain', diagnostic_stage='verify_checkout_clean'),
+                'checkout_sujo')
         active_versions = []
-        ids = self.run('docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
+        ids = self.run('docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + PROJECT,
+                       diagnostic_stage='list_project_containers').split()
         services = {}
         api_env = None
         for ident in ids:
-            d = self.inspect(ident)
+            d = self.inspect(ident, diagnostic_stage='inspect_project_container')
             labels = d['Config'].get('Labels') or {}
             name = labels.get('com.docker.compose.service')
             require(name in SERVICES and name not in services, 'servico_duplicado_ou_desconhecido')
@@ -446,13 +457,17 @@ class Host:
                 and isinstance(active_versions[0], str) and SHA.fullmatch(active_versions[0]),
                 'versao_ativa_divergente')
         active_sha = active_versions[0]
-        self.run('git', 'merge-base', '--is-ancestor', LIVE_MINIMUM_SHA, active_sha)
-        self.run('git', 'merge-base', '--is-ancestor', active_sha, checkout_sha)
-        require(self.schema() == [LIVE_SCHEMA], 'schema_divergente')
+        self.run('git', 'merge-base', '--is-ancestor', LIVE_MINIMUM_SHA, active_sha,
+                 diagnostic_stage='verify_minimum_active_version')
+        self.run('git', 'merge-base', '--is-ancestor', active_sha, checkout_sha,
+                 diagnostic_stage='verify_active_version_in_checkout')
+        require(self.schema(diagnostic_stage='read_live_schema') == [LIVE_SCHEMA], 'schema_divergente')
         key_probe = "from app.integration_secrets import IntegrationCipher; IntegrationCipher(); print('valid')"
         require(self.run('docker', 'exec', next(i for i in ids if
-                self.inspect(i)['Config'].get('Labels', {}).get('com.docker.compose.service') == 'api'),
-                'python', '-B', '-c', key_probe) == 'valid', 'cofre_indisponivel')
+                self.inspect(i, diagnostic_stage='locate_api_container')['Config'].get('Labels', {}).get(
+                    'com.docker.compose.service') == 'api'),
+                'python', '-B', '-c', key_probe, diagnostic_stage='probe_api_secret_vault') == 'valid',
+                'cofre_indisponivel')
         matrix = self.pg("""SELECT json_build_object(
           'preference_tenants', count(*),
           'pix_enabled', count(*) FILTER (WHERE pix_enabled),
@@ -469,14 +484,14 @@ class Host:
                  a.status AS account_status, a.test_account
           FROM payment_preferences p
           LEFT JOIN mercadopago_account a ON a.id = p.account_id AND a.tenant_id = p.tenant_id
-        ) tenant_settings""")
+        ) tenant_settings""", diagnostic_stage='read_tenant_configuration_matrix')
         require(isinstance(matrix, dict) and set(matrix) == {
             'preference_tenants', 'pix_enabled', 'mercadopago_enabled',
             'mp_enabled_production_active', 'mp_enabled_test_active',
             'mp_enabled_unavailable', 'mp_disabled'}
             and all(type(value) is int and value >= 0 for value in matrix.values()),
             'matriz_tenants_invalida')
-        https = self.health()
+        https = self.health(diagnostic_stage='check_public_https')
         require(https == [200, 200, 200], 'smoke_https_falhou')
         pending = [name for name in LIVE_PENDING if (STATE / name).exists()]
         require(not pending, 'operacao_pendente')
@@ -495,8 +510,9 @@ class Host:
         require(IMAGE.fullmatch(value), 'imagem_invalida')
         return value
 
-    def main_sha(self):
-        value = self.run('git', 'ls-remote', REPOSITORY, 'refs/heads/main').split()
+    def main_sha(self, diagnostic_stage=None):
+        value = self.run('git', 'ls-remote', REPOSITORY, 'refs/heads/main',
+                         diagnostic_stage=diagnostic_stage or 'read_remote_main').split()
         require(len(value) == 2 and SHA.fullmatch(value[0]), 'main_indisponivel')
         return value[0]
 
