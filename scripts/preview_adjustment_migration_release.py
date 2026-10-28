@@ -319,7 +319,8 @@ class ReleaseHost(InventoryHost):
         # PID 1 processes have no SIGTERM handler, so interrupt only after their
         # eligible durable work has drained and their image still matches.
         stop_order = {'api': 0, 'face-index-worker': 2,
-                      'face-maintenance-worker': 3, 'face-search-worker': 4}
+                      'face-maintenance-worker': 3, 'face-search-worker': 4,
+                      'preview-adjustment-worker': 5}
         targets.sort(key=lambda name: stop_order.get(name, 1))
         for name in targets:
             item = services[name]
@@ -334,8 +335,12 @@ class ReleaseHost(InventoryHost):
             if name == 'face-search-worker':
                 self.wait_for_face_search_idle()
                 require(self.inspect(ident)['Image'] == item['image'], 'writer_image_mudou')
+            if name == 'preview-adjustment-worker':
+                self.wait_for_preview_adjustment_idle()
+                require(self.inspect(ident)['Image'] == item['image'], 'writer_image_mudou')
             stop_signal = 'SIGINT' if name in {
-                'face-index-worker', 'face-maintenance-worker', 'face-search-worker'} else 'SIGTERM'
+                'face-index-worker', 'face-maintenance-worker', 'face-search-worker',
+                'preview-adjustment-worker'} else 'SIGTERM'
             attempted = self.journal.get('attempted', [])
             if name not in attempted:
                 attempted.append(name)
@@ -411,6 +416,23 @@ class ReleaseHost(InventoryHost):
             if time.monotonic() >= deadline:
                 print('writer_idle_timeout=face-maintenance-worker', flush=True)
                 raise InventoryError('fila_face_maintenance_nao_ociosa')
+            time.sleep(1)
+
+    def wait_for_preview_adjustment_idle(self) -> None:
+        print('writer_idle_wait=preview-adjustment-worker', flush=True)
+        deadline = time.monotonic() + 120
+        while True:
+            pending = self.pg_scalar(
+                "SELECT count(*) FROM preview_adjustment "
+                "WHERE status IN ('queued', 'processing')"
+            )
+            if pending == 0:
+                self.record('preview-adjustment-queue-idle')
+                print('writer_idle_confirmed=preview-adjustment-worker', flush=True)
+                return
+            if time.monotonic() >= deadline:
+                print('writer_idle_timeout=preview-adjustment-worker', flush=True)
+                raise InventoryError('fila_preview_adjustment_nao_ociosa')
             time.sleep(1)
 
     def pg_scalar(self, sql: str) -> int:
