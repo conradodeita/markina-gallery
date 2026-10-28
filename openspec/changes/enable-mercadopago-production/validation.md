@@ -29,6 +29,12 @@
 - Não há fingerprint nem inventário emitido; a task 2.1 segue pendente. O comando terminou em modo somente leitura e nenhum gate, serviço, configuração, banco, credencial ou pagamento foi alterado.
 - Correção em andamento: acrescentar ao helper rótulos estáticos de etapa em falhas operacionais, sem propagar argumentos ou saída do subprocesso; o próximo CI/preflight deverá permitir identificar o comando que falha mantendo a saída sanitizada.
 
+## Relação de ancestralidade de produção — 28/10/2026
+
+- Run `40632010932`, candidato `main` SHA `eaa23ecdb02e881d94b7618f6b0717b93d6293e5`: gates gerais verdes; o job read-only parou na etapa `verify_checkout_ancestry` antes de ler containers, banco ou matriz de tenants. A saída expôs somente o rótulo fixo, sem SHA ou dados sensíveis.
+- O SHA de produto documentado para o runtime publicado, `0dd015a62447e0c8d4c6af16b381140c8118f2ec`, é ancestral do `main` atual. Isso não explica a divergência do `HEAD` do checkout operacional. O inventário não deve prosseguir até identificar o HEAD real e confirmar sua proveniência; nenhuma guarda será removida por inferência.
+- Ajuste local em andamento: distinguir resultado legítimo `git merge-base --is-ancestor` falso de falha de execução e, somente nessa condição, reportar os SHAs Git validados para permitir a reconciliação. Repetir CI, instalar o wrapper protegido e novo preflight ainda pendentes.
+
 ## Limites ainda não validados
 
 - O estado do gate no runtime publicado ainda não foi confirmado pelo inventário atual compatível; a execução anterior falhou antes dessa leitura. Não alterar o gate até a task operacional 2.1 produzir inventário e plano exatos.

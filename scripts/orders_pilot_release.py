@@ -263,13 +263,13 @@ class Host:
             'overlay_sha256': overlay_hash,
             'receipt_sha256': receipt_hash}
 
-    def run(self, *args, data=None, timeout=60, binary=False, diagnostic_stage=None):
+    def run(self, *args, data=None, timeout=60, binary=False, check=True, diagnostic_stage=None):
         if getattr(self, 'deadline', None) is not None:
             timeout = min(timeout, self.deadline - time.monotonic())
             require(timeout > 0, 'janela_de_manutencao_excedida')
         try:
             result = subprocess.run(list(args), input=data, capture_output=True, text=not binary,
-                                    timeout=timeout, cwd=ROOT, check=True,
+                                    timeout=timeout, cwd=ROOT, check=check,
                                     env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'})
         except (subprocess.SubprocessError, OSError):
             # Report only a fixed operation label; never echo command arguments,
@@ -278,7 +278,16 @@ class Host:
                 r'[a-z][a-z0-9_]{0,63}', diagnostic_stage) else None
             code = 'comando_operacional_falhou' + (':' + stage if stage else '')
             raise GateError(code) from None
+        if not check:
+            return result.returncode
         return result.stdout if binary else result.stdout.strip()
+
+    def is_ancestor(self, ancestor, descendant, diagnostic_stage):
+        result = self.run('git', 'merge-base', '--is-ancestor', ancestor, descendant,
+                          check=False, diagnostic_stage=diagnostic_stage)
+        if result not in (0, 1):
+            raise GateError('comando_operacional_falhou:' + diagnostic_stage) from None
+        return result == 0
 
     def inspect(self, ident, diagnostic_stage=None):
         return json.loads(self.run('docker', 'inspect', ident, diagnostic_stage=diagnostic_stage))[0]
@@ -409,8 +418,8 @@ class Host:
         # blob is pinned by the forced-command wrapper. The deployed source tree
         # may legitimately lag support-only commits; it must remain clean and be
         # an ancestor of that reviewed candidate.
-        self.run('git', 'merge-base', '--is-ancestor', checkout_sha, main_sha,
-                 diagnostic_stage='verify_checkout_ancestry')
+        if not self.is_ancestor(checkout_sha, main_sha, 'verify_checkout_ancestry'):
+            raise GateError(f'checkout_fora_da_main_history:checkout_sha={checkout_sha};main_sha={main_sha}')
         require(not self.run('git', 'status', '--porcelain', diagnostic_stage='verify_checkout_clean'),
                 'checkout_sujo')
         active_versions = []
@@ -457,10 +466,10 @@ class Host:
                 and isinstance(active_versions[0], str) and SHA.fullmatch(active_versions[0]),
                 'versao_ativa_divergente')
         active_sha = active_versions[0]
-        self.run('git', 'merge-base', '--is-ancestor', LIVE_MINIMUM_SHA, active_sha,
-                 diagnostic_stage='verify_minimum_active_version')
-        self.run('git', 'merge-base', '--is-ancestor', active_sha, checkout_sha,
-                 diagnostic_stage='verify_active_version_in_checkout')
+        require(self.is_ancestor(LIVE_MINIMUM_SHA, active_sha, 'verify_minimum_active_version'),
+                'runtime_abaixo_da_versao_minima')
+        require(self.is_ancestor(active_sha, checkout_sha, 'verify_active_version_in_checkout'),
+                'runtime_nao_contido_no_checkout')
         require(self.schema(diagnostic_stage='read_live_schema') == [LIVE_SCHEMA], 'schema_divergente')
         key_probe = "from app.integration_secrets import IntegrationCipher; IntegrationCipher(); print('valid')"
         require(self.run('docker', 'exec', next(i for i in ids if
