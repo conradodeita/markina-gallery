@@ -189,6 +189,14 @@ def validate_inventory(data):
     return fingerprint(data)
 
 
+def require_complete_service_inventory(services, api_env):
+    missing = sorted(SERVICES - set(services))
+    if missing or api_env is None:
+        api_config = 'present' if api_env is not None else 'missing'
+        names = ','.join(missing) if missing else 'none'
+        raise GateError(f'servicos_incompletos:ausentes={names}:api_config={api_config}')
+
+
 def idle_queues(queues):
     require(set(queues) == set(QUEUES), 'filas_incompletas')
     for values in queues.values():
@@ -513,7 +521,7 @@ class Host:
                 active_versions.append(env.get('APP_VERSION'))
             if name == 'api':
                 api_env = env
-        require(set(services) == SERVICES and api_env is not None, 'servicos_incompletos')
+        require_complete_service_inventory(services, api_env)
         require(api_env.get('APP_ENV') == 'production', 'ambiente_divergente')
         gate = api_env.get('MERCADOPAGO_ALLOW_LIVE_PAYMENTS')
         require(gate in {'true', 'false'}, 'gate_live_invalido')
