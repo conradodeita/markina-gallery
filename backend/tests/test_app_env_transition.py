@@ -99,7 +99,11 @@ def _seed_account(db: Session, source: IntegrationCipher, *, number: int):
         webhook_secret_envelope=source.encrypt(
             f"synthetic-webhook-{number}", tenant_id=tenant.id, credential_id=UUID(int=number)).payload(),
     )
-    db.add_all([tenant, client, account])
+    # Flush parents first: these models do not declare ORM relationships, so
+    # relying on one unit-of-work flush ordering is not portable across DBs.
+    db.add(tenant)
+    db.flush()
+    db.add_all([client, account])
     db.flush()
     preference = PaymentPreferences(
         tenant_id=tenant.id, account_id=account.id, pix_enabled=True,
