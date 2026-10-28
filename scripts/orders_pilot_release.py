@@ -349,7 +349,7 @@ class Host:
         if not SHA.fullmatch(ancestor or '') or not SHA.fullmatch(descendant or ''):
             raise GateError('sha_invalido')
         url = (f'https://api.github.com/repos/conradodeita/markina-gallery/compare/'
-               f'{ancestor}...{descendant}')
+               f'{ancestor}...{descendant}?per_page=1')
         request = Request(url, headers={
             'Accept': 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2026-03-10',
