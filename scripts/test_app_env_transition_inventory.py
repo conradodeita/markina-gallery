@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import io
 import json
@@ -25,6 +26,7 @@ from backend.app.environment_transition_inventory import (
 )
 from scripts import app_env_transition_inventory as collector
 from scripts.app_env_transition_inventory import (
+    SAFE_FAILURE_CODES,
     binding_mismatches,
     integration_evidence,
     live_payment_gate,
@@ -79,6 +81,7 @@ def make_report(inventory: dict | None, *, incomplete: bool = False) -> dict:
             "inventory": None,
             "blockers": ["coleta_incompleta"],
             "approval_fingerprint": None,
+            "failure_category": "falha_interna",
         }
     return {
         "target_sha": SHA,
@@ -86,10 +89,29 @@ def make_report(inventory: dict | None, *, incomplete: bool = False) -> dict:
         "inventory": inventory,
         "blockers": inventory["blockers"],
         "approval_fingerprint": inventory["approval_fingerprint"],
+        "failure_category": None,
     }
 
 
 class AppEnvInventoryReportTests(unittest.TestCase):
+    def test_inventory_error_categories_are_closed_and_allowlisted(self):
+        source = ast.parse(Path(collector.__file__).read_text(encoding="utf-8"))
+        categories = set()
+        for node in ast.walk(source):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if (node.func.id == "InventoryError" and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)):
+                categories.add(node.args[0].value)
+            if node.func.id == "require" and len(node.args) >= 2:
+                self.assertIsInstance(node.args[1], ast.Constant)
+                self.assertIsInstance(node.args[1].value, str)
+                categories.add(node.args[1].value)
+
+        self.assertTrue(categories)
+        self.assertLessEqual(categories, SAFE_FAILURE_CODES)
+
     def test_invalid_sha_is_rejected_before_any_remote_command(self):
         with patch.object(collector, "run") as run, self.assertRaises(collector.InventoryError):
             collector.verify_main("invalid")
@@ -100,7 +122,7 @@ class AppEnvInventoryReportTests(unittest.TestCase):
         with (
             patch.object(collector, "verify_main"),
             patch.object(collector, "load_contract", return_value=inventory_contract),
-            patch.object(collector, "collect", side_effect=collector.InventoryError("secret-sentinel")),
+            patch.object(collector, "collect", side_effect=collector.InventoryError("secret-sentinel /private/path")),
             patch.object(sys, "argv", ["app_env_transition_inventory.py", "app-env-inventory", "--sha", SHA]),
             redirect_stdout(output),
         ):
@@ -109,8 +131,49 @@ class AppEnvInventoryReportTests(unittest.TestCase):
         report = json.loads(output.getvalue())
         self.assertEqual(report["collection_status"], "incomplete")
         self.assertEqual(report["blockers"], ["coleta_incompleta"])
+        self.assertEqual(report["failure_category"], "falha_interna")
         self.assertIsNone(report["approval_fingerprint"])
         self.assertNotIn("secret-sentinel", output.getvalue())
+        self.assertNotIn("/private/path", output.getvalue())
+
+    def test_main_preserves_only_a_known_static_failure_category(self):
+        output = io.StringIO()
+        with (
+            patch.object(collector, "verify_main"),
+            patch.object(collector, "load_contract", return_value=inventory_contract),
+            patch.object(collector, "collect", side_effect=collector.InventoryError("keyring_indisponivel")),
+            patch.object(sys, "argv", ["app_env_transition_inventory.py", "app-env-inventory", "--sha", SHA]),
+            redirect_stdout(output),
+        ):
+            collector.main()
+
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["failure_category"], "keyring_indisponivel")
+        self.assertIsNone(report["inventory"])
+        self.assertIsNone(report["approval_fingerprint"])
+
+    def test_main_maps_unclassified_exception_to_generic_category(self):
+        output = io.StringIO()
+        with (
+            patch.object(collector, "verify_main"),
+            patch.object(collector, "load_contract", return_value=inventory_contract),
+            patch.object(
+                collector,
+                "collect",
+                side_effect=RuntimeError("private id, secret, /private/path"),
+            ),
+            patch.object(sys, "argv", ["app_env_transition_inventory.py", "app-env-inventory", "--sha", SHA]),
+            redirect_stdout(output),
+        ):
+            collector.main()
+
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["failure_category"], "falha_interna")
+        self.assertIsNone(report["inventory"])
+        self.assertIsNone(report["approval_fingerprint"])
+        self.assertNotIn("private id", output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
+        self.assertNotIn("/private/path", output.getvalue())
 
     def test_active_container_keeps_identifier_only_in_memory(self):
         container = {
@@ -259,6 +322,7 @@ class AppEnvInventoryReportTests(unittest.TestCase):
         rendered = summary(validated)
 
         self.assertIn("coleta_incompleta", rendered)
+        self.assertIn("falha_interna", rendered)
         self.assertIn("Fingerprint: indisponível", rendered)
         self.assertNotIn("approval_fingerprint=", rendered)
 
@@ -306,6 +370,19 @@ class AppEnvInventoryReportTests(unittest.TestCase):
         report["approval_fingerprint"] = "d" * 64
         with self.assertRaisesRegex(ValueError, "relatorio_invalido"):
             validate_report([json.dumps(report)], SHA)
+
+    def test_incomplete_report_rejects_unrecognized_failure_category(self):
+        report = make_report(None, incomplete=True)
+        for category in (
+            "secret-sentinel /private/path",
+            None,
+            [],
+            {"secret": "value"},
+        ):
+            with self.subTest(category=category):
+                report["failure_category"] = category
+                with self.assertRaisesRegex(ValueError, "relatorio_invalido"):
+                    validate_report([json.dumps(report)], SHA)
 
     def test_report_rejects_multiple_lines_and_wrong_candidate(self):
         report = json.dumps(make_report(None, incomplete=True))

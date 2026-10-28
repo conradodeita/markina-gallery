@@ -31,10 +31,60 @@ APP_ENV_CONSUMER_SERVICES = {
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 ALLOWED_REMOTE_ROOTS = (ROOT.resolve(), STATE.resolve())
+SAFE_FAILURE_CODES = frozenset({
+    "ambiente_container_duplicado",
+    "ambiente_container_invalido",
+    "api_ausente",
+    "banco_inventario_invalido",
+    "banco_mudou_durante_coleta",
+    "candidato_nao_e_main",
+    "checkout_sujo",
+    "comando_indisponivel",
+    "compose_ausente",
+    "compose_divergente",
+    "compose_fora_do_escopo",
+    "compose_invalido",
+    "compose_indisponivel",
+    "compose_mudou_durante_coleta",
+    "contagens_indisponiveis",
+    "container_fora_do_projeto",
+    "container_id_invalido",
+    "container_restart_count_invalido",
+    "contrato_divergente",
+    "contrato_excessivo",
+    "contrato_invalido",
+    "contrato_indisponivel",
+    "fonte_divergente",
+    "inspect_invalido",
+    "keyring_divergente",
+    "keyring_indisponivel",
+    "keyring_mudou_durante_coleta",
+    "main_indisponivel",
+    "portas_container_invalidas",
+    "repositorio_divergente",
+    "runtime_mudou_durante_coleta",
+    "schema_indisponivel",
+    "servico_duplicado",
+    "servico_invalido",
+    "servicos_ausentes",
+    "sha_invalido",
+    "versao_api_invalida",
+    "whatsapp_inventario_invalido",
+})
+UNKNOWN_FAILURE_CODE = "falha_interna"
 
 
 class InventoryError(RuntimeError):
     """Categoria constante; nunca contém conteúdo do comando ou do ambiente."""
+
+
+def sanitized_failure_code(error: BaseException) -> str:
+    """Retorna apenas um código constante, validado contra a allowlist."""
+    if isinstance(error, InventoryError) and error.args:
+        category = error.args[0]
+        if isinstance(category, str) and category in SAFE_FAILURE_CODES:
+            return category
+    return UNKNOWN_FAILURE_CODE
 
 
 def require(condition: bool, category: str) -> None:
@@ -587,6 +637,7 @@ def collect(target_sha: str, contract: ModuleType) -> dict:
         "inventory": inventory,
         "blockers": inventory["blockers"],
         "approval_fingerprint": inventory["approval_fingerprint"],
+        "failure_category": None,
     }
 
 
@@ -599,15 +650,17 @@ def main() -> None:
     try:
         contract = load_contract(args.sha)
         report = collect(args.sha, contract)
-    except Exception:  # noqa: BLE001 - falha de fonte gera envelope sanitizado, sem detalhe bruto
+    except Exception as error:  # noqa: BLE001 - falha de fonte gera envelope sanitizado, sem detalhe bruto
         # Fonte ausente ou inconsistente é reportada de forma sanitizada e sem
-        # fingerprint. Não incluir exceções, comandos, caminhos ou valores.
+        # fingerprint. Somente um código constante allowlisted pode identificar
+        # a classe; nunca incluir mensagem, comando, caminho ou valor bruto.
         report = {
             "target_sha": args.sha,
             "collection_status": "incomplete",
             "inventory": None,
             "blockers": ["coleta_incompleta"],
             "approval_fingerprint": None,
+            "failure_category": sanitized_failure_code(error),
         }
     print(json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
