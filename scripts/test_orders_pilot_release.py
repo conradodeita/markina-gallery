@@ -18,6 +18,15 @@ import orders_pilot_release as release
 
 
 class CliContractTests(unittest.TestCase):
+    def test_app_environment_diagnostic_uses_only_allowlisted_categories(self):
+        for value, expected in (
+            (None, 'ausente'), ('', 'ausente'), ('production', 'production'),
+            ('staging', 'outro_ambiente_conhecido'), ('homolog', 'outro_ambiente_conhecido'),
+            ('development', 'outro_ambiente_conhecido'), ('mystery-secret-value', 'outro_valor'),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(release.app_environment_diagnostic(value), expected)
+
     def test_release_targets_integrated_orders_runtime_and_schema_0089(self):
         self.assertEqual(release.APPROVED_RUNTIME, 'b69a95c526912d725863a57a13f8735a62f671ed')
         self.assertEqual(release.SCHEMA, '20261024_0088')
