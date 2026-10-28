@@ -80,6 +80,10 @@ Compatibilidade CSV: o exportador padrão conserva exatamente quatro colunas, pa
 
 ## Open Questions
 
+### Atualização de escopo em 27/10/2026
+
+A declaração de que a liberação geral e cobranças reais estão fora do escopo registra a autorização do piloto vigente em 25–26/10/2026. Em 27/10/2026 o proprietário decidiu liberar o Mercado Pago em produção para todos os fotógrafos, mantendo opt-in e conta própria por tenant, allowlist do cliente de teste e PIX independente. A decisão posterior é implementada separadamente em `openspec/changes/enable-mercadopago-production/`; não apaga as evidências nem amplia retroativamente a autorização usada no deploy do piloto.
+
 ### Baseline após correção Pillow autorizada/publicada
 
 Em25/10/2026 os seis especializados receberam somente Pillow13, com PR258/main3d2ac6e7 e CI40206489337 aprovados; fonte/modelos/pacotes restantes preservados, schema0087/digest financeiro iguais e15 serviços saudáveis. O overlay persistente `pillow-prepare-20261025-01/active.compose.json` SHALL integrar CONFIGS/EXTRAS Orders. Inventário confere o published.json privado/fingerprint autorizado, IDs exatos e hash do overlay; não confiar apenas no pin da fonte nem reiniciar imagens antigas. A integração de main na branch Orders produziu cbb2362fcc2c3277ff1a8e7c8c4de963ea125b02; diff de backend/frontend/docker versus47af72bd é exclusivamente `Pillow>=10.0`→`Pillow==13.0.0`. Fixar esse novo snapshot e manter igualdade estrita dos runtimes futuros, sem exceção genérica no gate. Refazer preparação/backup/restore e recibo; API anterior já carregava13 e continua admitindo somente SDKmercadopago adicional.

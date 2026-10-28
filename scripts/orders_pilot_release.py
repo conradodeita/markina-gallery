@@ -32,6 +32,8 @@ ORIGIN = 'https://markina.pickyourpic.com.br'
 REPOSITORY = 'https://github.com/conradodeita/markina-gallery.git'
 SCHEMA = '20261024_0088'
 TARGET_SCHEMA = '20261025_0089'
+LIVE_SCHEMA = '20261026_0090'
+LIVE_MINIMUM_SHA = '0dd015a62447e0c8d4c6af16b381140c8118f2ec'
 BASELINE_SHA = '9bd66c48d7d43462886652b8fe85fdcbff877f64'
 BASELINE_IDENTITY_SHA256 = 'bb4998f77656691b2436c1d5ec635a9cf0e914c1d453eb4ad7595f2f318c8438'
 BASELINE_RECEIPT_SHA256 = '40d03be0c88f84ad634838837380e19622eac4a0eee0b6813be278d85a1dc289'
@@ -71,6 +73,8 @@ KEY_BINDING = ROOT / 'docker/.env.integration-secrets'
 KEY_TARGET = STATE / 'integration-secrets.env'
 PENDING = ('app-in-flight.sha', 'app-rollback-in-flight.sha', 'web-in-flight.sha',
            'web-pending.identity', 'infinitepay-retirement-in-flight.sha', 'pillow-in-flight.json')
+LIVE_PENDING = PENDING + ('orders-in-flight.json', 'preview-adjustment-migration-in-flight.json',
+                          'preview-adjustment-migration-in-flight.json.tmp')
 FINANCIAL = ('sale_order', 'sale_order_item', 'payment_group', 'provider_payment',
              'provider_payment_attempt', 'provider_payment_receipt', 'provider_payment_correction',
              'payment_confirmation_correction', 'payment_communication', 'global_pix_settings',
@@ -212,6 +216,30 @@ def release_overlay(images, pair, *, enabled=True):
 
 
 class Host:
+    def current_test_pair(self):
+        path = STATE / 'orders-current.identity.json'
+        require(path.resolve(strict=True) == path and not path.is_symlink(), 'identidade_orders_insegura')
+        info = path.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid()
+                and stat.S_IMODE(info.st_mode) == 0o600, 'identidade_orders_insegura')
+        identity = load(path)
+        require(identity.get('emission') == 'owner_test' and identity.get('schema') == TARGET_SCHEMA,
+                'identidade_orders_divergente')
+        receipt_path = Path(identity.get('receipt', ''))
+        require(receipt_path.is_absolute() and receipt_path.parent.parent == STATE
+                and receipt_path.name == 'prepared-main.json' and not receipt_path.is_symlink()
+                and receipt_path.resolve(strict=True) == receipt_path, 'recibo_orders_inseguro')
+        receipt_info = receipt_path.lstat()
+        require(stat.S_ISREG(receipt_info.st_mode) and receipt_info.st_nlink == 1
+                and receipt_info.st_uid == os.getuid() and stat.S_IMODE(receipt_info.st_mode) == 0o600,
+                'recibo_orders_inseguro')
+        receipt = load(receipt_path)
+        require(receipt.get('sha') == identity.get('sha') and receipt.get('images') == identity.get('images'),
+                'recibo_orders_divergente')
+        pair = pilot_pair(receipt.get('pair'))
+        pair_fingerprint = hashlib.sha256(json.dumps(pair, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        return pair, pair_fingerprint
+
     def published_orders(self):
         path = STATE / 'orders-current.identity.json'
         require(path.resolve(strict=True) == path, 'identidade_orders_insegura')
@@ -300,6 +328,9 @@ class Host:
 
     def inventory(self):
         require(socket.gethostname() == 'clearbudget-vnic' and ROOT.resolve() == ROOT, 'host_ou_raiz_divergente')
+        current_schema = self.schema()
+        if current_schema == [LIVE_SCHEMA]:
+            return self.live_gate_inventory()
         _, pair, orders_identity = self.published_orders()
         require(self.run('git', 'remote', 'get-url', 'origin') in {
             REPOSITORY, REPOSITORY[:-4], 'git@github.com:conradodeita/markina-gallery.git'}, 'repositorio_divergente')
@@ -358,6 +389,102 @@ class Host:
         require(data['free_bytes'] >= 8 * 1024**3, 'espaco_insuficiente')
         data['free_bytes'] = 8 * 1024**3
         validate_inventory(data)
+        return data
+
+    def live_gate_inventory(self):
+        """Snapshot read-only of the deployed 0090 runtime, with tenant counts only."""
+        require(self.run('git', 'remote', 'get-url', 'origin') in {
+            REPOSITORY, REPOSITORY[:-4], 'git@github.com:conradodeita/markina-gallery.git'},
+            'repositorio_divergente')
+        main_sha = self.main_sha()
+        checkout_sha = self.run('git', 'rev-parse', 'HEAD')
+        require(main_sha == checkout_sha and SHA.fullmatch(checkout_sha), 'checkout_nao_e_main')
+        require(not self.run('git', 'status', '--porcelain'), 'checkout_sujo')
+        active_versions = []
+        ids = self.run('docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
+        services = {}
+        api_env = None
+        for ident in ids:
+            d = self.inspect(ident)
+            labels = d['Config'].get('Labels') or {}
+            name = labels.get('com.docker.compose.service')
+            require(name in SERVICES and name not in services, 'servico_duplicado_ou_desconhecido')
+            env = dict(x.split('=', 1) for x in d['Config'].get('Env', []) if '=' in x)
+            status = d['State'].get('Status')
+            health = d['State'].get('Health', {}).get('Status')
+            require(status == 'running' and health in (None, 'healthy'), 'servico_nao_saudavel')
+            ports = d['NetworkSettings'].get('Ports') or {}
+            published = {port: bindings for port, bindings in ports.items() if bindings}
+            expected = {'80/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '8080'}]} if name == 'nginx' else {}
+            require(published == expected, 'porta_publicada_divergente')
+            services[name] = {
+                'image': d['Image'], 'status': status, 'health': health,
+                'version': env.get('APP_VERSION'), 'ports': published,
+                'compose_files': labels.get('com.docker.compose.project.config_files'),
+                'config_hash': labels.get('com.docker.compose.config-hash'),
+            }
+            if name in {'api', 'web', 'worker'}:
+                active_versions.append(env.get('APP_VERSION'))
+            if name == 'api':
+                api_env = env
+        require(set(services) == SERVICES and api_env is not None, 'servicos_incompletos')
+        require(api_env.get('APP_ENV') == 'production', 'ambiente_divergente')
+        gate = api_env.get('MERCADOPAGO_ALLOW_LIVE_PAYMENTS')
+        require(gate in {'true', 'false'}, 'gate_live_invalido')
+        try:
+            pairs = json.loads(api_env.get('MERCADOPAGO_TEST_CUSTOMERS', ''))
+            require(isinstance(pairs, list) and len(pairs) == 1, 'par_de_teste_divergente')
+            configured_pair = pilot_pair(pairs[0])
+        except (ValueError, TypeError, AttributeError):
+            raise GateError('par_de_teste_divergente') from None
+        current_pair, pair_fingerprint = self.current_test_pair()
+        require(configured_pair == current_pair, 'par_de_teste_divergente')
+        require(len(active_versions) == 3 and len(set(active_versions)) == 1
+                and isinstance(active_versions[0], str) and SHA.fullmatch(active_versions[0]),
+                'versao_ativa_divergente')
+        active_sha = active_versions[0]
+        self.run('git', 'merge-base', '--is-ancestor', LIVE_MINIMUM_SHA, active_sha)
+        self.run('git', 'merge-base', '--is-ancestor', active_sha, checkout_sha)
+        require(self.schema() == [LIVE_SCHEMA], 'schema_divergente')
+        key_probe = "from app.integration_secrets import IntegrationCipher; IntegrationCipher(); print('valid')"
+        require(self.run('docker', 'exec', next(i for i in ids if
+                self.inspect(i)['Config'].get('Labels', {}).get('com.docker.compose.service') == 'api'),
+                'python', '-B', '-c', key_probe) == 'valid', 'cofre_indisponivel')
+        matrix = self.pg("""SELECT json_build_object(
+          'preference_tenants', count(*),
+          'pix_enabled', count(*) FILTER (WHERE pix_enabled),
+          'mercadopago_enabled', count(*) FILTER (WHERE mercadopago_enabled),
+          'mp_enabled_production_active', count(*) FILTER (WHERE mercadopago_enabled
+            AND account_status = 'active' AND test_account IS FALSE),
+          'mp_enabled_test_active', count(*) FILTER (WHERE mercadopago_enabled
+            AND account_status = 'active' AND test_account IS TRUE),
+          'mp_enabled_unavailable', count(*) FILTER (WHERE mercadopago_enabled
+            AND (account_status IS DISTINCT FROM 'active' OR test_account IS NULL)),
+          'mp_disabled', count(*) FILTER (WHERE NOT mercadopago_enabled)
+        ) FROM (
+          SELECT p.tenant_id, p.pix_enabled, p.mercadopago_enabled,
+                 a.status AS account_status, a.test_account
+          FROM payment_preferences p
+          LEFT JOIN mercadopago_account a ON a.id = p.account_id AND a.tenant_id = p.tenant_id
+        ) tenant_settings""")
+        require(isinstance(matrix, dict) and set(matrix) == {
+            'preference_tenants', 'pix_enabled', 'mercadopago_enabled',
+            'mp_enabled_production_active', 'mp_enabled_test_active',
+            'mp_enabled_unavailable', 'mp_disabled'}
+            and all(type(value) is int and value >= 0 for value in matrix.values()),
+            'matriz_tenants_invalida')
+        https = self.health()
+        require(https == [200, 200, 200], 'smoke_https_falhou')
+        pending = [name for name in LIVE_PENDING if (STATE / name).exists()]
+        require(not pending, 'operacao_pendente')
+        data = {
+            'inventory_kind': 'mercadopago-live-gate-read-only', 'checkout_sha': checkout_sha,
+            'main_sha': main_sha, 'active_sha': active_sha, 'schema': LIVE_SCHEMA, 'project': PROJECT,
+            'origin': ORIGIN, 'nginx_bind': '127.0.0.1:8080', 'https': https,
+            'live_gate': gate, 'test_allowlist_pairs': len(pairs),
+            'test_allowlist_pair_fingerprint': pair_fingerprint,
+            'tenant_configuration_matrix': matrix, 'services': services, 'pending_markers': pending,
+        }
         return data
 
     def inspect_image(self, image):
@@ -1155,7 +1282,9 @@ def main():
         if args.sha is not None:
             data['target_sha'] = args.sha
         print(json.dumps(data, sort_keys=True))
-        print('inventory_fingerprint=' + validate_inventory(data))
+        result_fingerprint = (fingerprint(data) if data.get('inventory_kind') ==
+                              'mercadopago-live-gate-read-only' else validate_inventory(data))
+        print('inventory_fingerprint=' + result_fingerprint)
     elif args.mode == 'prepare':
         require(args.pair is not None and args.sha is not None, 'sha_e_par_obrigatorios')
         prepare(h, args.sha, load(args.pair))

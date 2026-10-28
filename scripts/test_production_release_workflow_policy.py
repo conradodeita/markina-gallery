@@ -98,6 +98,9 @@ def main() -> None:
     )[0]
     rollback_release = WORKFLOW.split("  production-app-rollback:", 1)[1]
     orders_preflight = WORKFLOW.split("  orders-pilot-preflight:", 1)[1]
+    orders_wrapper_install = WORKFLOW.split("  orders-live-inventory-wrapper-install:", 1)[1].split(
+        "  orders-pilot-preflight:", 1
+    )[0]
     preview_wrapper_install = WORKFLOW.split("  preview-adjustment-migration-wrapper-install:", 1)[1].split(
         "  preview-adjustment-migration-scope:", 1
     )[0]
@@ -128,6 +131,14 @@ def main() -> None:
     require("- infinitepay-retirement-preflight", "operação manual de preflight", WORKFLOW)
     require("- infinitepay-retirement-release", "operação manual de release", WORKFLOW)
     require("- orders-pilot-inventory", "operação manual de inventário Orders", WORKFLOW)
+    require("- orders-live-inventory-wrapper-install", "operação manual de atualização do inventário read-only Orders", WORKFLOW)
+    require("inputs.operation == 'orders-live-inventory-wrapper-install'", "instalador Orders só manual na main", orders_wrapper_install)
+    require("environment: production", "wrapper Orders usa ambiente protegido", orders_wrapper_install)
+    require("needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gitleaks]",
+            "wrapper Orders depende dos gates de CI", orders_wrapper_install)
+    require("scripts/install-prod-preview-migration-wrapper.sh", "wrapper Orders instala artefato root-owned protegido", orders_wrapper_install)
+    if any(token in orders_wrapper_install.lower() for token in ("docker ", "docker-compose", "alembic upgrade", "orders_pilot_release.py")):
+        raise AssertionError("instalador do wrapper Orders não pode alterar serviços ou executar helpers de inventário")
     require("- preview-adjustment-migration-preflight", "preflight manual da migration 0090", WORKFLOW)
     require("- preview-adjustment-migration-release", "release manual da migration 0090", WORKFLOW)
     require("- preview-adjustment-migration-wrapper-install", "instalação manual do wrapper restrito", WORKFLOW)
