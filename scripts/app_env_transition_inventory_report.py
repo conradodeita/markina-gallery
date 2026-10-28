@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Valida e resume o recibo sanitizado do inventário APP_ENV."""
 
 from __future__ import annotations

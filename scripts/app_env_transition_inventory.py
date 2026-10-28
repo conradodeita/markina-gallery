@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Coleta sanitizada do inventário APP_ENV em produção, sem efeitos colaterais."""
 
 from __future__ import annotations
