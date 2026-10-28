@@ -10,6 +10,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend.app.environment_transition_inventory import render_environment_inventory
+from scripts.app_env_transition_inventory import (
+    SAFE_FAILURE_CODES,
+    UNKNOWN_FAILURE_CODE,
+)
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
@@ -19,6 +23,7 @@ REPORT_FIELDS = {
     "inventory",
     "blockers",
     "approval_fingerprint",
+    "failure_category",
 }
 
 
@@ -37,11 +42,15 @@ def validate_report(lines: list[str], target_sha: str) -> dict:
     if report["collection_status"] == "incomplete":
         if (report["inventory"] is not None
                 or report["blockers"] != ["coleta_incompleta"]
-                or report["approval_fingerprint"] is not None):
+                or report["approval_fingerprint"] is not None
+                or not isinstance(report["failure_category"], str)
+                or report["failure_category"] not in SAFE_FAILURE_CODES | {UNKNOWN_FAILURE_CODE}):
             raise ValueError("relatorio_invalido")
         return report
 
-    if report["collection_status"] != "complete" or not isinstance(report["inventory"], dict):
+    if (report["collection_status"] != "complete"
+            or not isinstance(report["inventory"], dict)
+            or report["failure_category"] is not None):
         raise ValueError("relatorio_invalido")
     try:
         rendered = render_environment_inventory(report["inventory"])
@@ -69,6 +78,7 @@ def summary(report: dict) -> str:
     if inventory is None:
         lines.extend([
             "- Fontes: incompletas; o relatório não autoriza alteração.",
+            f"- Categoria sanitizada: `{report['failure_category']}`",
             "- Fingerprint: indisponível",
         ])
     else:

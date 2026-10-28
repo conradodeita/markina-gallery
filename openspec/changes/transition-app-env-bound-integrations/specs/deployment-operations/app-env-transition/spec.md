@@ -21,7 +21,9 @@ O sistema SHALL expor o inventário operacional somente por workflow manual em `
 #### Scenario: Fonte da coleta ausente ou inacessível
 - **WHEN** a revisão aprovada é confirmada, mas uma fonte necessária não pode ser lida ou validada
 - **THEN** o workflow apresenta um envelope sanitizado indicando coleta incompleta e bloqueio genérico
+- **AND** inclui um código de falha de uma lista fechada e revisada; exceções não classificadas usam uma categoria genérica
 - **AND** inventário parcial, erro bruto e fingerprint não são emitidos
+- **AND** valores de exceções, comandos, caminhos, variáveis e dados consultados não são emitidos
 - **AND** nenhuma configuração, banco, arquivo ou serviço é alterado
 
 ### Requirement: Inventário ambiental agregado e redigido
