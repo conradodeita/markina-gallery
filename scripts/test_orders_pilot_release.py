@@ -70,6 +70,14 @@ class CliContractTests(unittest.TestCase):
             release.Host().run('git', 'private-argument', diagnostic_stage='verify_checkout_ancestry')
         self.assertNotIn('private exception text', str(caught.exception))
 
+    def test_git_ancestry_reports_only_unexpected_numeric_exit_status(self):
+        with (patch.object(release.Host, 'run', return_value=128),
+              self.assertRaisesRegex(release.GateError,
+                  'comando_operacional_falhou:verify_checkout_ancestry:exit_status_128') as caught):
+            release.Host().is_ancestor('a' * 40, 'b' * 40, 'verify_checkout_ancestry')
+        self.assertNotIn('a' * 40, str(caught.exception))
+        self.assertNotIn('b' * 40, str(caught.exception))
+
     def test_inventory_reports_only_validated_git_shas_for_checkout_lineage_mismatch(self):
         checkout_sha = 'b' * 40
         main_sha = 'a' * 40

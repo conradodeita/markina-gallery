@@ -301,7 +301,10 @@ class Host:
         result = self.run('git', 'merge-base', '--is-ancestor', ancestor, descendant,
                           check=False, diagnostic_stage=diagnostic_stage)
         if result not in (0, 1):
-            raise GateError('comando_operacional_falhou:' + diagnostic_stage) from None
+            stage = diagnostic_stage if isinstance(diagnostic_stage, str) and re.fullmatch(
+                r'[a-z][a-z0-9_]{0,63}', diagnostic_stage) else 'verify_git_ancestry'
+            status = str(result) if isinstance(result, int) else 'desconhecido'
+            raise GateError('comando_operacional_falhou:' + stage + ':exit_status_' + status) from None
         return result == 0
 
     def inspect(self, ident, diagnostic_stage=None):

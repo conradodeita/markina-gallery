@@ -42,6 +42,12 @@
 - Correção local: adicionar categorias estáticas sanitizadas para `TimeoutExpired`, `OSError` (somente errno numérico), `CalledProcessError` (somente status numérico) e outros `SubprocessError`; mensagens, argumentos, ambiente e saídas permanecem omitidos. A guarda de ancestralidade e o fail-closed não mudam.
 - Validação da correção, nova CI, instalação do helper fixado e execução do preflight continuam pendentes. A task 2.1 segue aberta até que o inventário read-only gere evidência completa e revisável.
 
+## Retorno Git fora dos códigos de ancestralidade — 28/10/2026
+
+- O workflow read-only `40657916527`, no SHA `a6bc471da33aef6324381908eb0e92eacedcc958`, falhou em `verify_checkout_ancestry` com o texto genérico. O job de instalação no mesmo SHA (`40656462828`) confirmou `preview_wrapper_install=success`; o helper de `main` continha o novo tratamento sanitizado por tipo, mas ainda emitia erro genérico quando o código retornado por `git merge-base --is-ancestor` não era `0` ou `1`.
+- A saída pública não registra o status Git efetivo; portanto não se presume a causa específica. Correção local: reportar somente o número do status inesperado junto ao estágio estático, sem argumentos nem saída do Git. O retorno `1` permanece a interpretação normal de não ancestralidade.
+- O preflight permaneceu somente leitura e não produziu inventário/fingerprint. Gate, serviços, banco, credenciais e pagamentos não foram alterados. A correção, CI, instalação e novo inventário ainda estão pendentes.
+
 ## Limites ainda não validados
 
 - O estado do gate no runtime publicado ainda não foi confirmado pelo inventário atual compatível; a execução anterior falhou antes dessa leitura. Não alterar o gate até a task operacional 2.1 produzir inventário e plano exatos.
