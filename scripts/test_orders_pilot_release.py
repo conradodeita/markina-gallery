@@ -70,10 +70,10 @@ class CliContractTests(unittest.TestCase):
             release.Host().run('git', 'private-argument', diagnostic_stage='verify_checkout_ancestry')
         self.assertNotIn('private exception text', str(caught.exception))
 
-    def test_git_ancestry_reports_only_unexpected_numeric_exit_status(self):
-        with (patch.object(release.Host, 'run', return_value=128),
+    def test_git_ancestry_unexpected_status_reports_sanitized_object_availability(self):
+        with (patch.object(release.Host, 'run', side_effect=[128, 'false', 0, 1]),
               self.assertRaisesRegex(release.GateError,
-                  'comando_operacional_falhou:verify_checkout_ancestry:exit_status_128') as caught):
+                  'exit_status_128:shallow_false:ancestor_commit_present:descendant_commit_missing') as caught):
             release.Host().is_ancestor('a' * 40, 'b' * 40, 'verify_checkout_ancestry')
         self.assertNotIn('a' * 40, str(caught.exception))
         self.assertNotIn('b' * 40, str(caught.exception))

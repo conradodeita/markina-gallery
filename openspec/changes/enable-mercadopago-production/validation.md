@@ -48,6 +48,12 @@
 - A saída pública não registra o status Git efetivo; portanto não se presume a causa específica. Correção local: reportar somente o número do status inesperado junto ao estágio estático, sem argumentos nem saída do Git. O retorno `1` permanece a interpretação normal de não ancestralidade.
 - O preflight permaneceu somente leitura e não produziu inventário/fingerprint. Gate, serviços, banco, credenciais e pagamentos não foram alterados. A correção, CI, instalação e novo inventário ainda estão pendentes.
 
+## Diagnóstico de objetos Git indisponíveis — 28/10/2026
+
+- Run `40664700464`, no SHA `0c0018dd6ef885a63df8054d1bc9f743cf0151df`, confirmou `exit_status_128` em `verify_checkout_ancestry`. Esse status ocorre no helper instalado quando `git merge-base` retorna valor diferente de `0` ou `1`; a mensagem anterior omitia o número.
+- Correção local: após status anormal, consultar somente `git rev-parse --is-shallow-repository` e `git cat-file -e` para cada commit; a mensagem pública informa estados booleanos de repositório raso e presença dos objetos, nunca os SHAs nem saída textual. A guarda continua fail-closed.
+- O run falhou antes de gerar inventário/fingerprint e não alterou gate, serviços, banco, credenciais ou pagamentos. Testes focados, CI, instalação e nova execução read-only ainda pendentes.
+
 ## Limites ainda não validados
 
 - O estado do gate no runtime publicado ainda não foi confirmado pelo inventário atual compatível; a execução anterior falhou antes dessa leitura. Não alterar o gate até a task operacional 2.1 produzir inventário e plano exatos.
