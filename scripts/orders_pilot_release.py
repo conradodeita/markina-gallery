@@ -304,7 +304,19 @@ class Host:
             stage = diagnostic_stage if isinstance(diagnostic_stage, str) and re.fullmatch(
                 r'[a-z][a-z0-9_]{0,63}', diagnostic_stage) else 'verify_git_ancestry'
             status = str(result) if isinstance(result, int) else 'desconhecido'
-            raise GateError('comando_operacional_falhou:' + stage + ':exit_status_' + status) from None
+            shallow = self.run('git', 'rev-parse', '--is-shallow-repository',
+                               diagnostic_stage='check_git_shallow').strip().lower()
+            if shallow not in ('true', 'false'):
+                shallow = 'desconhecido'
+            present = []
+            for label, sha in (('ancestor', ancestor), ('descendant', descendant)):
+                object_status = self.run('git', 'cat-file', '-e', f'{sha}^{{commit}}', check=False,
+                                         diagnostic_stage=f'check_{label}_commit')
+                present.append(label + '_commit_' + ('present' if object_status == 0
+                                                      else 'missing' if object_status == 1
+                                                      else 'unknown'))
+            details = ':shallow_' + shallow + ':' + ':'.join(present)
+            raise GateError('comando_operacional_falhou:' + stage + ':exit_status_' + status + details) from None
         return result == 0
 
     def inspect(self, ident, diagnostic_stage=None):
