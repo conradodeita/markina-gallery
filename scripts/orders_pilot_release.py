@@ -20,7 +20,8 @@ import subprocess
 import tarfile
 import time
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
 ROOT = Path('/opt/markina-gallery')
@@ -319,6 +320,38 @@ class Host:
             raise GateError('comando_operacional_falhou:' + stage + ':exit_status_' + status + details) from None
         return result == 0
 
+    def is_remote_ancestor(self, ancestor, descendant):
+        """Verify Git ancestry through GitHub without fetching objects into production."""
+        if not SHA.fullmatch(ancestor or '') or not SHA.fullmatch(descendant or ''):
+            raise GateError('sha_invalido')
+        url = (f'https://api.github.com/repos/conradodeita/markina-gallery/compare/'
+               f'{ancestor}...{descendant}')
+        request = Request(url, headers={
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2026-03-10',
+        })
+        try:
+            with urlopen(request, timeout=20) as response:
+                if not response.geturl().startswith('https://api.github.com/'):
+                    raise GateError('fonte_ancestralidade_divergente')
+                raw = response.read(1_000_001)
+            if len(raw) > 1_000_000:
+                raise GateError('resposta_ancestralidade_excessiva')
+            comparison = json.loads(raw)
+        except GateError:
+            raise
+        except (URLError, TimeoutError, OSError, ValueError, TypeError, AttributeError):
+            raise GateError('ancestralidade_remota_indisponivel') from None
+        if not isinstance(comparison, dict):
+            raise GateError('resposta_ancestralidade_invalida')
+        base = comparison.get('base_commit')
+        merge_base = comparison.get('merge_base_commit')
+        if not isinstance(base, dict) or not isinstance(merge_base, dict):
+            raise GateError('resposta_ancestralidade_invalida')
+        if base.get('sha') != ancestor or not SHA.fullmatch(merge_base.get('sha', '')):
+            raise GateError('resposta_ancestralidade_invalida')
+        return comparison.get('status') in ('ahead', 'identical') and merge_base['sha'] == ancestor
+
     def inspect(self, ident, diagnostic_stage=None):
         return json.loads(self.run('docker', 'inspect', ident, diagnostic_stage=diagnostic_stage))[0]
 
@@ -448,7 +481,7 @@ class Host:
         # blob is pinned by the forced-command wrapper. The deployed source tree
         # may legitimately lag support-only commits; it must remain clean and be
         # an ancestor of that reviewed candidate.
-        if not self.is_ancestor(checkout_sha, main_sha, 'verify_checkout_ancestry'):
+        if not self.is_remote_ancestor(checkout_sha, main_sha):
             raise GateError(f'checkout_fora_da_main_history:checkout_sha={checkout_sha};main_sha={main_sha}')
         require(not self.run('git', 'status', '--porcelain', diagnostic_stage='verify_checkout_clean'),
                 'checkout_sujo')

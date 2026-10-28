@@ -12,6 +12,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.error import URLError
 
 import orders_pilot_release as release
 
@@ -78,6 +79,53 @@ class CliContractTests(unittest.TestCase):
         self.assertNotIn('a' * 40, str(caught.exception))
         self.assertNotIn('b' * 40, str(caught.exception))
 
+    def test_remote_git_ancestry_requires_github_merge_base_to_match_checkout(self):
+        ancestor = 'a' * 40
+        descendant = 'b' * 40
+        payload = json.dumps({'status': 'ahead', 'base_commit': {'sha': ancestor},
+                              'merge_base_commit': {'sha': ancestor}}).encode()
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                self.close()
+
+            def geturl(self):
+                return 'https://api.github.com/repos/conradodeita/markina-gallery/compare/'
+
+        with patch.object(release, 'urlopen', return_value=Response(payload)) as open_url:
+            self.assertTrue(release.Host().is_remote_ancestor(ancestor, descendant))
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, f'https://api.github.com/repos/conradodeita/markina-gallery/compare/{ancestor}...{descendant}')
+        self.assertEqual(request.get_header('X-github-api-version'), '2026-03-10')
+
+    def test_remote_git_ancestry_rejects_divergent_history(self):
+        ancestor = 'a' * 40
+        descendant = 'b' * 40
+        payload = json.dumps({'status': 'diverged', 'base_commit': {'sha': ancestor},
+                              'merge_base_commit': {'sha': 'c' * 40}}).encode()
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                self.close()
+
+            def geturl(self):
+                return 'https://api.github.com/repos/conradodeita/markina-gallery/compare/'
+
+        with patch.object(release, 'urlopen', return_value=Response(payload)):
+            self.assertFalse(release.Host().is_remote_ancestor(ancestor, descendant))
+
+    def test_remote_git_ancestry_fails_closed_without_leaking_api_error(self):
+        with (patch.object(release, 'urlopen', side_effect=URLError('private host detail')),
+              self.assertRaisesRegex(release.GateError, 'ancestralidade_remota_indisponivel') as caught):
+            release.Host().is_remote_ancestor('a' * 40, 'b' * 40)
+        self.assertNotIn('private host detail', str(caught.exception))
+
     def test_inventory_reports_only_validated_git_shas_for_checkout_lineage_mismatch(self):
         checkout_sha = 'b' * 40
         main_sha = 'a' * 40
@@ -87,12 +135,11 @@ class CliContractTests(unittest.TestCase):
                 return release.REPOSITORY
             if args == ('git', 'rev-parse', 'HEAD'):
                 return checkout_sha
-            if args == ('git', 'merge-base', '--is-ancestor', checkout_sha, main_sha):
-                return 1
             raise AssertionError(args)
 
         with (patch.object(release.Host, 'run', side_effect=run),
               patch.object(release.Host, 'main_sha', return_value=main_sha),
+              patch.object(release.Host, 'is_remote_ancestor', return_value=False),
               self.assertRaisesRegex(release.GateError,
                   f'checkout_fora_da_main_history:checkout_sha={checkout_sha};main_sha={main_sha}') as caught):
             release.Host().live_gate_inventory()
@@ -147,6 +194,7 @@ class CliContractTests(unittest.TestCase):
               patch.object(release.Path, 'resolve', return_value=release.ROOT),
               patch.object(release.Host, 'schema', return_value=[release.LIVE_SCHEMA]),
               patch.object(release.Host, 'main_sha', return_value=sha),
+              patch.object(release.Host, 'is_remote_ancestor', return_value=True),
               patch.object(release.Host, 'run', side_effect=run),
               patch.object(release.Host, 'inspect', side_effect=inspect),
               patch.object(release.Host, 'current_test_pair', return_value=(pair, release.fingerprint(pair))),
@@ -164,7 +212,7 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(data['live_gate'], 'false')
         self.assertEqual(data['main_sha'], sha)
         self.assertEqual(data['checkout_sha'], checkout_sha)
-        self.assertIn(('git', 'merge-base', '--is-ancestor', checkout_sha, sha), git_calls)
+        self.assertNotIn(('git', 'merge-base', '--is-ancestor', checkout_sha, sha), git_calls)
         self.assertEqual(data['active_sha'], active_sha)
         self.assertEqual(data['test_allowlist_pairs'], 1)
         self.assertEqual(data['test_allowlist_pair_fingerprint'], release.fingerprint(pair))
