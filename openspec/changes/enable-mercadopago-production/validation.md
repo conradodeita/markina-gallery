@@ -35,6 +35,13 @@
 - O SHA de produto documentado para o runtime publicado, `0dd015a62447e0c8d4c6af16b381140c8118f2ec`, é ancestral do `main` atual. Isso não explica a divergência do `HEAD` do checkout operacional. O inventário não deve prosseguir até identificar o HEAD real e confirmar sua proveniência; nenhuma guarda será removida por inferência.
 - Ajuste local em andamento: distinguir resultado legítimo `git merge-base --is-ancestor` falso de falha de execução e, somente nessa condição, reportar os SHAs Git validados para permitir a reconciliação. Repetir CI, instalar o wrapper protegido e novo preflight ainda pendentes.
 
+## Diagnóstico do subprocesso de ancestralidade — 28/10/2026
+
+- Run `40650111265` no SHA `f9a3c15eec17a63ed3cdf9448976109ed7155abc`: CI e instalação protegida do wrapper concluíram com sucesso. A instalação alterou apenas o helper de inventário autorizado por hash; não abriu o gate nem reiniciou serviços.
+- Run read-only `40651611371`, no mesmo SHA: os gates gerais passaram, mas `orders-pilot-preflight` falhou em `verify_checkout_ancestry` com `comando_operacional_falhou`. O erro não identifica a classe da exceção, portanto ainda não diferencia timeout, falha do sistema ou erro de subprocesso. O inventário e fingerprint não foram produzidos; nenhuma configuração financeira, serviço, banco ou pagamento foi alterado.
+- Correção local: adicionar categorias estáticas sanitizadas para `TimeoutExpired`, `OSError` (somente errno numérico), `CalledProcessError` (somente status numérico) e outros `SubprocessError`; mensagens, argumentos, ambiente e saídas permanecem omitidos. A guarda de ancestralidade e o fail-closed não mudam.
+- Validação da correção, nova CI, instalação do helper fixado e execução do preflight continuam pendentes. A task 2.1 segue aberta até que o inventário read-only gere evidência completa e revisável.
+
 ## Limites ainda não validados
 
 - O estado do gate no runtime publicado ainda não foi confirmado pelo inventário atual compatível; a execução anterior falhou antes dessa leitura. Não alterar o gate até a task operacional 2.1 produzir inventário e plano exatos.
