@@ -126,8 +126,18 @@ class CliContractTests(unittest.TestCase):
             release.Host().is_remote_ancestor('a' * 40, 'b' * 40)
         self.assertNotIn('private host detail', str(caught.exception))
 
-    def test_incomplete_service_inventory_reports_only_static_missing_services(self):
-        services = {name: {} for name in release.SERVICES - {'face-index-worker'}}
+    def test_live_inventory_requires_current_services_but_allows_retired_services_absent(self):
+        services = {name: {} for name in release.SERVICES - release.LIVE_RETIRED_SERVICES}
+        self.assertIsNone(release.require_complete_service_inventory(services, {}))
+
+    def test_live_inventory_fails_if_a_retired_worker_is_active(self):
+        services = {name: {} for name in release.SERVICES - release.LIVE_RETIRED_SERVICES}
+        services['raw-development-worker'] = {}
+        with self.assertRaisesRegex(release.GateError, 'servicos_aposentados_ativos=raw-development-worker'):
+            release.require_complete_service_inventory(services, {})
+
+    def test_live_inventory_reports_missing_current_service(self):
+        services = {name: {} for name in release.SERVICES - release.LIVE_RETIRED_SERVICES - {'face-index-worker'}}
         with self.assertRaisesRegex(release.GateError,
                                     'servicos_incompletos:ausentes=face-index-worker:api_config=present'):
             release.require_complete_service_inventory(services, {})
@@ -159,7 +169,8 @@ class CliContractTests(unittest.TestCase):
         matrix = {'preference_tenants': 3, 'pix_enabled': 2, 'mercadopago_enabled': 2,
                   'mp_enabled_production_active': 1, 'mp_enabled_test_active': 1,
                   'mp_enabled_unavailable': 0, 'mp_disabled': 1}
-        ids = {name: str(index).zfill(64) for index, name in enumerate(sorted(release.SERVICES), 1)}
+        ids = {name: str(index).zfill(64) for index, name in
+               enumerate(sorted(release.SERVICES - release.LIVE_RETIRED_SERVICES), 1)}
 
         git_calls = []
 

@@ -64,6 +64,7 @@ SPECIALIZED = ('face-index-worker', 'face-gemma-index-worker', 'face-search-work
                'face-maintenance-worker', 'preview-adjustment-worker', 'raw-development-worker')
 WRITERS = ('api', 'worker') + SPECIALIZED
 SERVICES = set(WRITERS) | {'web', 'nginx', 'db', 'redis', 'evolution-api', 'evolution-db', 'evolution-redis'}
+LIVE_RETIRED_SERVICES = {'face-gemma-index-worker', 'raw-development-worker'}
 EXTRAS = (STATE / 'branding.compose.yml', ROOT / 'docker/docker-compose.raw-development.yml',
           ROOT / 'docker/docker-compose.preview-adjustment.yml', ROOT / 'docker/docker-compose.system-monitor.yml',
     STATE / 'system-monitor.compose.yml', PILLOW_OVERLAY, BASELINE_ORDERS_OVERLAY)
@@ -190,7 +191,11 @@ def validate_inventory(data):
 
 
 def require_complete_service_inventory(services, api_env):
-    missing = sorted(SERVICES - set(services))
+    observed = set(services)
+    retired_active = sorted(LIVE_RETIRED_SERVICES & observed)
+    if retired_active:
+        raise GateError('servicos_aposentados_ativos=' + ','.join(retired_active))
+    missing = sorted((SERVICES - LIVE_RETIRED_SERVICES) - observed)
     if missing or api_env is None:
         api_config = 'present' if api_env is not None else 'missing'
         names = ','.join(missing) if missing else 'none'
