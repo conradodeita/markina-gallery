@@ -126,6 +126,17 @@ def require(condition, category):
         raise GateError(category)
 
 
+def app_environment_diagnostic(value):
+    """Return a small allowlisted category, never an arbitrary environment value."""
+    if value is None or value == '':
+        return 'ausente'
+    if value == 'production':
+        return 'production'
+    if value in {'staging', 'homolog', 'homologation', 'development', 'test'}:
+        return 'outro_ambiente_conhecido'
+    return 'outro_valor'
+
+
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
@@ -527,7 +538,9 @@ class Host:
             if name == 'api':
                 api_env = env
         require_complete_service_inventory(services, api_env)
-        require(api_env.get('APP_ENV') == 'production', 'ambiente_divergente')
+        if api_env.get('APP_ENV') != 'production':
+            category = app_environment_diagnostic(api_env.get('APP_ENV'))
+            raise GateError('ambiente_divergente:' + category)
         gate = api_env.get('MERCADOPAGO_ALLOW_LIVE_PAYMENTS')
         require(gate in {'true', 'false'}, 'gate_live_invalido')
         try:
