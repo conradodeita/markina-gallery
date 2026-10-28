@@ -107,8 +107,25 @@ class CliContractTests(unittest.TestCase):
         with patch.object(release, 'urlopen', return_value=Response(payload)) as open_url:
             self.assertTrue(release.Host().is_remote_ancestor(ancestor, descendant))
         request = open_url.call_args.args[0]
-        self.assertEqual(request.full_url, f'https://api.github.com/repos/conradodeita/markina-gallery/compare/{ancestor}...{descendant}')
+        self.assertEqual(request.full_url,
+                         f'https://api.github.com/repos/conradodeita/markina-gallery/compare/{ancestor}...{descendant}?per_page=1')
         self.assertEqual(request.get_header('X-github-api-version'), '2026-03-10')
+
+    def test_remote_git_ancestry_rejects_oversized_github_response(self):
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                self.close()
+
+            def geturl(self):
+                return 'https://api.github.com/repos/conradodeita/markina-gallery/compare/'
+
+        response = Response(b'x' * 1_000_001)
+        with patch.object(release, 'urlopen', return_value=response), \
+                self.assertRaisesRegex(release.GateError, 'resposta_ancestralidade_excessiva'):
+            release.Host().is_remote_ancestor('a' * 40, 'b' * 40)
 
     def test_remote_git_ancestry_rejects_divergent_history(self):
         ancestor = 'a' * 40
