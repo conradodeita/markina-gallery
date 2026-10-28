@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import secrets
 from dataclasses import replace
 from uuid import uuid4
@@ -81,3 +82,51 @@ def test_wrong_master_material_fails_and_restored_keyring_recovers(secret_keyrin
     assert "synthetic-restore-value" not in str(failure.value)
     monkeypatch.setenv("INTEGRATION_SECRET_KEYS", json.dumps(secret_keyring))
     assert IntegrationCipher().decrypt(envelope, tenant_id=tenant, credential_id=credential) == "synthetic-restore-value"
+
+
+def test_explicit_contexts_reencrypt_without_mutating_process_environment(secret_keyring, monkeypatch):
+    tenant, credential = uuid4(), uuid4()
+    monkeypatch.setenv("APP_ENV", "test-process")
+    monkeypatch.setenv("INTEGRATION_SECRET_ENV", "test-process")
+    before = {
+        name: os.environ.get(name)
+        for name in ("APP_ENV", "INTEGRATION_SECRET_ENV", "INTEGRATION_SECRET_ACTIVE_KEY_ID",
+                     "INTEGRATION_SECRET_KEYS")
+    }
+    keys = {name: base64.b64decode(value, validate=True) for name, value in secret_keyring.items()}
+    source = IntegrationCipher.from_explicit_context(
+        environment="staging", secret_environment="staging", active_key_id="old", keys=keys)
+    destination = source.for_environment("production")
+    original = source.encrypt("synthetic-mp-token", tenant_id=tenant, credential_id=credential)
+
+    with pytest.raises(IntegrationSecretError):
+        destination.decrypt(original, tenant_id=tenant, credential_id=credential)
+    plaintext = source.decrypt(original, tenant_id=tenant, credential_id=credential)
+    migrated = destination.encrypt(plaintext, tenant_id=tenant, credential_id=credential)
+    assert migrated.environment == "production"
+    assert migrated.key_id == original.key_id
+    assert destination.decrypt(migrated, tenant_id=tenant, credential_id=credential) == plaintext
+    with pytest.raises(IntegrationSecretError):
+        source.decrypt(migrated, tenant_id=tenant, credential_id=credential)
+    assert {
+        name: os.environ.get(name)
+        for name in before
+    } == before
+
+
+@pytest.mark.parametrize("environment,secret_environment,active_key_id,keys", [
+    ("staging", "production", "old", {"old": b"x" * 32}),
+    ("staging", "staging", "missing", {"old": b"x" * 32}),
+    ("staging", "staging", "old", {"old": b"short"}),
+    (" staging", " staging", "old", {"old": b"x" * 32}),
+])
+def test_explicit_context_rejects_mismatched_or_invalid_keyrings(
+    environment, secret_environment, active_key_id, keys,
+):
+    with pytest.raises(IntegrationSecretError, match="temporariamente indisponível"):
+        IntegrationCipher.from_explicit_context(
+            environment=environment,
+            secret_environment=secret_environment,
+            active_key_id=active_key_id,
+            keys=keys,
+        )

@@ -1,11 +1,15 @@
 """Envelope dedicado a credenciais de integração; material mestre só no servidor."""
 
+from __future__ import annotations
+
 import base64
 import json
 import os
 import re
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from uuid import UUID
 
 from cryptography.exceptions import InvalidTag
@@ -54,25 +58,78 @@ class SecretEnvelope:
 class IntegrationCipher:
     def __init__(self):
         try:
-            self.environment = os.environ.get("APP_ENV", "development").strip()
-            if not self.environment or os.environ.get("INTEGRATION_SECRET_ENV") != self.environment:
-                raise ValueError()
-            self.active_key_id = os.environ["INTEGRATION_SECRET_ACTIVE_KEY_ID"]
+            environment = os.environ.get("APP_ENV", "development").strip()
+            secret_environment = os.environ.get("INTEGRATION_SECRET_ENV")
+            active_key_id = os.environ["INTEGRATION_SECRET_ACTIVE_KEY_ID"]
             raw = json.loads(os.environ["INTEGRATION_SECRET_KEYS"], object_pairs_hook=_pairs)
             if not isinstance(raw, dict) or not 1 <= len(raw) <= 16:
                 raise ValueError()
-            self._keys = {}
+            keys = {}
             for key_id, value in raw.items():
                 if not re.fullmatch(r"[A-Za-z0-9_-]{1,48}", key_id):
                     raise ValueError()
                 key = base64.b64decode(value, validate=True)
                 if len(key) != 32:
                     raise ValueError()
-                self._keys[key_id] = key
-            if self.active_key_id not in self._keys:
-                raise ValueError()
+                keys[key_id] = key
+            self._configure(environment, secret_environment, active_key_id, keys)
         except (KeyError, ValueError, TypeError):
             raise IntegrationSecretError(MESSAGE) from None
+
+    @classmethod
+    def from_explicit_context(
+        cls,
+        *,
+        environment: str,
+        secret_environment: str,
+        active_key_id: str,
+        keys: Mapping[str, bytes],
+    ) -> IntegrationCipher:
+        """Create an isolated cipher context without reading or changing process env."""
+        instance = cls.__new__(cls)
+        try:
+            instance._configure(environment, secret_environment, active_key_id, keys)
+        except (KeyError, ValueError, TypeError):
+            raise IntegrationSecretError(MESSAGE) from None
+        return instance
+
+    def for_environment(self, environment: str) -> IntegrationCipher:
+        """Reuse the validated in-memory keyring with a distinct authenticated context."""
+        return self.from_explicit_context(
+            environment=environment,
+            secret_environment=environment,
+            active_key_id=self.active_key_id,
+            keys=self._keys,
+        )
+
+    def _configure(
+        self,
+        environment: str,
+        secret_environment: str,
+        active_key_id: str,
+        keys: Mapping[str, bytes],
+    ) -> None:
+        if (not isinstance(environment, str) or not environment
+                or environment != environment.strip()
+                or not isinstance(secret_environment, str)
+                or secret_environment != environment
+                or not isinstance(active_key_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,48}", active_key_id)
+                or not isinstance(keys, Mapping)
+                or not 1 <= len(keys) <= 16):
+            raise ValueError()
+        copied: dict[str, bytes] = {}
+        for key_id, key in keys.items():
+            if (not isinstance(key_id, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,48}", key_id)
+                    or not isinstance(key, bytes) or len(key) != 32):
+                raise ValueError()
+            copied[key_id] = key
+        if active_key_id not in copied:
+            raise ValueError()
+        self.environment = environment
+        self.active_key_id = active_key_id
+        self._keys = MappingProxyType(copied)
 
     def _aad(self, tenant_id: UUID, credential_id: UUID, envelope: SecretEnvelope) -> bytes:
         if (not isinstance(tenant_id, UUID) or not isinstance(credential_id, UUID)
