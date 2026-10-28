@@ -126,6 +126,12 @@ class CliContractTests(unittest.TestCase):
             release.Host().is_remote_ancestor('a' * 40, 'b' * 40)
         self.assertNotIn('private host detail', str(caught.exception))
 
+    def test_incomplete_service_inventory_reports_only_static_missing_services(self):
+        services = {name: {} for name in release.SERVICES - {'face-index-worker'}}
+        with self.assertRaisesRegex(release.GateError,
+                                    'servicos_incompletos:ausentes=face-index-worker:api_config=present'):
+            release.require_complete_service_inventory(services, {})
+
     def test_inventory_reports_only_validated_git_shas_for_checkout_lineage_mismatch(self):
         checkout_sha = 'b' * 40
         main_sha = 'a' * 40
