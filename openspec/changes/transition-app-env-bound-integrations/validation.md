@@ -1,5 +1,12 @@
 # Validação
 
+## 28/10/2026 — preflight Orders não substitui inventário APP_ENV
+
+- O CI do merge #336 (`40757983730`, SHA `cc62353d3e68b86f232b9a225d5c7791c6c771e0`) concluiu com sucesso. O wrapper SSH read-only foi atualizado pelo fluxo protegido `40760247201`; o job de instalação confirmou sucesso.
+- A coleta `orders-pilot-inventory` `40762760966`, no mesmo SHA, passou pelos gates e validou serviços/portas, mas falhou fechado em `ambiente_divergente:outro_ambiente_conhecido`. O preflight Orders interrompe antes do schema, matriz de tenants, gate live, HTTPS e fingerprint; não revela o valor bruto de `APP_ENV`.
+- Nenhum inventário/fingerprint APP_ENV, contagem de banco, confirmação de biometria ou classificação de integrações foi produzido. A operação foi somente-leitura: nenhum serviço, configuração, arquivo, banco, credencial, gate ou pagamento foi alterado.
+- A conclusão do run confirma que o fluxo Orders não pode ser usado para a transição APP_ENV. O coletor remoto dedicado permanece pendente na task 3.1; até ele passar CI e retornar um relatório sanitizado, a transição e o plano de liberação geral continuam bloqueados.
+
 ## 28/10/2026 — inventário local (task 1.1)
 
 - `rg` confirmou os consumidores de `APP_ENV`, classificadores `*_CREDENTIAL_ENV`, chaves de cofre e campos cifrados em `backend/app`; a matriz e a classificação criptográfica estão em `inventory.md`.
@@ -65,3 +72,15 @@
 - O CI do PR #335, SHA `947582a6b297e5ae650116b0369fef3dfc6c2e88`, run [`40737909487`](https://github.com/conradodeita/markina-gallery/actions/runs/40737909487), terminou **success**. Os três shards backend passaram; o shard 1 aprovou **543 testes, 5 skipped e 1096 deselected**. O banco `app_env_transition_test` foi provisionado no shard, e o teste PostgreSQL `test_postgresql_transition_locks_and_preserves_financial_rows` deixou de falhar; seus asserts verificam envelopes/credenciais por tenant, total, revisão do carrinho, status e ID da order.
 - Também passaram `openspec`, `ci-scope`, `gitleaks`, `frontend`, `backend-quality`, imagens amd64/arm64 e `homolog-inventory-policy`. Os jobs de produção foram ignorados por escopo; isso não representa execução, prontidão ou aprovação da transição operacional em produção.
 - Task 2.2 validada. Permanecem bloqueadas as tasks operacionais 3.1 e 4.1: não houve pausa real de serviços, inventário/fingerprint atual do servidor, comprovação de origem biométrica, backup operacional verificado ou execução da mudança em produção. Nenhuma credencial real foi trocada e nenhuma configuração, serviço ou dado de produção foi alterado.
+
+## 28/10/2026 — coletor remoto APP_ENV (implementação local, task 3.1 pendente)
+
+- Implementados `scripts/app_env_transition_inventory.py` e `scripts/app_env_transition_inventory_report.py`, a allowlist `MARKINA_APP_ENV_INVENTORY_TARGET_SHA` no wrapper restrito e o job manual `app-env-transition-inventory` em `production-preflight`. O script exige SHA igual a `origin/main`, checkout remoto limpo, blob do helper de contrato fixado e modo somente-leitura.
+- A coleta verifica consistência por duas leituras dos containers, variáveis de runtime, Compose, keyring, banco e referências faciais; também exige checkout remoto limpo. API/worker e consumidores faciais têm seus bindings ambientais comparados; o gate live precisa estar fechado nos consumidores financeiros verificados. Vínculos WhatsApp são agrupados por categoria ambiental segura e estado, sem IDs ou telefones.
+- `python scripts/test_app_env_transition_inventory.py`: **14 passed, 1 skipped**. O skip local é a checagem POSIX de permissões da keyring, incompatível com o host Windows; o mesmo teste está incluído no CI Linux.
+- `python -m pytest -q backend/tests/test_environment_transition_inventory.py backend/tests/test_app_env_transition.py`: **38 passed, 1 skipped** (PostgreSQL dedicado local não configurado; a prova PostgreSQL isolada já passou no run `40737909487`).
+- Ruff passou para o contrato, testes e scripts alterados; `compileall`, `bash -n` via Git Bash, os dois testes dinâmicos do ForcedCommand, `scripts/test_production_release_workflow_policy.py`, `openspec validate transition-app-env-bound-integrations --strict` e `git diff --check` passaram.
+- A revisão final encontrou que a etapa do workflow não passava o destino SSH configurado; a chamada foi corrigida para usar o usuário e host de `production-preflight`, e o teste de política agora exige esse destino. A validação foi repetida após a correção: **38 testes backend passaram, 1 skip local**; **14 testes do coletor passaram, 1 skip POSIX local**; **2 testes do wrapper passaram**; Ruff, parse YAML, política do workflow, `bash -n`, `compileall`, OpenSpec estrito e `git diff --check` passaram.
+- O CI inicial do PR `#337` (`40771097519`) falhou somente no lint novo com dois `EXE001` porque os scripts invocados por `python` continham shebang sem modo executável. Os shebangs desnecessários foram removidos e o blob permitido do coletor foi recalculado no wrapper; o CI da correção ainda precisa ser acompanhado.
+- As fixtures verificam recibo sanitizado, comparação em memória de segredo/chaves, paridade de configurações API/worker, comparação de snapshots, recusa de comando arbitrário e saída de workflow com fingerprint vazio quando há bloqueios. Nenhuma consulta remota, leitura de credencial de produção, chamada a provedor, alteração de configuração, pausa de serviço ou escrita de produção foi feita nesta etapa.
+- A task 3.1 permanece pendente até CI, integração em `main` e execução do workflow read-only produzirem e validarem um recibo sanitizado real. Tasks 4.1 e 4.2 permanecem pendentes; não houve aprovação de um plano operacional específico nem troca de `access_token`/`public_key`.

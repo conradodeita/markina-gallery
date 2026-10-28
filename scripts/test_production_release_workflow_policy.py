@@ -24,6 +24,8 @@ INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-facial-services.sh").read_bytes(
 APP_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-app-services.sh").read_bytes()
 RETIREMENT_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-infinitepay-retirement.sh").read_bytes()
 ORDERS_INVENTORY_SCRIPT = (ROOT / "scripts/orders_pilot_release.py").read_bytes()
+APP_ENV_INVENTORY_SCRIPT = (ROOT / "scripts/app_env_transition_inventory.py").read_bytes()
+APP_ENV_INVENTORY_CONTRACT = (ROOT / "backend/app/environment_transition_inventory.py").read_bytes()
 PREVIEW_MIGRATION_INVENTORY = (ROOT / "scripts/preview_adjustment_migration_inventory.py").read_bytes()
 PREVIEW_MIGRATION_DEPLOY = (ROOT / "scripts/deploy-prod-preview-adjustment-migration.sh").read_text(encoding="utf-8")
 PREVIEW_MIGRATION_WRAPPER_INSTALL = (ROOT / "scripts/install-prod-preview-migration-wrapper.sh").read_text(encoding="utf-8")
@@ -97,7 +99,10 @@ def main() -> None:
         "  production-app-rollback:", 1
     )[0]
     rollback_release = WORKFLOW.split("  production-app-rollback:", 1)[1]
-    orders_preflight = WORKFLOW.split("  orders-pilot-preflight:", 1)[1]
+    orders_preflight = WORKFLOW.split("  orders-pilot-preflight:", 1)[1].split(
+        "  app-env-transition-inventory:", 1
+    )[0]
+    app_env_preflight = WORKFLOW.split("  app-env-transition-inventory:", 1)[1]
     orders_wrapper_install = WORKFLOW.split("  orders-live-inventory-wrapper-install:", 1)[1].split(
         "  orders-pilot-preflight:", 1
     )[0]
@@ -132,6 +137,42 @@ def main() -> None:
     require("- infinitepay-retirement-release", "operação manual de release", WORKFLOW)
     require("- orders-pilot-inventory", "operação manual de inventário Orders", WORKFLOW)
     require("- orders-live-inventory-wrapper-install", "operação manual de atualização do inventário read-only Orders", WORKFLOW)
+    require("- app-env-transition-inventory", "operação manual de inventário APP_ENV", WORKFLOW)
+    require("inputs.operation == 'app-env-transition-inventory'", "coletor APP_ENV somente manual na main", app_env_preflight)
+    require("environment: production-preflight", "coletor APP_ENV usa somente credenciais read-only", app_env_preflight)
+    require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]",
+            "coletor APP_ENV aguarda gates de CI", app_env_preflight)
+    require('"MARKINA_APP_ENV_INVENTORY_TARGET_SHA=$GITHUB_SHA" </dev/null',
+            "coletor envia somente SHA e stdin fechado", app_env_preflight)
+    require('"$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST"',
+            "coletor conecta somente ao destino SSH configurado", app_env_preflight)
+    require("scripts/app_env_transition_inventory_report.py", "workflow valida e resume recibo sanitizado", app_env_preflight)
+    require("PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}",
+            "chave SSH somente nos passos necessários", app_env_preflight)
+    require("unset PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS", "chaves removidas antes de resumir", app_env_preflight)
+    if "\n    env:\n      PRODUCTION_SSH_HOST" in app_env_preflight:
+        raise AssertionError("segredos de preflight não podem ser variáveis globais do job")
+    if any(token in app_env_preflight.lower() for token in (
+        "environment: production\n", "docker compose", "alembic upgrade", "compose pause", "compose stop",
+    )):
+        raise AssertionError("inventário APP_ENV usa credencial mutável ou altera serviço/schema")
+    require("MARKINA_APP_ENV_INVENTORY_TARGET_SHA=([0-9a-f]{40})", "wrapper valida SHA APP_ENV completo", WRAPPER)
+    require('script_name="app_env_transition_inventory.py"', "wrapper seleciona coletor APP_ENV fixo", WRAPPER)
+    require('APP_ENV_INVENTORY_BLOB_SHA=', "wrapper fixa blob do coletor APP_ENV", WRAPPER)
+    require('inventory_mode="app-env-inventory"', "wrapper fixa modo APP_ENV somente-leitura", WRAPPER)
+    require('python3 -B - "$inventory_mode" --sha "$target_sha"', "wrapper limita coletor a modo e SHA", WRAPPER)
+    app_env_blob = APP_ENV_INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
+    app_env_blob_sha = hashlib.sha1(f"blob {len(app_env_blob)}\0".encode() + app_env_blob).hexdigest()
+    require(f'APP_ENV_INVENTORY_BLOB_SHA="{app_env_blob_sha}"', "wrapper fixa conteúdo exato do coletor", WRAPPER)
+    contract_blob = APP_ENV_INVENTORY_CONTRACT.replace(b"\r\n", b"\n")
+    contract_blob_sha = hashlib.sha1(f"blob {len(contract_blob)}\0".encode() + contract_blob).hexdigest()
+    require(f'CONTRACT_BLOB_SHA = "{contract_blob_sha}"', "coletor fixa contrato sanitizado exato", APP_ENV_INVENTORY_SCRIPT.decode("utf-8"))
+    for forbidden in ("mercadopago.com", "smtp.", "whatsapp.com", "INSERT INTO", "UPDATE ", "DELETE FROM"):
+        if forbidden.lower() in APP_ENV_INVENTORY_SCRIPT.decode("utf-8").lower():
+            raise AssertionError(f"coletor APP_ENV contém operação/provedor externo: {forbidden}")
+    require("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY", "consulta ao banco é transação somente-leitura", APP_ENV_INVENTORY_SCRIPT.decode("utf-8"))
+    require('"collection_status": "incomplete"', "fonte ausente produz relatório sanitizado incompleto", APP_ENV_INVENTORY_SCRIPT.decode("utf-8"))
+    require('"approval_fingerprint": None', "fonte incompleta não produz fingerprint", APP_ENV_INVENTORY_SCRIPT.decode("utf-8"))
     require("inputs.operation == 'orders-live-inventory-wrapper-install'", "instalador Orders só manual na main", orders_wrapper_install)
     require("environment: production", "wrapper Orders usa ambiente protegido", orders_wrapper_install)
     require("needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gitleaks]",

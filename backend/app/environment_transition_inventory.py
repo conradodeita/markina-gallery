@@ -39,6 +39,21 @@ BIOMETRIC_COUNTERS = {
     "search_notifications",
     "search_reference_locators",
 }
+WHATSAPP_ENVIRONMENT_CATEGORIES = {
+    "ausente",
+    "production",
+    "outro_ambiente_conhecido",
+    "outro_valor",
+}
+WHATSAPP_CHANNEL_STATUSES = {
+    "sandbox",
+    "pending_pairing",
+    "connecting",
+    "ready",
+    "mismatch",
+    "disconnected",
+    "error",
+}
 CONFIG_DIGEST_NAMES = {
     "compose",
     "email_settings",
@@ -120,6 +135,28 @@ def _count_map(values: Mapping[str, Any], expected: set[str], category: str) -> 
         _require(type(value) is int and value >= 0, category)
         result[key] = value
     return result
+
+
+def _whatsapp_binding_counts(values: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    _require(isinstance(values, Sequence) and not isinstance(values, (str, bytes)),
+             "contagens_whatsapp_invalidas")
+    result = []
+    seen: set[tuple[str, str]] = set()
+    for value in values:
+        _require(isinstance(value, Mapping)
+                 and set(value) == {"environment_category", "status", "count"},
+                 "contagens_whatsapp_invalidas")
+        environment = value["environment_category"]
+        status = value["status"]
+        count = value["count"]
+        _require(isinstance(environment, str) and environment in WHATSAPP_ENVIRONMENT_CATEGORIES
+                 and isinstance(status, str) and status in WHATSAPP_CHANNEL_STATUSES
+                 and type(count) is int and count > 0, "contagens_whatsapp_invalidas")
+        key = (environment, status)
+        _require(key not in seen, "contagens_whatsapp_duplicadas")
+        seen.add(key)
+        result.append({"environment_category": environment, "status": status, "count": count})
+    return sorted(result, key=lambda item: (item["environment_category"], item["status"]))
 
 
 def classify_external_integrations(
@@ -210,6 +247,7 @@ def build_environment_inventory(
     configuration_digests: Mapping[str, str],
     credential_counts: Mapping[str, int],
     biometric_counts: Mapping[str, int],
+    whatsapp_binding_counts: Sequence[Mapping[str, Any]],
     integration_evidence: Mapping[str, Mapping[str, bool | None]],
     live_payment_gate: bool | None,
     unknown_consumer_count: int,
@@ -236,6 +274,7 @@ def build_environment_inventory(
 
     credentials = _count_map(credential_counts, CREDENTIAL_COUNTERS, "contagens_credenciais_invalidas")
     biometrics = _count_map(biometric_counts, BIOMETRIC_COUNTERS, "contagens_biometricas_invalidas")
+    whatsapp_bindings = _whatsapp_binding_counts(whatsapp_binding_counts)
     states = classify_external_integrations(integration_evidence)
 
     service_summaries, unknown_service_count = _service_summaries(services)
@@ -276,6 +315,7 @@ def build_environment_inventory(
         "configuration_digests": digests,
         "credential_counts": credentials,
         "biometric_counts": biometrics,
+        "whatsapp_binding_counts": whatsapp_bindings,
         "integration_states": states,
         "live_payment_gate_closed": live_payment_gate is False,
         "unknown_consumer_count": unknown_consumer_count,
@@ -295,6 +335,7 @@ def render_environment_inventory(inventory: Mapping[str, Any]) -> str:
         "format_version", "source_environment_category", "target_environment_category",
         "code_revision", "schema_revision", "services", "configuration_digests",
         "credential_counts", "biometric_counts", "integration_states",
+        "whatsapp_binding_counts",
         "live_payment_gate_closed", "unknown_consumer_count", "unknown_service_count",
         "blockers", "approval_fingerprint",
     }
@@ -313,6 +354,7 @@ def render_environment_inventory(inventory: Mapping[str, Any]) -> str:
                      for value in inventory["configuration_digests"].values()), "inventario_invalido")
     _count_map(inventory["credential_counts"], CREDENTIAL_COUNTERS, "inventario_invalido")
     _count_map(inventory["biometric_counts"], BIOMETRIC_COUNTERS, "inventario_invalido")
+    _whatsapp_binding_counts(inventory["whatsapp_binding_counts"])
     _require(isinstance(inventory["integration_states"], Mapping)
              and set(inventory["integration_states"]) == INTEGRATION_NAMES
              and all(isinstance(value, str) and value in INTEGRATION_STATES

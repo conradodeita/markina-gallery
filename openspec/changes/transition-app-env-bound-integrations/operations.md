@@ -2,6 +2,8 @@
 
 Este roteiro descreve uma operação futura; **não significa que a transição de produção esteja pronta ou autorizada para execução**. O preflight read-only `40715456515` falhou fechado após identificar `outro_ambiente_conhecido` e não produziu fingerprint completo, contagens do banco, classificação das integrações nem prova sobre dados biométricos. Não derive valores atuais de produção deste documento ou do Compose versionado.
 
+O run read-only `40762760966` repetiu o bloqueio ao executar `orders-pilot-inventory`: depois de validar os serviços/portas, o preflight Orders parou em `ambiente_divergente:outro_ambiente_conhecido`. Esse fluxo exige `APP_ENV=production` e não é o coletor de transição; não o repita como substituto. O wrapper Orders foi instalado com sucesso no run `40760247201`, mas nenhum inventário de `APP_ENV`, fingerprint, contagem de banco ou classificação de integrações foi produzido. O coletor dedicado, seu validador de relatório e o comando restrito foram implementados localmente nesta change; ainda precisam passar CI, ser integrados em `main` e executar o primeiro inventário remoto read-only.
+
 Esta mudança preserva o conteúdo do `access_token` e do segredo de webhook ao re-cifrá-los, e não altera `public_key`, vendedor ou classificação de conta sandbox. Ela não troca credenciais de teste por credenciais de produção nem habilita cobrança real. A configuração de credenciais reais é uma ação separada, e o proprietário será avisado antes dessa etapa.
 
 ## Pré-condições obrigatórias
@@ -11,6 +13,10 @@ Esta mudança preserva o conteúdo do `access_token` e do segredo de webhook ao 
 3. Manter `MERCADOPAGO_ALLOW_LIVE_PAYMENTS` fechado. Não criar cobranças, pedidos de teste, mensagens ou tráfego externo.
 4. Preservar uma cópia cifrada e recuperável da configuração anterior no armazenamento seguro já aprovado, incluindo o keyring original e as configurações dos consumidores. A keyring não é embutida no backup de envelopes; mantê-la separada e disponível até a verificação final ou recuperação.
 5. Usar exclusivamente um PostgreSQL de teste descartável, chamado `app_env_transition_test` em loopback, para o teste opcional do código. Não apontar esse teste para homologação, produção ou banco compartilhado.
+
+## Coleta remota somente-leitura
+
+Após CI e integração em `main`, executar o workflow manual `CI` com `operation=app-env-transition-inventory`, pelo ambiente protegido de preflight. O wrapper SSH aceitará apenas esse identificador com SHA atual de `main` e o blob revisado do script. O relatório pode conter bloqueios e fingerprint nulo; isso é evidência de inventário, não aprovação para mutação. Uma fonte ausente gera envelope sanitizado `coleta_incompleta`, sem inventário parcial nem fingerprint. A coleta não pausa os serviços, não lê payloads biométricos, não chama Mercado Pago/WhatsApp/SMTP e não escreve no host ou banco. Se não houver relatório válido ou houver qualquer bloqueio, interromper a preparação e registrar o resultado; não reutilizar o inventário Orders.
 
 ## Execução controlada
 

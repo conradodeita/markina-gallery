@@ -38,6 +38,7 @@ def _input_values(**overrides):
         "configuration_digests": {name: "b" * 64 for name in CONFIG_DIGEST_NAMES},
         "credential_counts": {name: 1 for name in CREDENTIAL_COUNTERS},
         "biometric_counts": {name: 0 for name in BIOMETRIC_COUNTERS},
+        "whatsapp_binding_counts": [],
         "integration_evidence": {
             name: {
                 "enabled": False,
@@ -122,6 +123,34 @@ def test_unrecognized_port_binding_blocks_fingerprint_without_echo() -> None:
     assert "portas_divergentes" in inventory["blockers"]
     assert inventory["approval_fingerprint"] is None
     assert "sensitive-host-sentinel" not in rendered
+
+
+def test_whatsapp_bindings_are_aggregated_by_safe_environment_category() -> None:
+    bindings = [
+        {"environment_category": "outro_ambiente_conhecido", "status": "ready", "count": 2},
+        {"environment_category": "production", "status": "sandbox", "count": 1},
+    ]
+    values = _input_values(whatsapp_binding_counts=bindings)
+    inventory = build_environment_inventory(**values)
+    rendered = render_environment_inventory(inventory)
+
+    assert inventory["whatsapp_binding_counts"] == sorted(
+        bindings, key=lambda item: (item["environment_category"], item["status"]),
+    )
+    assert inventory["approval_fingerprint"]
+    assert "tenant-id-sentinel" not in rendered
+    assert "phone-sentinel" not in rendered
+
+
+def test_whatsapp_binding_rejects_raw_environment_label_without_echo() -> None:
+    values = _input_values(whatsapp_binding_counts=[
+        {"environment_category": "private-environment-sentinel", "status": "ready", "count": 1},
+    ])
+    with pytest.raises(EnvironmentInventoryError) as caught:
+        build_environment_inventory(**values)
+
+    assert str(caught.value) == "contagens_whatsapp_invalidas"
+    assert "private-environment-sentinel" not in str(caught.value)
 
 
 def test_render_rejects_unreviewed_extra_fields() -> None:

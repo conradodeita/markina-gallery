@@ -13,6 +13,7 @@ readonly APP_SCRIPT_BLOB_SHA="646852479c83d0bfa356203379a95cbd9e4019f6"
 readonly RETIREMENT_SCRIPT_BLOB_SHA="935af96ec1b650eb2c9ae188186eec38f0dd532b"
 readonly ORDERS_SCRIPT_BLOB_SHA="f45b16ca2d748172ca617c78e31de6cff2fa4289"
 readonly PREVIEW_MIGRATION_INVENTORY_BLOB_SHA="1296ccb0e0f6295bc07b30837fc5043e7dac4db6"
+readonly APP_ENV_INVENTORY_BLOB_SHA="d4dbb3a21af6c7ee687a26ef466e3003bc6f3d99"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
@@ -49,6 +50,12 @@ elif [[ "$original_command" =~ ^MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA=([0-9a-f]{
   script_name="preview_adjustment_migration_inventory.py"
   script_blob_sha="$PREVIEW_MIGRATION_INVENTORY_BLOB_SHA"
   inventory_runtime="preview-migration-python"
+elif [[ "$original_command" =~ ^MARKINA_APP_ENV_INVENTORY_TARGET_SHA=([0-9a-f]{40})$ ]]; then
+  target_sha="${BASH_REMATCH[1]}"
+  script_name="app_env_transition_inventory.py"
+  script_blob_sha="$APP_ENV_INVENTORY_BLOB_SHA"
+  inventory_mode="app-env-inventory"
+  inventory_runtime="python"
 else
   fail "comando SSH nÃƒÂ£o permitido"
 fi

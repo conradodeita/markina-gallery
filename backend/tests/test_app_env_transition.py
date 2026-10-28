@@ -154,6 +154,7 @@ def _approved_inventory(*, account_count: int, **overrides):
         "configuration_digests": {name: "b" * 64 for name in CONFIG_DIGEST_NAMES},
         "credential_counts": {name: account_count for name in CREDENTIAL_COUNTERS},
         "biometric_counts": {name: 0 for name in BIOMETRIC_COUNTERS},
+        "whatsapp_binding_counts": [],
         "integration_evidence": evidence,
         "live_payment_gate": False,
         "unknown_consumer_count": 0,

@@ -22,6 +22,7 @@ on:
           - preview-adjustment-migration-release
           - orders-pilot-inventory
           - orders-live-inventory-wrapper-install
+          - app-env-transition-inventory
       approval_fingerprint:
         description: Fingerprint do inventário aprovado (obrigatório para release protegido)
         type: string
@@ -79,6 +80,8 @@ jobs:
         run: pip install -r backend/requirements.txt -r backend/face-requirements.txt -r backend/benchmark-requirements.txt
       - name: Lint (ruff)
         run: ruff check backend/app backend/tests
+      - name: Lint do inventário APP_ENV
+        run: ruff check scripts/app_env_transition_inventory.py scripts/app_env_transition_inventory_report.py scripts/test_app_env_transition_inventory.py scripts/test_production_release_workflow_policy.py scripts/test_prod_release_state.py
       - name: Persistência de branding e política de deploy
         run: |
           python scripts/test_preserve_branding.py -v
@@ -435,7 +438,8 @@ jobs:
           python scripts/test_prepare_emergency_api_image.py
           python scripts/test_classify_prod_release.py
           python scripts/test_retirement_approval.py
-          python -m unittest scripts.test_prod_release_state.ReleaseContracts.test_preview_migration_wrapper_runs_only_pinned_readonly_inventory scripts.test_prod_release_state.ReleaseContracts.test_preview_migration_wrapper_rejects_arbitrary_command -v
+          python scripts/test_app_env_transition_inventory.py
+          python -m unittest scripts.test_prod_release_state.ReleaseContracts.test_app_env_wrapper_runs_only_pinned_python_inventory_with_exact_sha scripts.test_prod_release_state.ReleaseContracts.test_app_env_wrapper_rejects_arbitrary_command scripts.test_prod_release_state.ReleaseContracts.test_preview_migration_wrapper_runs_only_pinned_readonly_inventory scripts.test_prod_release_state.ReleaseContracts.test_preview_migration_wrapper_rejects_arbitrary_command -v
           python scripts/test_production_release_workflow_policy.py
 
   # The protected main branch still requires this legacy context. It reports
@@ -1250,3 +1254,56 @@ jobs:
           with Path(sys.argv[3]).open("a", encoding="utf-8") as output:
               output.write("\n".join(summary) + "\n")
           PY
+
+  app-env-transition-inventory:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'app-env-transition-inventory' }}"
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    outputs:
+      approval_fingerprint: ${{ steps.inventory.outputs.approval_fingerprint }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verificar configuração de preflight
+        shell: bash
+        env:
+          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ ]] || { echo 'Porta SSH inválida' >&2; exit 1; }
+      - name: Inventário APP_ENV somente-leitura
+        id: inventory
+        shell: bash
+        env:
+          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          output_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file" "$output_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" \
+            "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "MARKINA_APP_ENV_INVENTORY_TARGET_SHA=$GITHUB_SHA" </dev/null > "$output_file"
+          unset PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER
+          python scripts/app_env_transition_inventory_report.py \
+            "$output_file" "$GITHUB_SHA" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
