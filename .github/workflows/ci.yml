@@ -21,6 +21,7 @@ on:
           - preview-adjustment-migration-preflight
           - preview-adjustment-migration-release
           - orders-pilot-inventory
+          - orders-live-inventory-wrapper-install
       approval_fingerprint:
         description: Fingerprint do inventário aprovado (obrigatório para release protegido)
         type: string
@@ -1096,6 +1097,41 @@ jobs:
             "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode rollback --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
             < scripts/deploy-prod-app-services.sh
 
+  orders-live-inventory-wrapper-install:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'orders-live-inventory-wrapper-install' }}"
+    needs: [ci-scope, backend, frontend, runtime-images, openspec, homolog-inventory-policy, gitleaks]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    env:
+      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Instalar somente o wrapper read-only Orders atualizado
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"; known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          wrapper_blob="$(git rev-parse "$GITHUB_SHA:scripts/production-preflight-ssh-wrapper.sh")"
+          [[ "$wrapper_blob" =~ ^[0-9a-f]{40}$ ]]
+          remote_command="cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' bash -s -- --mode install --support-sha '$GITHUB_SHA' --wrapper-blob '$wrapper_blob'"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" "$remote_command" < scripts/install-prod-preview-migration-wrapper.sh
+
   orders-pilot-preflight:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'orders-pilot-inventory' }}"
     needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]
@@ -1157,14 +1193,34 @@ jobs:
               "## Inventário Orders de produção (somente leitura)",
               "",
               f"- Commit de código solicitado: `{inventory['target_sha']}`",
-              f"- Checkout ativo: `{inventory['checkout_sha']}`",
-              f"- Schema: `{inventory['schema']}`; tabelas Orders: `{inventory['orders_tables']}`",
+              f"- Checkout ativo: `{inventory.get('checkout_sha', inventory.get('main_sha', ''))}`",
+              f"- Schema: `{inventory['schema']}`" + (f"; tabelas Orders: `{inventory['orders_tables']}`"
+                  if 'orders_tables' in inventory else ""),
               f"- Origem: `{inventory['origin']}`; projeto: `{inventory['project']}`",
               f"- Fingerprint: `{match[0]}`",
               "",
+          ]
+          if inventory.get('inventory_kind') == 'mercadopago-live-gate-read-only':
+              matrix = inventory['tenant_configuration_matrix']
+              summary.extend([
+                  f"- API/web/worker ativos: `{inventory['active_sha']}`",
+                  f"- Gate real: `{inventory['live_gate']}`; pares de teste configurados: `{inventory['test_allowlist_pairs']}` (IDs omitidos)",
+                  "",
+                  "| Configuração agregada por tenant | Quantidade |",
+                  "|---|---:|",
+                  f"| Preferências existentes | {matrix['preference_tenants']} |",
+                  f"| PIX habilitado | {matrix['pix_enabled']} |",
+                  f"| Mercado Pago habilitado | {matrix['mercadopago_enabled']} |",
+                  f"| MP real, conta ativa | {matrix['mp_enabled_production_active']} |",
+                  f"| MP teste, conta ativa | {matrix['mp_enabled_test_active']} |",
+                  f"| MP habilitado, indisponível | {matrix['mp_enabled_unavailable']} |",
+                  f"| MP desabilitado | {matrix['mp_disabled']} |",
+                  "",
+              ])
+          summary.extend([
               "| Serviço | Estado | Saúde | Imagem | Portas publicadas |",
               "|---|---|---|---|---|",
-          ]
+          ])
           for name, service in sorted(services.items()):
               ports = ", ".join(
                   f"{binding['HostIp']}:{binding['HostPort']}"

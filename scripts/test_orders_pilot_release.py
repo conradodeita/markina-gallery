@@ -30,6 +30,71 @@ class CliContractTests(unittest.TestCase):
             release.main()
         inventory.assert_not_called()
 
+    def test_inventory_0090_uses_sanitized_live_gate_matrix(self):
+        sha = 'a' * 40
+        active_sha = release.LIVE_MINIMUM_SHA
+        pair = {'tenant_id': str(release.uuid4()), 'client_id': str(release.uuid4())}
+        matrix = {'preference_tenants': 3, 'pix_enabled': 2, 'mercadopago_enabled': 2,
+                  'mp_enabled_production_active': 1, 'mp_enabled_test_active': 1,
+                  'mp_enabled_unavailable': 0, 'mp_disabled': 1}
+        ids = {name: str(index).zfill(64) for index, name in enumerate(sorted(release.SERVICES), 1)}
+
+        def run(*args, **kwargs):
+            if args == ('git', 'remote', 'get-url', 'origin'):
+                return release.REPOSITORY
+            if args == ('git', 'rev-parse', 'HEAD'):
+                return sha
+            if args == ('git', 'status', '--porcelain'):
+                return ''
+            if args[:2] == ('git', 'merge-base'):
+                return ''
+            if args[:3] == ('docker', 'ps', '-q'):
+                return ' '.join(ids.values())
+            if args[:3] == ('docker', 'exec', ids['api']):
+                return 'valid'
+            raise AssertionError(args)
+
+        def inspect(ident):
+            name = next(name for name, value in ids.items() if value == ident)
+            env = []
+            if name == 'api':
+                env = ['APP_ENV=production', 'MERCADOPAGO_ALLOW_LIVE_PAYMENTS=false',
+                       f'MERCADOPAGO_TEST_CUSTOMERS={json.dumps([pair])}', f'APP_VERSION={active_sha}']
+            elif name in {'worker', 'web'}:
+                env = [f'APP_VERSION={active_sha}']
+            ports = {'80/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '8080'}]} if name == 'nginx' else {}
+            return {'Id': ident, 'Image': 'sha256:' + 'b' * 64,
+                    'Config': {'Labels': {'com.docker.compose.service': name,
+                        'com.docker.compose.project.config_files': '/opt/active.compose.json',
+                        'com.docker.compose.config-hash': 'c' * 64}, 'Env': env},
+                    'State': {'Status': 'running', 'Health': {'Status': 'healthy'}},
+                    'NetworkSettings': {'Ports': ports}}
+
+        with (patch.object(release.socket, 'gethostname', return_value='clearbudget-vnic'),
+              patch.object(release.Path, 'resolve', return_value=release.ROOT),
+              patch.object(release.Host, 'schema', return_value=[release.LIVE_SCHEMA]),
+              patch.object(release.Host, 'main_sha', return_value=sha),
+              patch.object(release.Host, 'run', side_effect=run),
+              patch.object(release.Host, 'inspect', side_effect=inspect),
+              patch.object(release.Host, 'current_test_pair', return_value=(pair, release.fingerprint(pair))),
+              patch.object(release.Host, 'pg', return_value=matrix),
+              patch.object(release.Host, 'health', return_value=[200, 200, 200])):
+            data = release.Host().inventory()
+            mismatched = {**pair, 'tenant_id': str(release.uuid4())}
+            with (patch.object(release.Host, 'current_test_pair', return_value=(mismatched,
+                    release.fingerprint(mismatched))),
+                  self.assertRaisesRegex(release.GateError, 'par_de_teste_divergente')):
+                release.Host().inventory()
+
+        self.assertEqual(data['inventory_kind'], 'mercadopago-live-gate-read-only')
+        self.assertEqual(data['tenant_configuration_matrix'], matrix)
+        self.assertEqual(data['live_gate'], 'false')
+        self.assertEqual(data['active_sha'], active_sha)
+        self.assertEqual(data['test_allowlist_pairs'], 1)
+        self.assertEqual(data['test_allowlist_pair_fingerprint'], release.fingerprint(pair))
+        self.assertNotIn(pair['tenant_id'], json.dumps(data))
+        self.assertNotIn(pair['client_id'], json.dumps(data))
+
 
 def inventory():
     return {'host': 'clearbudget-vnic', 'root': str(release.ROOT), 'project': release.PROJECT,
