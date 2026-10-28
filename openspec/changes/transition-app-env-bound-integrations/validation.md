@@ -55,4 +55,5 @@
 - `backend/.venv/Scripts/python.exe -m compileall -q` nos módulos/testes alterados: **passou**.
 - `openspec validate transition-app-env-bound-integrations --strict`: **change válida**; `git diff --check`: sem erros de whitespace. A política `docs/CONTINUOUS-REFACTORING.md` foi aplicada à área afetada; imports/lint e revisão não apontaram código substituído elegível.
 - O backend não declara etapa de mypy/pyright/typecheck ou build em `backend/pyproject.toml`/CI; Python compileall e testes são a validação local aplicável.
-- O branch ainda não foi publicado neste ponto do registro. Nenhuma migration, configuração, serviço, credencial ou dado de produção foi alterado.
+- O commit inicial `61df1a8` foi enviado ao branch de feature. O ajuste de CI para PostgreSQL ainda está em alteração local. Nenhuma migration, configuração, serviço, credencial ou dado de produção foi alterado.
+- Para executar a prova PostgreSQL pendente, o job `backend-tests` do CI agora cria um banco `app_env_transition_test` isolado em cada PostgreSQL descartável do shard e fornece sua URL somente ao teste opcional. O teste usa schema aleatório e remove somente esse schema. Parse do YAML do workflow e `python -m unittest scripts.test_classify_ci_scope -q`: **10 passed**. A task 2.2 só será marcada depois do resultado do teste PostgreSQL no CI.

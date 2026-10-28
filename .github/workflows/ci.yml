@@ -212,6 +212,7 @@ jobs:
     env:
       TENANT_TEST_DATABASE_URL: postgresql+psycopg://pyp_test:synthetic-test-only@127.0.0.1:55469/pyp_tenant_test
       PHOTOGRAPHER_TEST_DATABASE_URL: postgresql+psycopg://postgres:synthetic-test-only@127.0.0.1:15470/pyp_photographer_test
+      APP_ENV_TRANSITION_TEST_DATABASE_URL: postgresql+psycopg://postgres:synthetic-test-only@127.0.0.1:15470/app_env_transition_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -224,6 +225,22 @@ jobs:
             backend/benchmark-requirements.txt
       - name: Instalar dependências
         run: pip install -r backend/requirements.txt -r backend/face-requirements.txt -r backend/benchmark-requirements.txt
+      - name: Provisionar banco PostgreSQL isolado para transição APP_ENV
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+
+          engine = create_engine(
+              os.environ["PHOTOGRAPHER_TEST_DATABASE_URL"],
+              isolation_level="AUTOCOMMIT",
+          )
+          try:
+              with engine.connect() as connection:
+                  connection.execute(text("CREATE DATABASE app_env_transition_test"))
+          finally:
+              engine.dispose()
+          PY
       - name: Suíte completa distribuída por módulos
         run: >-
           python scripts/backend_ci.py run --index ${{ matrix.shard }} --count 3
