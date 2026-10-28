@@ -612,6 +612,42 @@ source {quote(path.as_posix())}
         self.assertEqual(json.loads(output.getvalue().splitlines()[0])['target_sha'], SHA_MAIN)
         self.assertEqual(before, self.snapshot())
 
+    def test_app_env_wrapper_runs_only_pinned_python_inventory_with_exact_sha(self):
+        source = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(encoding="utf-8")
+        source = source.replace('/opt/markina-gallery', self.model['root'])
+        path = self.base / 'app-env-wrapper.sh'
+        path.write_text(source, encoding='utf-8', newline='\n')
+        payload = self.base / 'app-env-payload.py'
+        payload.write_text((ROOT / 'scripts/app_env_transition_inventory.py').read_text(encoding='utf-8'),
+                           encoding='utf-8', newline='\n')
+        args = self.base / 'app-env-args.txt'
+        quote = lambda p: "'" + str(p).replace("'", "'\\''") + "'"
+        python = quote(Path(os.sys.executable).as_posix())
+        command = f'''
+export SSH_ORIGINAL_COMMAND=MARKINA_APP_ENV_INVENTORY_TARGET_SHA={SHA_MAIN}
+curl() {{ cat {quote(payload.as_posix())}; }}
+git() {{ {python} -c 'import sys,hashlib; sys.stdout.reconfigure(newline="\\n"); b=sys.stdin.buffer.read(); print(hashlib.sha1(b"blob "+str(len(b)).encode()+b"\\0"+b).hexdigest())'; }}
+python3() {{ printf '%s\\n' "$@" > {quote(args.as_posix())}; cat >/dev/null; echo verified-app-env-body; }}
+source {quote(path.as_posix())}
+'''
+        before = self.snapshot()
+        result = subprocess.run([BASH, '-c', command], capture_output=True, text=True, timeout=20, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('verified-app-env-body', result.stdout)
+        self.assertEqual(args.read_text().splitlines(), ['-B', '-', 'app-env-inventory', '--sha', SHA_MAIN])
+        self.assertEqual(before, self.snapshot())
+
+    def test_app_env_wrapper_rejects_arbitrary_command(self):
+        source = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(encoding="utf-8")
+        source = source.replace('/opt/markina-gallery', self.model['root'])
+        path = self.base / 'app-env-wrapper-reject.sh'
+        path.write_text(source, encoding='utf-8', newline='\n')
+        command = f'''\nexport SSH_ORIGINAL_COMMAND='bash -i'\nsource '{path.as_posix()}'\n'''
+        before = self.snapshot()
+        result = subprocess.run([BASH, '-c', command], capture_output=True, text=True, timeout=20, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.snapshot(), before)
+
     def test_preview_migration_wrapper_runs_only_pinned_readonly_inventory(self):
         source = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(encoding="utf-8")
         source = source.replace('/opt/markina-gallery', self.model['root'])

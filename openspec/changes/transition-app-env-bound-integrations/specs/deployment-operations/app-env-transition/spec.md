@@ -6,6 +6,24 @@ O sistema SHALL inventariar e migrar o contexto de ambiente das integrações da
 
 ## ADDED Requirements
 
+### Requirement: Coleta remota protegida do inventário APP_ENV
+O sistema SHALL expor o inventário operacional somente por workflow manual em `main` e comando SSH restrito, validando a revisão atual e o blob aprovado do coletor antes de executá-lo. O coletor MUST ser somente-leitura, sem pausar serviços, alterar arquivos/configurações, escrever no banco, chamar provedores externos ou emitir tráfego financeiro/mensagens. O workflow SHALL exibir apenas o relatório sanitizado e seus bloqueios, inclusive quando não houver fingerprint aprovável.
+
+#### Scenario: Inventário remoto aprovado pelo contrato
+- **WHEN** o operador despacha o inventário em `main` e a revisão/blob do coletor correspondem aos valores aprovados
+- **THEN** o comando coleta metadados whitelisted, contagens agregadas e categorias ambientais em modo somente-leitura
+- **AND** o relatório não inclui valores de ambiente, credenciais, envelopes, IDs de tenant/conta, payloads ou caminhos sensíveis
+
+#### Scenario: Comando ou revisão divergem
+- **WHEN** o comando SSH não corresponde à allowlist exata, ou a revisão/blob não é a aprovada
+- **THEN** a execução falha fechada sem usar credenciais mutáveis nem alterar configuração, banco, arquivos ou serviços
+
+#### Scenario: Fonte da coleta ausente ou inacessível
+- **WHEN** a revisão aprovada é confirmada, mas uma fonte necessária não pode ser lida ou validada
+- **THEN** o workflow apresenta um envelope sanitizado indicando coleta incompleta e bloqueio genérico
+- **AND** inventário parcial, erro bruto e fingerprint não são emitidos
+- **AND** nenhuma configuração, banco, arquivo ou serviço é alterado
+
 ### Requirement: Inventário ambiental agregado e redigido
 O preflight SHALL identificar o ambiente de origem, o ambiente alvo, todos os consumidores de `APP_ENV` e contagens agregadas de credenciais/configurações e dados cifrados vinculados ao ambiente, sem revelar valores, payloads cifrados, IDs de tenant, chaves, tokens ou conteúdo de arquivos. Resultado incompleto ou desconhecido MUST impedir a emissão de fingerprint aprovável.
 
