@@ -34,6 +34,8 @@ O code atual já modela credenciais Mercado Pago por fotógrafo, verifica a cont
 
 7. **Diagnosticar falhas de comandos sem revelar dados operacionais.** Se um subprocesso do inventário falhar, a mensagem de erro poderá incluir apenas um rótulo estático correspondente à etapa (por exemplo, leitura do schema ou verificação HTTPS). Para uma divergência de ancestralidade Git, podem ser reportados somente os SHAs completos que já foram validados como 40 caracteres hexadecimais, pois são necessários para verificar a procedência do checkout. Argumentos de outros comandos, saída do processo, variáveis de ambiente, queries e identificadores nunca serão incluídos; os guards e o comportamento fail-closed permanecem inalterados.
 
+8. **Classificar falhas de subprocesso com dados limitados.** Além da etapa estática, o erro operacional pode expor somente uma das categorias fixas `timeout` ou `subprocess_error`, um `errno` numérico de `OSError`, ou o status numérico de `CalledProcessError`. Mensagens de exceção, argumentos, stdout/stderr, ambiente e queries continuam sempre omitidos. A relação de ancestralidade permanece fail-closed para qualquer falha de execução.
+
 ## Risks / Trade-offs
 
 - [Recebedor ou credenciais configurados no tenant errado] → verificar identidade pela API do Mercado Pago no servidor e manter busca por `account_id` e `tenant_id`.

@@ -36,11 +36,39 @@ class CliContractTests(unittest.TestCase):
         with (patch.object(release.subprocess, 'run', side_effect=subprocess.CalledProcessError(
                 1, ['docker', 'exec'], stderr='sensitive output')),
               self.assertRaisesRegex(release.GateError,
-                                     'comando_operacional_falhou:read_tenant_configuration_matrix') as caught):
+                                     'comando_operacional_falhou:read_tenant_configuration_matrix:exit_status_1') as caught):
             host.run('docker', 'exec', 'private-container', 'psql',
                      diagnostic_stage='read_tenant_configuration_matrix')
         self.assertNotIn('sensitive output', str(caught.exception))
         self.assertNotIn('private-container', str(caught.exception))
+
+    def test_operational_timeout_reports_only_fixed_category_and_stage(self):
+        error = subprocess.TimeoutExpired(['git', 'private-argument'], 60, output='private stdout',
+                                          stderr='private stderr')
+        with (patch.object(release.subprocess, 'run', side_effect=error),
+              self.assertRaisesRegex(release.GateError,
+                  'comando_operacional_falhou:verify_checkout_ancestry:timeout') as caught):
+            release.Host().run('git', 'private-argument', diagnostic_stage='verify_checkout_ancestry')
+        self.assertNotIn('private-argument', str(caught.exception))
+        self.assertNotIn('private stdout', str(caught.exception))
+        self.assertNotIn('private stderr', str(caught.exception))
+
+    def test_operational_os_error_reports_only_numeric_errno_and_stage(self):
+        error = OSError(13, 'private message: /sensitive/path')
+        with (patch.object(release.subprocess, 'run', side_effect=error),
+              self.assertRaisesRegex(release.GateError,
+                  'comando_operacional_falhou:verify_checkout_ancestry:os_error_errno_13') as caught):
+            release.Host().run('git', 'private-argument', diagnostic_stage='verify_checkout_ancestry')
+        self.assertNotIn('private message', str(caught.exception))
+        self.assertNotIn('/sensitive/path', str(caught.exception))
+
+    def test_operational_subprocess_error_reports_only_fixed_category(self):
+        error = subprocess.SubprocessError('private exception text')
+        with (patch.object(release.subprocess, 'run', side_effect=error),
+              self.assertRaisesRegex(release.GateError,
+                  'comando_operacional_falhou:verify_checkout_ancestry:subprocess_error') as caught):
+            release.Host().run('git', 'private-argument', diagnostic_stage='verify_checkout_ancestry')
+        self.assertNotIn('private exception text', str(caught.exception))
 
     def test_inventory_reports_only_validated_git_shas_for_checkout_lineage_mismatch(self):
         checkout_sha = 'b' * 40

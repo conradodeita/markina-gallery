@@ -271,12 +271,27 @@ class Host:
             result = subprocess.run(list(args), input=data, capture_output=True, text=not binary,
                                     timeout=timeout, cwd=ROOT, check=check,
                                     env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'})
-        except (subprocess.SubprocessError, OSError):
-            # Report only a fixed operation label; never echo command arguments,
-            # process output, environment values, or database query contents.
+        except subprocess.TimeoutExpired:
             stage = diagnostic_stage if isinstance(diagnostic_stage, str) and re.fullmatch(
                 r'[a-z][a-z0-9_]{0,63}', diagnostic_stage) else None
-            code = 'comando_operacional_falhou' + (':' + stage if stage else '')
+            code = 'comando_operacional_falhou' + (':' + stage if stage else '') + ':timeout'
+            raise GateError(code) from None
+        except subprocess.CalledProcessError as exc:
+            stage = diagnostic_stage if isinstance(diagnostic_stage, str) and re.fullmatch(
+                r'[a-z][a-z0-9_]{0,63}', diagnostic_stage) else None
+            status = str(exc.returncode) if isinstance(exc.returncode, int) else 'desconhecido'
+            code = 'comando_operacional_falhou' + (':' + stage if stage else '') + ':exit_status_' + status
+            raise GateError(code) from None
+        except OSError as exc:
+            stage = diagnostic_stage if isinstance(diagnostic_stage, str) and re.fullmatch(
+                r'[a-z][a-z0-9_]{0,63}', diagnostic_stage) else None
+            errno = str(exc.errno) if isinstance(exc.errno, int) else 'desconhecido'
+            code = 'comando_operacional_falhou' + (':' + stage if stage else '') + ':os_error_errno_' + errno
+            raise GateError(code) from None
+        except subprocess.SubprocessError:
+            stage = diagnostic_stage if isinstance(diagnostic_stage, str) and re.fullmatch(
+                r'[a-z][a-z0-9_]{0,63}', diagnostic_stage) else None
+            code = 'comando_operacional_falhou' + (':' + stage if stage else '') + ':subprocess_error'
             raise GateError(code) from None
         if not check:
             return result.returncode
