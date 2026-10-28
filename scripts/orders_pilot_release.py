@@ -23,8 +23,6 @@ from pathlib import Path
 from urllib.request import urlopen
 from uuid import UUID, uuid4
 
-from prepare_emergency_api_image import METADATA, STARTUP, maintenance_configuration
-
 ROOT = Path('/opt/markina-gallery')
 STATE = Path('/var/lib/markina-gallery/deploy-state')
 PROJECT = 'markina-gallery'
@@ -398,7 +396,12 @@ class Host:
             'repositorio_divergente')
         main_sha = self.main_sha()
         checkout_sha = self.run('git', 'rev-parse', 'HEAD')
-        require(main_sha == checkout_sha and SHA.fullmatch(checkout_sha), 'checkout_nao_e_main')
+        require(SHA.fullmatch(main_sha) and SHA.fullmatch(checkout_sha), 'sha_invalido')
+        # The inventory script is fetched from the exact current-main SHA and its
+        # blob is pinned by the forced-command wrapper. The deployed source tree
+        # may legitimately lag support-only commits; it must remain clean and be
+        # an ancestor of that reviewed candidate.
+        self.run('git', 'merge-base', '--is-ancestor', checkout_sha, main_sha)
         require(not self.run('git', 'status', '--porcelain'), 'checkout_sujo')
         active_versions = []
         ids = self.run('docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
@@ -591,6 +594,8 @@ class Host:
         return result
 
     def guard_rehearsal(self, inventory, work, candidate):
+        from prepare_emergency_api_image import maintenance_configuration
+
         source = self.run('docker', 'exec', inventory['services']['nginx']['id'],
                           'cat', '/etc/nginx/conf.d/default.conf')
         config = work / ('nginx-guard-rehearsal-' + uuid4().hex + '.conf')
@@ -724,6 +729,8 @@ class Host:
         return self.run(*command, *args, timeout=240)
 
     def maintenance(self, work, enabled, *, reuse=False):
+        from prepare_emergency_api_image import maintenance_configuration
+
         name = 'markina-gallery-nginx-1'
         backup = work / 'nginx-original.conf'
         if enabled:
@@ -898,6 +905,8 @@ def isolated(h, image, code, *, network='none', env=(), mounts=()):
 
 
 def prepare(h, target, pair):
+    from prepare_emergency_api_image import METADATA, STARTUP
+
     require(SHA.fullmatch(target), 'sha_invalido')
     inventory = h.inventory()
     print('preparation_stage=inventory_validated', flush=True)

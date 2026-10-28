@@ -30,6 +30,8 @@ O code atual já modela credenciais Mercado Pago por fotógrafo, verifica a cont
 
 5. **Separar implementação de ativação operacional.** Esta change pode atualizar código/spec/docs e preparar um plano. Alterar o ambiente de produção exige inventário atual de serviços/portas, confirmação do SHA/configuração alvo e aprovação explícita do plano de impacto zero conforme AGENTS.md; não fazer toggle durante implementação.
 
+6. **Inventariar sem exigir que o checkout operacional acompanhe commits de suporte.** O workflow aceita apenas o SHA atual de `main` e baixa `orders_pilot_release.py` desse SHA por HTTPS, validando o blob Git contra o pin no wrapper restrito. A produção pode continuar no SHA de produto publicado, que deve ser limpo e ancestral do candidato atual; o helper verifica essa relação, além da ancestralidade do runtime ativo. A rota de inventário não deve importar módulos Python do checkout local, pois ele pode ser anterior ao helper e não é a fonte confiável para esse procedimento. Isso permite leitura remota do runtime existente sem atualizar a aplicação, repositório operacional, serviços ou gate.
+
 ## Risks / Trade-offs
 
 - [Recebedor ou credenciais configurados no tenant errado] → verificar identidade pela API do Mercado Pago no servidor e manter busca por `account_id` e `tenant_id`.
