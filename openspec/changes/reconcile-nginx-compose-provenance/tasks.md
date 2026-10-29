@@ -8,9 +8,9 @@
 
 ## 2. Executor restrito e evidência
 
-- [x] 2.1 Implementar preflight sanitizado, fingerprint e guarda de execução exclusiva; verificar recusa antes de writes para snapshot alterado, aprovação ausente, fonte inválida, outro projeto e artefato de recuperação indisponível. Treze testes sintéticos aprovados em Linux descartável, incluindo trava real e backup HMAC autenticado; ver `validation.md`.
+- [x] 2.1 Implementar preflight sanitizado, fingerprint e guarda de execução exclusiva; verificar recusa antes de writes para snapshot alterado, aprovação ausente, fonte inválida, outro projeto e artefato de recuperação indisponível. Quatorze testes sintéticos aprovados em Linux descartável, incluindo trava real, backup HMAC autenticado e recusa de override de configuração; ver `validation.md`.
 - [ ] 2.2 Implementar backup persistido/autenticado, atualização exclusiva do Nginx e recuperação por imagem/configuração anteriores, sem dependências ou serviços aposentados; verificar sucesso e falhas em ambiente descartável com fixtures próprias, comprovando preservação do restante do projeto. Executor e ensaio Docker implementados; aguardam prova real no CI Linux, sem operação mutável no Oracle.
-- [x] 2.3 Atualizar o runbook e revisar somente os helpers afetados conforme a política de refatoração; executar validação focalizada, lint aplicável, OpenSpec estrito e revisão do diff antes de PR. Não criar suítes ou pushes apenas de documentação intermediária. Runbook e revisão focalizada completos; 13 testes Linux, Ruff, Bash, YAML, AST 3.8, OpenSpec estrito e diff check aprovados. Prova de publicação/recovery real continua nas tasks 1.3/2.2.
+- [x] 2.3 Atualizar o runbook e revisar somente os helpers afetados conforme a política de refatoração; executar validação focalizada, lint aplicável, OpenSpec estrito e revisão do diff antes de PR. Não criar suítes ou pushes apenas de documentação intermediária. Runbook e revisão focalizada completos; 14 testes Linux, Ruff, Bash, YAML, AST 3.8, OpenSpec estrito e diff check aprovados. Prova de publicação/recovery real continua nas tasks 1.3/2.2.
 
 ## 3. Publicação e retomada
 

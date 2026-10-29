@@ -16,6 +16,8 @@ def fixture(source):
     config = {'Env': ['NGINX_VERSION=synthetic'], 'Entrypoint': ['/entrypoint'],
               'Cmd': ['nginx', '-g', 'daemon off;'], 'StopSignal': 'SIGQUIT',
               'User': '', 'WorkingDir': '', 'Hostname': 'generated', 'Image': 'nginx:test',
+              'Domainname': '', 'AttachStdin': False, 'Tty': False,
+              'OpenStdin': False, 'StdinOnce': False,
               'Labels': {'com.docker.compose.project': 'markina-gallery',
                          'com.docker.compose.service': 'nginx'},
               'Healthcheck': {'Test': ['CMD', 'true'], 'Interval': 1000000000,
@@ -34,7 +36,9 @@ def fixture(source):
                              'Destination': mod.CONFIG_FILES[2]}],
                  'NetworkSettings': {'Networks': {'markina-gallery_internal': {'Aliases': ['nginx']}}}}
     image = {'Id': container['Image'], 'Config': {k: v for k, v in config.items()
-                                                if k not in ('Healthcheck', 'Labels', 'Hostname')}}
+                                                if k not in ('Healthcheck', 'Labels', 'Hostname',
+                                                             'Domainname', 'AttachStdin', 'Tty',
+                                                             'OpenStdin', 'StdinOnce', 'User')}}
     return container, image
 
 
@@ -112,6 +116,11 @@ class ProvenanceTest(unittest.TestCase):
     def test_unknown_host_policy_blocks(self):
         self.container['HostConfig']['Privileged'] = True
         with self.assertRaisesRegex(mod.Refusal, '^politica_host_nao_suportada$'):
+            self.operation.snapshot()
+
+    def test_non_default_container_config_override_blocks(self):
+        self.container['Config']['Tty'] = True
+        with self.assertRaisesRegex(mod.Refusal, '^configuracao_imagem_nao_suportada$'):
             self.operation.snapshot()
 
     def test_other_project_and_network_block(self):

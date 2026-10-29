@@ -30,6 +30,14 @@ MASKED = ['/proc/asound', '/proc/acpi', '/proc/interrupts', '/proc/kcore', '/pro
           '/proc/scsi', '/sys/firmware', '/sys/devices/virtual/powercap']
 READONLY = ['/proc/bus', '/proc/fs', '/proc/irq', '/proc/sys', '/proc/sysrq-trigger']
 
+# docker inspect adds these engine defaults to a created container even when
+# the image config omits them. Accept only these exact values; any override is
+# still a runtime customization and remains unsupported.
+CONTAINER_CONFIG_DEFAULTS = {
+    'Domainname': '', 'User': '', 'AttachStdin': False, 'Tty': False,
+    'OpenStdin': False, 'StdinOnce': False,
+}
+
 
 class Refusal(RuntimeError):
     """A mensagem é sempre um código constante, nunca erro de Docker/host."""
@@ -99,7 +107,14 @@ def validate_runtime(c, image, project):
     require(len(names) == len(set(names)), 'ambiente_ambiguo')
     # Qualquer customização da imagem requer ampliar explicitamente o contrato.
     ignored = {'Hostname', 'Labels', 'Image', 'Healthcheck', 'AttachStdout', 'AttachStderr'}
-    require(all(v == image['Config'].get(k) for k, v in c['Config'].items() if k not in ignored),
+    image_config = image['Config']
+    def matches_image_config(key, value):
+        image_value = image_config.get(key)
+        if value == image_value:
+            return True
+        return (image_value is None and key in CONTAINER_CONFIG_DEFAULTS
+                and value == CONTAINER_CONFIG_DEFAULTS[key])
+    require(all(matches_image_config(k, v) for k, v in c['Config'].items() if k not in ignored),
             'configuracao_imagem_nao_suportada')
     require(c['Config'].get('StopSignal') == 'SIGQUIT', 'sinal_gracioso_nao_comprovado')
     h = c['HostConfig']

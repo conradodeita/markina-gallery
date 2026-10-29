@@ -31,7 +31,13 @@ Somente planejamento e diagnóstico inicial. O candidato, a equivalência comple
 
 ## Checkpoint antes do PR
 
-- Treze testes sintéticos passaram no Linux local descartável, sem skips: inclui trava POSIX real contra segundo operador, assinatura adulterada, arquivo world-readable, blob exato do operador e canonicalização dos mounts. Nenhum runtime ou rede de outro projeto foi alterado pelo teste.
+- Quatorze testes sintéticos passaram no Linux local descartável, sem skips: inclui trava POSIX real contra segundo operador, assinatura adulterada, arquivo world-readable, blob exato do operador, canonicalização dos mounts e recusa de override de configuração de container. Nenhum runtime ou rede de outro projeto foi alterado pelo teste.
 - Ruff, sintaxe Bash, parse YAML e AST Python 3.8 aprovados. A compatibilidade de execução read-only em Python 3.8.10/Compose 2.35.1 do host foi observada. O wrapper carrega somente o blob aprovado em memória e os modos mutáveis exigem fingerprint exato; o workflow só permite operação manual na main, após CI e prova Docker da mesma revisão.
 - Backup HMAC usa chave operacional separada de integrações, diretórios 0700/arquivos 0600, escrita exclusiva/fsync, releitura e autenticação. Nenhuma preparação remota foi executada. Runbook em `operations.md` separa inventário, preparação de armazenamento e publicação/recovery com aprovações específicas.
 - A revisão focalizada não encontrou código substituído/removível nesta implementação nova; helpers de releases anteriores permanecem intactos. A prova Docker de publicação, recuperação e preservação de container testemunha está configurada para CI Linux descartável; tasks 1.3/2.2 continuam pendentes dessa evidência, não de novas baterias opcionais.
+
+## Ajuste após falha da prova isolada — 29/10/2026
+
+- O primeiro CI do PR #341 concluiu `ci-scope`, `gitleaks`, `openspec`, `backend-quality`, `frontend` e build ARM64 com sucesso; o CI geral ainda executava os testes backend e builds AMD64. A prova Docker isolada falhou nos três cenários antes de parar qualquer container, recusando a fixture como `configuracao_imagem_nao_suportada`.
+- A reprodução com a imagem pública `nginx:1.27-alpine` mostrou que `docker inspect` acrescenta `Domainname=""`, `User=""`, `AttachStdin=false`, `Tty=false`, `OpenStdin=false` e `StdinOnce=false`, campos que não existem na configuração declarada da imagem. A guarda agora aceita somente esses seis defaults exatos quando ausentes na imagem; valores diferentes continuam bloqueados. A fixture sintética representa essa diferença e testa um override não-default recusado.
+- Após o ajuste, os 14 testes sintéticos passaram sem skips no container Linux descartável, com rede desativada e scripts montados somente-leitura; Ruff passou. As três provas Docker reais ainda aguardam novo CI do commit corrigido. Nenhuma operação remota ou mudança de produção ocorreu.
