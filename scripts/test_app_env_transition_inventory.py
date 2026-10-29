@@ -117,6 +117,58 @@ class AppEnvInventoryReportTests(unittest.TestCase):
             collector.verify_main("invalid")
         run.assert_not_called()
 
+    def test_compose_resolution_failures_use_sanitized_categories(self):
+        cases = (
+            (FileNotFoundError, "compose_caminho_ausente"),
+            (PermissionError, "compose_resolucao_negada"),
+            (OSError, "compose_resolucao_indisponivel"),
+        )
+        for error_type, expected in cases:
+            with self.subTest(category=expected), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                compose_path = root / "docker-compose.yml"
+                compose_path.write_text("services: {}", encoding="utf-8")
+                services = {"api": {"compose_files": str(compose_path)}}
+                error = error_type("private-path-sentinel /secret/compose.yml")
+                with (
+                    patch.object(collector, "ROOT", root),
+                    patch.object(collector, "ALLOWED_REMOTE_ROOTS", (root,)),
+                    patch.object(Path, "resolve", side_effect=error),
+                    self.assertRaises(collector.InventoryError) as raised,
+                ):
+                    collector.compose_digest(services)
+
+                self.assertEqual(str(raised.exception), expected)
+                self.assertEqual(collector.sanitized_failure_code(raised.exception), expected)
+                self.assertNotIn("private-path-sentinel", str(raised.exception))
+                self.assertNotIn("/secret/compose.yml", str(raised.exception))
+
+    def test_compose_read_failures_use_sanitized_categories(self):
+        cases = (
+            (FileNotFoundError, "compose_arquivo_ausente"),
+            (PermissionError, "compose_leitura_negada"),
+            (OSError, "compose_leitura_indisponivel"),
+        )
+        for error_type, expected in cases:
+            with self.subTest(category=expected), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                compose_path = root / "docker-compose.yml"
+                compose_path.write_text("services: {}", encoding="utf-8")
+                services = {"api": {"compose_files": str(compose_path)}}
+                error = error_type("private-path-sentinel /secret/compose.yml")
+                with (
+                    patch.object(collector, "ROOT", root),
+                    patch.object(collector, "ALLOWED_REMOTE_ROOTS", (root,)),
+                    patch.object(Path, "read_bytes", side_effect=error),
+                    self.assertRaises(collector.InventoryError) as raised,
+                ):
+                    collector.compose_digest(services)
+
+                self.assertEqual(str(raised.exception), expected)
+                self.assertEqual(collector.sanitized_failure_code(raised.exception), expected)
+                self.assertNotIn("private-path-sentinel", str(raised.exception))
+                self.assertNotIn("/secret/compose.yml", str(raised.exception))
+
     def test_main_turns_failed_source_into_sanitized_report(self):
         output = io.StringIO()
         with (
@@ -136,21 +188,35 @@ class AppEnvInventoryReportTests(unittest.TestCase):
         self.assertNotIn("secret-sentinel", output.getvalue())
         self.assertNotIn("/private/path", output.getvalue())
 
-    def test_main_preserves_only_a_known_static_failure_category(self):
-        output = io.StringIO()
-        with (
-            patch.object(collector, "verify_main"),
-            patch.object(collector, "load_contract", return_value=inventory_contract),
-            patch.object(collector, "collect", side_effect=collector.InventoryError("keyring_indisponivel")),
-            patch.object(sys, "argv", ["app_env_transition_inventory.py", "app-env-inventory", "--sha", SHA]),
-            redirect_stdout(output),
-        ):
-            collector.main()
+    def test_main_preserves_only_known_static_failure_categories(self):
+        categories = (
+            "keyring_indisponivel",
+            "compose_caminho_ausente",
+            "compose_resolucao_negada",
+            "compose_resolucao_indisponivel",
+            "compose_arquivo_ausente",
+            "compose_leitura_negada",
+            "compose_leitura_indisponivel",
+        )
+        for category in categories:
+            with self.subTest(category=category):
+                output = io.StringIO()
+                with (
+                    patch.object(collector, "verify_main"),
+                    patch.object(collector, "load_contract", return_value=inventory_contract),
+                    patch.object(collector, "collect", side_effect=collector.InventoryError(category)),
+                    patch.object(
+                        sys, "argv", ["app_env_transition_inventory.py", "app-env-inventory", "--sha", SHA]
+                    ),
+                    redirect_stdout(output),
+                ):
+                    collector.main()
 
-        report = json.loads(output.getvalue())
-        self.assertEqual(report["failure_category"], "keyring_indisponivel")
-        self.assertIsNone(report["inventory"])
-        self.assertIsNone(report["approval_fingerprint"])
+                report = json.loads(output.getvalue())
+                self.assertEqual(report["failure_category"], category)
+                self.assertEqual(report["collection_status"], "incomplete")
+                self.assertIsNone(report["inventory"])
+                self.assertIsNone(report["approval_fingerprint"])
 
     def test_main_maps_unclassified_exception_to_generic_category(self):
         output = io.StringIO()

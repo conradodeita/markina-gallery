@@ -26,6 +26,12 @@ O sistema SHALL expor o inventário operacional somente por workflow manual em `
 - **AND** valores de exceções, comandos, caminhos, variáveis e dados consultados não são emitidos
 - **AND** nenhuma configuração, banco, arquivo ou serviço é alterado
 
+#### Scenario: Falha ao resolver ou ler um arquivo Compose
+- **WHEN** um arquivo Compose necessário está ausente, inacessível ou encontra uma falha de E/S ao ser resolvido ou lido
+- **THEN** `failure_category` diferencia a etapa e a classe segura da falha por códigos constantes da allowlist
+- **AND** o recibo não inclui caminho, errno, mensagem, argumento ou detalhe bruto da exceção
+- **AND** inventário e fingerprint permanecem nulos e nenhuma configuração, banco, arquivo ou serviço é alterado
+
 ### Requirement: Inventário ambiental agregado e redigido
 O preflight SHALL identificar o ambiente de origem, o ambiente alvo, todos os consumidores de `APP_ENV` e contagens agregadas de credenciais/configurações e dados cifrados vinculados ao ambiente, sem revelar valores, payloads cifrados, IDs de tenant, chaves, tokens ou conteúdo de arquivos. Resultado incompleto ou desconhecido MUST impedir a emissão de fingerprint aprovável.
 

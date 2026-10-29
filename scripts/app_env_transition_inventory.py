@@ -41,11 +41,17 @@ SAFE_FAILURE_CODES = frozenset({
     "checkout_sujo",
     "comando_indisponivel",
     "compose_ausente",
+    "compose_arquivo_ausente",
+    "compose_caminho_ausente",
     "compose_divergente",
     "compose_fora_do_escopo",
     "compose_invalido",
     "compose_indisponivel",
+    "compose_leitura_indisponivel",
+    "compose_leitura_negada",
     "compose_mudou_durante_coleta",
+    "compose_resolucao_indisponivel",
+    "compose_resolucao_negada",
     "contagens_indisponiveis",
     "container_fora_do_projeto",
     "container_id_invalido",
@@ -454,6 +460,22 @@ def live_payment_gate(api_env: dict[str, str], worker_env: dict[str, str]) -> bo
     return False if all(value == "false" for value in values) else None
 
 
+def _raise_compose_io_error(stage: str, error: OSError) -> None:
+    if stage == "resolucao":
+        if isinstance(error, FileNotFoundError):
+            raise InventoryError("compose_caminho_ausente") from None
+        if isinstance(error, PermissionError):
+            raise InventoryError("compose_resolucao_negada") from None
+        raise InventoryError("compose_resolucao_indisponivel") from None
+    if stage == "leitura":
+        if isinstance(error, FileNotFoundError):
+            raise InventoryError("compose_arquivo_ausente") from None
+        if isinstance(error, PermissionError):
+            raise InventoryError("compose_leitura_negada") from None
+        raise InventoryError("compose_leitura_indisponivel") from None
+    raise InventoryError("compose_indisponivel") from None
+
+
 def compose_digest(services: dict[str, dict]) -> str:
     paths: set[Path] = set()
     for service in services.values():
@@ -465,8 +487,8 @@ def compose_digest(services: dict[str, dict]) -> str:
                 path = ROOT / path
             try:
                 resolved = path.resolve(strict=True)
-            except OSError:
-                raise InventoryError("compose_indisponivel") from None
+            except OSError as error:
+                _raise_compose_io_error("resolucao", error)
             require(any(resolved == root or root in resolved.parents for root in ALLOWED_REMOTE_ROOTS),
                     "compose_fora_do_escopo")
             require(resolved.is_file() and not path.is_symlink(), "compose_invalido")
@@ -476,8 +498,8 @@ def compose_digest(services: dict[str, dict]) -> str:
     for path in sorted(paths, key=str):
         try:
             entries.append(hashlib.sha256(path.read_bytes()).hexdigest())
-        except OSError:
-            raise InventoryError("compose_indisponivel") from None
+        except OSError as error:
+            _raise_compose_io_error("leitura", error)
     return digest(entries)
 
 
