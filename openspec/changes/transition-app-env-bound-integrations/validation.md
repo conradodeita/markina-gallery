@@ -93,10 +93,24 @@
 - O preflight Orders read-only `40780574819` passou os gates gerais de CI e falhou fechado no host com `ambiente_divergente:outro_ambiente_conhecido`. Não produziu fingerprint nem consultou a matriz de tenants/gate live depois da divergência. O valor bruto de `APP_ENV` não foi registrado nem exposto.
 - Nenhuma configuração, serviço, schema, credencial, pedido ou pagamento foi alterado; nenhuma cobrança foi enviada. Tasks 3.2 e 4.1 permanecem bloqueadas por ausência de inventário completo/fingerprint e recibo de backup. A task 4.2 continua pendente porque o preflight Orders não produziu plano/inventário atual. Não trocar `access_token` ou `public_key` e não habilitar pagamentos reais até resolver a coleta e aprovar um plano operacional específico.
 
-## 28/10/2026 — diagnóstico sanitizado da coleta incompleta (em validação)
+## 28/10/2026 — primeira revisão do diagnóstico sanitizado
 
 - O recibo `coleta_incompleta` do run `40778425249` não identificou a fonte que falhou, por desenho. Não há como recuperar essa causa do recibo anterior.
 - Para a próxima coleta, o contrato agora aceita somente `failure_category` de uma allowlist de códigos constantes; valores/exceções arbitrários viram `falha_interna`. O envelope continua sem inventário parcial, fingerprint ou aprovação.
 - Validação local final: `python scripts/test_app_env_transition_inventory.py` — **18 testes, 1 skip**; o teste AST prova que todas as categorias literais emitidas por `require()`/`InventoryError` estão na allowlist; fixtures comprovam que categoria conhecida é preservada, exceção arbitrária vira `falha_interna`, e segredo/ID/caminho não aparecem no relatório. O validador rejeita categoria ausente, não textual ou fora da allowlist.
 - Ruff nos três scripts, `bash -n scripts/production-preflight-ssh-wrapper.sh`, política do workflow, OpenSpec estrito das changes `transition-app-env-bound-integrations` e `enable-mercadopago-production`, e `git diff --check` passaram. O skip local é o teste de permissões POSIX, que roda no worker Linux do CI.
-- O pin do wrapper para o novo blob do coletor foi atualizado. CI, integração desta correção em `main`, instalação protegida atualizada e nova coleta read-only ainda pendentes; a task 3.5 não está concluída.
+- Naquele ponto, o pin do wrapper estava atualizado, mas CI, integração em `main`, instalação protegida e nova coleta ainda estavam pendentes. A integração e o run remoto posterior estão registrados na seção seguinte; a task 3.5 foi concluída quanto à primeira versão do diagnóstico.
+
+## 28/10/2026 — execução read-only com diagnóstico no GitHub
+
+- No navegador Chrome, foi conferido o run manual do GitHub Actions `40788942618` (CI #1057), evento `workflow_dispatch`, branch `main`, SHA `8404cc5a58f2039fa1b86ac84976774b1e4132dd`. O job `app-env-transition-inventory` terminou com sucesso como execução do workflow.
+- O recibo sanitizado da coleta, contudo, informou `collection_status=incomplete`, `failure_category=compose_indisponivel`, inventário ausente e fingerprint indisponível. A coleta não autoriza alteração; o run verde atesta somente a execução do fluxo e seus guards.
+- A revisão do código mostrou que `compose_indisponivel` agrupava falha ao resolver o caminho e falha ao ler o arquivo. O recibo não informa nem permite inferir qual etapa ou causa do host ocorreu. Nenhum caminho/erro bruto foi obtido ou registrado; não houve alteração de configuração, serviço, banco, credenciais ou pagamentos.
+- Está em andamento uma alteração focalizada para distinguir apenas as categorias seguras de resolução/leitura (`ausente`, `negada` e outra falha de E/S), mantendo o relatório fail-closed sem inventário parcial, fingerprint ou detalhes da exceção. A tarefa 3.6 ficará pendente até validação e CI dessa alteração.
+
+## 28/10/2026 — refinamento local da classificação Compose
+
+- O coletor agora separa falhas de resolução e leitura em seis códigos estáticos: caminho/arquivo ausente, acesso negado e outra falha de E/S. O código antigo `compose_indisponivel` permanece aceito para compatibilidade com recibos anteriores.
+- Teste direcionado: `backend/.venv/Scripts/python.exe -m unittest scripts.test_app_env_transition_inventory -v` — **20 testes aprovados, 1 skip** (verificação de permissões POSIX, executada no CI Linux). Os novos casos verificam as seis classificações sem propagar mensagem/caminho e preservam relatório incompleto com inventário e fingerprint nulos.
+- Ruff nos dois arquivos Python alterados, `scripts/test_classify_ci_scope.py` (**10 testes**), teste `scripts/test_production_release_workflow_policy.py`, `openspec validate transition-app-env-bound-integrations --strict` e `git diff --check` passaram. A validação de política foi executada pelo arquivo, que é a forma correta de resolver seus imports locais.
+- O pin `APP_ENV_INVENTORY_BLOB_SHA` do wrapper corresponde ao blob Git do coletor (`09f030a1a2fac7ec8512b2c1132a3d1005e529fc`). A sintaxe do wrapper e os gates gerais ainda serão repetidos após a revisão final; CI, merge, atualização do wrapper protegido e nova coleta read-only permanecem pendentes.
