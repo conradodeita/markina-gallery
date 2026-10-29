@@ -5,7 +5,7 @@ umask 077
 fail() {
   local code="${1:-preflight_recusado}"
   case "$code" in
-    repositorio_config_invalido|url_publica_invalida|argumentos_invalidos|operacao_invalida|sha_suporte_invalido|aprovacao_invalida|bundle_invalido|aprovacao_recuperacao_invalida|diretorio_checkout_invalido|remoto_origem_invalido|main_remota_indisponivel|main_remota_divergente) ;;
+    repositorio_config_invalido|url_publica_invalida|argumentos_invalidos|operacao_invalida|sha_suporte_invalido|aprovacao_invalida|bundle_invalido|aprovacao_recuperacao_invalida|diretorio_checkout_invalido|remoto_origem_indisponivel|remoto_origem_invalido|main_remota_indisponivel|main_remota_divergente) ;;
     *) code=preflight_recusado ;;
   esac
   printf 'nginx-provenance: preflight recusado (%s)\n' "$code" >&2
@@ -13,6 +13,13 @@ fail() {
 }
 readonly EXPECTED_REPOSITORY='conradodeita/markina-gallery'
 readonly MODULE_BLOB_SHA='128121277e0e161afd71129c70421530f61b7401'
+is_expected_repository_origin() {
+  local candidate="${1,,}"
+  case "$candidate" in
+    "https://github.com/$EXPECTED_REPOSITORY.git"|"https://github.com/$EXPECTED_REPOSITORY"|"git@github.com:$EXPECTED_REPOSITORY.git"|"git@github.com:$EXPECTED_REPOSITORY"|"ssh://git@github.com/$EXPECTED_REPOSITORY.git"|"ssh://git@github.com/$EXPECTED_REPOSITORY") return 0 ;;
+    *) return 1 ;;
+  esac
+}
 [[ "${MARKINA_EXPECTED_REPOSITORY:-}" == "$EXPECTED_REPOSITORY" ]] || fail repositorio_config_invalido
 [[ "${MARKINA_PUBLIC_BASE_URL:-}" == 'https://markina.pickyourpic.com.br' ]] || fail url_publica_invalida
 [[ "$#" == 5 ]] || fail argumentos_invalidos
@@ -26,8 +33,8 @@ fi
 if [[ "$mode" == recover ]]; then [[ "$recovery_approval" =~ ^[0-9a-f]{64}$ ]] || fail aprovacao_recuperacao_invalida; fi
 cd /opt/markina-gallery 2>/dev/null || fail diretorio_checkout_invalido
 [[ "$(pwd -P 2>/dev/null)" == /opt/markina-gallery ]] || fail diretorio_checkout_invalido
-origin_url="$(git remote get-url origin 2>/dev/null)" || fail remoto_origem_invalido
-[[ "$origin_url" == "https://github.com/$EXPECTED_REPOSITORY.git" ]] || fail remoto_origem_invalido
+origin_url="$(git remote get-url origin 2>/dev/null)" || fail remoto_origem_indisponivel
+is_expected_repository_origin "$origin_url" || fail remoto_origem_invalido
 if ! remote_main="$(GIT_OPTIONAL_LOCKS=0 git ls-remote origin refs/heads/main 2>/dev/null)"; then
   fail main_remota_indisponivel
 fi

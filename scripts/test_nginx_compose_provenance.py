@@ -168,6 +168,68 @@ class ProvenanceTest(unittest.TestCase):
                 self.assertEqual(result.stdout, '')
                 self.assertNotIn(sentinel, result.stderr + result.stdout)
 
+    @unittest.skipUnless(os.name == 'posix' and BASH,
+                         'teste de checkout temporário do wrapper requer POSIX')
+    def test_operator_wrapper_accepts_only_canonical_repository_origin_aliases(self):
+        wrapper = Path(__file__).resolve().parent / 'deploy-prod-nginx-provenance.sh'
+        workspace = self.root / 'wrapper-worktree'
+        fake_bin = workspace / 'bin'
+        fake_bin.mkdir(parents=True)
+        operator = workspace / 'operator.sh'
+        operator.write_text(
+            wrapper.read_text().replace('/opt/markina-gallery', workspace.as_posix()))
+        fake_git = fake_bin / 'git'
+        fake_git.write_text(
+            '#!/bin/sh\n'
+            'set -eu\n'
+            'if [ "$1" = remote ] && [ "$2" = get-url ] && [ "$3" = origin ]; then\n'
+            '  printf "%s\\n" "${FAKE_GIT_ORIGIN:?}"\n'
+            'elif [ "$1" = ls-remote ]; then\n'
+            '  printf "%s\\trefs/heads/main\\n" "${FAKE_GIT_MAIN_SHA:?}"\n'
+            'else\n'
+            '  exit 97\n'
+            'fi\n')
+        fake_git.chmod(0o700)
+        support_sha = 'a' * 40
+        aliases = [
+            'https://github.com/conradodeita/markina-gallery.git',
+            'https://github.com/conradodeita/markina-gallery',
+            'git@github.com:conradodeita/markina-gallery.git',
+            'git@github.com:conradodeita/markina-gallery',
+            'ssh://git@github.com/conradodeita/markina-gallery.git',
+            'SSH://GIT@GITHUB.COM/CONRADOdeita/MARKINA-GALLERY',
+        ]
+        rejected = [
+            'https://github.com/attacker/markina-gallery.git',
+            'https://github.com/conradodeita/markina-gallery.evil',
+            'git@attacker.example:conradodeita/markina-gallery.git',
+            'https://token@github.com/conradodeita/markina-gallery.git',
+        ]
+        for origin, expected_code in [(url, 'main_remota_divergente') for url in aliases] + [
+                (url, 'remoto_origem_invalido') for url in rejected]:
+            with self.subTest(origin_class=expected_code):
+                env = os.environ.copy()
+                env['MARKINA_EXPECTED_REPOSITORY'] = 'conradodeita/markina-gallery'
+                env['MARKINA_PUBLIC_BASE_URL'] = 'https://markina.pickyourpic.com.br'
+                env['FAKE_GIT_ORIGIN'] = origin
+                env['FAKE_GIT_MAIN_SHA'] = 'b' * 40
+                env['PATH'] = str(fake_bin) + os.pathsep + env.get('PATH', '')
+                probe = subprocess.run(
+                    ['git', 'remote', 'get-url', 'origin'], cwd=workspace, env=env,
+                    text=True, capture_output=True, timeout=5, check=False)
+                self.assertEqual(probe.returncode, 0, probe.stderr)
+                self.assertEqual(probe.stdout, origin + '\n')
+                result = subprocess.run(
+                    [BASH, str(operator), 'inventory', support_sha, '', '', ''],
+                    cwd=workspace, env=env, text=True, capture_output=True,
+                    timeout=5, check=False)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(
+                    result.stderr,
+                    f'nginx-provenance: preflight recusado ({expected_code})\n')
+                self.assertEqual(result.stdout, '')
+                self.assertNotIn(origin, result.stderr + result.stdout)
+
     def test_unknown_host_policy_blocks(self):
         self.container['HostConfig']['Privileged'] = True
         with self.assertRaisesRegex(mod.Refusal, '^politica_host_nao_suportada$'):
