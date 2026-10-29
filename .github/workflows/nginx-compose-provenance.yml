@@ -1,0 +1,135 @@
+name: Nginx Compose provenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        required: true
+        default: inventory
+        options: [inventory, prepare, release, recovery-inventory, recover]
+      approval:
+        type: string
+        required: false
+      bundle:
+        type: string
+        required: false
+      recovery_approval:
+        type: string
+        required: false
+  pull_request:
+    paths:
+      - scripts/*nginx*provenance*
+      - .github/workflows/nginx-compose-provenance.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/*nginx*provenance*
+      - .github/workflows/nginx-compose-provenance.yml
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-proof:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Instalar Compose idêntico ao host para o ensaio
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/nginx-compose-proof"
+          mkdir -p "$DOCKER_CONFIG/cli-plugins"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            https://github.com/docker/compose/releases/download/v2.35.1/docker-compose-linux-x86_64 \
+            -o "$DOCKER_CONFIG/cli-plugins/docker-compose"
+          echo "7bdb2ce2916e5dd0354e5d129892bf96fdcdb1a9ab8eed69b9173e131db4c230  $DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum --check
+          chmod 700 "$DOCKER_CONFIG/cli-plugins/docker-compose"
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+      - name: Guardas, autenticação e compatibilidade Python 3.8
+        run: |
+          python -m unittest discover -s scripts -p test_nginx_compose_provenance.py -v
+          python -c "import ast,pathlib; ast.parse(pathlib.Path('scripts/nginx_compose_provenance.py').read_text(), feature_version=(3,8))"
+      - name: Publicação e recuperação reais em projeto descartável
+        env:
+          NGINX_PROVENANCE_DOCKER_TEST: '1'
+        run: |
+          docker pull nginx:1.27-alpine
+          python -m unittest discover -s scripts -p test_nginx_provenance_docker.py -v
+
+  authorized-operation:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: markina-gallery-production-nginx-provenance
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exigir CI e prova operacional da mesma main
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"
+          python - <<'PY'
+          import os
+          from scripts.verify_main_ci_evidence import paginate
+          sha, token = os.environ['GITHUB_SHA'], os.environ['GITHUB_TOKEN']
+          runs = paginate('actions/workflows/nginx-compose-provenance.yml/runs', 'workflow_runs', token,
+                          {'event': 'push', 'branch': 'main', 'head_sha': sha})
+          assert runs and all(r['head_sha'] == sha and r['head_branch'] == 'main' and
+                              r['event'] == 'push' and r['path'] == '.github/workflows/nginx-compose-provenance.yml'
+                              for r in runs), 'prova_nginx_ausente'
+          latest = max(runs, key=lambda r: (r['run_number'], r['run_attempt']))
+          assert latest['status'] == 'completed' and latest['conclusion'] == 'success', 'prova_nginx_nao_verde'
+          jobs = paginate('actions/runs/%s/attempts/%s/jobs' % (latest['id'], latest['run_attempt']), 'jobs', token)
+          proof = [j for j in jobs if j['name'] == 'isolated-proof']
+          assert len(proof) == 1 and proof[0]['conclusion'] == 'success', 'prova_nginx_job_ausente'
+          print('nginx_main_proof=success')
+          PY
+      - name: Executar exclusivamente a operação aprovada
+        shell: bash
+        env:
+          OPERATION: ${{ inputs.operation }}
+          APPROVAL: ${{ inputs.approval }}
+          BUNDLE: ${{ inputs.bundle }}
+          RECOVERY_APPROVAL: ${{ inputs.recovery_approval }}
+          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          case "$OPERATION" in inventory|prepare|release|recovery-inventory|recover) ;; *) exit 1 ;; esac
+          [[ -z "$APPROVAL" || "$APPROVAL" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          [[ -z "$BUNDLE" || "$BUNDLE" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          [[ -z "$RECOVERY_APPROVAL" || "$RECOVERY_APPROVAL" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          for name in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || { echo 'Configuração protegida ausente'; exit 1; }
+          done
+          [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ ]] || exit 1
+          key_file="$(mktemp)"
+          known_hosts="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts"
+          chmod 600 "$key_file" "$known_hosts"
+          command="cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='conradodeita/markina-gallery' MARKINA_PUBLIC_BASE_URL='https://markina.pickyourpic.com.br' bash -s -- '$OPERATION' '$GITHUB_SHA' '$APPROVAL' '$BUNDLE' '$RECOVERY_APPROVAL'"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$known_hosts" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" "$command" \
+            < scripts/deploy-prod-nginx-provenance.sh
