@@ -1,0 +1,37 @@
+# Evidências e limites
+
+## 29/10/2026 — diagnóstico remoto somente-leitura
+
+- Worktree `mercadopago-orders`, branch `codex/record-app-env-inventory-407959`; `main` remota `c142c7ead1dfff430d7b9f35cd5d1fa342503232`. As cinco alterações documentais locais anteriores foram preservadas. Não houve push, mudança funcional ou publicação nesta investigação.
+- Usado o acesso SSH operacional já documentado em `docs/RELEASE-DEPENDENCIES.md`; a chave existente foi referenciada pelo cliente, sem abrir/imprimir/copiar seu conteúdo. Consultas limitadas a metadados Docker/Git e resolução de configuração em memória do projeto `markina-gallery`. Não houve escrita de configuração/arquivos no host, parada, recriação, leitura de dados de aplicação ou alteração de banco/credenciais.
+- Os 13 serviços ativos listados no projeto têm fontes existentes, exceto a terceira fonte das seis informadas pelo Nginx. Essa fonte foi classificada por nome constante como Compose RAW aposentado; não é versionada no checkout atual, e existe histórico Git. Nenhum caminho arbitrário ou mensagem bruta de erro foi registrado.
+- Nginx `ee8973e6551e`, criado em `2026-10-18T00:33:13.219368314Z`, running/healthy, zero restarts, imagem `sha256:96868d9fa38f469a86d2f25787e43ee9ad330339d30be260aa9f5a338bb03751`, rede `markina-gallery_internal`, porta exclusiva de loopback `127.0.0.1:8080 → 80/tcp`, uma montagem com destino `/etc/nginx/conf.d/default.conf`. Hash Compose no container: `96dd77fe8c7e5742f7513ba31fe58bc3091c9aa5ade7398e27d35a636483b8a8`. Estes valores são evidência diagnóstica, não fingerprint de aprovação operacional.
+- Resolução diagnóstica das cinco fontes existentes foi recusada pela consistência normal do Compose. `config --no-consistency` foi usado apenas para identificar a causa: `face-gemma-index-worker` sem imagem/build, nenhuma dependência de serviço indefinida. A imagem resolvida e a montagem do Nginx coincidem; o hash de configuração não coincide. Nenhum modelo incompleto foi aprovado ou aplicado.
+- A leitura local do helper 0090 confirmou que a barreira de manutenção escreve/restaura `nginx.conf` no container; a configuração efetiva deve ser inventariada antes de uma recriação. Não se presume alteração residual nem recuperação já ensaiada.
+- Consulta HTTPS pública `/healthz`: HTTP 200. Não houve OTP, mensagem, chamada de pagamento ou smoke com dados de clientes.
+
+## Prontidão no planejamento inicial
+
+Somente planejamento e diagnóstico inicial. O candidato, a equivalência completa, o backup e a recuperação ainda precisam ser implementados/verificados. A publicação não está pronta nem autorizada por este documento. A revisão desta ampliação de escopo é necessária antes de aplicar a change; a execução remota dependerá do plano específico da task 3.1.
+
+## Validação dos artefatos
+
+- `openspec validate reconcile-nginx-compose-provenance --strict` e `openspec validate transition-app-env-bound-integrations --strict`: aprovados.
+- `git diff --check` dos arquivos rastreados: sem erros; apenas avisos de normalização LF/CRLF. A nova change permanece local e não rastreada, sem commit/push.
+- Nenhum código funcional foi alterado; não houve necessidade de testes de aplicação ou limpeza/refatoração. Todos os quatro artefatos obrigatórios de planejamento existem; a implementação permanece pendente de revisão.
+
+## 29/10/2026 — implementação autorizada, inventário e candidato
+
+- Proprietário pediu aplicar `reconcile-nginx-compose-provenance`. Branch isolada `codex/nginx-compose-provenance` criada da main `c142c7e`, preservando integralmente as cinco alterações documentais anteriores e a proposta local.
+- Coletor próprio executado por stdin/SSH somente-leitura, compatível com Python 3.8.10 do host. O candidato passa a resolução normal do Compose 2.35.1 por stdin, sem arquivo temporário remoto. Snapshot consistente abrange Nginx e 21 peers (inclusive históricos parados). Nenhuma configuração, serviço, segredo ou dado remoto foi escrito.
+- Rede adicional existente `npm-network` e aliases foram confirmados e incluídos no candidato, sem nova rede ou ampliação de acesso. Uma aparente corrida veio da ordem variável do array de mounts retornado pelo Docker: o hash agora ordena por destino/origem e mantém todos os atributos; teste cobre permutação sem mascarar alterações reais.
+- Recibo diagnóstico obtido: bundle `c0ce1e618fc50e074743f7c628d5e9688def3616727523e482d40e4156e9e777`, fingerprint `88dbb345d37019f386a44ef7d85a56c78a4ecc2a4301904d2263c5e373d2cba3`, modelo resolvido `005db9a62c8e05f528897c3316575010cb13739ba60eb29c116478743abc6418`. Esses valores não são aprovação e devem ser recolhidos após CI/merge.
+- Hashes observados: main `4dee6b0c7c8278f6a9b827261c25d3215c9ea8955e41ff7fe3eabdd5297edce7`, mime `6f95d1d7d75e3c072907d845622a69d23110d1266c16ff122b3109b8b21f3ae9`, server `0ab727b84f86e6a0d2b637ef7079ab1202296de4a53b9a6c9185a971a5be6c01`. Conteúdo somente em memória; nenhum dump ou arquivo de configuração real foi salvo no repositório.
+- Dez testes sintéticos passaram em container Linux local descartável, rede desabilitada e árvore scripts somente-leitura, incluindo backup HMAC persistido/recarregado, corrupção, symlink, aprovação ausente/divergente, origem externa e corrida. O fixture Docker de publicação/recuperação real e novos testes de trava/assinatura ainda precisam rodar no CI Linux; não marcar o executor como validado antes disso.
+
+## Checkpoint antes do PR
+
+- Treze testes sintéticos passaram no Linux local descartável, sem skips: inclui trava POSIX real contra segundo operador, assinatura adulterada, arquivo world-readable, blob exato do operador e canonicalização dos mounts. Nenhum runtime ou rede de outro projeto foi alterado pelo teste.
+- Ruff, sintaxe Bash, parse YAML e AST Python 3.8 aprovados. A compatibilidade de execução read-only em Python 3.8.10/Compose 2.35.1 do host foi observada. O wrapper carrega somente o blob aprovado em memória e os modos mutáveis exigem fingerprint exato; o workflow só permite operação manual na main, após CI e prova Docker da mesma revisão.
+- Backup HMAC usa chave operacional separada de integrações, diretórios 0700/arquivos 0600, escrita exclusiva/fsync, releitura e autenticação. Nenhuma preparação remota foi executada. Runbook em `operations.md` separa inventário, preparação de armazenamento e publicação/recovery com aprovações específicas.
+- A revisão focalizada não encontrou código substituído/removível nesta implementação nova; helpers de releases anteriores permanecem intactos. A prova Docker de publicação, recuperação e preservação de container testemunha está configurada para CI Linux descartável; tasks 1.3/2.2 continuam pendentes dessa evidência, não de novas baterias opcionais.
