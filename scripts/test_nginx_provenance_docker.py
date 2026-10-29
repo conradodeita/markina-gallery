@@ -114,11 +114,18 @@ class DockerProof(unittest.TestCase):
             return original_verify(value)
 
         self.operation.verify_running = fail_once
-        with self.assertRaisesRegex(mod.Refusal, '^publicacao_falhou_recuperada$'):
-            self.operation.release(payload['bundle_id'], payload['approval_fingerprint'])
         directory = self.state / 'nginx-provenance' / payload['bundle_id']
-        receipt = json.loads((directory / 'result.json').read_text())
+        try:
+            self.operation.release(payload['bundle_id'], payload['approval_fingerprint'])
+        except mod.Refusal as error:
+            receipt = json.loads((directory / 'result.json').read_text())
+            if str(error) != 'publicacao_falhou_recuperada':
+                self.fail('recovery required after publish stage ' + receipt.get('failure', 'unknown')
+                          + '; recovery stage ' + receipt.get('recovery_failure', 'unknown'))
+        else:
+            self.fail('injected publication failure was not reported')
         self.assertEqual(receipt['failure'], 'synthetic_post_creation_failure')
+        self.assertEqual(receipt['state'], 'recovered')
         original_verify(payload)
 
     def test_corrupt_backup_and_peer_drift_do_not_stop_nginx(self):
