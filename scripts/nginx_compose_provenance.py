@@ -443,8 +443,14 @@ class Operation:
                 break
             require(c['State']['Running'] and time.monotonic() < deadline, 'nginx_nao_saudavel')
             time.sleep(1)
-        require(configuration_projection(c) == configuration_projection(payload['nginx']),
-                'runtime_candidato_divergente')
+        expected = configuration_projection(payload['nginx'])
+        observed = configuration_projection(c)
+        for section, code in (('image', 'imagem_candidata_divergente'),
+                              ('config', 'configuracao_candidata_divergente'),
+                              ('host', 'host_candidato_divergente'),
+                              ('labels', 'labels_candidatas_divergentes'),
+                              ('networks', 'redes_candidatas_divergentes')):
+            require(observed[section] == expected[section], code)
         require(len(c['Mounts']) == 3 and all(m['Type'] == 'bind' and not m['RW'] for m in c['Mounts']),
                 'montagens_candidatas_divergentes')
         require({m['Destination'] for m in c['Mounts']} == set(CONFIG_FILES), 'destinos_divergentes')
