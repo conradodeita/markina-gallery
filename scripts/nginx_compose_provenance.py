@@ -445,9 +445,13 @@ class Operation:
             time.sleep(1)
         expected = configuration_projection(payload['nginx'])
         observed = configuration_projection(c)
+        for key in sorted(set(expected['host']) | set(observed['host'])):
+            if observed['host'].get(key) != expected['host'].get(key):
+                # Docker HostConfig keys are API field names, never values.
+                suffix = key.lower() if re.fullmatch(r'[A-Za-z][A-Za-z0-9]{0,31}', key) else 'outro_campo'
+                raise Refusal('host_' + suffix + '_divergente')
         for section, code in (('image', 'imagem_candidata_divergente'),
                               ('config', 'configuracao_candidata_divergente'),
-                              ('host', 'host_candidato_divergente'),
                               ('labels', 'labels_candidatas_divergentes'),
                               ('networks', 'redes_candidatas_divergentes')):
             require(observed[section] == expected[section], code)
