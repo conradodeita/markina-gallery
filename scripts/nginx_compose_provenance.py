@@ -268,7 +268,8 @@ def configuration_projection(c):
     config = {k: v for k, v in c['Config'].items()
               if k not in ('Hostname', 'Image', 'Labels', 'AttachStdout', 'AttachStderr')}
     config['Env'] = sorted(config.get('Env') or [])
-    host = {k: v for k, v in c['HostConfig'].items() if k not in ('Binds', 'ConsoleSize')}
+    host = {k: v for k, v in c['HostConfig'].items()
+            if k not in ('Binds', 'ConsoleSize', 'Mounts')}
     for key in ('CapAdd', 'CapDrop', 'Devices', 'DeviceRequests', 'DeviceCgroupRules', 'Dns',
                 'DnsOptions', 'DnsSearch', 'ExtraHosts', 'GroupAdd', 'Links', 'SecurityOpt',
                 'StorageOpt', 'Sysctls', 'VolumesFrom', 'Mounts', 'Ulimits', 'Tmpfs', 'Annotations'):
@@ -458,6 +459,11 @@ class Operation:
         require(len(c['Mounts']) == 3 and all(m['Type'] == 'bind' and not m['RW'] for m in c['Mounts']),
                 'montagens_candidatas_divergentes')
         require({m['Destination'] for m in c['Mounts']} == set(CONFIG_FILES), 'destinos_divergentes')
+        expected_mounts = {volume['target']: str(Path(volume['source']).resolve())
+                           for volume in payload['candidate']['services']['nginx']['volumes']}
+        observed_mounts = {mount['Destination']: str(Path(mount['Source']).resolve())
+                           for mount in c['Mounts']}
+        require(observed_mounts == expected_mounts, 'fontes_candidatas_divergentes')
         for path, value in payload['files'].items():
             require(self.runner.run('docker', 'exec', c['Id'], 'cat', path) == base64.b64decode(value),
                     'bytes_configuracao_divergentes')
