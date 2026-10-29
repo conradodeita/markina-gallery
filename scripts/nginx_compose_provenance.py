@@ -43,6 +43,12 @@ class Refusal(RuntimeError):
     """A mensagem é sempre um código constante, nunca erro de Docker/host."""
 
 
+def safe_failure_code(error):
+    """Retorna apenas códigos fixos ASCII; nunca persiste detalhe de subprocesso."""
+    code = str(error) if isinstance(error, Refusal) else ''
+    return code if re.fullmatch(r'[a-z][a-z0-9_]{0,63}', code) else 'falha_interna'
+
+
 def require(condition, code):
     if not condition:
         raise Refusal(code)
@@ -526,12 +532,16 @@ class Operation:
                         and published['Config']['Labels'].get('com.docker.compose.config-hash') == expected_hash[1]
                         and published['Config']['Labels'].get('com.docker.compose.project.config_files') ==
                         str(directory / 'candidate.compose.json'), 'proveniencia_publicada_divergente')
-            except Exception:  # noqa: BLE001 - qualquer falha posterior à parada exige recuperação
+            except Exception as publish_error:  # noqa: BLE001 - falha posterior à parada exige recuperação
+                failure_code = safe_failure_code(publish_error)
                 try:
                     self.recover(payload, directory)
-                    private_write(directory / 'result.json', encoded({'state': 'recovered', 'approval': approval}))
-                except Exception:  # noqa: BLE001 - não vazar erros de Docker/configuração
-                    private_write(directory / 'result.json', encoded({'state': 'recovery_required', 'approval': approval}))
+                    private_write(directory / 'result.json', encoded({'state': 'recovered', 'approval': approval,
+                                                                      'failure': failure_code}))
+                except Exception as recovery_error:  # noqa: BLE001 - não vazar erros de Docker/configuração
+                    private_write(directory / 'result.json', encoded({
+                        'state': 'recovery_required', 'approval': approval,
+                        'failure': failure_code, 'recovery_failure': safe_failure_code(recovery_error)}))
                     raise Refusal('recuperacao_requer_operador') from None
                 raise Refusal('publicacao_falhou_recuperada') from None
             private_write(directory / 'result.json', encoded({'state': 'published', 'approval': approval}))

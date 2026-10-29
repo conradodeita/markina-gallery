@@ -123,6 +123,14 @@ class ProvenanceTest(unittest.TestCase):
         with self.assertRaisesRegex(mod.Refusal, '^configuracao_imagem_nao_suportada$'):
             self.operation.snapshot()
 
+    def test_failure_receipt_code_never_contains_exception_details(self):
+        self.assertEqual(mod.safe_failure_code(mod.Refusal('nginx_nao_saudavel')),
+                         'nginx_nao_saudavel')
+        self.assertEqual(mod.safe_failure_code(RuntimeError('token=private-value')),
+                         'falha_interna')
+        self.assertEqual(mod.safe_failure_code(mod.Refusal('bad:detail')),
+                         'falha_interna')
+
     def test_other_project_and_network_block(self):
         self.container['Config']['Labels']['com.docker.compose.project'] = 'another-project'
         with self.assertRaises(mod.Refusal):

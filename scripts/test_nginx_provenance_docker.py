@@ -90,7 +90,12 @@ class DockerProof(unittest.TestCase):
 
     def test_success_preserves_bytes_image_and_witness(self):
         payload = self.prepared()
-        result = self.operation.release(payload['bundle_id'], payload['approval_fingerprint'])
+        try:
+            result = self.operation.release(payload['bundle_id'], payload['approval_fingerprint'])
+        except mod.Refusal:
+            directory = self.state / 'nginx-provenance' / payload['bundle_id']
+            receipt = json.loads((directory / 'result.json').read_text())
+            self.fail('publication recovered after stage ' + receipt.get('failure', 'unknown'))
         self.assertEqual(result['status'], 'publicado')
         current = self.operation.verify_running(payload)
         self.assertNotEqual(current['Id'], payload['nginx']['Id'])
@@ -111,6 +116,9 @@ class DockerProof(unittest.TestCase):
         self.operation.verify_running = fail_once
         with self.assertRaisesRegex(mod.Refusal, '^publicacao_falhou_recuperada$'):
             self.operation.release(payload['bundle_id'], payload['approval_fingerprint'])
+        directory = self.state / 'nginx-provenance' / payload['bundle_id']
+        receipt = json.loads((directory / 'result.json').read_text())
+        self.assertEqual(receipt['failure'], 'synthetic_post_creation_failure')
         original_verify(payload)
 
     def test_corrupt_backup_and_peer_drift_do_not_stop_nginx(self):
