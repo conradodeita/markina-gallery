@@ -15,9 +15,9 @@
 
 ## 3. Publicação e retomada
 
-- [ ] 3.1 Após CI/revisão, obter inventário atual e apresentar plano específico com domínio, porta, fingerprint, imagens, impacto e backup/recuperação verificados; registrar aprovação humana desse plano antes de mutação remota.
-- [ ] 3.2 Executar somente o plano aprovado, revalidando snapshot e exclusividade; comprovar Nginx/configuração saudáveis, HTTPS 200 e igualdade dos demais containers. Recuperar pelo procedimento aprovado se falhar, sem writes de banco ou alteração financeira.
-- [ ] 3.3 Repetir o inventário APP_ENV oficial e registrar seu recibo real; concluir apenas a reconciliação comprovada, mantendo pendências/aprovações próprias de `transition-app-env-bound-integrations` e `enable-mercadopago-production`.
+- [x] 3.1 Após CI/revisão, obter inventário atual e apresentar plano específico com domínio, porta, fingerprint, imagens, impacto e backup/recuperação verificados; registrar aprovação humana desse plano antes de mutação remota. Inventário read-only `40866844466`, backup HMAC `backup_verificado` `40870995198` e aprovação específica do plano registrados em `validation.md`.
+- [x] 3.2 Executar somente o plano aprovado, revalidando snapshot e exclusividade; comprovar Nginx/configuração saudáveis, HTTPS 200 e igualdade dos demais containers. Recuperar pelo procedimento aprovado se falhar, sem writes de banco ou alteração financeira. Release `40906357934` retornou `publicado`; as verificações internas confirmaram runtime, montagens, redes/aliases e peers; `/healthz`, `/api/health` e `/` retornaram HTTP 200 após a troca. Ver `validation.md`.
+- [x] 3.3 Repetir o inventário APP_ENV oficial e registrar seu recibo real; concluir apenas a reconciliação comprovada, mantendo pendências/aprovações próprias de `transition-app-env-bound-integrations` e `enable-mercadopago-production`. Run `40906842688`, job `app-env-transition-inventory`, concluiu com coleta completa; recibo e bloqueios agregados em `validation.md`. O fingerprint permaneceu indisponível por causa dos bloqueios, sem transição APP_ENV nem abertura do gate financeiro.
 
 ## Workflow follow-up
 
