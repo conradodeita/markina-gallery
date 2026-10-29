@@ -38,6 +38,7 @@ class DockerProof(unittest.TestCase):
             'volumes': [{'type': 'bind', 'source': str(source), 'target': mod.CONFIG_FILES[2],
                          'read_only': True}],
             'networks': {self.network: {'aliases': ['proof-alias']}}, 'cgroup': 'host',
+            'logging': {'driver': 'json-file'},
             'healthcheck': {'test': ['CMD-SHELL', 'wget -qO- http://127.0.0.1/healthz >/dev/null'],
                             'interval': '1s', 'timeout': '1s', 'retries': 5},
         }}, 'networks': {self.network: {'external': True, 'name': self.network}}}
@@ -53,6 +54,15 @@ class DockerProof(unittest.TestCase):
                 break
             self.assertLess(time.monotonic(), deadline)
             time.sleep(1)
+        # Estes caminhos são defaults do daemon/host e variam entre runners;
+        # a prova valida que a recriação preserva os do próprio runtime isolado.
+        self.assertIsInstance(c['HostConfig'].get('MaskedPaths'), list)
+        self.assertIsInstance(c['HostConfig'].get('ReadonlyPaths'), list)
+        original_masked, original_readonly = mod.MASKED, mod.READONLY
+        mod.MASKED = list(c['HostConfig']['MaskedPaths'])
+        mod.READONLY = list(c['HostConfig']['ReadonlyPaths'])
+        self.addCleanup(setattr, mod, 'MASKED', original_masked)
+        self.addCleanup(setattr, mod, 'READONLY', original_readonly)
         # Testemunha parada: identidade deve sobreviver à publicação e à recuperação.
         self.runner.run('docker', 'create', '--label', 'com.docker.compose.project=' + self.project,
                         '--label', 'com.docker.compose.service=witness', 'nginx:1.27-alpine', 'true')
