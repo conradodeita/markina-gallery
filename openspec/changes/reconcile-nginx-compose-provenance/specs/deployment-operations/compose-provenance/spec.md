@@ -42,3 +42,11 @@ A operação SHALL preparar e verificar backup protegido da configuração efeti
 #### Scenario: Falha após atualização do Nginx
 - **WHEN** configuração, saúde ou HTTPS falha
 - **THEN** o procedimento recupera somente o Nginx anterior com os artefatos verificados e confirma novamente o ingresso
+
+### Requirement: Diagnóstico seguro das guardas do executor
+O wrapper operacional SHALL identificar uma pré-condição recusada usando somente códigos constantes permitidos e SHALL NOT imprimir os valores recebidos, saídas brutas de comandos ou segredos. Uma falha de verificação MUST interromper o fluxo antes de buscar/executar o módulo operacional ou alterar recursos remotos.
+
+#### Scenario: Pré-condição de inventário inválida
+- **WHEN** a configuração, os argumentos, o checkout, a origem Git ou a revisão remota não satisfazem uma guarda
+- **THEN** o wrapper informa somente o código estável da guarda recusada, sem revelar valores ou saídas do comando
+- **AND** nenhuma consulta operacional ou mutação remota é executada

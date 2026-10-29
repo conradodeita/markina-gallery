@@ -4,12 +4,29 @@ import copy
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import nginx_compose_provenance as mod
+
+
+def bash_executable():
+    if os.name == 'posix':
+        return shutil.which('bash')
+    roots = [os.environ.get('ProgramFiles'), os.environ.get('ProgramFiles(x86)'), r'C:\Program Files']
+    for root in roots:
+        if root:
+            candidate = Path(root) / 'Git' / 'bin' / 'bash.exe'
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
+BASH = bash_executable()
 
 
 def fixture(source):
@@ -112,6 +129,44 @@ class ProvenanceTest(unittest.TestCase):
         wrapper = (folder / 'deploy-prod-nginx-provenance.sh').read_text()
         self.assertIn("MODULE_BLOB_SHA='" + blob + "'", wrapper)
         self.assertNotIn('PIN_PENDING', wrapper)
+
+    @unittest.skipUnless(BASH, 'execução do wrapper requer Bash')
+    def test_operator_wrapper_preflight_codes_are_constant_and_sanitized(self):
+        wrapper = Path(__file__).resolve().parent / 'deploy-prod-nginx-provenance.sh'
+        sentinel = 'invalid-secret-must-not-be-printed'
+        support_sha = 'a' * 40
+        approval = 'b' * 64
+        bundle = 'c' * 64
+        cases = [
+            ('repositorio_config_invalido',
+             {'MARKINA_EXPECTED_REPOSITORY': sentinel},
+             ['inventory', support_sha, '', '', '']),
+            ('url_publica_invalida',
+             {'MARKINA_PUBLIC_BASE_URL': 'https://' + sentinel},
+             ['inventory', support_sha, '', '', '']),
+            ('argumentos_invalidos', {}, ['inventory', support_sha, '', '']),
+            ('operacao_invalida', {}, ['invalid-' + sentinel, support_sha, '', '', '']),
+            ('sha_suporte_invalido', {}, ['inventory', sentinel, '', '', '']),
+            ('aprovacao_invalida', {}, ['prepare', support_sha, sentinel, '', '']),
+            ('bundle_invalido', {}, ['release', support_sha, approval, sentinel, '']),
+            ('aprovacao_recuperacao_invalida',
+             {}, ['recover', support_sha, approval, bundle, sentinel]),
+        ]
+        for code, overrides, arguments in cases:
+            with self.subTest(code=code):
+                env = os.environ.copy()
+                env['MARKINA_EXPECTED_REPOSITORY'] = 'conradodeita/markina-gallery'
+                env['MARKINA_PUBLIC_BASE_URL'] = 'https://markina.pickyourpic.com.br'
+                env.update(overrides)
+                result = subprocess.run(
+                    [BASH, str(wrapper), *arguments], cwd=self.root, env=env,
+                    text=True, capture_output=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(
+                    result.stderr,
+                    f'nginx-provenance: preflight recusado ({code})\n')
+                self.assertEqual(result.stdout, '')
+                self.assertNotIn(sentinel, result.stderr + result.stdout)
 
     def test_unknown_host_policy_blocks(self):
         self.container['HostConfig']['Privileged'] = True

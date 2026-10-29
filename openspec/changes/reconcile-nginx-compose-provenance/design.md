@@ -20,6 +20,7 @@ O modelo diagnóstico construído em memória com as cinco fontes ainda existent
 3. Não recriar antes de guardar configuração efetiva, origem, imagem, inventário completo e recuperação reproduzível em armazenamento protegido. Backup não depende do arquivo RAW ausente. Recibos públicos contêm somente hashes, estados e metadados permitidos.
 4. Executar por procedimento protegido com fingerprint revalidado e trava exclusiva. A operação alcança apenas Nginx do projeto, com imagem local já existente e sem build/pull/dependências. Todos os outros containers e configurações devem manter os mesmos fingerprints; não iniciar nem remover serviços aposentados ou outros projetos.
 5. A revisão desta proposta libera preparação/implementação local; o plano remoto final exige revisão específica com candidato, recuperação, impacto e snapshot atuais. A autorização anterior da transição APP_ENV não é usada como aprovação de um candidato de proxy ainda não validado.
+6. As recusas do wrapper antes do módulo operacional usam uma allowlist de códigos constantes. Erros brutos de comandos de identidade/proveniência e entradas recebidas não são exibidos; códigos não reconhecidos são reduzidos a uma recusa genérica. Assim, uma guarda pode ser diagnosticada sem expor valores ou contornar a condição.
 
 ## Risks / Trade-offs
 
