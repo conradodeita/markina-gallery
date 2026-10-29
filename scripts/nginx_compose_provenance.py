@@ -444,7 +444,7 @@ class Operation:
         after = self.runner.json('docker', 'inspect', container['Id'])[0]
         require(not after['State']['Running'], 'parada_nao_confirmada')
 
-    def verify_running(self, payload):
+    def verify_running(self, payload, expected_mount_sources=None):
         deadline = time.monotonic() + 90
         while True:
             c = self.target()
@@ -466,10 +466,15 @@ class Operation:
                               ('networks', 'redes_candidatas_divergentes')):
             require(observed[section] == expected[section], code)
         require(len(c['Mounts']) == 3 and all(m['Type'] == 'bind' and not m['RW'] for m in c['Mounts']),
-                'montagens_candidatas_divergentes')
+                'montagens_divergentes')
         require({m['Destination'] for m in c['Mounts']} == set(CONFIG_FILES), 'destinos_divergentes')
-        expected_mounts = {volume['target']: str(Path(volume['source']).resolve())
-                           for volume in payload['candidate']['services']['nginx']['volumes']}
+        if expected_mount_sources is None:
+            expected_mounts = {volume['target']: str(Path(volume['source']).resolve())
+                               for volume in payload['candidate']['services']['nginx']['volumes']}
+        else:
+            require(set(expected_mount_sources) == set(CONFIG_FILES), 'montagens_esperadas_invalidas')
+            expected_mounts = {target: str(Path(source).resolve())
+                               for target, source in expected_mount_sources.items()}
         observed_mounts = {mount['Destination']: str(Path(mount['Source']).resolve())
                            for mount in c['Mounts']}
         names = {CONFIG_FILES[0]: 'nginx_config', CONFIG_FILES[1]: 'mime_types',
@@ -520,7 +525,9 @@ class Operation:
             connection.close()
         require(re.fullmatch(r'[0-9a-f]{64}', new_id) is not None, 'recuperacao_id_invalido')
         self.runner.run('docker', 'start', new_id)
-        self.verify_running(payload)
+        self.verify_running(payload, expected_mount_sources={
+            target: str(directory / ('config-' + str(index)))
+            for index, target in enumerate(CONFIG_FILES)})
 
     def recovery_inventory(self, bundle_id, approval):
         payload, directory = self.load(bundle_id, approval)

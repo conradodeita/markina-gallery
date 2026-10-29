@@ -107,11 +107,11 @@ class DockerProof(unittest.TestCase):
         original_verify = self.operation.verify_running
         failures = [True]
 
-        def fail_once(value):
+        def fail_once(value, expected_mount_sources=None):
             if failures:
                 failures.pop()
                 raise mod.Refusal('synthetic_post_creation_failure')
-            return original_verify(value)
+            return original_verify(value, expected_mount_sources=expected_mount_sources)
 
         self.operation.verify_running = fail_once
         directory = self.state / 'nginx-provenance' / payload['bundle_id']
@@ -126,7 +126,9 @@ class DockerProof(unittest.TestCase):
             self.fail('injected publication failure was not reported')
         self.assertEqual(receipt['failure'], 'synthetic_post_creation_failure')
         self.assertEqual(receipt['state'], 'recovered')
-        original_verify(payload)
+        original_verify(payload, expected_mount_sources={
+            target: str(directory / ('config-' + str(index)))
+            for index, target in enumerate(mod.CONFIG_FILES)})
 
     def test_corrupt_backup_and_peer_drift_do_not_stop_nginx(self):
         payload = self.prepared()

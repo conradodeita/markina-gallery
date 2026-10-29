@@ -4,7 +4,7 @@ set -Eeuo pipefail
 umask 077
 fail() { echo 'nginx-provenance: operação recusada' >&2; exit 1; }
 readonly EXPECTED_REPOSITORY='conradodeita/markina-gallery'
-readonly MODULE_BLOB_SHA='c447cbb72257a0c05dffb8f46ee21180433b4946'
+readonly MODULE_BLOB_SHA='128121277e0e161afd71129c70421530f61b7401'
 [[ "${MARKINA_EXPECTED_REPOSITORY:-}" == "$EXPECTED_REPOSITORY" ]] || fail
 [[ "${MARKINA_PUBLIC_BASE_URL:-}" == 'https://markina.pickyourpic.com.br' ]] || fail
 [[ "$#" == 5 ]] || fail
