@@ -472,7 +472,11 @@ class Operation:
                            for volume in payload['candidate']['services']['nginx']['volumes']}
         observed_mounts = {mount['Destination']: str(Path(mount['Source']).resolve())
                            for mount in c['Mounts']}
-        require(observed_mounts == expected_mounts, 'fontes_candidatas_divergentes')
+        names = {CONFIG_FILES[0]: 'nginx_config', CONFIG_FILES[1]: 'mime_types',
+                 CONFIG_FILES[2]: 'server_config'}
+        for destination in CONFIG_FILES:
+            require(observed_mounts.get(destination) == expected_mounts.get(destination),
+                    'fonte_' + names[destination] + '_divergente')
         for path, value in payload['files'].items():
             require(self.runner.run('docker', 'exec', c['Id'], 'cat', path) == base64.b64decode(value),
                     'bytes_configuracao_divergentes')
