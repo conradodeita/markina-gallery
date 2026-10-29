@@ -131,6 +131,17 @@ class ProvenanceTest(unittest.TestCase):
         self.assertEqual(mod.safe_failure_code(mod.Refusal('bad:detail')),
                          'falha_interna')
 
+    def test_recovery_rebuilds_mounts_only_from_authenticated_binds(self):
+        original = {'HostConfig': {'Binds': ['old-source:/etc/nginx/conf.d/default.conf:ro'],
+                                   'Mounts': [{'Target': '/etc/nginx/conf.d/default.conf'}],
+                                   'NetworkMode': 'markina-gallery_internal'}}
+        directory = self.root / 'sealed-bundle'
+        host = mod.recovery_host_config(original, directory)
+        self.assertNotIn('Mounts', host)
+        self.assertEqual(host['NetworkMode'], 'markina-gallery_internal')
+        self.assertEqual(host['Binds'], [str(directory / ('config-' + str(i))) + ':' + path + ':ro'
+                                         for i, path in enumerate(mod.CONFIG_FILES)])
+
     def test_other_project_and_network_block(self):
         self.container['Config']['Labels']['com.docker.compose.project'] = 'another-project'
         with self.assertRaises(mod.Refusal):

@@ -187,6 +187,15 @@ def candidate_model(c, directory, project):
                          for name in c['NetworkSettings']['Networks']}}
 
 
+def recovery_host_config(original, directory):
+    """Constrói HostConfig de create usando somente os binds autenticados."""
+    host = dict(original['HostConfig'])
+    host.pop('Mounts', None)  # campo de inspect não deve competir com Binds de recuperação
+    host['Binds'] = [str(directory / ('config-' + str(index))) + ':' + path + ':ro'
+                     for index, path in enumerate(CONFIG_FILES)]
+    return host
+
+
 def plan_fingerprint(payload):
     return digest({'version': payload['version'], 'project': payload['project'],
                    'identity': payload['identity'], 'candidate': payload['candidate']})
@@ -488,9 +497,7 @@ class Operation:
             self.runner.run('docker', 'rm', current['Id'])  # nunca --force
         original = payload['nginx']
         body = {**original['Config'], 'Image': original['Image'],
-                'HostConfig': {**original['HostConfig'], 'Binds': [
-                    str(directory / ('config-' + str(i))) + ':' + p + ':ro'
-                    for i, p in enumerate(CONFIG_FILES)]},
+                'HostConfig': recovery_host_config(original, directory),
                 'NetworkingConfig': {'EndpointsConfig': {
                     name: {'Aliases': data.get('Aliases') or []}
                     for name, data in original['NetworkSettings']['Networks'].items()}}}
