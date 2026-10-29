@@ -21,6 +21,7 @@ O modelo diagnóstico construído em memória com as cinco fontes ainda existent
 4. Executar por procedimento protegido com fingerprint revalidado e trava exclusiva. A operação alcança apenas Nginx do projeto, com imagem local já existente e sem build/pull/dependências. Todos os outros containers e configurações devem manter os mesmos fingerprints; não iniciar nem remover serviços aposentados ou outros projetos.
 5. A revisão desta proposta libera preparação/implementação local; o plano remoto final exige revisão específica com candidato, recuperação, impacto e snapshot atuais. A autorização anterior da transição APP_ENV não é usada como aprovação de um candidato de proxy ainda não validado.
 6. As recusas do wrapper antes do módulo operacional usam uma allowlist de códigos constantes. Erros brutos de comandos de identidade/proveniência e entradas recebidas não são exibidos; códigos não reconhecidos são reduzidos a uma recusa genérica. Assim, uma guarda pode ser diagnosticada sem expor valores ou contornar a condição.
+7. A identidade do repositório remoto aceita somente formas HTTPS/SSH canônicas do mesmo host e repositório, sem userinfo, porta ou host alternativo. A comparação ignora diferenças de caixa admitidas pelo GitHub; qualquer outra origem continua recusada. Falha de leitura do remoto recebe um código distinto de uma origem lida mas não reconhecida.
 
 ## Risks / Trade-offs
 

@@ -14,7 +14,7 @@ Este procedimento não aprova uma publicação. A implementação local é autor
 
 Workflow `Nginx Compose provenance`, somente despacho manual em `main` para operações remotas, ambiente `production` e credencial operacional já usada nos releases. Antes da consulta SSH, o workflow exige CI de push da mesma main e prova Docker desta change. O wrapper confirma main no remoto e executa em memória somente o blob Python pinado. Os fingerprints completos são argumentos de aprovação e nenhuma exceção bruta é exibida.
 
-Se uma guarda anterior ao módulo recusar a execução, o wrapper emite somente um código constante da allowlist (por exemplo, divergência de checkout ou revisão remota); stderr bruto dos comandos e valores de entrada são omitidos. Isso identifica a pré-condição a revisar sem enfraquecer guardas ou imprimir configuração.
+Se uma guarda anterior ao módulo recusar a execução, o wrapper emite somente um código constante da allowlist (por exemplo, falha ao ler a origem, origem não reconhecida, divergência de checkout ou revisão remota); stderr bruto dos comandos e valores de entrada são omitidos. Para a origem Git, somente formas HTTPS/SSH exatas do `github.com/conradodeita/markina-gallery` são aceitas, sem credenciais na URL. Isso identifica a pré-condição a revisar sem enfraquecer guardas ou imprimir configuração.
 
 O job `isolated-proof` de PR/push não acessa Oracle, segredos ou clientes. Ele usa Compose 2.35.1 com checksum fixado e Nginx de teste para publicação e recuperação em namespaces descartáveis.
 

@@ -50,3 +50,8 @@ O wrapper operacional SHALL identificar uma pré-condição recusada usando some
 - **WHEN** a configuração, os argumentos, o checkout, a origem Git ou a revisão remota não satisfazem uma guarda
 - **THEN** o wrapper informa somente o código estável da guarda recusada, sem revelar valores ou saídas do comando
 - **AND** nenhuma consulta operacional ou mutação remota é executada
+
+#### Scenario: Origem Git diferente do repositório esperado
+- **WHEN** a origem Git não é uma forma HTTPS/SSH canônica do repositório autorizado, ou a leitura da origem falha
+- **THEN** o wrapper distingue origem não reconhecida de falha de leitura usando códigos constantes
+- **AND** a URL não é exibida e o módulo operacional não é executado
