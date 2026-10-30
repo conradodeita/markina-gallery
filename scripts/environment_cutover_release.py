@@ -320,7 +320,7 @@ def runtime(config, mode, operation, *, paused=False, network_checks=False):
                 '--mount', 'type=bind,src=' + str(CODE / 'backend') + ',dst=/candidate/backend,readonly',
                 '--mount', 'type=bind,src=' + str(WORK / 'packages') + ',dst=' + str(WORK / 'packages'),
                 '--mount', 'type=bind,src=' + str(WORK / 'keys') + ',dst=' + str(WORK / 'keys'),
-                '--entrypoint', 'python', api['Image'], '-B', '-m', 'app.environment_transition_runtime',
+                '--entrypoint', 'python', api['Image'], '-P', '-B', '-m', 'app.environment_transition_runtime',
                 mode, '--operation', operation, '--inventory', config['fingerprint'], '--plan', config['plan']]
         if paused:
             args.append('--paused')

@@ -2,6 +2,13 @@
 
 ## ADDED Requirements
 
+### Requirement: Carregamento inequívoco do candidato de manutenção
+O processo de manutenção SHALL importar o pacote Python do candidato revisado, sem precedência do pacote antigo existente no diretório de trabalho da imagem. O executor MUST preservar esse diretório e a resolução dos caminhos relativos de mídia; a seleção do candidato não autoriza trocar a imagem de aplicação ou ignorar a verificação de blobs.
+
+#### Scenario: Imagem preservada contém pacote anterior
+- **WHEN** a imagem contém `app` antigo no diretório de trabalho e o candidato está em `PYTHONPATH`
+- **THEN** o processo usa o pacote do candidato sem mudar o diretório de trabalho nem os caminhos relativos de mídia
+
 ### Requirement: Inventário independente da ordem de mounts
 O inventário SHALL comparar mounts pela identidade de destino, preservando todos os campos retornados pelo Docker. A ordem da lista MUST NOT provocar drift; destinos ausentes ou duplicados e qualquer alteração de valor MUST permanecer bloqueantes.
 
