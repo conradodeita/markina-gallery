@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
+_PACKAGE_LIMIT = 512_000_000
 
 
 class PackageStorageError(RuntimeError):
@@ -79,7 +80,7 @@ def reopen_package(package_root: Path, key_root: Path, operation: str) -> Reopen
             raise ValueError
         for root in (package_root, key_root):
             directories.append(_directory(root))
-        payload = json.loads(_read(directories[0], operation + ".json", 256_000_000))
+        payload = json.loads(_read(directories[0], operation + ".json", _PACKAGE_LIMIT))
         key = _read(directories[1], operation + ".key", 32)
         if not isinstance(payload, dict) or len(key) != 32:
             raise ValueError
@@ -105,7 +106,7 @@ def persist_encrypted_package(package_root: Path, key_root: Path, operation: str
         if package_root == key_root:
             raise ValueError
         content = json.dumps(encrypted_payload, sort_keys=True, allow_nan=False).encode()
-        if len(content) > 256_000_000:
+        if len(content) > _PACKAGE_LIMIT:
             raise ValueError
         for root in (package_root, key_root):
             directories.append(_directory(root))
@@ -113,7 +114,7 @@ def persist_encrypted_package(package_root: Path, key_root: Path, operation: str
         _write(directories[0], operation + ".json", content)
         if not hmac.compare_digest(_read(directories[1], operation + ".key", 32), backup_key):
             raise ValueError
-        if _read(directories[0], operation + ".json", 256_000_000) != content:
+        if _read(directories[0], operation + ".json", _PACKAGE_LIMIT) != content:
             raise ValueError
     except (OSError, ValueError, TypeError):
         # Nunca apagar nem sobrescrever automaticamente um pacote parcial.

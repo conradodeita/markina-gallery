@@ -115,21 +115,25 @@ def run_runtime(mode: str, operation: str, *, inventory: str | None, plan: str |
     require_reference_store_empty()
     source_environment = os.environ["APP_ENV"].strip()
     content = None
-    if mode not in {"prepare", "preflight"}:
+    if mode not in {"prepare", "preflight", "idle"}:
         content, _ = load_bundle(PACKAGES, KEYS, operation)
         source_environment = content["source_environment"]
     contexts, source_cipher, target_cipher = contexts_for(source_environment)
     engine = create_engine(os.environ["DATABASE_URL"], echo=False, pool_pre_ping=True)
     try:
         with engine.begin() as connection:
-            if mode in {"prepare", "preflight", "verify", "channels", "eligibility"}:
+            if mode in {"prepare", "preflight", "idle", "verify", "channels", "eligibility"}:
                 connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             connection.exec_driver_sql("SET LOCAL statement_timeout='120s'")
             schema = connection.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
             if schema != ["20261026_0090"]:
                 raise ValueError
             preservation_metadata_verified(connection)
-            if mode == "preflight":
+            if mode == "idle":
+                from app.environment_transition_bundle import assert_sql_only_idle
+                assert_sql_only_idle(connection)
+                result = {"consumers_idle": True}
+            elif mode == "preflight":
                 from app.environment_transition_bundle import persist_profile
                 result = persist_profile(connection, package_root=PACKAGES, key_root=KEYS,
                     operation=operation, continuity=inspect_channel_continuity(connection,
@@ -171,7 +175,7 @@ def run_runtime(mode: str, operation: str, *, inventory: str | None, plan: str |
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("preflight", "prepare", "apply", "verify", "recover", "channels", "eligibility"))
+    parser.add_argument("mode", choices=("preflight", "idle", "prepare", "apply", "verify", "recover", "channels", "eligibility"))
     parser.add_argument("--operation", required=True)
     parser.add_argument("--inventory")
     parser.add_argument("--plan")

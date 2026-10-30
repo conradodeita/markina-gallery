@@ -2,6 +2,24 @@
 
 ## ADDED Requirements
 
+### Requirement: Capacidade limitada para o conjunto operacional
+O backup cifrado SHALL admitir até 512.000.000 bytes por pacote, preservando autenticação, permissões, exclusividade e recusa acima do limite. O processo de manutenção MUST limitar memória a 4 GiB e exigir previamente pelo menos 8 GiB disponíveis no host e 4 GiB livres no armazenamento próprio, sem alterar recursos de terceiros.
+
+#### Scenario: Volume real cabe no orçamento explícito
+- **WHEN** o pacote operacional tem aproximadamente 305 MB e os recursos mínimos estão disponíveis
+- **THEN** o storage admite sua persistência e reabertura sem remover as verificações criptográficas
+
+#### Scenario: Orçamento insuficiente
+- **WHEN** memória, disco ou tamanho do pacote excede o orçamento definido
+- **THEN** o executor recusa a operação e não aplica SQL
+
+### Requirement: Parada facial após prova de ociosidade
+O executor SHALL parar API e worker graciosamente, confirmar novamente zero jobs e referências em transação somente-leitura e somente então enviar SIGINT aos três processos faciais Python sem handler SIGTERM. O executor MUST aguardar sua saída, sem SIGKILL. Se a prova de ociosidade falhar antes de aplicar SQL, a recuperação SHALL retomar o contexto original sem interromper os consumidores faciais que continuam ativos.
+
+#### Scenario: Trabalho facial permanece ativo
+- **WHEN** a conferência após a pausa de API e worker encontra jobs ou referências
+- **THEN** nenhum SIGINT é enviado aos consumidores faciais e a publicação permanece bloqueada
+
 ### Requirement: Carregamento inequívoco do candidato de manutenção
 O processo de manutenção SHALL importar o pacote Python do candidato revisado, sem precedência do pacote antigo existente no diretório de trabalho da imagem. O executor MUST preservar esse diretório e a resolução dos caminhos relativos de mídia; a seleção do candidato não autoriza trocar a imagem de aplicação ou ignorar a verificação de blobs.
 
