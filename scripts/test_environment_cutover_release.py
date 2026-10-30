@@ -4,6 +4,7 @@ import ast
 import copy
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,34 @@ else:
 
 @unittest.skipUnless(os.name == 'posix', 'Runner operacional exige POSIX')
 class EnvironmentReleaseTests(unittest.TestCase):
+    def test_maintenance_command_preserves_workdir_and_prefers_candidate_package(self):
+        config = {'fingerprint': 'a'*64, 'plan': 'b'*64, 'services': {'api': {
+            'Config': {'Env': ['APP_ENV=staging']}, 'Image': 'synthetic-image',
+            'NetworkSettings': {'Networks': {'synthetic': {}}}}}}
+        with (patch.object(release, 'maintenance_api', return_value='synthetic-api'),
+              patch.object(release, 'run', return_value='{"status":"success"}') as command):
+            release.runtime(config, 'preflight', 'synthetic')
+        args = command.call_args.args
+        self.assertEqual(args[args.index('synthetic-image')+1:args.index('preflight')],
+                         ('-P', '-B', '-m', 'app.environment_transition_runtime'))
+        self.assertNotIn('--workdir', args)
+        self.assertIn('PYTHONPATH=/candidate/backend', args)
+
+    def test_candidate_module_is_imported_over_published_package_without_changing_cwd(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            published = root / 'published'
+            candidate = root / 'candidate'
+            for path, marker in ((published, 'published'), (candidate, 'candidate')):
+                (path / 'app').mkdir(parents=True)
+                (path / 'app/__init__.py').write_text('SOURCE = ' + repr(marker))
+            (candidate / 'app/environment_transition_runtime.py').write_text(
+                'import app, json, os; print(json.dumps({"source":app.SOURCE,"cwd":os.getcwd()}))')
+            result = subprocess.run([sys.executable, '-P', '-B', '-m', 'app.environment_transition_runtime'],
+                cwd=published, env={**os.environ, 'PYTHONPATH': str(candidate)},
+                capture_output=True, text=True, check=True)
+            self.assertEqual(json.loads(result.stdout), {'source': 'candidate', 'cwd': str(published)})
+
     def test_docker_mount_reordering_preserves_inventory_but_real_drift_blocks(self):
         mounts = [{'Destination': '/z', 'Source': '/synthetic/z', 'RW': False},
                   {'Destination': '/a', 'Source': '/synthetic/a', 'RW': True}]

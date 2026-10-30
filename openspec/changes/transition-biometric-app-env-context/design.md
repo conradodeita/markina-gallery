@@ -2,6 +2,8 @@
 
 ## Correção operacional observada em 30/10/2026
 
+Após o CI main `41004477565` verde no merge #346 (`b24eac46`), a ordenação dos mounts passou pela comparação de preparação. O processo nativo então recusou `app.environment_transition_runtime`: o pacote antigo `/app/app` tinha precedência sobre `PYTHONPATH`. Usar `python -P` no Python 3.13 da imagem preservada remove apenas essa precedência implícita, mantendo `/app` como diretório e a resolução relativa de mídia. Não usar troca de workdir, que poderia deslocar referências relativas. Importação isolada na imagem real, sem rede, banco ou volumes de dados, confirmou o candidato com `-P`; nenhuma biblioteca foi instalada e nenhum dado foi alterado.
+
 O coordenador integrado pelo PR #345 recusou a preparação em `prepare_inventory`, antes de qualquer manutenção ou escrita financeira/biométrica. Duas consultas consecutivas provaram que somente a ordem de `Mounts` variou; ordenar por `Destination` produziu listas integralmente iguais. Normalizar a lista imediatamente após o inspect torna snapshots, fingerprints e verificações de retomada determinísticos, conservando todos os campos de cada mount. Destinos ausentes/duplicados continuam recusados; nenhum guard é removido. O pacote de fontes também exige `git -c core.autocrlf=false archive` no Windows para preservar exatamente os blobs revisados. Esta correção não modifica o plano de serviços, credenciais, pagamentos ou recuperação.
 
 ## Context
