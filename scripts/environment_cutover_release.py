@@ -266,14 +266,25 @@ def write_private(path, value):
         os.fsync(stream.fileno())
 
 
+def maintenance_api(api):
+    # Historical containers retain labels. The inventory's exact container name
+    # identifies the Compose slot after recreation without choosing a historical one.
+    name = api['Name']
+    require(isinstance(name, str) and re.fullmatch(r'/[a-zA-Z0-9][a-zA-Z0-9_.-]*', name),
+            'maintenance_api_name_invalid')
+    values = json.loads(run('docker', 'inspect', '--type', 'container', name))
+    require(isinstance(values, list) and len(values) == 1, 'maintenance_api_ambiguous')
+    current = values[0]
+    labels = current['Config']['Labels']
+    require(current['Name'] == name and current['Image'] == api['Image']
+            and labels.get('com.docker.compose.project') == PROJECT
+            and labels.get('com.docker.compose.service') == 'api', 'maintenance_api_identity_changed')
+    return current['Id']
+
+
 def runtime(config, mode, operation, *, paused=False, network_checks=False):
     api = config['services']['api']
-    selected_api = api['Id']
-    # The original API may have been replaced; use the current project's API if present.
-    candidates = run('docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + PROJECT,
-                     '--filter', 'label=com.docker.compose.service=api').split()
-    require(len(candidates) == 1, 'maintenance_api_ambiguous')
-    selected_api = candidates[0]
+    selected_api = maintenance_api(api)
     networks = list(api['NetworkSettings']['Networks'])
     require(len(networks) == 1, 'maintenance_network_ambiguous')
     values = environment(api)

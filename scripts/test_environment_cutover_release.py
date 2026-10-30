@@ -21,6 +21,17 @@ else:
 
 @unittest.skipUnless(os.name == 'posix', 'Runner operacional exige POSIX')
 class EnvironmentReleaseTests(unittest.TestCase):
+    def test_maintenance_selects_exact_inventory_name_with_historical_labels_preserved(self):
+        source = {'Name': '/markina-gallery-api-1', 'Image': 'sha256:synthetic-original'}
+        current = {**source, 'Id': 'synthetic-current', 'Config': {'Labels': {
+            'com.docker.compose.project': 'markina-gallery', 'com.docker.compose.service': 'api'}}}
+        with patch.object(release, 'run', return_value=json.dumps([current])) as command:
+            self.assertEqual(release.maintenance_api(source), 'synthetic-current')
+            self.assertEqual(command.call_args.args,
+                             ('docker', 'inspect', '--type', 'container', source['Name']))
+        with patch.object(release, 'run', return_value=json.dumps([{**current, 'Image': 'changed'}])), self.assertRaises(release.ReleaseBlocked):
+            release.maintenance_api(source)
+
     def test_apply_keeps_financial_gate_closed_and_only_restarts_api_worker(self):
         config = {'fingerprint': 'a'*64, 'plan': 'b'*64, 'sha': 'd'*40,
                   'facts': {'biometric_counts': {'photo_embeddings': 2},
