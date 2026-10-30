@@ -37,6 +37,38 @@ def test_reference_directory_is_never_cleared_to_make_preflight_pass(monkeypatch
     runtime.require_reference_store_empty()
 
 
+@pytest.mark.parametrize('busy', [False, True])
+def test_idle_proof_is_read_only_has_no_backup_or_payload_and_refuses_active_jobs(monkeypatch, busy):
+    from app import environment_transition_bundle as bundle
+    events = []
+    connection = SimpleNamespace(
+        exec_driver_sql=lambda sql: events.append(sql),
+        execute=lambda _: SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: ['20261026_0090'])))
+    engine = SimpleNamespace(begin=lambda: nullcontext(connection), dispose=Mock())
+    monkeypatch.setattr(runtime, 'create_engine', lambda *a, **kw: engine)
+    monkeypatch.setattr(runtime, 'require_reference_store_empty', lambda: None)
+    monkeypatch.setattr(runtime, 'preservation_metadata_verified', lambda _: None)
+    monkeypatch.setattr(runtime, 'contexts_for', lambda _: (None, None, None))
+    loader = Mock(side_effect=AssertionError('Must not read backup or payload'))
+    monkeypatch.setattr(runtime, 'load_bundle', loader)
+    def idle(_):
+        assert events[0] == 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY'
+        if busy:
+            raise bundle.CutoverBundleError('Jobs ativos.')
+    monkeypatch.setattr(bundle, 'assert_sql_only_idle', idle)
+    for key, value in {'FACIAL_PROCESSING_ENABLED': 'false', 'MERCADOPAGO_ALLOW_LIVE_PAYMENTS': 'false',
+                       'APP_ENV': 'staging', 'DATABASE_URL': 'synthetic'}.items():
+        monkeypatch.setenv(key, value)
+    if busy:
+        with pytest.raises(bundle.CutoverBundleError):
+            runtime.run_runtime('idle', 'synthetic', inventory=None, plan=None, paused=False, network_checks=False)
+    else:
+        result = runtime.run_runtime('idle', 'synthetic', inventory=None, plan=None, paused=False, network_checks=False)
+        assert result['consumers_idle'] is True
+    loader.assert_not_called()
+    engine.dispose.assert_called_once()
+
+
 def test_channel_check_authenticates_without_send_or_pairing(monkeypatch):
     email = SmtpEmailProvider(host="synthetic.invalid", port=587, username="synthetic-user",
         password="synthetic-secret", from_address="synthetic@sample.invalid")

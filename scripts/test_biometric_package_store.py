@@ -6,9 +6,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from backend.app.facial import environment_package_store as storage
 from backend.app.facial.environment_package_store import (
     PackageStorageError,
     persist_encrypted_package,
@@ -41,6 +43,19 @@ class PackageStoreTests(unittest.TestCase):
         with self.assertRaises(PackageStorageError):
             self.save()
         self.assertEqual(json.loads((self.packages / "synthetic.json").read_text()), self.payload)
+
+    def test_explicit_size_limit_is_enforced_for_writes_and_reopening(self):
+        self.assertEqual(storage._PACKAGE_LIMIT, 512_000_000)
+        length = len(json.dumps(self.payload, sort_keys=True, allow_nan=False).encode())
+        with patch.object(storage, '_PACKAGE_LIMIT', length):
+            self.save()
+        with patch.object(storage, '_PACKAGE_LIMIT', length-1):
+            with self.assertRaises(PackageStorageError):
+                reopen_package(self.packages, self.keys, 'synthetic')
+            with self.assertRaises(PackageStorageError):
+                self.save('oversized')
+        self.assertFalse((self.packages / 'oversized.json').exists())
+        self.assertFalse((self.keys / 'oversized.key').exists())
 
     def test_unsafe_permissions_and_symlinks_are_rejected(self):
         self.packages.chmod(0o755)

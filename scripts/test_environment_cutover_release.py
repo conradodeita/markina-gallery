@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,7 @@ class EnvironmentReleaseTests(unittest.TestCase):
             'Config': {'Env': ['APP_ENV=staging']}, 'Image': 'synthetic-image',
             'NetworkSettings': {'Networks': {'synthetic': {}}}}}}
         with (patch.object(release, 'maintenance_api', return_value='synthetic-api'),
+              patch.object(release, 'require_maintenance_capacity'),
               patch.object(release, 'run', return_value='{"status":"success"}') as command):
             release.runtime(config, 'preflight', 'synthetic')
         args = command.call_args.args
@@ -34,6 +36,29 @@ class EnvironmentReleaseTests(unittest.TestCase):
                          ('-P', '-B', '-m', 'app.environment_transition_runtime'))
         self.assertNotIn('--workdir', args)
         self.assertIn('PYTHONPATH=/candidate/backend', args)
+        self.assertEqual(args[args.index('--memory')+1], '4096m')
+
+    def test_maintenance_capacity_fails_before_launch_when_memory_or_disk_is_low(self):
+        with (patch.object(Path, 'read_text', return_value='MemAvailable: 8388608 kB\n'),
+              patch.object(release.shutil, 'disk_usage', return_value=SimpleNamespace(free=4*1024**3))):
+            release.require_maintenance_capacity()
+        for memory, free, category in [('MemAvailable: 8388607 kB\n', 4*1024**3, 'memory'),
+                                       ('MemAvailable: 8388608 kB\n', 4*1024**3-1, 'storage')]:
+            with (patch.object(Path, 'read_text', return_value=memory),
+                  patch.object(release.shutil, 'disk_usage', return_value=SimpleNamespace(free=free)),
+                  patch.object(release, 'run') as command,
+                  self.assertRaisesRegex(release.ReleaseBlocked, 'maintenance_'+category+'_unavailable')):
+                release.runtime({}, 'preflight', 'synthetic')
+            command.assert_not_called()
+
+    def test_failed_idle_proof_never_interrupts_facial_consumers(self):
+        config = {'services': {name: {'Id': 'synthetic-'+name} for name in release.CONSUMERS}}
+        with (patch.object(release, 'run') as command,
+              patch.object(release, 'runtime', side_effect=release.ReleaseBlocked('active_jobs')),
+              self.assertRaises(release.ReleaseBlocked)):
+            release.stop_consumers(config, 'synthetic')
+        self.assertEqual([call.args[-1] for call in command.call_args_list],
+                         ['synthetic-api', 'synthetic-worker'])
 
     def test_candidate_module_is_imported_over_published_package_without_changing_cwd(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -142,6 +167,27 @@ class EnvironmentReleaseTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseBlocked):
             release.target_environment({**source, 'WHATSAPP_BINDING_OWNER_CREDENTIAL_ENV': 'another-account'})
 
+    def test_failure_before_sql_recovers_without_interrupting_running_facial_workers(self):
+        config = {'fingerprint': 'a'*64, 'plan': 'b'*64,
+                  'services': {name: {'Id': 'synthetic-'+name} for name in release.FACIAL_CONSUMERS}}
+        with (patch.object(release, 'open_config', return_value=config),
+              patch.object(release, 'load_receipt', return_value={
+                  'fingerprint': 'a'*64, 'plan': 'b'*64, 'channels_verified': True}),
+              patch.object(release, 'snapshot', return_value={'fingerprint': 'a'*64}),
+              patch.object(release, 'model_path', return_value=Path('/synthetic/model')),
+              patch.object(release, 'maintenance'),
+              patch.object(release, 'stop_consumers', side_effect=release.ReleaseBlocked('active_jobs')),
+              patch.object(release, 'containers', return_value=config['services']),
+              patch.object(release, 'stop_container') as stop,
+              patch.object(release, 'runtime') as runtime,
+              patch.object(release, 'configure_files'), patch.object(release, 'compose'),
+              patch.object(release, 'run'), patch.object(release, 'wait_running'),
+              self.assertRaisesRegex(release.ReleaseBlocked, 'release_failed_source_recovered')):
+            release.apply('synthetic', 'a'*64)
+        stop.assert_not_called()
+        runtime.assert_not_called()
+        self.assertEqual(release.PHASE, 'pause_consumers')
+
     def test_environment_file_changes_are_allowlisted_and_preserve_secret_bytes(self):
         source = b'# preserved\r\nAPP_ENV="staging"\r\nSMTP_PASSWORD=synthetic$secret\r\n'
         result = release.rewrite_environment(source, {'APP_ENV': 'production', 'FACIAL_PROCESSING_ENABLED': 'false'})
@@ -166,13 +212,20 @@ class EnvironmentReleaseTests(unittest.TestCase):
 
     def test_stop_has_no_forced_timeout_and_scopes_only_consumers(self):
         config = {'services': {name: {'Id': 'synthetic-' + name} for name in release.CONSUMERS}}
-        with patch.object(release, 'run') as command:
-            release.stop_consumers(config)
+        events = []
+        with (patch.object(release, 'run', side_effect=lambda *args, **kw: events.append(args[-1])) as command,
+              patch.object(release, 'runtime', side_effect=lambda *args: events.append('idle') or {'consumers_idle': True})):
+            release.stop_consumers(config, 'synthetic')
         self.assertEqual(len(command.call_args_list), 5)
+        self.assertEqual(events, ['synthetic-api', 'synthetic-worker', 'idle',
+                                 *['synthetic-'+name for name in release.FACIAL_CONSUMERS]])
         for call in command.call_args_list:
             self.assertEqual(call.args[:4], ('docker', 'stop', '--timeout', '-1'))
             self.assertNotIn('nginx', call.args)
             self.assertNotIn('--force', call.args)
+            self.assertEqual('--signal' in call.args, call.args[-1].removeprefix('synthetic-') in release.FACIAL_CONSUMERS)
+            if '--signal' in call.args:
+                self.assertEqual(call.args[call.args.index('--signal')+1], 'SIGINT')
 
     def test_main_ci_must_be_latest_successful_push_on_exact_revision(self):
         sha = 'a'*40

@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import stat
 import subprocess
@@ -291,7 +292,15 @@ def maintenance_api(api):
     return current['Id']
 
 
+def require_maintenance_capacity():
+    memory = re.search(r'^MemAvailable:\s+(\d+) kB$', Path('/proc/meminfo').read_text(), re.MULTILINE)
+    require(memory is not None and int(memory.group(1)) >= 8 * 1024 * 1024,
+            'maintenance_memory_unavailable')
+    require(shutil.disk_usage(WORK).free >= 4 * 1024 ** 3, 'maintenance_storage_unavailable')
+
+
 def runtime(config, mode, operation, *, paused=False, network_checks=False):
+    require_maintenance_capacity()
     api = config['services']['api']
     selected_api = maintenance_api(api)
     networks = list(api['NetworkSettings']['Networks'])
@@ -313,7 +322,7 @@ def runtime(config, mode, operation, *, paused=False, network_checks=False):
         os.lseek(descriptor, 0, os.SEEK_SET)
         args = ['docker', 'run', '--rm', '--read-only', '--user', '0', '--cap-drop', 'ALL',
                 '--cap-add', 'DAC_READ_SEARCH', '--security-opt', 'no-new-privileges',
-                '--memory', '1536m', '--cpus', '1', '--network', networks[0],
+                '--memory', '4096m', '--cpus', '1', '--network', networks[0],
                 '--label', 'com.docker.compose.project=markina-gallery-env-maintenance',
                 '--env-file', '/proc/' + str(os.getpid()) + '/fd/' + str(descriptor), '-e', 'PYTHONPATH=/candidate/backend',
                 '--tmpfs', '/tmp:rw,nosuid,noexec,size=64m', '--volumes-from', selected_api + ':ro',
@@ -454,9 +463,19 @@ def maintenance(config, enabled):
                 '--write-out', '%{http_code}', ORIGIN + '/') == expected, 'maintenance_barrier_unverified')
 
 
-def stop_consumers(config):
-    for name in CONSUMERS:
-        run('docker', 'stop', '--timeout', '-1', config['services'][name]['Id'], timeout=300)
+def stop_container(name, identity):
+    args = ['docker', 'stop', '--timeout', '-1']
+    if name in FACIAL_CONSUMERS:
+        args += ['--signal', 'SIGINT']
+    run(*args, identity, timeout=300)
+
+
+def stop_consumers(config, operation):
+    for name in ACTIVE_CONSUMERS:
+        stop_container(name, config['services'][name]['Id'])
+    require(runtime(config, 'idle', operation).get('consumers_idle') is True, 'facial_idle_unverified')
+    for name in FACIAL_CONSUMERS:
+        stop_container(name, config['services'][name]['Id'])
 
 
 def target_config(config, *, live=False):
@@ -579,7 +598,7 @@ def apply(operation, fingerprint):
         phase('maintenance_barrier')
         maintenance(config, True)
         phase('pause_consumers')
-        stop_consumers(config)
+        stop_consumers(config, operation)
         phase('database_package_prepare')
         prepared = runtime(config, 'prepare', operation, paused=True, network_checks=True)
         require(prepared['embedding_count'] == config['facts']['biometric_counts']['photo_embeddings']
@@ -610,14 +629,17 @@ def apply(operation, fingerprint):
                 'live_gate': False, 'financial_preserved': True, 'channels_verified': True,
                 'target_fingerprint': target_identity, 'tenant_matrix': matrix}
     except Exception:  # noqa: BLE001 - recuperação precede qualquer reabertura e erros permanecem sanitizados
+        failed_phase = PHASE
         if barrier:
             try:
                 phase('source_recovery')
                 maintenance(config, True)
                 current = containers()
-                for name in CONSUMERS:
+                if database_attempted:
+                    require(not any(name in current for name in FACIAL_CONSUMERS), 'recovery_facial_unexpected')
+                for name in ACTIVE_CONSUMERS:
                     if name in current:
-                        run('docker', 'stop', '--timeout', '-1', current[name]['Id'], timeout=300)
+                        stop_container(name, current[name]['Id'])
                 if database_attempted:
                     proof = runtime(config, 'verify', operation, paused=True)
                     if not proof.get('source_verified'):
@@ -631,6 +653,7 @@ def apply(operation, fingerprint):
                 maintenance(config, False)
             except Exception:  # noqa: BLE001 - barreira deve permanecer fechada em qualquer falha de recovery
                 raise ReleaseBlocked('recovery_requires_operator_barrier_preserved') from None
+        phase(failed_phase)
         raise ReleaseBlocked('release_failed_source_recovered') from None
 
 
@@ -650,7 +673,7 @@ def enable_live(operation, fingerprint):
         maintenance(config, True)
         active = containers()
         for name in ACTIVE_CONSUMERS:
-            run('docker', 'stop', '--timeout', '-1', active[name]['Id'], timeout=300)
+            stop_container(name, active[name]['Id'])
         configure_files(config, target=True, live=True)
         phase('live_startup')
         compose(active_model, 'up', '-d', '--no-deps', '--no-build', '--pull', 'never', *ACTIVE_CONSUMERS)
@@ -677,7 +700,7 @@ def enable_live(operation, fingerprint):
                 active = containers()
                 for name in ACTIVE_CONSUMERS:
                     if name in active:
-                        run('docker', 'stop', '--timeout', '-1', active[name]['Id'], timeout=300)
+                        stop_container(name, active[name]['Id'])
                 configure_files(config, target=True)
                 compose(rollback_model, 'up', '-d', '--no-deps', '--no-build', '--pull', 'never', *ACTIVE_CONSUMERS)
                 wait_running(config, target=True)
@@ -695,9 +718,14 @@ def recover_release(operation, fingerprint):
     source_model = model_path(config, operation, False, reuse=True)
     maintenance(config, True)
     active = containers()
-    for name in CONSUMERS:
+    for name in ACTIVE_CONSUMERS:
         if name in active:
-            run('docker', 'stop', '--timeout', '-1', active[name]['Id'], timeout=300)
+            stop_container(name, active[name]['Id'])
+    if any(name in active for name in FACIAL_CONSUMERS):
+        require(runtime(config, 'idle', operation).get('consumers_idle') is True, 'facial_idle_unverified')
+        for name in FACIAL_CONSUMERS:
+            if name in active:
+                stop_container(name, active[name]['Id'])
     proof = runtime(config, 'verify', operation, paused=True)
     if not proof.get('source_verified'):
         require(proof.get('destination_verified') is True, 'recovery_database_unknown')

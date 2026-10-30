@@ -1,5 +1,13 @@
 # Procedimento operacional — preservação SQL e corte de ambiente
 
+## Execução de 30/10 — recuperação antes de SQL
+
+Os PRs #345, #346 e #347 estão integrados. O CI main `41007045024` passou em `dee4dc9f`; o pacote Git foi gerado com `core.autocrlf=false` e todos os blobs foram verificados nativamente. O inventário estável anterior foi `a8033c3c…25a940f`, com 13 serviços saudáveis, schema 0090, 15.055 índices e zero jobs/referências/notificações com conteúdo. A preparação `env-mp-20261030-03` confirmou uma conta, continuidade dos canais e configuração cifrada reaberta.
+
+Na aplicação, API/worker encerraram normalmente. Os três faciais não responderam a SIGTERM; SIGINT aos IDs/imagens conferidos encerrou-os sem SIGKILL. O backup definitivo excedeu o teto antigo: diagnóstico somente-leitura com persistência proibida mediu aproximadamente 305 MB e confirmou todos os cálculos/cifras. Não houve pacote SQL persistido nem aplicação SQL. O coordenador recuperou configuração/contexto anteriores e reabriu o site; 13 serviços saudáveis e nenhum marcador pendente foram confirmados. O gate live continua fechado e a busca facial retornou ao estado anterior.
+
+Antes de repetir: usar o novo orçamento limitado e prova de ociosidade após parar API/worker, aguardar CI da mesma main, gerar candidato exato, obter novo inventário/fingerprint e usar nova operação. Não reutilizar o plano 03, porque API/worker foram recriados na recuperação. Os artefatos anteriores permanecem privados, sem exclusão ou sobrescrita. A recuperação bem-sucedida observada não substitui a prova de aplicação futura. Não houve cobrança, troca de credenciais, mensagem, migration ou alteração de imagens/portas/terceiros.
+
 ## Atualização executável em 30/10/2026
 
 O caminho inicial descrito abaixo foi concretizado em `scripts/environment_cutover_release.py` e `app.environment_transition_runtime`. O usuário autorizou prosseguir autonomamente com push/CI/merge/deploy e aceitou explicitamente a indisponibilidade facial. O plano revisável é: preservar as imagens, comandos, versões, volumes e portas atuais; pausar cinco consumidores; deixar os três faciais parados; retomar somente API e worker com contexto production e flag facial false. O site fica brevemente em HTTP 503 enquanto a manutenção é validada; Nginx e demais serviços permanecem os mesmos. Não atualizar engines, pesos ou outros projetos.
