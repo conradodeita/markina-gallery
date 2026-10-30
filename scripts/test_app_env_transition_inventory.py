@@ -94,6 +94,30 @@ def make_report(inventory: dict | None, *, incomplete: bool = False) -> dict:
 
 
 class AppEnvInventoryReportTests(unittest.TestCase):
+    def test_origin_diagnostics_are_aggregate_and_do_not_clear_blockers(self):
+        counts = {key: 0 for key in collector.BIOMETRIC_ORIGIN_FIELDS}
+        counts.update(total=1, binding_verified=1)
+        report = make_report(make_inventory(biometric_counts={
+            **dict.fromkeys(BIOMETRIC_COUNTERS, 0), "photo_embeddings": 1,
+        }))
+        report["biometric_origin"] = counts
+        verified = validate_report([json.dumps(report)], SHA)
+        self.assertIsNone(verified["approval_fingerprint"])
+        self.assertIn("dados_biometricos_vinculados_a_origem", verified["blockers"])
+        self.assertIn("Diagnóstico de índices", summary(verified))
+        for invalid in (
+            {**counts, "tenant_id": "private-sentinel"},
+            {**counts, "total": 2}, {**counts, "binding_verified": 2},
+            {**counts, "binding_verified": True}, {**counts, "policy_missing": -1},
+        ):
+            report["biometric_origin"] = invalid
+            with self.assertRaises(ValueError):
+                validate_report([json.dumps(report)], SHA)
+        incomplete = make_report(None, incomplete=True)
+        incomplete["biometric_origin"] = counts
+        with self.assertRaises(ValueError):
+            validate_report([json.dumps(incomplete)], SHA)
+
     def test_inventory_error_categories_are_closed_and_allowlisted(self):
         source = ast.parse(Path(collector.__file__).read_text(encoding="utf-8"))
         categories = set()
@@ -307,6 +331,14 @@ class AppEnvInventoryReportTests(unittest.TestCase):
         program = run.call_args.kwargs["data"]
         self.assertIn("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY", program)
         self.assertIn("FROM mercadopago_account", program)
+        self.assertIn(
+            "facial_search_notification_outbox WHERE octet_length(payload_ciphertext) > 0",
+            program,
+        )
+        self.assertNotIn(
+            "facial_search_notification_outbox WHERE payload_ciphertext IS NOT NULL",
+            program,
+        )
         self.assertNotIn("private-container-id", json.dumps(result))
 
     def test_collect_emits_only_sanitized_contract_fields(self):

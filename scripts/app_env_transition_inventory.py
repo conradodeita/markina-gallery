@@ -78,6 +78,21 @@ SAFE_FAILURE_CODES = frozenset({
     "whatsapp_inventario_invalido",
 })
 UNKNOWN_FAILURE_CODE = "falha_interna"
+BIOMETRIC_ORIGIN_FIELDS = frozenset({
+    "total", "binding_verified", "policy_missing", "policy_inactive",
+    "model_mismatch", "notice_missing", "basis_missing", "retention_missing", "rollout_total",
+})
+
+
+def validate_biometric_origin(value: object, expected_total: int) -> dict:
+    require(isinstance(value, dict) and set(value) == BIOMETRIC_ORIGIN_FIELDS,
+            "banco_inventario_invalido")
+    require(all(type(count) is int and count >= 0 for count in value.values()),
+            "banco_inventario_invalido")
+    require(value["total"] == expected_total and all(
+        count <= expected_total for key, count in value.items() if key != "rollout_total"
+    ), "banco_inventario_invalido")
+    return {key: value[key] for key in sorted(BIOMETRIC_ORIGIN_FIELDS)}
 
 
 class InventoryError(RuntimeError):
@@ -268,9 +283,24 @@ SELECT json_build_object(
   'biometric_counts', json_build_object(
     'active_jobs', (SELECT count(*) FROM facial_job WHERE status IN ('queued', 'processing')),
     'photo_embeddings', (SELECT count(*) FROM photo_face_embedding WHERE payload_ciphertext IS NOT NULL),
-    'search_notifications', (SELECT count(*) FROM facial_search_notification_outbox WHERE payload_ciphertext IS NOT NULL),
+    'search_notifications', (SELECT count(*) FROM facial_search_notification_outbox WHERE octet_length(payload_ciphertext) > 0),
     'search_reference_locators', (SELECT count(*) FROM facial_search_request WHERE reference_locator_ciphertext IS NOT NULL)
   ),
+  'biometric_origin', (SELECT json_build_object(
+    'total', count(*),
+    'binding_verified', count(*) FILTER (WHERE a.id IS NOT NULL AND g.id IS NOT NULL),
+    'policy_missing', count(*) FILTER (WHERE p.id IS NULL),
+    'policy_inactive', count(*) FILTER (WHERE p.status <> 'active' OR p.suspended_at IS NOT NULL),
+    'model_mismatch', count(*) FILTER (WHERE p.model_version IS DISTINCT FROM e.model_version),
+    'notice_missing', count(*) FILTER (WHERE coalesce(length(btrim(p.legal_notice_version)), 0)=0),
+    'basis_missing', count(*) FILTER (WHERE coalesce(length(btrim(p.legal_basis_reference)), 0)=0),
+    'retention_missing', count(*) FILTER (WHERE coalesce(length(btrim(p.retention_policy_version)), 0)=0),
+    'rollout_total', (SELECT count(*) FROM facial_rollout)
+    ) FROM photo_face_embedding e
+    LEFT JOIN photo_asset a ON a.id=e.photo_asset_id AND a.parent_gallery_id=e.parent_gallery_id
+      AND a.tenant_id=e.tenant_id
+    LEFT JOIN parent_gallery g ON g.id=e.parent_gallery_id AND g.tenant_id=e.tenant_id
+    LEFT JOIN gallery_facial_policy p ON p.parent_gallery_id=e.parent_gallery_id AND p.tenant_id=e.tenant_id),
   'whatsapp_bindings', json_build_object(
     'channel_bindings', (SELECT coalesce(json_agg(json_build_object(
         'environment_category', environment_category, 'status', status, 'count', amount
@@ -653,7 +683,12 @@ def collect(target_sha: str, contract: ModuleType) -> dict:
     )
     rendered = contract.render_environment_inventory(inventory)
     inventory = json.loads(rendered)
+    diagnostics = {}
+    if "biometric_origin" in probe:
+        diagnostics["biometric_origin"] = validate_biometric_origin(
+            probe["biometric_origin"], biometric_counts["photo_embeddings"])
     return {
+        **diagnostics,
         "target_sha": target_sha,
         "collection_status": "complete",
         "inventory": inventory,

@@ -18,6 +18,8 @@ MARKER = re.compile(
 )
 
 EXPECTED_REFERENCE_LINE_COUNTS = {
+    "backend/app/environment_transition_channels.py": 1,
+    "backend/app/environment_transition_runtime.py": 4,
     "backend/app/admin_security.py": 1,
     "backend/app/auth.py": 2,
     "backend/app/email_delivery.py": 4,
