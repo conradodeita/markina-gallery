@@ -1,5 +1,9 @@
 # Procedimento operacional — preservação SQL e corte de ambiente
 
+## Publicação concluída em 30/10
+
+A operação `env-mp-20261030-04`, suporte main `180de9e8` com CI `41010400151` verde, concluiu a transição e enable-live. APP_ENV production, gate live true, facial false, 10 serviços saudáveis e 3 faciais preservados/parados. A prova real do destino e a comparação integral dos 14 conjuntos financeiros passaram. As credenciais existentes continuam sandbox, limitadas ao par original; o proprietário foi avisado para cadastrar as de produção pela UI. HTTPS efetivos 200 e nenhum marcador pendente. Ver `validation.md` para fingerprints, matrizes, limites, recuperação e evidências completas. Não repetir os passos abaixo nem recuperar banco após uso normal sem novo inventário/plano; são histórico e roteiro do corte concluído.
+
 ## Execução de 30/10 — recuperação antes de SQL
 
 Os PRs #345, #346 e #347 estão integrados. O CI main `41007045024` passou em `dee4dc9f`; o pacote Git foi gerado com `core.autocrlf=false` e todos os blobs foram verificados nativamente. O inventário estável anterior foi `a8033c3c…25a940f`, com 13 serviços saudáveis, schema 0090, 15.055 índices e zero jobs/referências/notificações com conteúdo. A preparação `env-mp-20261030-03` confirmou uma conta, continuidade dos canais e configuração cifrada reaberta.
