@@ -1267,6 +1267,7 @@ def test_admin_validation_summary_counts_active_public_and_private_content_folde
     counts = response.json()["counts"]
     assert counts["folders_with_active_imports"] == 2
     assert counts["photos_in_folders_with_active_imports"] == 3
+    assert counts["imports"] == {"queued": 2, "completed": 1, "processing": 1, "failed": 1}
 
 
 def test_admin_validation_summary_keeps_other_metrics_when_storage_is_unavailable(

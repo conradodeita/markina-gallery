@@ -13,6 +13,7 @@ from app.auth import (
     AuthSession,
     Client,
     DerivedGallery,
+    MediaJob,
     ParentGallery,
     PhotoAsset,
     PhotoFolder,
@@ -24,6 +25,51 @@ from app.private_membership import ensure_private_membership
 from tests.test_tenant_foundation import tenant_db as foundation_tenant_db
 
 tenant_db = foundation_tenant_db
+
+
+def test_validation_summary_aggregates_only_current_tenant(tenant_db, admin_api, monkeypatch):
+    from app.storage_metrics import PhotoStorageMeasurement
+
+    api, owner, _ = admin_api
+    other = Tenant()
+    tenant_db.add(other)
+    tenant_db.flush()
+    first = ParentGallery(tenant_id=owner.id, name="Atual")
+    hidden = ParentGallery(tenant_id=owner.id, name="Removida", lifecycle_status="deleted")
+    second = ParentGallery(tenant_id=other.id, name="Outra conta")
+    tenant_db.add_all([first, hidden, second])
+    tenant_db.flush()
+    folders = [
+        PhotoFolder(tenant_id=owner.id, parent_gallery_id=first.id, name="Preparando",
+                    purpose="content", status="preparing"),
+        PhotoFolder(tenant_id=other.id, parent_gallery_id=second.id, name="Liberada",
+                    purpose="content", status="released"),
+    ]
+    tenant_db.add_all(folders)
+    for account in (owner, other):
+        tenant_db.add(Client(tenant_id=account.id, full_name="Sintética",
+                             phone_e164="+5511999999999"))
+    tenant_db.flush()
+    for folder, status in zip(folders, ("failed", "queued")):
+        photo = PhotoAsset(tenant_id=folder.tenant_id, parent_gallery_id=folder.parent_gallery_id,
+                           folder_id=folder.id, filename="synthetic.jpg",
+                           storage_key=f"tenants/{folder.tenant_id}/synthetic.jpg")
+        tenant_db.add(photo)
+        tenant_db.flush()
+        tenant_db.add(MediaJob(tenant_id=folder.tenant_id, photo_asset_id=photo.id, status=status))
+    tenant_db.commit()
+    monkeypatch.setattr(main, "measure_owned_photo_storage",
+                        lambda db, *, tenant_id: PhotoStorageMeasurement(bytes=0, available=True))
+    response = api.get("/admin/validation-summary")
+    assert response.status_code == 200, response.text
+    summary = response.json()
+    assert summary["counts"]["clients"] == summary["counts"]["parent_galleries"] == 1
+    assert summary["counts"]["imports"] == {"failed": 1}
+    assert summary["counts"]["folders_preparing"] == 1
+    assert summary["counts"]["folders_released"] == 0
+    assert summary["counts"]["folders_with_active_imports"] == 0
+    assert summary["storage"]["photo_count"] == 1
+    assert [g["id"] for g in summary["recent_galleries"]] == [str(first.id)]
 
 
 @pytest.fixture

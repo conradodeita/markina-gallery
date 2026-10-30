@@ -2681,10 +2681,10 @@ def admin_validation_summary(
     """Resumo seguro para o painel visual do fotógrafo."""
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
-    jobs = list(db.scalars(select(MediaJob).where(MediaJob.tenant_id == tenant_id)))
-    job_states: defaultdict[str, int] = defaultdict(int)
-    for job in jobs:
-        job_states[job.status] += 1
+    job_states = dict(db.execute(
+        select(MediaJob.status, func.count()).where(MediaJob.tenant_id == tenant_id)
+        .group_by(MediaJob.status)
+    ).all())
     legacy_gallery_count = db.scalar(select(func.count(DerivedGallery.id)).where(DerivedGallery.tenant_id == tenant_id)) or 0
     active_import_folders = (
         select(PhotoFolder.id.label("folder_id"))
@@ -2720,31 +2720,23 @@ def admin_validation_summary(
             "available": storage.available,
         },
         "counts": {
-            "clients": len(list(db.scalars(select(Client.id).where(Client.tenant_id == tenant_id)))),
-            "parent_galleries": len(
-                list(
-                    db.scalars(
-                        select(ParentGallery.id).where(ParentGallery.tenant_id == tenant_id).where(ParentGallery.lifecycle_status != "deleted")
-                    )
-                )
-            ),
+            "clients": db.scalar(select(func.count(Client.id)).where(
+                Client.tenant_id == tenant_id,
+            )) or 0,
+            "parent_galleries": db.scalar(select(func.count(ParentGallery.id)).where(
+                ParentGallery.tenant_id == tenant_id, ParentGallery.lifecycle_status != "deleted",
+            )) or 0,
             "derived_galleries": legacy_gallery_count,
             "imports": dict(job_states),
             "folders_with_active_imports": active_import_folder_count,
             "photos_in_folders_with_active_imports": active_import_photo_count,
-            "folders_preparing": len(
-                list(db.scalars(select(PhotoFolder.id).where(PhotoFolder.tenant_id == tenant_id).where(PhotoFolder.status == "preparing")))
-            ),
-            "folders_released": len(
-                list(
-                    db.scalars(
-                        select(PhotoFolder.id).where(PhotoFolder.tenant_id == tenant_id).where(
-                            PhotoFolder.status == "released",
-                            PhotoFolder.purpose == "content",
-                        )
-                    )
-                )
-            ),
+            "folders_preparing": db.scalar(select(func.count(PhotoFolder.id)).where(
+                PhotoFolder.tenant_id == tenant_id, PhotoFolder.status == "preparing",
+            )) or 0,
+            "folders_released": db.scalar(select(func.count(PhotoFolder.id)).where(
+                PhotoFolder.tenant_id == tenant_id, PhotoFolder.status == "released",
+                PhotoFolder.purpose == "content",
+            )) or 0,
         },
         "recent_galleries": [
             {
