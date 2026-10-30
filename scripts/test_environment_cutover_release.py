@@ -1,0 +1,148 @@
+"""Contratos focados do corte; nenhuma credencial ou infraestrutura operacional."""
+
+import ast
+import copy
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+if os.name == 'posix':
+    from scripts import environment_cutover_release as release
+else:
+    release = None
+
+
+@unittest.skipUnless(os.name == 'posix', 'Runner operacional exige POSIX')
+class EnvironmentReleaseTests(unittest.TestCase):
+    def test_maintenance_selects_exact_inventory_name_with_historical_labels_preserved(self):
+        source = {'Name': '/markina-gallery-api-1', 'Image': 'sha256:synthetic-original'}
+        current = {**source, 'Id': 'synthetic-current', 'Config': {'Labels': {
+            'com.docker.compose.project': 'markina-gallery', 'com.docker.compose.service': 'api'}}}
+        with patch.object(release, 'run', return_value=json.dumps([current])) as command:
+            self.assertEqual(release.maintenance_api(source), 'synthetic-current')
+            self.assertEqual(command.call_args.args,
+                             ('docker', 'inspect', '--type', 'container', source['Name']))
+        with patch.object(release, 'run', return_value=json.dumps([{**current, 'Image': 'changed'}])), self.assertRaises(release.ReleaseBlocked):
+            release.maintenance_api(source)
+
+    def test_apply_keeps_financial_gate_closed_and_only_restarts_api_worker(self):
+        config = {'fingerprint': 'a'*64, 'plan': 'b'*64, 'sha': 'd'*40,
+                  'facts': {'biometric_counts': {'photo_embeddings': 2},
+                            'credential_counts': {'mercadopago_access_token': 1}}}
+        phases, commands = [], []
+
+        def runtime(_config, mode, *args, **kwargs):
+            phases.append(mode)
+            return {'embedding_count': 2, 'account_count': 1, 'destination_verified': True,
+                    'live_gate': False}
+
+        with (patch.object(release, 'open_config', return_value=config),
+              patch.object(release, 'load_receipt', return_value={
+                  'fingerprint': 'a'*64, 'plan': 'b'*64, 'channels_verified': True}),
+              patch.object(release, 'snapshot', return_value={'fingerprint': 'a'*64}),
+              patch.object(release, 'model_path', return_value=Path('/synthetic/model')),
+              patch.object(release, 'maintenance') as barrier,
+              patch.object(release, 'stop_consumers'), patch.object(release, 'runtime', side_effect=runtime),
+              patch.object(release, 'configure_files'),
+              patch.object(release, 'compose', side_effect=lambda *a: commands.append(a)),
+              patch.object(release, 'wait_running'), patch.object(release, 'target_config', return_value=config),
+              patch.object(release, 'target_fingerprint', return_value='c'*64),
+              patch.object(release, 'save_receipt')):
+            result = release.apply('synthetic', 'a'*64)
+        self.assertEqual(phases, ['prepare', 'apply', 'verify', 'channels', 'eligibility'])
+        self.assertFalse(result['live_gate'])
+        self.assertFalse(result['facial_enabled'])
+        self.assertEqual(commands[0][-2:], ('api', 'worker'))
+        self.assertEqual([call.args[1] for call in barrier.call_args_list], [True, False])
+
+    def test_target_configuration_preserves_tokens_and_test_allowlist(self):
+        source = {'APP_ENV': 'staging', 'APP_VERSION': 'a'*40,
+            'INTEGRATION_SECRET_ENV': 'staging', 'FACIAL_PROCESSING_ENABLED': 'true',
+            'MERCADOPAGO_ALLOW_LIVE_PAYMENTS': 'false', 'MERCADOPAGO_TEST_CUSTOMERS': '["synthetic"]',
+            'WHATSAPP_BINDING_OWNER_CREDENTIAL_ENV': 'staging', 'SMTP_PASSWORD': 'synthetic$secret'}
+        before = copy.deepcopy(source)
+        target = release.target_environment(source)
+        self.assertEqual(source, before)
+        self.assertEqual(target['APP_ENV'], 'production')
+        self.assertEqual(target['FACIAL_PROCESSING_ENABLED'], 'false')
+        self.assertEqual(target['SMTP_PASSWORD'], source['SMTP_PASSWORD'])
+        self.assertEqual(target['MERCADOPAGO_TEST_CUSTOMERS'], source['MERCADOPAGO_TEST_CUSTOMERS'])
+        self.assertEqual(target['APP_VERSION'], source['APP_VERSION'])
+        live = release.target_environment(source, live=True)
+        self.assertEqual(live['MERCADOPAGO_ALLOW_LIVE_PAYMENTS'], 'true')
+        self.assertEqual(live['MERCADOPAGO_TEST_CUSTOMERS'], target['MERCADOPAGO_TEST_CUSTOMERS'])
+        with self.assertRaises(release.ReleaseBlocked):
+            release.target_environment({**source, 'WHATSAPP_BINDING_OWNER_CREDENTIAL_ENV': 'another-account'})
+
+    def test_environment_file_changes_are_allowlisted_and_preserve_secret_bytes(self):
+        source = b'# preserved\r\nAPP_ENV="staging"\r\nSMTP_PASSWORD=synthetic$secret\r\n'
+        result = release.rewrite_environment(source, {'APP_ENV': 'production', 'FACIAL_PROCESSING_ENABLED': 'false'})
+        self.assertIn(b'APP_ENV=production\r\n', result)
+        self.assertIn(b'SMTP_PASSWORD=synthetic$secret\r\n', result)
+        self.assertIn(b'FACIAL_PROCESSING_ENABLED=false\n', result)
+        with self.assertRaises(release.ReleaseBlocked):
+            release.rewrite_environment(b'APP_ENV=staging\nAPP_ENV=staging\n', {'APP_ENV': 'production'})
+
+    def test_config_authentication_binds_operation(self):
+        key = b'x'*32
+        payload = release.seal_config({'private': 'synthetic-secret'}, key, 'synthetic')
+        encoded = json.dumps(payload)
+        self.assertNotIn('synthetic-secret', encoded)
+        import base64
+
+        from cryptography.exceptions import InvalidTag
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        with self.assertRaises(InvalidTag):
+            AESGCM(key).decrypt(base64.b64decode(payload['nonce']), base64.b64decode(payload['ciphertext']),
+                                b'environment-host-v1:wrong-operation')
+
+    def test_stop_has_no_forced_timeout_and_scopes_only_consumers(self):
+        config = {'services': {name: {'Id': 'synthetic-' + name} for name in release.CONSUMERS}}
+        with patch.object(release, 'run') as command:
+            release.stop_consumers(config)
+        self.assertEqual(len(command.call_args_list), 5)
+        for call in command.call_args_list:
+            self.assertEqual(call.args[:4], ('docker', 'stop', '--timeout', '-1'))
+            self.assertNotIn('nginx', call.args)
+            self.assertNotIn('--force', call.args)
+
+    def test_main_ci_must_be_latest_successful_push_on_exact_revision(self):
+        sha = 'a'*40
+        responses = [
+            {'object': {'sha': sha}},
+            {'workflow_runs': [{'path': '.github/workflows/ci.yml', 'head_sha': sha,
+                'head_branch': 'main', 'event': 'push', 'run_number': 1, 'run_attempt': 1,
+                'status': 'completed', 'conclusion': 'failure'}]},
+        ]
+        with patch.object(release, 'github', side_effect=responses), self.assertRaises(release.ReleaseBlocked):
+            release.verify_candidate(sha)
+
+    def test_host_source_is_python38_compatible(self):
+        ast.parse(Path(release.__file__).read_text(), feature_version=(3, 8))
+
+    def test_model_escapes_resolved_dollars_without_loading_other_projects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'compose.json'
+            path.write_text('{}')
+            services = {name: {'Image': 'synthetic-image', 'Config': {
+                'Env': ['APP_ENV=staging', 'PYP_TOKEN=synthetic$literal'],
+                'Cmd': ['python', '-c', 'print("$literal")'], 'Entrypoint': None,
+                'Labels': {'com.docker.compose.project.config_files': str(path)}}}
+                for name in release.CONSUMERS}
+            model = {'services': {name: {} for name in release.CONSUMERS}}
+            with patch.object(release, 'ROOT', root), patch.object(release, 'run', return_value=json.dumps(model)):
+                result = release.compose_model(services)
+            self.assertEqual(result['services']['api']['environment']['PYP_TOKEN'], 'synthetic$$literal')
+            self.assertEqual(result['services']['api']['command'][2], 'print("$$literal")')
+
+
+if __name__ == '__main__':
+    unittest.main()

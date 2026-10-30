@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 ENVELOPE_VERSION = 1
 NONCE_BYTES = 12
+_ENVIRONMENT_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
 
 
 class FacialCryptoError(RuntimeError):
@@ -69,11 +71,23 @@ class FacialCipher:
     """Cifra envelopes com chave ativa e decifra versões ainda autorizadas."""
 
     def __init__(self, *, active_key_id: str, keys: Mapping[str, bytes]) -> None:
-        normalized = dict(keys)
+        if not isinstance(keys, Mapping):
+            raise FacialCryptoError("Chave criptográfica facial indisponível.")
+        try:
+            normalized = dict(keys)
+        except (TypeError, ValueError):
+            raise FacialCryptoError("Chave criptográfica facial indisponível.") from None
         if (
-            not active_key_id
+            not isinstance(active_key_id, str)
+            or not active_key_id.strip()
             or active_key_id not in normalized
-            or any(len(key) != 32 for key in normalized.values())
+            or any(
+                not isinstance(key_id, str)
+                or not key_id.strip()
+                or not isinstance(key, bytes)
+                or len(key) != 32
+                for key_id, key in normalized.items()
+            )
         ):
             raise FacialCryptoError("Chave criptográfica facial indisponível.")
         self._active_key_id = active_key_id
@@ -121,3 +135,76 @@ class FacialCipher:
         if envelope.key_id == self._active_key_id:
             return envelope
         return self.encrypt(plaintext, scope=scope)
+
+
+@dataclass(frozen=True, slots=True)
+class FacialCryptoContext:
+    """Ambiente AAD e chave já validados, sem depender da variável global de ambiente."""
+
+    environment: str
+    cipher: FacialCipher
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.environment, str)
+            or not _ENVIRONMENT_NAME.fullmatch(self.environment)
+            or not isinstance(self.cipher, FacialCipher)
+        ):
+            raise FacialCryptoError("Contexto criptográfico facial inválido.")
+
+    @classmethod
+    def from_keyring(
+        cls,
+        *,
+        environment: str,
+        active_key_id: str,
+        keys: Mapping[str, bytes],
+    ) -> FacialCryptoContext:
+        """Valida o ambiente e o keyring antes de qualquer persistência."""
+
+        if not isinstance(environment, str) or not _ENVIRONMENT_NAME.fullmatch(environment):
+            raise FacialCryptoError("Contexto criptográfico facial inválido.")
+        return cls(
+            environment=environment,
+            cipher=FacialCipher(active_key_id=active_key_id, keys=keys),
+        )
+
+    def scope(
+        self,
+        *,
+        gallery_id: UUID,
+        object_kind: Literal["photo", "request"],
+        object_id: UUID,
+        purpose: Literal[
+            "embedding", "reference_image", "reference_locator", "notification"
+        ],
+        model_version: str,
+        data_version: str,
+    ) -> FacialScope:
+        scope = FacialScope(
+            environment=self.environment,
+            gallery_id=gallery_id,
+            object_kind=object_kind,
+            object_id=object_id,
+            purpose=purpose,
+            model_version=model_version,
+            data_version=data_version,
+        )
+        scope.additional_authenticated_data(envelope_version=ENVELOPE_VERSION)
+        return scope
+
+
+@dataclass(frozen=True, slots=True)
+class FacialCryptoContextPair:
+    """Par de contextos independentes; não implica aprovação para migrar dados."""
+
+    source: FacialCryptoContext
+    destination: FacialCryptoContext
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, FacialCryptoContext) or not isinstance(
+            self.destination, FacialCryptoContext
+        ):
+            raise FacialCryptoError("Contexto criptográfico facial inválido.")
+        if self.source.environment.casefold() == self.destination.environment.casefold():
+            raise FacialCryptoError("Contextos criptográficos faciais devem ser distintos.")

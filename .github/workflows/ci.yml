@@ -82,6 +82,11 @@ jobs:
         run: ruff check backend/app backend/tests
       - name: Lint do inventário APP_ENV
         run: ruff check scripts/app_env_transition_inventory.py scripts/app_env_transition_inventory_report.py scripts/test_app_env_transition_inventory.py scripts/test_production_release_workflow_policy.py scripts/test_prod_release_state.py
+      - name: Contratos POSIX do corte de ambiente e pacotes cifrados
+        run: |
+          ruff check scripts/environment_cutover_release.py scripts/test_environment_cutover_release.py scripts/test_biometric_package_store.py
+          python -B scripts/test_environment_cutover_release.py
+          python -B scripts/test_biometric_package_store.py
       - name: Persistência de branding e política de deploy
         run: |
           python scripts/test_preserve_branding.py -v

@@ -14,7 +14,14 @@ from uuid import UUID
 
 from PIL import Image, UnidentifiedImageError
 
-from app.facial.crypto import FacialCipher, FacialCryptoError, FacialEnvelope, FacialScope
+from app.facial.crypto import (
+    ENVELOPE_VERSION,
+    FacialCipher,
+    FacialCryptoContext,
+    FacialCryptoError,
+    FacialEnvelope,
+    FacialScope,
+)
 
 
 class FacialReferenceError(RuntimeError):
@@ -55,14 +62,21 @@ class FacialReferenceStore:
         *,
         max_bytes: int,
         max_pixels: int,
+        environment_context: FacialCryptoContext | None = None,
     ) -> None:
         resolved = root.resolve()
         if resolved == Path(resolved.anchor) or resolved == Path.home().resolve():
             raise FacialReferenceError("Diretório temporário facial inseguro.")
         if max_bytes < 1 or max_pixels < 1:
             raise FacialReferenceError("Limites da referência facial inválidos.")
+        if environment_context is not None and (
+            not isinstance(environment_context, FacialCryptoContext)
+            or environment_context.cipher is not cipher
+        ):
+            raise FacialReferenceError("Contexto da referência facial inválido.")
         self._root = resolved
         self._cipher = cipher
+        self._environment_context = environment_context
         self._max_bytes = max_bytes
         self._max_pixels = max_pixels
 
@@ -79,7 +93,6 @@ class FacialReferenceStore:
         if authorize:
             authorize()
         width, height = self._validate_jpeg(payload)
-        self._root.mkdir(parents=True, exist_ok=True)
         target = self._target(request_id)
         if target.is_symlink():
             raise FacialReferenceError("Destino temporário facial inválido.")
@@ -90,7 +103,17 @@ class FacialReferenceStore:
             data_version=data_version,
             purpose="reference_image",
         )
+        locator_scope = self._scope(
+            request_id=request_id,
+            gallery_id=gallery_id,
+            model_version=model_version,
+            data_version=data_version,
+            purpose="reference_locator",
+        )
+        image_scope.additional_authenticated_data(envelope_version=ENVELOPE_VERSION)
+        locator_scope.additional_authenticated_data(envelope_version=ENVELOPE_VERSION)
         envelope = self._cipher.encrypt(payload, scope=image_scope)
+        locator = self._cipher.encrypt(target.name.encode("ascii"), scope=locator_scope)
         serialized = json.dumps(
             {
                 "ciphertext": base64.urlsafe_b64encode(envelope.ciphertext).decode("ascii"),
@@ -101,6 +124,7 @@ class FacialReferenceStore:
             separators=(",", ":"),
             sort_keys=True,
         ).encode("ascii")
+        self._root.mkdir(parents=True, exist_ok=True)
         partial = target.with_suffix(".part")
         try:
             partial.write_bytes(serialized)
@@ -112,15 +136,6 @@ class FacialReferenceStore:
             raise FacialReferenceError("Referência facial não pôde ser armazenada.") from exc
         finally:
             partial.unlink(missing_ok=True)
-
-        locator_scope = self._scope(
-            request_id=request_id,
-            gallery_id=gallery_id,
-            model_version=model_version,
-            data_version=data_version,
-            purpose="reference_locator",
-        )
-        locator = self._cipher.encrypt(target.name.encode("ascii"), scope=locator_scope)
         return StoredReference(
             locator=locator,
             width=width,
@@ -254,8 +269,8 @@ class FacialReferenceStore:
             raise FacialReferenceError("Localizador facial inválido.")
         return self._target(request_id)
 
-    @staticmethod
     def _scope(
+        self,
         *,
         request_id: UUID,
         gallery_id: UUID,
@@ -264,7 +279,11 @@ class FacialReferenceStore:
         purpose,
     ) -> FacialScope:
         return FacialScope(
-            environment=os.getenv("APP_ENV", "development").strip(),
+            environment=(
+                self._environment_context.environment
+                if self._environment_context is not None
+                else os.getenv("APP_ENV", "development").strip()
+            ),
             gallery_id=gallery_id,
             object_kind="request",
             object_id=request_id,

@@ -13,6 +13,7 @@ from backend.app.environment_transition_inventory import render_environment_inve
 from scripts.app_env_transition_inventory import (
     SAFE_FAILURE_CODES,
     UNKNOWN_FAILURE_CODE,
+    validate_biometric_origin,
 )
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -34,13 +35,15 @@ def validate_report(lines: list[str], target_sha: str) -> dict:
         report = json.loads(lines[0])
     except (TypeError, json.JSONDecodeError):
         raise ValueError("relatorio_invalido") from None
-    if not isinstance(report, dict) or set(report) != REPORT_FIELDS:
+    if not isinstance(report, dict) or set(report) not in (
+        REPORT_FIELDS, REPORT_FIELDS | {"biometric_origin"},
+    ):
         raise ValueError("relatorio_invalido")
     if report["target_sha"] != target_sha:
         raise ValueError("relatorio_invalido")
 
     if report["collection_status"] == "incomplete":
-        if (report["inventory"] is not None
+        if ("biometric_origin" in report or report["inventory"] is not None
                 or report["blockers"] != ["coleta_incompleta"]
                 or report["approval_fingerprint"] is not None
                 or not isinstance(report["failure_category"], str)
@@ -57,6 +60,12 @@ def validate_report(lines: list[str], target_sha: str) -> dict:
     except (TypeError, ValueError):
         raise ValueError("relatorio_invalido") from None
     inventory = json.loads(rendered)
+    if "biometric_origin" in report:
+        try:
+            validate_biometric_origin(report["biometric_origin"],
+                                     inventory["biometric_counts"]["photo_embeddings"])
+        except RuntimeError:
+            raise ValueError("relatorio_invalido") from None
     if report["blockers"] != inventory["blockers"]:
         raise ValueError("relatorio_invalido")
     fingerprint = inventory["approval_fingerprint"]
@@ -112,6 +121,9 @@ def summary(report: dict) -> str:
             f"- Fingerprint: `{fingerprint or 'indisponível'}`",
         ])
     blockers = report["blockers"]
+    if "biometric_origin" in report:
+        lines.extend(["", "### Diagnóstico de índices (contagens; não autoriza transição)",
+                      f"`{json.dumps(report['biometric_origin'], sort_keys=True)}`"])
     lines.extend(["", "### Bloqueios"])
     if blockers:
         lines.extend(f"- `{blocker}`" for blocker in blockers)
