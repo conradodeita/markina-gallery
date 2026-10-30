@@ -57,7 +57,7 @@ x-facial-environment: &facial-environment
 
 services:
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.31-alpine
     ports:
       - "${MARKINA_GALLERY_PORT:-8080}:80"
     volumes:
