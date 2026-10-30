@@ -21,6 +21,38 @@ else:
 
 @unittest.skipUnless(os.name == 'posix', 'Runner operacional exige POSIX')
 class EnvironmentReleaseTests(unittest.TestCase):
+    def test_docker_mount_reordering_preserves_inventory_but_real_drift_blocks(self):
+        mounts = [{'Destination': '/z', 'Source': '/synthetic/z', 'RW': False},
+                  {'Destination': '/a', 'Source': '/synthetic/a', 'RW': True}]
+        item = {'Id': 'synthetic-api', 'Image': 'synthetic-image',
+                'State': {'Status': 'running', 'Health': {'Status': 'healthy'}},
+                'Config': {'Env': ['APP_ENV=staging'], 'Cmd': ['python'], 'Entrypoint': None,
+                           'Labels': {'com.docker.compose.service': 'api'}},
+                'Mounts': mounts, 'NetworkSettings': {'Networks': {'synthetic': {}}},
+                'HostConfig': {'RestartPolicy': {'Name': 'unless-stopped'}}}
+        reordered = copy.deepcopy(item)
+        reordered['Mounts'].reverse()
+        with (patch.object(release, 'EXPECTED', {'api'}),
+              patch.object(release, 'run', side_effect=[
+                  'synthetic-api', json.dumps([item]),
+                  'synthetic-api', json.dumps([reordered])])):
+            config = {'services': release.containers()}
+            release.verify_running(config, target=False)
+        for field, value in [('Source', '/synthetic/changed'), ('RW', True)]:
+            changed = copy.deepcopy(item)
+            changed['Mounts'][0][field] = value
+            with (patch.object(release, 'EXPECTED', {'api'}),
+                  patch.object(release, 'run', side_effect=['synthetic-api', json.dumps([changed])]),
+                  self.assertRaisesRegex(release.ReleaseBlocked, 'runtime_mounts_changed')):
+                release.verify_running(config, target=False)
+        self.assertEqual(item['Mounts'], mounts)
+
+    def test_mount_destination_must_be_absolute_and_unique(self):
+        for mounts in ([{'Source': '/synthetic'}], [{'Destination': 'relative'}],
+                       [{'Destination': '/same'}, {'Destination': '/same'}]):
+            with self.assertRaisesRegex(release.ReleaseBlocked, 'mount_destination_invalid'):
+                release.canonical_mounts(mounts)
+
     def test_maintenance_selects_exact_inventory_name_with_historical_labels_preserved(self):
         source = {'Name': '/markina-gallery-api-1', 'Image': 'sha256:synthetic-original'}
         current = {**source, 'Id': 'synthetic-current', 'Config': {'Labels': {

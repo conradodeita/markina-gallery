@@ -2,6 +2,17 @@
 
 ## ADDED Requirements
 
+### Requirement: Inventário independente da ordem de mounts
+O inventário SHALL comparar mounts pela identidade de destino, preservando todos os campos retornados pelo Docker. A ordem da lista MUST NOT provocar drift; destinos ausentes ou duplicados e qualquer alteração de valor MUST permanecer bloqueantes.
+
+#### Scenario: Docker reordena a lista sem alterar a configuração
+- **WHEN** duas consultas retornam os mesmos mounts em ordens diferentes
+- **THEN** o fingerprint e a verificação de preservação permanecem iguais
+
+#### Scenario: Mount sofre alteração efetiva
+- **WHEN** fonte, destino, permissões ou outro campo de um mount muda
+- **THEN** a comparação continua detectando drift e impede a publicação
+
 ### Requirement: Corte coordenado de contexto ambiental
 O executor SHALL tratar a migração biométrica aprovada, envelopes de integração e bindings do canal como um conjunto recuperável. A operação MUST exigir SHA atual de main com CI push verde, inventário e fingerprint estáveis, execução exclusiva, backup cifrado reaberto e pausa graciosa dos consumidores próprios. O relatório não pode expor credenciais, payloads, IDs ou hashes de conteúdo biométrico.
 

@@ -48,7 +48,9 @@
 
 ## 5. Publicação autorizada
 
-- [ ] 5.1 Reconciliar os artefatos e revisar o diff; validar suíte focada com PostgreSQL/Linux, política de release, lint e OpenSpec; criar PR e acompanhar CI.
+- [ ] 5.5 Corrigir a instabilidade observada na ordem dos mounts do Docker sem ignorar alterações reais; validar preservação, destinos duplicados e drift; publicar pelo mesmo gate main/CI antes de repetir o inventário. O corte ainda não começou: a preparação abortou em `prepare_inventory`. Correção local: **11 testes POSIX passaram**, incluindo reordenação aceita e alteração de origem/permissão recusada; Ruff/OpenSpec/diff passaram. Pendente CI/main e repetição nativa.
+
+- [x] 5.1 Reconciliar os artefatos e revisar o diff; validar suíte focada com PostgreSQL/Linux, política de release, lint e OpenSpec; criar PR e acompanhar CI. PR #345 integrado como `aaaac33916c3b1f82f88fc5cf4cc0e1ba72663f9`; CI push/main `41001303712` passou integralmente. A aplicação nativa detectou o drift de ordenação de mounts tratado em 5.5; sem manutenção nem escrita de dados.
 - [ ] 5.2 Integrar após CI verde conforme autorização existente, confirmar CI push/main do SHA e obter inventário/fingerprint pelo coordenador revisado. Apresentar serviços/portas/impacto/recuperação na conversa antes da escrita.
 - [ ] 5.3 Executar preparação autenticada, corte do contexto e validação de dados/configuração/canais; recuperar em qualquer falha comprovando o estado conhecido. Manter facial indisponível e gate live fechado até a verificação.
 - [ ] 5.4 Habilitar o gate live pela fase própria com o fingerprint do destino, preservar sandbox/PIX/tenants, verificar HTTPS e disponibilidade sem cobranças reais; avisar o proprietário sobre cadastro das credenciais de produção pela UI.

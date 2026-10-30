@@ -1,5 +1,9 @@
 # Design
 
+## Correção operacional observada em 30/10/2026
+
+O coordenador integrado pelo PR #345 recusou a preparação em `prepare_inventory`, antes de qualquer manutenção ou escrita financeira/biométrica. Duas consultas consecutivas provaram que somente a ordem de `Mounts` variou; ordenar por `Destination` produziu listas integralmente iguais. Normalizar a lista imediatamente após o inspect torna snapshots, fingerprints e verificações de retomada determinísticos, conservando todos os campos de cada mount. Destinos ausentes/duplicados continuam recusados; nenhum guard é removido. O pacote de fontes também exige `git -c core.autocrlf=false archive` no Windows para preservar exatamente os blobs revisados. Esta correção não modifica o plano de serviços, credenciais, pagamentos ou recuperação.
+
 ## Context
 
 Decisão operacional de 29/10/2026 após inspeção SSH: o proprietário aceitou busca facial temporariamente indisponível para priorizar pagamentos, preservando fotos e índices. O caminho inicial SQL fica restrito a embeddings: qualquer job ativo, arquivo/localizador de referência, entrada desconhecida no diretório ou notificação com conteúdo bloqueia a escrita. A indisponibilidade facial deve ser explicitamente aplicada no corte e sua reativação exige procedimento próprio. Não fabricar registros de rollout/calibração para satisfazer o gate.

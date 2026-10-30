@@ -129,6 +129,14 @@ def target_environment(source, *, live=False):
     return result
 
 
+def canonical_mounts(values):
+    require(isinstance(values, list), 'mount_inventory_invalid')
+    destinations = [item.get('Destination') for item in values]
+    require(all(isinstance(value, str) and value.startswith('/') for value in destinations)
+            and len(set(destinations)) == len(destinations), 'mount_destination_invalid')
+    return sorted(values, key=lambda item: item['Destination'])
+
+
 def containers():
     ids = run('docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + PROJECT).split()
     require(bool(ids), 'project_missing')
@@ -140,6 +148,7 @@ def containers():
             # Preserve retired and historical stopped containers; never remove them.
             continue
         require(name in EXPECTED and name not in result, 'service_unknown_or_duplicate')
+        item['Mounts'] = canonical_mounts(item['Mounts'])
         result[name] = item
     return result
 
