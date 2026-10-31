@@ -12,7 +12,7 @@
 - [x] 2.1b Implementar o adapter de pausa, drenagem, substituição, journal durável e rollback por ID, com overlays distintos para candidato e rollback e restauração exata da política de restart. Não reutilizar o executor da migration 0090. Validado localmente com testes sintéticos e ensaios isolados de Compose/Nginx; não executar contra Oracle.
 - [x] 2.2 Executar rehearsal end-to-end em projetos Compose aleatórios e descartáveis; cobrir sucesso e recuperação após candidato incompatível, registrar limites do daemon compartilhado e remover somente recursos temporários pelo manifesto exato.
 - [x] 2.3 Revisar o diff local e executar OpenSpec, testes, compilação e lint aplicáveis; registrar evidências e limites.
-- [ ] 2.4 Preparar PR de revisão quando adapter operacional e rehearsal descartável estiverem coesos e validados.
+- [x] 2.4 Preparar PR draft de revisão após validar adapter operacional e rehearsal descartável (PR #351; sem merge).
 
 ## 3. Gate externo
 - [ ] 3.1 Obter tratamento/aceitação explícitos dos callbacks e autorização posterior da janela operacional. Não executar nesta preparação.

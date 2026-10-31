@@ -22,6 +22,7 @@ Recibos idempotentes exigem conteúdo/permissões coincidentes; o journal rejeit
 - `ruff check` e `ruff format --check` nos arquivos implementados — aprovados.
 - `openspec validate release-preview-worker-security --strict` — aprovado.
 - `git diff --check` — aprovado; os avisos de CRLF são dos artefatos locais preexistentes fora da change.
+- PR draft #351 aberto para revisão; não mesclado. O PR inclui somente os commits/documentos da change e os 12 arquivos listados no escopo da implementação.
 - Compose real: configuração de overlay com `image=sha256:...` aceita por `docker compose config --hash`; `build: null` reproduzido como inválido.
 - Nginx 1.27 isolado: configuração temporária passou `nginx -t`.
 - Rehearsal end-to-end em dois projetos Compose aleatórios, cada um removido pelo seu próprio manifesto: (a) baseline antigo substituído pela imagem candidata ARM64; (b) candidato baseline deliberadamente incompatível recusado e imagem anterior restaurada. Os dois fluxos confirmaram healthchecks, recibo/journal, três smoke tests HTTP 200 após conclusão e IDs inalterados dos demais serviços. A barreira foi observada como HTTP 503 antes das pausas. O segundo cenário terminou com recibo de recuperação.
