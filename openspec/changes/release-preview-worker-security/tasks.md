@@ -2,15 +2,17 @@
 
 ## 1. Preparação e contratos
 - [x] 1.1 Registrar escopo de manutenção autorizado, evidência de legado e isolamento de produção.
-- [ ] 1.2 Implementar coordenador de transição e recuperação testável, com recusa de gates incompletos.
-- [ ] 1.3 Provar ordem e falhas com testes, incluindo fila ocupada, drift, lock e recuperação interrompida.
+- [x] 1.2 Implementar coordenador de transição e recuperação testável, com recusa de gates incompletos.
+- [x] 1.3 Provar ordem e falhas com testes, incluindo fila ocupada, drift, lock e recuperação interrompida.
 
-- [ ] 1.4 Rever proposta/design e aceitar os contratos de recuperação e impacto antes de implementar o novo comportamento.
+- [x] 1.4 Aplicar o escopo autorizado de preparação local, mantendo callback e janela operacional como gates sem aceite presumido.
 
 ## 2. Operação e homologação
-- [ ] 2.1 Implementar/adaptar host operacional e inventário com proveniência Compose, journal e rollback por ID, sem migrations ou build Oracle.
-- [ ] 2.2 Executar rehearsal real em ambiente descartável e documentar limites.
-- [ ] 2.3 Revisar diff e executar OpenSpec, testes e gates aplicáveis; preparar PR para revisão quando coeso.
+- [x] 2.1a Implementar e testar o coletor read-only de inventário sanitizado, com proveniência Compose, identidade/arquitetura de imagens, estado de serviços e contagens agregadas.
+- [x] 2.1b Implementar o adapter de pausa, drenagem, substituição, journal durável e rollback por ID, com overlays distintos para candidato e rollback e restauração exata da política de restart. Não reutilizar o executor da migration 0090. Validado localmente com testes sintéticos e ensaios isolados de Compose/Nginx; não executar contra Oracle.
+- [x] 2.2 Executar rehearsal end-to-end em projetos Compose aleatórios e descartáveis; cobrir sucesso e recuperação após candidato incompatível, registrar limites do daemon compartilhado e remover somente recursos temporários pelo manifesto exato.
+- [x] 2.3 Revisar o diff local e executar OpenSpec, testes, compilação e lint aplicáveis; registrar evidências e limites.
+- [ ] 2.4 Preparar PR de revisão quando adapter operacional e rehearsal descartável estiverem coesos e validados.
 
 ## 3. Gate externo
 - [ ] 3.1 Obter tratamento/aceitação explícitos dos callbacks e autorização posterior da janela operacional. Não executar nesta preparação.
