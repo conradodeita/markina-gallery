@@ -9,7 +9,7 @@ Fonte aprovada dos pins: 74f61300e7a818d1605afda3db1d07574c443110. Evidência e 
 - O primeiro bootstrap exige janela de indisponibilidade aprovada, entrada em manutenção e parada graciosa dos produtores; o worker antigo só recebe SIGINT depois de queued/processing zerados. Timeout não escala para SIGKILL.
 - Reutilizar o lock production-release.lock e os mecanismos de Compose e manutenção existentes quando seus contratos forem compatíveis; não chamar a migration ou publicar API/web. Divergência de proveniência Compose bloqueia.
 - Recibo antes de cada mutação, recuperação inversa, referência anterior preservada por ID e checagens dos serviços fora do escopo. Falha de recuperação mantém a manutenção e o journal; nunca anunciar sucesso.
-- Callback recebido durante manutenção pode não ser entregue novamente pelo provedor. A aceitação da pausa técnica não comprova retry externo; isso permanece gate explícito antes de autorização da janela.
+- O caminho de pagamentos presente no código atual é Mercado Pago Orders. Seu endpoint valida assinatura, grava a notificação em inbox durável antes da resposta e o worker também reconcilia pedidos enviados por polling, sem depender do webhook. A documentação pública de Orders descreve tentativas repetidas quando não recebe confirmação HTTP 200/201. Isso sustenta o mecanismo para notificações Orders, mas não comprova quais URLs/tópicos estão ativos em cada conta de produção. Tópicos opcionais podem ter política diferente; a documentação do Mercado Pago diz que alertas `stop_delivery_op_wh` não seguem a política usual de retry. A configuração efetiva e a aceitação do impacto continuam gates explícitos antes da janela.
 
 ## Sequência operacional proposta
 
