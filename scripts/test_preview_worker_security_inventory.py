@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import sys
@@ -226,6 +227,85 @@ class PreviewWorkerInventoryTests(unittest.TestCase):
         self.assertEqual(
             self.collect()["pending_markers"], ["production-in-flight.json"]
         )
+
+    def test_exited_historical_alias_does_not_replace_active_api(self):
+        api = next(
+            c
+            for c in self.fixture.containers.values()
+            if c["Config"]["Labels"]["com.docker.compose.service"] == "api"
+        )
+        old = copy.deepcopy(api)
+        old["Id"] = "e" * 64
+        old["State"]["Status"] = "exited"
+        old["Config"]["Labels"].pop("com.docker.compose.config-hash")
+        old["Config"]["Labels"].pop("com.docker.compose.project.config_files")
+        self.fixture.containers[old["Id"]] = old
+        report = self.collect()
+        self.assertEqual(report["services"]["api"]["container_id"], api["Id"])
+        self.assertEqual(report["historical_containers"][0]["container_id"], old["Id"])
+
+    def test_stopped_optional_preserves_identity_without_retired_manifest(self):
+        optional = copy.deepcopy(next(iter(self.fixture.containers.values())))
+        optional["Id"] = "e" * 64
+        labels = optional["Config"]["Labels"]
+        labels["com.docker.compose.service"] = "raw-development-worker"
+        labels["com.docker.compose.project.config_files"] = str(
+            self.fixture.root / "retired.yml"
+        )
+        optional["State"]["Status"] = "exited"
+        self.fixture.containers[optional["Id"]] = optional
+        item = self.collect()["services"]["raw-development-worker"]
+        self.assertEqual(item["container_id"], optional["Id"])
+        self.assertEqual(item["compose_files"], [])
+        self.assertEqual(len(item["compose_labels_sha256"]), 64)
+        optional["State"]["Status"] = "running"
+        with self.assertRaisesRegex(
+            InventoryError, "compose_path_fora_das_raizes_ou_ausente"
+        ):
+            self.collect()
+
+    def test_paused_producers_still_require_full_compose_provenance(self):
+        for item in self.fixture.containers.values():
+            if item["Config"]["Labels"]["com.docker.compose.service"] in {
+                "api",
+                "worker",
+            }:
+                item["State"]["Status"] = "exited"
+        report = self.collector.collect(
+            expected_sha=EXPECTED_SHA,
+            candidate_image_id=IMAGE_CANDIDATE,
+            allow_paused_producers=True,
+        )
+        self.assertTrue(report["services"]["api"]["compose_files"])
+        self.fixture.compose_path.unlink()
+        with self.assertRaises(InventoryError):
+            self.collector.collect(
+                expected_sha=EXPECTED_SHA,
+                candidate_image_id=IMAGE_CANDIDATE,
+                allow_paused_producers=True,
+            )
+
+    def test_duplicate_active_api_still_blocks(self):
+        item = copy.deepcopy(next(iter(self.fixture.containers.values())))
+        item["Id"] = "e" * 64
+        self.fixture.containers[item["Id"]] = item
+        with self.assertRaisesRegex(InventoryError, "servico_ativo_duplicado"):
+            self.collect()
+
+    def test_cli_compose_version_is_explicit_and_allowlisted(self):
+        from preview_worker_security_release import parser
+
+        self.assertEqual(
+            parser().parse_args(["inventory"]).expected_compose_version, "2.35.1"
+        )
+        self.assertEqual(
+            parser()
+            .parse_args(["inventory", "--expected-compose-version", "5.6.1"])
+            .expected_compose_version,
+            "5.6.1",
+        )
+        with self.assertRaises(SystemExit):
+            parser().parse_args(["inventory", "--expected-compose-version", "9.9.9"])
 
 
 if __name__ == "__main__":

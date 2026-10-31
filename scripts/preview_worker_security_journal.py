@@ -35,7 +35,7 @@ class DurableJournal:
         if (
             os.name == "posix"
             and hasattr(os, "geteuid")
-            and info.st_uid != os.geteuid()
+            and os.geteuid() not in {0, info.st_uid}
         ):
             raise JournalError("journal_state_directory_owner_mismatch")
 
