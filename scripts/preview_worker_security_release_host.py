@@ -187,7 +187,15 @@ class PreviewWorkerSecurityHost:
             ):
                 raise HostError("lock_compartilhado_inseguro")
             if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
-                raise HostError("lock_compartilhado_owner_divergente")
+                state_info = self.state.lstat()
+                if not (
+                    os.geteuid() == 0
+                    and stat.S_ISDIR(state_info.st_mode)
+                    and not stat.S_ISLNK(state_info.st_mode)
+                    and not stat.S_IMODE(state_info.st_mode) & 0o077
+                    and info.st_uid == state_info.st_uid
+                ):
+                    raise HostError("lock_compartilhado_owner_divergente")
             with lock_path.open("r+") as stream:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 yield
@@ -250,6 +258,7 @@ class PreviewWorkerSecurityHost:
             "compose_provenance_valid": all(
                 service["compose_files"] and service["compose_config_hash"]
                 for service in inventory["services"].values()
+                if service["status"] == "running"
             ),
             "services_healthy": all(
                 service["status"] == "running" and service["health"] == "healthy"
@@ -347,6 +356,8 @@ class PreviewWorkerSecurityHost:
             str(self.root / "docker"),
             "-p",
             self.project,
+            "--profile",
+            "*",
         ]
         for entry in files:
             relative = entry["path"]

@@ -21,6 +21,9 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--source-sha", default="")
     value.add_argument("--candidate-image-id", default="")
     value.add_argument(
+        "--expected-compose-version", choices=("2.35.1", "5.6.1"), default="2.35.1"
+    )
+    value.add_argument(
         "--callback-policy",
         choices=("provider_retry_proven", "callback_outage_accepted", "unreviewed"),
         default="unreviewed",
@@ -37,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         candidate_image_id=args.candidate_image_id,
         callback_policy=args.callback_policy,
         window_approved=args.approve_window,
+        expected_compose_version=args.expected_compose_version,
     )
     try:
         if args.mode == "inventory":

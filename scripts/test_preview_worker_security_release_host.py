@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preview_worker_security_release_host import (
@@ -133,6 +136,17 @@ class PreviewWorkerSecurityHostTests(unittest.TestCase):
         ):
             self.fail("nested lock unexpectedly acquired")
 
+    def test_profiled_service_is_explicitly_selected_without_starting_services(self):
+        self.host.inventory_data = {
+            "services": {
+                "preview-adjustment-worker": {
+                    "compose_files": [{"path": "docker/docker-compose.yml"}]
+                }
+            }
+        }
+        args = self.host._compose("preview-adjustment-worker")
+        self.assertEqual(args[args.index("--profile") + 1], "*")
+
     def test_restart_policy_restore_preserves_failure_retry_limit(self):
         self.assertEqual(
             self.host._restart_spec({"name": "on-failure", "maximum_retry_count": 7}),
@@ -146,6 +160,48 @@ class PreviewWorkerSecurityHostTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(HostError, "restart_policy_invalida"):
             self.host._restart_spec({"name": "always", "maximum_retry_count": 3})
+
+    def test_root_lock_requires_matching_private_state_owner(self):
+        import preview_worker_security_release_host as module
+
+        lock_path = self.state / "production-release.lock"
+        lock_path.write_text("")
+        real_lstat = Path.lstat
+        owner = 1001
+        mode = stat.S_IFDIR | 0o700
+
+        def metadata(path):
+            if path == lock_path:
+                return SimpleNamespace(st_uid=1001, st_mode=stat.S_IFREG | 0o600)
+            if path == self.state:
+                return SimpleNamespace(st_uid=owner, st_mode=mode)
+            return real_lstat(path)
+
+        fake_fcntl = SimpleNamespace(LOCK_EX=2, LOCK_NB=4, flock=Mock())
+        with (
+            patch.object(module, "fcntl", fake_fcntl),
+            patch.object(module.os, "geteuid", return_value=0, create=True),
+            patch.object(Path, "lstat", metadata),
+        ):
+            with self.host.lock():
+                pass
+            owner = 1002
+            with (
+                self.assertRaisesRegex(
+                    HostError, "lock_compartilhado_owner_divergente"
+                ),
+                self.host.lock(),
+            ):
+                self.fail("mismatched owner accepted")
+            owner = 1001
+            mode = stat.S_IFDIR | 0o770
+            with (
+                self.assertRaisesRegex(
+                    HostError, "lock_compartilhado_owner_divergente"
+                ),
+                self.host.lock(),
+            ):
+                self.fail("shared directory accepted")
 
     def test_resume_command_restores_on_failure_retry_limit(self):
         retry_policy = {"name": "on-failure", "maximum_retry_count": 7}

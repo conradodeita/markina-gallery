@@ -12,11 +12,13 @@
 - [x] 2.1b Implementar o adapter de pausa, drenagem, substituição, journal durável e rollback por ID, com overlays distintos para candidato e rollback e restauração exata da política de restart. Não reutilizar o executor da migration 0090. Validado localmente com testes sintéticos e ensaios isolados de Compose/Nginx; não executar contra Oracle.
 - [x] 2.2 Executar rehearsal end-to-end em projetos Compose aleatórios e descartáveis; cobrir sucesso e recuperação após candidato incompatível, registrar limites do daemon compartilhado e remover somente recursos temporários pelo manifesto exato.
 - [x] 2.3 Revisar o diff local e executar OpenSpec, testes, compilação e lint aplicáveis; registrar evidências e limites.
-- [x] 2.4 Preparar PR para revisão após validar adapter operacional e rehearsal descartável (PR #351; pronto para revisão, sem merge).
+- [x] 2.4 Preparar PR para revisão após validar adapter operacional e rehearsal descartável (PR #351 integrado após revisão e autorização explícita do proprietário; CI pós-merge aprovado).
 
 ## 3. Gate externo
 - [x] 3.1a Documentar o caminho versionado Mercado Pago Orders, a persistência da inbox/reconciliação e a política pública de retry aplicável, sem inferir a configuração da produção.
 - [ ] 3.1b Confirmar as URLs/tópicos de webhook efetivamente ativos nas contas, avaliar tópicos excepcionais e obter aceitação explícita do tratamento dos callbacks e autorização da janela operacional. Não executar nesta preparação.
 
 ## Workflow follow-up
+- [x] 4.1 Adaptar o inventário ao Compose 5.6.1 comprovado, preservar identidades de containers históricos parados sem exigir manifestos retirados e suportar operador root com lock pertencente ao dono privado do diretório de estado. Manter validação integral de serviços ativos, allowlist e lock exclusivo.
+- [x] 4.2 Validar regressões e preparar artefato local verificável/documentação do PR separado; registrar gates operacionais restantes sem executar publicação.
 - Não sincronizar/arquivar sem revisão humana. Nenhum teste ou aceite de preparação autoriza execução na Oracle.

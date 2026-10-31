@@ -34,4 +34,7 @@ Fonte aprovada dos pins: 74f61300e7a818d1605afda3db1d07574c443110. Evidência e 
 Testes de contrato para ordens, falhas em cada fase, tarefa ativa, timeout, imagem divergente, recuperação e preservação. Rehearsal real isolado deve distinguir containers sintéticos de Oracle, sem credenciais/dados reais. Cada evidência só vale para o código e ambiente executados.
 
 ## Open Questions
+### Adequação ao inventário de 31/10/2026
+Oracle usa Compose 5.6.1, também exercitado no rehearsal local. A CLI aceitará somente versões explicitamente homologadas (2.35.1 ou 5.6.1), exigindo escolha explícita quando diferente do padrão. Containers parados conservam identidades, estado e labels no snapshot; seus manifestos históricos podem ter sido retirados e não autorizam recriação. Todos os serviços ativos continuam exigindo proveniência integral; serviços desconhecidos e instâncias ativas duplicadas continuam bloqueados. API e worker têm manifestos privados root: o operador privilegiado pode adquirir o lock de seu dono original somente quando esse dono coincide com o diretório de estado privado, sem symlinks ou permissões de escrita de terceiros. Não alterar ACLs ou permissões de produção. Preparar artefatos locais não autoriza carregá-los no Docker Oracle ou executar release.
+
 A autorização da janela e a comprovação/aceitação operacional do tratamento dos callbacks dependem de decisão posterior do proprietário. Nenhuma pausa na Oracle está autorizada nesta change.

@@ -136,6 +136,7 @@ class PreviewWorkerInventory:
                     "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                     "LANG": "C.UTF-8",
                     "LC_ALL": "C.UTF-8",
+                    "GIT_OPTIONAL_LOCKS": "0",
                 },
             )
             return result.stdout
@@ -186,7 +187,7 @@ class PreviewWorkerInventory:
         except ValueError:
             raise InventoryError("imagem_inspect_invalida") from None
 
-    def _service(self, container: dict) -> dict:
+    def _service(self, container: dict, *, require_provenance: bool = False) -> dict:
         labels = container.get("Config", {}).get("Labels") or {}
         service = labels.get("com.docker.compose.service")
         if (
@@ -221,11 +222,20 @@ class PreviewWorkerInventory:
             raise InventoryError("restart_policy_incompleta")
         if oneoff not in {"False", "false"} and status == "running":
             raise InventoryError("container_oneoff_ativo")
-        if not _sha(config_hash):
+        if (
+            config_hash is not None or status != "exited" or require_provenance
+        ) and not _sha(config_hash):
             raise InventoryError("compose_config_hash_ausente")
-        compose = _safe_compose_paths(
-            labels.get("com.docker.compose.project.config_files"), self.root, self.state
-        )
+        if status == "exited" and not require_provenance:
+            # Preserve stopped identities without authorizing their recreation.
+            # Their original manifests may have been retired by later releases.
+            compose = []
+        else:
+            compose = _safe_compose_paths(
+                labels.get("com.docker.compose.project.config_files"),
+                self.root,
+                self.state,
+            )
         return {
             "service": service,
             "container_id": ident,
@@ -238,6 +248,9 @@ class PreviewWorkerInventory:
             },
             "compose_config_hash": config_hash,
             "compose_files": compose,
+            "compose_labels_sha256": hashlib.sha256(
+                json.dumps(labels, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
             "started_at": state.get("StartedAt")
             if isinstance(state.get("StartedAt"), str)
             else None,
@@ -284,19 +297,35 @@ class PreviewWorkerInventory:
         ):
             raise InventoryError("imagem_candidata_identidade_ou_arquitetura_invalida")
         services: dict[str, dict] = {}
+        grouped: dict[str, list[dict]] = {}
         for ident in ids:
-            item = self._service(self._inspect(ident))
-            name = item["service"]
-            # Multiple exited one-off tasks are not runtime identities. More
-            # than one running instance is ambiguous and always blocks.
+            raw = self._inspect(ident)
+            labels = raw.get("Config", {}).get("Labels") or {}
+            name = labels.get("com.docker.compose.service")
             if (
-                name in services
-                and item["status"] == "running"
-                and services[name]["status"] == "running"
+                labels.get("com.docker.compose.project") != self.project
+                or name not in SERVICES
             ):
+                raise InventoryError("container_fora_do_escopo_ou_servico_desconhecido")
+            grouped.setdefault(name, []).append(raw)
+        historical = []
+        for name, containers in grouped.items():
+            active = [
+                c for c in containers if c.get("State", {}).get("Status") == "running"
+            ]
+            if len(active) > 1:
                 raise InventoryError("servico_ativo_duplicado")
-            if name not in services or item["status"] == "running":
-                services[name] = item
+            selected = (
+                active[0]
+                if active
+                else max(
+                    containers, key=lambda c: c.get("State", {}).get("StartedAt") or ""
+                )
+            )
+            services[name] = self._service(
+                selected, require_provenance=name in REQUIRED_ACTIVE
+            )
+            historical.extend(self._service(c) for c in containers if c is not selected)
         if not REQUIRED_ACTIVE.issubset(services):
             raise InventoryError("servicos_necessarios_ausentes")
         for name in REQUIRED_ACTIVE:
@@ -380,6 +409,9 @@ class PreviewWorkerInventory:
             "candidate_image_id": candidate_image_id,
             "candidate_platform": f"{candidate_os}/{candidate_arch}",
             "services": services,
+            "historical_containers": sorted(
+                historical, key=lambda c: c["container_id"]
+            ),
             "preview_worker_previous_image_id": worker["image_id"],
             "optional_writers_active": optional_active,
             "database_revision": parts[0],
