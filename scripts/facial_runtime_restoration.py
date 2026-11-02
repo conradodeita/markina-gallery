@@ -20,6 +20,7 @@ SERVICES = ("api", "worker", "face-search-worker", "face-index-worker", "face-ma
 FACIAL = SERVICES[2:]
 REQUIRED = frozenset(SERVICES) | {"web", "nginx", "db", "redis"}
 GATES = frozenset({"security", "privacy", "legal_basis", "calibration", "capacity", "recovery", "human_approval"})
+GENERAL_RESTORE_MODE = "owner-authorized-general-restore-v1"
 HEX = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -85,6 +86,11 @@ def validate_inventory(inventory: dict, *, now: datetime | None = None) -> None:
 def validate_images(inventory: dict, manifest: dict, observations: dict) -> None:
     require(manifest.get("format") == 1 and SHA.fullmatch(manifest.get("support_sha", "")), "manifesto_invalido")
     require(manifest["support_sha"] == inventory["support_sha"], "suporte_divergente")
+    policy = manifest.get("activation_policy", "strict")
+    require(policy in {"strict", GENERAL_RESTORE_MODE}, "politica_de_ativacao_invalida")
+    if policy == GENERAL_RESTORE_MODE:
+        require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,199}",
+                                 manifest.get("authorization_reference", ""))), "autorizacao_ausente")
     candidates = manifest.get("services", {})
     require(set(candidates) == set(SERVICES) and set(observations) == set(SERVICES), "candidatos_incompletos")
     for service in SERVICES:
@@ -127,6 +133,19 @@ class Approval:
         require(scope and len(set(scope)) == len(scope), "allowlist_vazia_ou_duplicada")
         require(self.stage in {"canary", "limited", "general"}, "etapa_invalida")
         return digest(sorted(scope))
+
+
+def calibration_admission_proven(manifest: dict, proof: dict, stage: str) -> bool:
+    if manifest.get("activation_policy", "strict") == "strict":
+        return proof.get("calibration_verified") is True
+    return (
+        manifest.get("activation_policy") == GENERAL_RESTORE_MODE
+        and stage == "general"
+        and proof.get("calibration_verified") is False
+        and proof.get("calibration_waived") is True
+        and bool(manifest.get("authorization_reference"))
+        and proof.get("authorization_reference") == manifest["authorization_reference"]
+    )
 
 
 class Host(Protocol):
@@ -202,7 +221,7 @@ def execute(host: Host, operation: str, mode: str, approval: Approval) -> dict:
                 current_proof = host.activation_proof(operation, approval)
                 require(current_proof.get("scope_digest") == approval.scope_digest()
                     and current_proof.get("scope_count") == len(approval.allowlist)
-                    and current_proof.get("calibration_verified") is True
+                    and calibration_admission_proven(receipt["manifest"], current_proof, approval.stage)
                     and current_proof.get("stage") == approval.stage
                     and current_proof.get("gates") == sorted(GATES), "gate_revogado_ou_divergente")
                 observed = host.verify(operation, receipt, enabled=True)
@@ -224,7 +243,9 @@ def execute(host: Host, operation: str, mode: str, approval: Approval) -> dict:
                 scope = approval.scope_digest()
                 proof = host.activation_proof(operation, approval)
                 require(proof.get("scope_digest") == scope and proof.get("scope_count") == len(approval.allowlist), "escopo_nao_comprovado")
-                require(proof.get("stage") == approval.stage and proof.get("calibration_verified") is True, "calibracao_nao_comprovada")
+                require(proof.get("stage") == approval.stage
+                        and calibration_admission_proven(receipt["manifest"], proof, approval.stage),
+                        "calibracao_ou_dispensa_nao_comprovada")
                 require(proof.get("gates") == sorted(GATES), "gates_nao_comprovados")
                 record["activation_proof_digest"] = digest(proof)
                 record["scope_digest"] = scope

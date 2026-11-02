@@ -114,6 +114,7 @@ class FacialSettings:
     reference_ambiguous_threshold_milli: int | None = None
     region_ambiguous_threshold_milli: int | None = None
     require_explicit_rollout: bool = False
+    require_production_calibration: bool = True
 
     @property
     def active_key(self) -> bytes:
@@ -132,6 +133,7 @@ def facial_settings_from_environment(
     settings = FacialSettings(
         enabled=_boolean("FACIAL_PROCESSING_ENABLED"),
         require_explicit_rollout=_boolean("FACIAL_REQUIRE_EXPLICIT_ROLLOUT"),
+        require_production_calibration=_boolean("FACIAL_REQUIRE_PRODUCTION_CALIBRATION", default=True),
         environment=os.getenv("APP_ENV", "development").strip().lower(),
         credential_environment=_text("FACIAL_CREDENTIAL_ENV").lower(),
         manifest_path=Path(

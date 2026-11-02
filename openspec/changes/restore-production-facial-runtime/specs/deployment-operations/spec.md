@@ -1,5 +1,19 @@
 ## ADDED Requirements
 
+### Requirement: Restauração geral sem calibração exige decisão explícita
+
+O modo `owner-authorized-general-restore-v1` SHALL permitir a restauração geral sem medição prévia somente com referência de autorização do proprietário vinculada ao manifesto e recibo. O código SHALL exigir calibração por padrão; o modo autorizado SHALL registrar dispensa, nunca aprovação de medição, e preservar todos os demais controles de tenant, política, versões e acesso.
+
+#### Scenario: Proprietário autoriza restauração geral sem calibração
+
+- **WHEN** o manifesto registra o modo autorizado e referência de decisão e a etapa é `general`
+- **THEN** os consumidores usam as flags explícitas para não exigir calibração/rollout prévio, e o operador comprova o escopo de políticas ativas sem inserir calibração fictícia
+
+#### Scenario: Dispensa não possui autorização ou etapa correspondente
+
+- **WHEN** falta a referência, o modo diverge ou a etapa não é `general`
+- **THEN** a operação é recusada e o modo estrito preserva suas exigências anteriores
+
 ### Requirement: Restauração facial preserva o ambiente e a versão saudáveis
 
 A restauração facial SHALL preservar o contexto `production`, schema, dados e correções da versão saudável observada. O pacote SHALL identificar imagens e arquivos por digest, revalidar o inventário imediatamente antes da aplicação e excluir alterações SaaS locais não revisadas.
@@ -96,11 +110,19 @@ O operador SHALL comprovar a parada pelo encerramento normal do mesmo container 
 
 ### Requirement: Troca e recuperação preservam camadas e mounts
 
+Diretórios estruturais de mounts SHALL exigir prova de ausência de conteúdo subjacente antes de serem aceitos como camada sem dados.
+
+#### Scenario: Docker criou diretórios de montagem na camada
+
+- **WHEN** o diff contém somente destinos de mounts declarados ou seus ancestrais
+- **THEN** a exportação TAR em streaming comprova diretórios sem arquivos, links ou entradas especiais subjacentes e confere identidade, mounts e diff antes/depois; nenhum TAR é extraído ou persistido
+- **AND** qualquer diferença fora desse caso bloqueia a recriação
+
 O operador SHALL conferir a camada gravável antes e depois de parar um container. Candidatos SHALL usar raiz read-only, manter os mounts persistentes e gravar temporários somente em `tmpfs` limitado. A recuperação MUST NOT remover candidato com identidade, mounts ou camada persistente inesperados.
 
 #### Scenario: Camada original muda durante parada
 
-- **WHEN** `docker diff` mostra alteração não vazia antes ou depois da parada de um container original
+- **WHEN** `docker diff` mostra conteúdo ou diretórios estruturais não comprovados antes ou depois da parada de um container original
 - **THEN** o operador reinicia esse mesmo container e aborta antes de substituição, preservando a camada e os mounts
 
 #### Scenario: Candidato está restrito a escrita temporária

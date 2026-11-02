@@ -10,6 +10,7 @@ import secrets
 import socket
 import stat
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
@@ -21,6 +22,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from facial_runtime_restoration import (
     FACIAL,
     GATES,
+    GENERAL_RESTORE_MODE,
     HEX,
     IMAGE,
     MODULE_CHANGES_BY_SERVICE,
@@ -119,6 +121,28 @@ with psycopg.connect(url) as db:
 print(json.dumps(result,sort_keys=True))
 '''
 
+GENERAL_ACTIVATION_PROBE = r'''
+import hashlib,json,os,sys
+import psycopg
+request=json.load(sys.stdin)
+fields=('model_version','quality_version','calibration_version','legal_notice_version','legal_basis_reference','retention_policy_version','minor_policy_version')
+params={key:os.environ.get('FACIAL_'+key.upper(),'') for key in fields}
+params['threshold']=int(os.environ.get('FACIAL_SIMILARITY_THRESHOLD_MILLI','750'))
+query="""SELECT p.id::text FROM parent_gallery p
+JOIN tenant t ON t.id=p.tenant_id AND t.status='active'
+JOIN gallery_facial_policy g ON g.parent_gallery_id=p.id AND g.tenant_id=p.tenant_id
+WHERE p.active AND p.lifecycle_status='active' AND g.status='active'
+AND g.model_version=%(model_version)s AND g.quality_version=%(quality_version)s
+AND g.calibration_version=%(calibration_version)s
+AND g.legal_notice_version=%(legal_notice_version)s AND g.legal_basis_reference=%(legal_basis_reference)s
+AND g.retention_policy_version=%(retention_policy_version)s AND g.minor_policy_version=%(minor_policy_version)s
+AND g.similarity_threshold_milli=%(threshold)s"""
+with psycopg.connect(os.environ['DATABASE_URL'].replace('postgresql+psycopg://','postgresql://',1)) as db:
+ db.execute('SET TRANSACTION READ ONLY'); db.execute("SET LOCAL statement_timeout='15s'")
+ scope=sorted(row[0] for row in db.execute(query,params).fetchall()); db.rollback()
+print(json.dumps({'scope_digest':hashlib.sha256(json.dumps(scope,sort_keys=True,separators=(',',':')).encode()).hexdigest(),'scope_count':len(scope),'stage':request['stage'],'calibration_verified':False,'calibration_waived':True,'authorization_reference':request['authorization_reference']},sort_keys=True))
+'''
+
 FUNCTIONAL_PROBE = r'''
 import json,os,sys
 from uuid import UUID
@@ -208,6 +232,24 @@ class RestorationHost:
             return json.loads(self.run(*args, **kwargs))
         except (ValueError, TypeError):
             raise RestorationError("resposta_json_invalida") from None
+
+    def _assert_preserved_layer(self, item, *, reason="camada_gravavel_nao_preservada"):
+        changes = sorted(self.run("docker", "diff", item["Id"]).splitlines())
+        if not changes:
+            return
+        mounts = sorted(m["Destination"] for m in item.get("Mounts", []))
+        allowed = set()
+        for destination in mounts:
+            path = destination.rstrip("/")
+            while path:
+                allowed.add(path)
+                path = path.rsplit("/", 1)[0]
+        require(all(line[:2] in {"A ", "C "} and line[2:] in allowed for line in changes), reason)
+        expected = {"id": item["Id"], "image": item["Image"], "mounts": mounts, "changes": changes}
+        proof = self.obj(sys.executable, str(Path(__file__).with_name("facial_runtime_layer_probe.py")),
+                         item["Id"], data=json.dumps({"mounts": mounts, "changes": changes}).encode(),
+                         timeout=120)
+        require(proof == {"safe": True, "proof_sha256": digest(expected)}, reason)
 
     def _safe_directory(self, path: Path, *, private=False):
         require(path.is_absolute(), "diretorio_relativo")
@@ -371,7 +413,10 @@ class RestorationHost:
             require(hash_result.split() == [service, expected], "compose_nao_reproduz_baseline")
         key = secrets.token_bytes(32)
         nonce = secrets.token_bytes(12)
-        raw = json.dumps({"containers": self._raw, "models": models}, sort_keys=True).encode()
+        raw = json.dumps({"containers": self._raw, "models": models,
+                          "activation_policy": receipt["manifest"].get("activation_policy", "strict"),
+                          "authorization_reference": receipt["manifest"].get("authorization_reference")},
+                         sort_keys=True).encode()
         encrypted = AESGCM(key).encrypt(nonce, raw, (operation + ":" + receipt["fingerprint"]).encode())
         self._write(work / "config.key", key)
         self._write(work / "config.sealed", nonce + encrypted)
@@ -504,8 +549,7 @@ class RestorationHost:
             if item["State"]["Status"] == "running":
                 self._assert_known_process(name, item)
         for item in current.values():
-            changes = self.run("docker", "diff", item["Id"])
-            require(not changes.strip(), "camada_gravavel_nao_preservada")
+            self._assert_preserved_layer(item)
 
         affected = set(SERVICES)
         if record.get("phase") == "recovering":
@@ -568,10 +612,7 @@ class RestorationHost:
                     item["Id"] == expected["Id"] and item["Image"] == expected["Image"],
                     "identidade_de_parada_divergente",
                 )
-                require(
-                    not self.run("docker", "diff", item["Id"]).strip(),
-                    "camada_gravavel_nao_preservada",
-                )
+                self._assert_preserved_layer(item)
             busy = self._sql(
                 "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
                 "AND pid<>pg_backend_pid() AND state IN "
@@ -599,7 +640,11 @@ class RestorationHost:
                 result[key] = api[key]
             else:
                 result.pop(key, None)
-        result.update(APP_ENV="production", FACIAL_CREDENTIAL_ENV="production", FACIAL_PROCESSING_ENABLED="true" if enabled else "false", FACIAL_REQUIRE_EXPLICIT_ROLLOUT="true")
+        general = saved.get("activation_policy", "strict") == GENERAL_RESTORE_MODE
+        result.update(APP_ENV="production", FACIAL_CREDENTIAL_ENV="production",
+                      FACIAL_PROCESSING_ENABLED="true" if enabled else "false",
+                      FACIAL_REQUIRE_EXPLICIT_ROLLOUT="false" if general else "true",
+                      FACIAL_REQUIRE_PRODUCTION_CALIBRATION="false" if general else "true")
         return result
 
     def replace(self, operation, receipt, service, *, enabled, previous=False):
@@ -649,9 +694,9 @@ class RestorationHost:
         if previous:
             current = self._current(service)
             require(current.get("HostConfig", {}).get("ReadonlyRootfs") is True
-                    and current.get("HostConfig", {}).get("Tmpfs") == CANDIDATE_TMPFS
-                    and not self.run("docker", "diff", current["Id"]).strip(),
+                    and current.get("HostConfig", {}).get("Tmpfs") == CANDIDATE_TMPFS,
                     "candidato_nao_preservavel")
+            self._assert_preserved_layer(current, reason="candidato_nao_preservavel")
         if action == "create":
             self.run(*args, action, "--no-deps", "--no-build", "--pull", "never", "--force-recreate", service)
         else:
@@ -688,7 +733,7 @@ class RestorationHost:
             else:
                 require(actual["State"]["Status"] in {"exited", "created"}, "facial_deveria_estar_parado")
             if not previous and not untouched:
-                require(not self.run("docker", "diff", actual["Id"]).strip(), "camada_candidata_nao_vazia")
+                self._assert_preserved_layer(actual, reason="camada_candidata_nao_vazia")
         require(self._sql("SELECT json_agg(version_num) FROM alembic_version") == [SCHEMA], "schema_alterado")
         codes = [self.run("curl", "--proto", "=https", "--tlsv1.2", "--max-time", "10", "-sS", "-o", "/dev/null", "-w", "%{http_code}", ORIGIN + path) for path in ("/api/health", "/healthz")]
         require(codes == ["200", "200"], "https_nao_saudavel")
@@ -709,8 +754,25 @@ class RestorationHost:
             value = json.loads(raw)
             require(value.get("gate") == gate and value.get("fingerprint") == approval.fingerprint and value.get("scope_digest") == approval.scope_digest(), "vinculo_de_evidencia_divergente")
         api = self._current("api")
-        require(environment(api).get("FACIAL_REQUIRE_EXPLICIT_ROLLOUT") == "true", "modo_estrito_nao_carregado")
-        proof = self.obj("docker", "exec", "-i", api["Id"], "python", "-B", "-c", ACTIVATION_PROBE, data=json.dumps({"allowlist": approval.allowlist, "stage": approval.stage}).encode())
+        saved = self._private(operation, self.load(operation))
+        general = saved.get("activation_policy", "strict") == GENERAL_RESTORE_MODE
+        if general:
+            require(approval.stage == "general" and saved.get("authorization_reference"), "dispensa_nao_autorizada")
+            decision = json.loads(self._read(work / evidence["gates"]["calibration"]["file"]))
+            require(decision.get("decision") == "waived-by-owner"
+                    and decision.get("authorization_reference") == saved["authorization_reference"],
+                    "dispensa_sem_decisao_do_proprietario")
+            require(environment(api).get("FACIAL_REQUIRE_EXPLICIT_ROLLOUT") == "false"
+                    and environment(api).get("FACIAL_REQUIRE_PRODUCTION_CALIBRATION") == "false",
+                    "modo_geral_nao_carregado")
+        else:
+            require(environment(api).get("FACIAL_REQUIRE_EXPLICIT_ROLLOUT") == "true"
+                    and environment(api).get("FACIAL_REQUIRE_PRODUCTION_CALIBRATION") == "true",
+                    "modo_estrito_nao_carregado")
+        proof = self.obj("docker", "exec", "-i", api["Id"], "python", "-B", "-c",
+                         GENERAL_ACTIVATION_PROBE if general else ACTIVATION_PROBE,
+                         data=json.dumps({"allowlist": approval.allowlist, "stage": approval.stage,
+                                          "authorization_reference": saved.get("authorization_reference")}).encode())
         proof["gates"] = sorted(GATES)
         return proof
 

@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.acervo_context import owned_record
+from app.acervo_context import owned_record, require_active_owner
 from app.auth import AdminUser, AuditEvent, FacialRollout, ParentGallery, now
 from app.facial.calibration import calibration_is_approved
 from app.facial.config import FacialSettings
@@ -28,6 +28,15 @@ APPROVAL_REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$")
 
 class FacialRolloutError(RuntimeError):
     """Transição de rollout inválida ou fora do escopo autorizado."""
+
+
+def calibration_allows_processing(db: Session, settings: FacialSettings, *, tenant_id: UUID) -> bool:
+    if settings.require_production_calibration:
+        return calibration_is_approved(db, settings, tenant_id=tenant_id)
+    # A dispensa operacional não concede acesso a tenant suspenso nem declara
+    # calibração aprovada. A referência de autorização pertence ao recibo.
+    require_active_owner(db, tenant_id)
+    return True
 
 
 @dataclass(frozen=True)
@@ -151,7 +160,7 @@ def activate_rollout(
         or canonical_rollout_environment(settings.environment) != environment
     ):
         raise FacialRolloutError("O kill switch e o ambiente facial não autorizam ativação.")
-    if not calibration_is_approved(db, settings, tenant_id=tenant_id):
+    if not calibration_allows_processing(db, settings, tenant_id=tenant_id):
         raise FacialRolloutError("Calibração e grupos relevantes não foram aprovados.")
     if db.get(AdminUser, actor_admin_id) is None:
         raise FacialRolloutError("Administrador aprovador indisponível.")
@@ -252,7 +261,7 @@ def rollout_is_active(
 ) -> bool:
     if not settings.enabled:
         return False
-    if not calibration_is_approved(db, settings, tenant_id=tenant_id):
+    if not calibration_allows_processing(db, settings, tenant_id=tenant_id):
         return False
     parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
     if parent is None or not parent.active or parent.lifecycle_status != "active":

@@ -275,7 +275,7 @@ class HostContractTests(unittest.TestCase):
         self.root.chmod(0o700)
         self.host._raw = self.containers
         self.host._private = self.private_snapshot
-        receipt = {"fingerprint":"f"*64, "inventory":{"services":{s:{"compose_files":[{"path":"/fixture/compose"}]} for s in SERVICES}}}
+        receipt = {"fingerprint":"f"*64, "manifest":{}, "inventory":{"services":{s:{"compose_files":[{"path":"/fixture/compose"}]} for s in SERVICES}}}
         def command(args,data,timeout):
             if args[-2:] == ("--format","json"):
                 return json.dumps({"services":{s:{"environment":{"TOKEN":"secret-sentinel"}} for s in SERVICES}}).encode()

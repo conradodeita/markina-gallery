@@ -1,5 +1,7 @@
 # Proposal: Restaurar o runtime facial em produção
 
+> **Escopo atualizado por decisão expressa em 02/11/2026:** restauração geral autorizada sem exigir calibração prévia, preservando políticas, modelos/limiares e controles de acesso. Usar modo operacional auditável e configuração explícita, com exigência de calibração habilitada por padrão no código. Nenhuma aprovação de medição será inventada. A medição posterior usará uma pasta restrita ao cliente de teste do proprietário.
+
 ## Why
 
 A transição ambiental de 30/10/2026 preservou os índices e desligou a busca facial; o proprietário solicitou expressamente sua reativação. A API atual não contém OpenCV, NumPy ou o cache de modelos exigido para ligar a flag, e os workers preservados pertencem ao contexto anterior de `staging`, portanto a retomada exige preparação compatível com o ambiente `production` atual.
