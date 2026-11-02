@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "observed_at_utc": "2026-11-02T17:23:37Z",
-  "validation_recorded_at_utc": "2026-11-02T22:09:36Z",
+  "validation_recorded_at_utc": "2026-11-02T22:36:09Z",
   "scope": "local_only",
   "docker": {
     "context": "desktop-linux",
@@ -243,7 +243,10 @@
       "Facial SLO thresholds are documented in docs/OPERACAO-BUSCA-FACIAL-PRODUCAO.md and backend/app/facial/observability.py; this candidate has no comparable native ARM64 capacity run.",
       "No production container, database, flag, approval, image, or service was modified.",
       "No absolute regression guarantee; local contract tests and image allowlists reduce risk but do not replace post-release monitoring.",
-      "No Git-bound support commit proof is recorded until the scoped local commit is verified against the candidate overlay hashes."
+      "The candidate images were rebuilt and Git-bound to a local scoped commit; no operational manifest was generated and no production activation was performed.",
+      "Local ARM64 probes ran under x86_64 emulation and do not establish native production capacity or post-release payment behavior.",
+      "The complete PostgreSQL run had four setup errors from the shared global-Pix test fixture attempting to drop an unnamed use_alter foreign key; all seven PostgreSQL-only concurrency/reset scenarios passed when run directly, and the 98-test SQLite run passed.",
+      "A test PostgreSQL container used Docker bridge networking to expose only a loopback port; test transports were mocked and no production payment or callback was invoked."
     ],
     "local_operator_revision": {
       "date": "2026-11-02",
@@ -406,7 +409,7 @@
       "data_handling_gate": "Package may contain production personal and financial data; no local copy/decryption/restore without explicit scope and isolated destination approval"
     },
     "mercado_pago_preservation": {
-      "result": "98 passed, 7 skipped, 76 warnings in 411.40 seconds",
+      "result": "No regression observed in the exercised Mercado Pago contracts: 98 passed on SQLite plus all 7 PostgreSQL-only scenarios passed in isolation; no payment assertion failed.",
       "runtime": "Windows x86_64, Python 3.12.9, backend/.venv, mercadopago 3.6.0",
       "command": "pytest backend/tests/test_mercadopago_checkout.py backend/tests/test_mercadopago_webhook.py backend/tests/test_mercadopago_worker.py backend/tests/test_mercadopago_settings.py backend/tests/test_mercadopago_operations.py backend/tests/test_mercadopago_projections.py backend/tests/test_unified_checkout.py backend/tests/test_provider_payment_persistence.py -q",
       "coverage": [
@@ -420,10 +423,53 @@
         "unified checkout"
       ],
       "warnings_summary": "FastAPI on_event deprecation and SQLAlchemy cyclic-FK drop warnings; pytest reported no failures. Seven tests were skipped.",
-      "production_mutation": false
+      "production_mutation": false,
+      "candidate_content_check": {
+        "result": "passed",
+        "method": "Git-bound prove_images plus validate_images",
+        "unchanged_marketplace_related_modules_per_service": 11,
+        "module_hashes_match_baseline": true,
+        "api_worker_added_packages": [
+          "numpy==2.2.6",
+          "opencv-python-headless==4.12.0.88"
+        ],
+        "other_package_changes": false,
+        "support_commit_sha": "44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc",
+        "full_suite_sqlite": "98 passed, 7 skipped",
+        "postgresql_only_scenarios": "7 passed",
+        "postgresql_fixture_limit": "4 setup errors in shared PostgreSQL drop_all fixture; no payment assertion failed in these cases"
+      },
+      "sqlite_suite": {
+        "result": "98 passed, 7 skipped, 76 warnings in 411.40 seconds",
+        "runtime": "Windows x86_64, Python 3.12.9, backend/.venv, mercadopago 3.6.0",
+        "skips": "Seven cases require PostgreSQL concurrency/reset semantics; executed separately below.",
+        "warnings_summary": "FastAPI on_event deprecation and SQLAlchemy cyclic-FK drop warnings."
+      },
+      "postgresql_full_suite": {
+        "result": "101 passed, 4 setup errors in 282.63 seconds; no skipped tests",
+        "runtime": "PostgreSQL 17.11-alpine, disposable test database markina_unified_test",
+        "setup_error": "Four tests using the shared clean_database fixture in backend/tests/test_global_pix.py fail before assertions: Base.metadata.drop_all cannot compile DROP CONSTRAINT for an unnamed use_alter foreign key in parent_gallery. This is a test-fixture reset limitation; the corresponding suite passed under SQLite.",
+        "isolation": "PGDATA on 768 MiB tmpfs, no volume/bind mount, port 55458 published only on 127.0.0.1. Docker bridge was used because internal networking did not publish the host port; tests used mocked Mercado Pago transport and submitted no live payment.",
+        "production_mutation": false
+      },
+      "postgresql_only_scenarios": {
+        "result": "7 passed, 6 warnings in 27.90 seconds",
+        "tests": [
+          "test_mercadopago_checkout.py::test_concorrencia_postgresql_prepara_e_envia_uma_unica_cobranca",
+          "test_mercadopago_projections.py::test_reset_homolog_recusa_evidencia_financeira_antes_de_apagar",
+          "test_unified_checkout.py::test_concurrent_external_finalization_creates_one_order",
+          "test_unified_checkout.py::test_simultaneous_first_selections_create_one_canonical_state",
+          "test_unified_checkout.py::test_concurrent_preparation_and_report_on_postgres",
+          "test_unified_checkout.py::test_concurrent_selection_and_report_on_postgres",
+          "test_unified_checkout.py::test_concurrent_admin_decisions_apply_one_transition_to_all_orders"
+        ],
+        "database": "Same disposable PostgreSQL 17.11-alpine database; no production data",
+        "production_mutation": false
+      },
+      "test_transport": "Synthetic provider/network adapters and mocked callbacks; no Mercado Pago credentials, real Orders, or production callbacks were used."
     },
     "git_bound_candidate_rebuild": {
-      "recorded_at_utc": "2026-11-02T22:09:36Z",
+      "recorded_at_utc": "2026-11-02T22:13:55Z",
       "scope": "local only; production read-only",
       "builder": "Docker Desktop desktop-linux, driver docker",
       "target": "linux/arm64 under x86_64 host emulation",
@@ -476,8 +522,33 @@
         "face-maintenance-worker": []
       },
       "marketplace_related_modules_unchanged_per_service": 11,
-      "support_commit_sha": "pending local scoped commit and git-show proof",
-      "production_mutation": false
+      "support_commit_sha": "44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc",
+      "production_mutation": false,
+      "git_bound_validate_images": {
+        "result": "passed",
+        "support_commit_sha": "44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc",
+        "method": "RestorationHost.prove_images() followed by validate_images()",
+        "baseline_and_candidate_runtime_probes": 10,
+        "services": 5,
+        "runtime_per_image": "144 modules",
+        "elapsed_seconds": 141.3,
+        "production_mutation": false
+      },
+      "marketplace_test_results": {
+        "sqlite": "98 passed, 7 skipped",
+        "postgresql_only": "7 passed",
+        "postgresql_full": "101 passed, 4 setup errors in shared reset fixture"
+      },
+      "postgres_test_resources": {
+        "image": "postgres:17.11-alpine",
+        "database": "markina_unified_test",
+        "pgdata": "768 MiB tmpfs",
+        "persistent_mounts": false,
+        "host_port": "127.0.0.1:55458",
+        "container_stopped_and_auto_removed": true,
+        "port_closed_after_cleanup": true,
+        "production_mutation": false
+      }
     }
   },
   "candidate_build_history": [
