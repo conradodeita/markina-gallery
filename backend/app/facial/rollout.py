@@ -265,6 +265,8 @@ def rollout_is_active(
         tenant_id=tenant_id,
     )
     if rollout is None:
+        if settings.require_explicit_rollout:
+            return False
         rollout_in_another_environment = db.scalar(
             select(FacialRollout.id)
             .where(FacialRollout.tenant_id == tenant_id, FacialRollout.parent_gallery_id == parent_gallery_id)

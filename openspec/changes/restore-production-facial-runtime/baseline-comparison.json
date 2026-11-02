@@ -1,0 +1,209 @@
+{
+  "main": "6af538ecd5c46da7691fa973c33869f263945a25",
+  "hash_method": "git cat-file --batch raw blobs (archive converts line endings on Windows)",
+  "comparison": {
+    "markina-gallery-api-1": {
+      "modules": 144,
+      "equal_to_main": 141,
+      "differences": {
+        "app/facial/crypto.py": {
+          "runtime": "6f63b44e50166886e6ace89dda78864fabd6aaaff971bedd330c8fd51efd893f",
+          "main": "84ab2498f828d31628883da761dbd053bd8e708a7e3849ff3869b225c113f0ee"
+        },
+        "app/facial/reference_store.py": {
+          "runtime": "e610468e0f20c326424e47f85547b1ebf4be0666f31277ac57f814eb1b5b7d98",
+          "main": "a89ea51fc51d476c2b6cbc69e21534b67f3615714b54668d8fc39e397d3d1c5e"
+        },
+        "app/integration_secrets.py": {
+          "runtime": "9b1f0bad5bcbdb8796e8181ccec35d9cecaee360556903bbc505d864f8277498",
+          "main": "a15f1399dc8c3216cf9fe97fd4f185bf592a86ce7ba6a8885d137f3cc4cf576e"
+        }
+      }
+    },
+    "markina-gallery-worker-1": {
+      "modules": 144,
+      "equal_to_main": 135,
+      "differences": {
+        "app/auth.py": {
+          "runtime": "19fcc2f4d54df9f792a7aadbf1179b522c190519d5da0c34b7789cc766a1ae98",
+          "main": "e3115bd5b0c49148470317a22bd7433a0096ae7f342f202e7068de1a83ea2c8a"
+        },
+        "app/facial/crypto.py": {
+          "runtime": "6f63b44e50166886e6ace89dda78864fabd6aaaff971bedd330c8fd51efd893f",
+          "main": "84ab2498f828d31628883da761dbd053bd8e708a7e3849ff3869b225c113f0ee"
+        },
+        "app/facial/reference_store.py": {
+          "runtime": "e610468e0f20c326424e47f85547b1ebf4be0666f31277ac57f814eb1b5b7d98",
+          "main": "a89ea51fc51d476c2b6cbc69e21534b67f3615714b54668d8fc39e397d3d1c5e"
+        },
+        "app/folder_processing.py": {
+          "runtime": "a53d57310be2e05002ee393bf5560370998961b4ba16e8aae6b5f743b1a779e9",
+          "main": "0ec470ffbdbb98c2cb282d0d85e9acc52d53cda1e6d1d447cb76884dc287ce24"
+        },
+        "app/folder_processing_api.py": {
+          "runtime": "084072ff59eed182c78a00fc17e8a148888a721c5689bc5c02f9c72609e296b5",
+          "main": "0bf7aa7b41f8753bdd567c25513bd99caea18d499fe2b5601f6f9e7e65561825"
+        },
+        "app/integration_secrets.py": {
+          "runtime": "9b1f0bad5bcbdb8796e8181ccec35d9cecaee360556903bbc505d864f8277498",
+          "main": "a15f1399dc8c3216cf9fe97fd4f185bf592a86ce7ba6a8885d137f3cc4cf576e"
+        },
+        "app/main.py": {
+          "runtime": "2e1d6f525def4db8d277182f751f36bd6772b5c8f53faee62deece5191829c73",
+          "main": "035c54bd21bd8628c07b157460d165135b9db1749e456821cf9f5e1ee5eb8cc8"
+        },
+        "app/preview_adjustment/api.py": {
+          "runtime": "44b297c9eaf203c85177dfb0570212d5996340a20e0f41a9de585aaecdcc9659",
+          "main": "667771e346f014165ab63f372874873ff755bf80b73953395431aecc21db6b02"
+        },
+        "app/storage_metrics.py": {
+          "runtime": "0278339132ceb1a9dd216f631092607ee4c2bc139287bff00462627813fb6612",
+          "main": "51788c000ed2516006abd05de3aa19d0a6a34bc23def1a557c62a4c7724ff714"
+        }
+      }
+    }
+  },
+  "permitted_candidate_overlays": [
+    "app/facial/config.py",
+    "app/facial/rollout.py"
+  ],
+  "preserve_all_other_modules": true,
+  "donors": {
+    "markina-gallery-face-index-worker-1": {
+      "modules": 144,
+      "equal_to_main": 135,
+      "differences": {
+        "app/auth.py": {
+          "donor": "19fcc2f4d54df9f792a7aadbf1179b522c190519d5da0c34b7789cc766a1ae98",
+          "main": "e3115bd5b0c49148470317a22bd7433a0096ae7f342f202e7068de1a83ea2c8a"
+        },
+        "app/facial/crypto.py": {
+          "donor": "6f63b44e50166886e6ace89dda78864fabd6aaaff971bedd330c8fd51efd893f",
+          "main": "84ab2498f828d31628883da761dbd053bd8e708a7e3849ff3869b225c113f0ee"
+        },
+        "app/facial/reference_store.py": {
+          "donor": "e610468e0f20c326424e47f85547b1ebf4be0666f31277ac57f814eb1b5b7d98",
+          "main": "a89ea51fc51d476c2b6cbc69e21534b67f3615714b54668d8fc39e397d3d1c5e"
+        },
+        "app/folder_processing.py": {
+          "donor": "a53d57310be2e05002ee393bf5560370998961b4ba16e8aae6b5f743b1a779e9",
+          "main": "0ec470ffbdbb98c2cb282d0d85e9acc52d53cda1e6d1d447cb76884dc287ce24"
+        },
+        "app/folder_processing_api.py": {
+          "donor": "084072ff59eed182c78a00fc17e8a148888a721c5689bc5c02f9c72609e296b5",
+          "main": "0bf7aa7b41f8753bdd567c25513bd99caea18d499fe2b5601f6f9e7e65561825"
+        },
+        "app/integration_secrets.py": {
+          "donor": "9b1f0bad5bcbdb8796e8181ccec35d9cecaee360556903bbc505d864f8277498",
+          "main": "a15f1399dc8c3216cf9fe97fd4f185bf592a86ce7ba6a8885d137f3cc4cf576e"
+        },
+        "app/main.py": {
+          "donor": "2e1d6f525def4db8d277182f751f36bd6772b5c8f53faee62deece5191829c73",
+          "main": "035c54bd21bd8628c07b157460d165135b9db1749e456821cf9f5e1ee5eb8cc8"
+        },
+        "app/preview_adjustment/api.py": {
+          "donor": "44b297c9eaf203c85177dfb0570212d5996340a20e0f41a9de585aaecdcc9659",
+          "main": "667771e346f014165ab63f372874873ff755bf80b73953395431aecc21db6b02"
+        },
+        "app/storage_metrics.py": {
+          "donor": "0278339132ceb1a9dd216f631092607ee4c2bc139287bff00462627813fb6612",
+          "main": "51788c000ed2516006abd05de3aa19d0a6a34bc23def1a557c62a4c7724ff714"
+        }
+      },
+      "missing_from_donor": [],
+      "extra_in_donor": [],
+      "only_model_assets_copied": true
+    },
+    "markina-gallery-face-maintenance-worker-1": {
+      "modules": 144,
+      "equal_to_main": 135,
+      "differences": {
+        "app/auth.py": {
+          "donor": "19fcc2f4d54df9f792a7aadbf1179b522c190519d5da0c34b7789cc766a1ae98",
+          "main": "e3115bd5b0c49148470317a22bd7433a0096ae7f342f202e7068de1a83ea2c8a"
+        },
+        "app/facial/crypto.py": {
+          "donor": "6f63b44e50166886e6ace89dda78864fabd6aaaff971bedd330c8fd51efd893f",
+          "main": "84ab2498f828d31628883da761dbd053bd8e708a7e3849ff3869b225c113f0ee"
+        },
+        "app/facial/reference_store.py": {
+          "donor": "e610468e0f20c326424e47f85547b1ebf4be0666f31277ac57f814eb1b5b7d98",
+          "main": "a89ea51fc51d476c2b6cbc69e21534b67f3615714b54668d8fc39e397d3d1c5e"
+        },
+        "app/folder_processing.py": {
+          "donor": "a53d57310be2e05002ee393bf5560370998961b4ba16e8aae6b5f743b1a779e9",
+          "main": "0ec470ffbdbb98c2cb282d0d85e9acc52d53cda1e6d1d447cb76884dc287ce24"
+        },
+        "app/folder_processing_api.py": {
+          "donor": "084072ff59eed182c78a00fc17e8a148888a721c5689bc5c02f9c72609e296b5",
+          "main": "0bf7aa7b41f8753bdd567c25513bd99caea18d499fe2b5601f6f9e7e65561825"
+        },
+        "app/integration_secrets.py": {
+          "donor": "9b1f0bad5bcbdb8796e8181ccec35d9cecaee360556903bbc505d864f8277498",
+          "main": "a15f1399dc8c3216cf9fe97fd4f185bf592a86ce7ba6a8885d137f3cc4cf576e"
+        },
+        "app/main.py": {
+          "donor": "2e1d6f525def4db8d277182f751f36bd6772b5c8f53faee62deece5191829c73",
+          "main": "035c54bd21bd8628c07b157460d165135b9db1749e456821cf9f5e1ee5eb8cc8"
+        },
+        "app/preview_adjustment/api.py": {
+          "donor": "44b297c9eaf203c85177dfb0570212d5996340a20e0f41a9de585aaecdcc9659",
+          "main": "667771e346f014165ab63f372874873ff755bf80b73953395431aecc21db6b02"
+        },
+        "app/storage_metrics.py": {
+          "donor": "0278339132ceb1a9dd216f631092607ee4c2bc139287bff00462627813fb6612",
+          "main": "51788c000ed2516006abd05de3aa19d0a6a34bc23def1a557c62a4c7724ff714"
+        }
+      },
+      "missing_from_donor": [],
+      "extra_in_donor": [],
+      "only_model_assets_copied": true
+    },
+    "markina-gallery-face-search-worker-1": {
+      "modules": 144,
+      "equal_to_main": 135,
+      "differences": {
+        "app/auth.py": {
+          "donor": "19fcc2f4d54df9f792a7aadbf1179b522c190519d5da0c34b7789cc766a1ae98",
+          "main": "e3115bd5b0c49148470317a22bd7433a0096ae7f342f202e7068de1a83ea2c8a"
+        },
+        "app/facial/crypto.py": {
+          "donor": "6f63b44e50166886e6ace89dda78864fabd6aaaff971bedd330c8fd51efd893f",
+          "main": "84ab2498f828d31628883da761dbd053bd8e708a7e3849ff3869b225c113f0ee"
+        },
+        "app/facial/reference_store.py": {
+          "donor": "e610468e0f20c326424e47f85547b1ebf4be0666f31277ac57f814eb1b5b7d98",
+          "main": "a89ea51fc51d476c2b6cbc69e21534b67f3615714b54668d8fc39e397d3d1c5e"
+        },
+        "app/folder_processing.py": {
+          "donor": "a53d57310be2e05002ee393bf5560370998961b4ba16e8aae6b5f743b1a779e9",
+          "main": "0ec470ffbdbb98c2cb282d0d85e9acc52d53cda1e6d1d447cb76884dc287ce24"
+        },
+        "app/folder_processing_api.py": {
+          "donor": "084072ff59eed182c78a00fc17e8a148888a721c5689bc5c02f9c72609e296b5",
+          "main": "0bf7aa7b41f8753bdd567c25513bd99caea18d499fe2b5601f6f9e7e65561825"
+        },
+        "app/integration_secrets.py": {
+          "donor": "9b1f0bad5bcbdb8796e8181ccec35d9cecaee360556903bbc505d864f8277498",
+          "main": "a15f1399dc8c3216cf9fe97fd4f185bf592a86ce7ba6a8885d137f3cc4cf576e"
+        },
+        "app/main.py": {
+          "donor": "2e1d6f525def4db8d277182f751f36bd6772b5c8f53faee62deece5191829c73",
+          "main": "035c54bd21bd8628c07b157460d165135b9db1749e456821cf9f5e1ee5eb8cc8"
+        },
+        "app/preview_adjustment/api.py": {
+          "donor": "44b297c9eaf203c85177dfb0570212d5996340a20e0f41a9de585aaecdcc9659",
+          "main": "667771e346f014165ab63f372874873ff755bf80b73953395431aecc21db6b02"
+        },
+        "app/storage_metrics.py": {
+          "donor": "0278339132ceb1a9dd216f631092607ee4c2bc139287bff00462627813fb6612",
+          "main": "51788c000ed2516006abd05de3aa19d0a6a34bc23def1a557c62a4c7724ff714"
+        }
+      },
+      "missing_from_donor": [],
+      "extra_in_donor": [],
+      "only_model_assets_copied": true
+    }
+  },
+  "donor_runtime_source_main": "6af538ecd5c46da7691fa973c33869f263945a25"
+}

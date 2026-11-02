@@ -1,8 +1,33 @@
+import threading
 from types import SimpleNamespace
 
 import pytest
 
 from app.facial import face_worker
+
+
+def test_sigterm_request_finishes_current_cycle_without_starting_another() -> None:
+    stop_requested = threading.Event()
+    cycles: list[str] = []
+
+    class FakeWorker:
+        processed_jobs = 0
+
+        def run_cycle(self) -> None:
+            cycles.append("cycle")
+            self.processed_jobs += 1
+            stop_requested.set()
+
+    face_worker.run_worker_until_stopped(
+        worker=FakeWorker(),
+        active_class="maintenance",
+        settings=SimpleNamespace(max_jobs_per_process=1, queue_block_seconds=1),
+        cipher=object(),
+        session_factory=lambda: None,
+        stop_requested=stop_requested,
+    )
+
+    assert cycles == ["cycle"]
 
 
 class _MaintenanceDrainComplete(RuntimeError):

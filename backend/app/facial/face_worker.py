@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-import time
+import signal
+import threading
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -28,6 +29,29 @@ from app.facial.search_worker import process_claimed_search_job
 from app.facial.worker import process_claimed_index_job, process_claimed_purge_job
 from app.tenancy import TenantContextError, domain_session
 
+_STOP_REQUESTED = threading.Event()
+
+
+def _request_stop(_signum, _frame) -> None:
+    # O handler não acessa banco/Redis nem interrompe a tarefa em andamento.
+    _STOP_REQUESTED.set()
+
+
+def run_worker_until_stopped(*, worker, active_class, settings, cipher, session_factory,
+                             stop_requested: threading.Event) -> None:
+    """Termina o ciclo em curso e não inicia outro após o pedido de parada."""
+    while (
+        not stop_requested.is_set()
+        and (active_class == "maintenance" or worker.processed_jobs < settings.max_jobs_per_process)
+    ):
+        try:
+            worker.run_cycle()
+            if active_class == "search" and not stop_requested.is_set():
+                with session_factory() as db:
+                    process_next_search_notification(db, cipher=cipher, settings=settings)
+        except TenantContextError:
+            stop_requested.wait(settings.queue_block_seconds)
+
 
 def record_provider_failure(repository: FacialJobRepository, claim: ClaimedFacialJob,
                             error: Exception) -> None:
@@ -41,6 +65,9 @@ def record_provider_failure(repository: FacialJobRepository, claim: ClaimedFacia
 
 
 def main(worker_class: str | None = None) -> None:
+    _STOP_REQUESTED.clear()
+    signal.signal(signal.SIGTERM, _request_stop)
+    signal.signal(signal.SIGINT, _request_stop)
     active_class = (worker_class or os.getenv("FACIAL_WORKER_CLASS", "")).strip().lower()
     if active_class not in FACIAL_JOB_KINDS_BY_CLASS:
         raise FacialConfigurationError(
@@ -156,22 +183,16 @@ def main(worker_class: str | None = None) -> None:
         processor=processor,
         repository=repository,
     )
-    # Search e index reciclam o processo para liberar o runtime dos modelos.
-    # Maintenance não carrega modelos e precisa permanecer vivo enquanto drena
-    # lotes grandes de purge/cleanup, inclusive acima do limite por processo.
-    while (
-        active_class == "maintenance"
-        or worker.processed_jobs < settings.max_jobs_per_process
-    ):
-        try:
-            worker.run_cycle()
-            if active_class == "search":
-                with SessionLocal() as db:
-                    process_next_search_notification(db, cipher=cipher, settings=settings)
-
-        except TenantContextError:
-            time.sleep(settings.queue_block_seconds)
-            continue
+    # SIGTERM termina o ciclo em curso. Maintenance segue atendendo lotes
+    # grandes enquanto ativo, mas também respeita o pedido cooperativo de saída.
+    run_worker_until_stopped(
+        worker=worker,
+        active_class=active_class,
+        settings=settings,
+        cipher=cipher,
+        session_factory=SessionLocal,
+        stop_requested=_STOP_REQUESTED,
+    )
 
 
 if __name__ == "__main__":

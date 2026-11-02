@@ -1,0 +1,583 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-11-02T17:23:37Z",
+  "validation_recorded_at_utc": "2026-11-02T22:09:36Z",
+  "scope": "local_only",
+  "docker": {
+    "context": "desktop-linux",
+    "builder": "desktop-linux",
+    "driver": "docker",
+    "target_platform": "linux/arm64",
+    "build_network": "none",
+    "pull": false,
+    "production_mutation": false
+  },
+  "candidate_images": {
+    "api": {
+      "tag": "pyp-facial-restore:api-20261102-c",
+      "image_id": "sha256:8efd620b5957e550993559a57f90b1bfc4b6c996144fdb416aa2167358231288",
+      "baseline_image_id": "sha256:0d14e294a7581f0f863e19a030f158ef2b59c6e409cf0c4a763124906459ef6f",
+      "donor_image_id": "sha256:a0c1aa1ba4b19e8b3f6cd1198ff6ca78feab0dde14c5e10bc15490066975cd92",
+      "architecture": "arm64",
+      "python": "3.13.18",
+      "module_count": 144,
+      "source_overlay_allowlist": [
+        "app/facial/config.py",
+        "app/facial/rollout.py"
+      ],
+      "module_changes_sha256": {
+        "app/facial/config.py": "61315cee145a7143693fbee6a431a39784281fe7a1af6cc98aa78955eb934a3b",
+        "app/facial/rollout.py": "e793fb1f431d075b52cb7e7a0db00a6d3518940d7e11ea03caa1865a05bf45cd"
+      },
+      "packages_added": [
+        "numpy==2.2.6",
+        "opencv-python-headless==4.12.0.88"
+      ],
+      "models_verified": true
+    },
+    "worker": {
+      "tag": "pyp-facial-restore:worker-20261102-c",
+      "image_id": "sha256:d862c934a429c64ec37bdc2141b0bcb1831586cd6b553c622d48d0899674cf0d",
+      "baseline_image_id": "sha256:06e3c1127212fab1629157f7e9c90f801d88e8a949b67795c8d22186a105e815",
+      "donor_image_id": "sha256:a0c1aa1ba4b19e8b3f6cd1198ff6ca78feab0dde14c5e10bc15490066975cd92",
+      "architecture": "arm64",
+      "python": "3.13.17",
+      "module_count": 144,
+      "source_overlay_allowlist": [
+        "app/facial/config.py",
+        "app/facial/rollout.py"
+      ],
+      "module_changes_sha256": {
+        "app/facial/config.py": "61315cee145a7143693fbee6a431a39784281fe7a1af6cc98aa78955eb934a3b",
+        "app/facial/rollout.py": "e793fb1f431d075b52cb7e7a0db00a6d3518940d7e11ea03caa1865a05bf45cd"
+      },
+      "packages_added": [
+        "numpy==2.2.6",
+        "opencv-python-headless==4.12.0.88"
+      ],
+      "models_verified": true
+    },
+    "face-index-worker": {
+      "tag": "pyp-facial-restore:face-index-20261102-c",
+      "image_id": "sha256:a3700220adda4ea79badf21282759a6756b0e08908e3b52316cc16a116e1fe49",
+      "baseline_image_id": "sha256:fc2cb47fa432f880dfe380cb6f6efd8b91e241379d280f06a13d8e8b5739c0a4",
+      "donor_image_id": "sha256:fc2cb47fa432f880dfe380cb6f6efd8b91e241379d280f06a13d8e8b5739c0a4",
+      "architecture": "arm64",
+      "python": "3.13.16",
+      "module_count": 144,
+      "source_overlay_allowlist": [
+        "app/facial/config.py",
+        "app/facial/face_worker.py",
+        "app/facial/rollout.py"
+      ],
+      "packages_added": [],
+      "models_verified": true,
+      "module_changes_sha256": {
+        "app/facial/config.py": "61315cee145a7143693fbee6a431a39784281fe7a1af6cc98aa78955eb934a3b",
+        "app/facial/face_worker.py": "4d447114b3e9a1933e6fac1f75b3b4ec13382f9658130515c16ae9c07fb38edb",
+        "app/facial/rollout.py": "e793fb1f431d075b52cb7e7a0db00a6d3518940d7e11ea03caa1865a05bf45cd"
+      }
+    },
+    "face-maintenance-worker": {
+      "tag": "pyp-facial-restore:maintenance-20261102-c",
+      "image_id": "sha256:0e09c30b8591d6c686eae00cf698d8c1d0f3248794a3cf0dcdb8186b17cd6add",
+      "baseline_image_id": "sha256:a02de031663488c6a238a745e1cd86a15292812723f22c86a26edab645d6eccc",
+      "donor_image_id": "sha256:a02de031663488c6a238a745e1cd86a15292812723f22c86a26edab645d6eccc",
+      "architecture": "arm64",
+      "python": "3.13.16",
+      "module_count": 144,
+      "source_overlay_allowlist": [
+        "app/facial/config.py",
+        "app/facial/face_worker.py",
+        "app/facial/rollout.py"
+      ],
+      "packages_added": [],
+      "models_verified": true,
+      "module_changes_sha256": {
+        "app/facial/config.py": "61315cee145a7143693fbee6a431a39784281fe7a1af6cc98aa78955eb934a3b",
+        "app/facial/face_worker.py": "4d447114b3e9a1933e6fac1f75b3b4ec13382f9658130515c16ae9c07fb38edb",
+        "app/facial/rollout.py": "e793fb1f431d075b52cb7e7a0db00a6d3518940d7e11ea03caa1865a05bf45cd"
+      }
+    },
+    "face-search-worker": {
+      "tag": "pyp-facial-restore:search-20261102-c",
+      "image_id": "sha256:2cb4fab05124c725104aa69e0e9293735257e29b3b508bd6331d4b996c3d7ce6",
+      "baseline_image_id": "sha256:a0c1aa1ba4b19e8b3f6cd1198ff6ca78feab0dde14c5e10bc15490066975cd92",
+      "donor_image_id": "sha256:a0c1aa1ba4b19e8b3f6cd1198ff6ca78feab0dde14c5e10bc15490066975cd92",
+      "architecture": "arm64",
+      "python": "3.13.16",
+      "module_count": 144,
+      "source_overlay_allowlist": [
+        "app/facial/config.py",
+        "app/facial/face_worker.py",
+        "app/facial/rollout.py"
+      ],
+      "packages_added": [],
+      "models_verified": true,
+      "module_changes_sha256": {
+        "app/facial/config.py": "61315cee145a7143693fbee6a431a39784281fe7a1af6cc98aa78955eb934a3b",
+        "app/facial/face_worker.py": "4d447114b3e9a1933e6fac1f75b3b4ec13382f9658130515c16ae9c07fb38edb",
+        "app/facial/rollout.py": "e793fb1f431d075b52cb7e7a0db00a6d3518940d7e11ea03caa1865a05bf45cd"
+      }
+    }
+  },
+  "dependency_delta": {
+    "numpy": {
+      "version": "2.2.6",
+      "wheel_sha256": "f92729c95468a2f4f15e9bb94c432a9229d0d50de67304399627a943201baa2f"
+    },
+    "opencv-python-headless": {
+      "version": "4.12.0.88",
+      "wheel_sha256": "aeb4b13ecb8b4a0beb2668ea07928160ea7c2cd2d9b5ef571bbee6bafe9cc8d0"
+    },
+    "existing_packages_preserved": true
+  },
+  "model_assets": {
+    "manifest_sha256": "c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075",
+    "version": "yunet-2023mar+sface-2021dec",
+    "yunet": {
+      "bytes": 232589,
+      "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
+    },
+    "sface": {
+      "bytes": 38696353,
+      "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+    }
+  },
+  "isolated_configuration_validation": {
+    "api": "passed",
+    "worker": "passed",
+    "facial_processing_enabled": true,
+    "explicit_rollout_required": true,
+    "app_environment": "production",
+    "credential_environment": "production",
+    "key_material": "synthetic_test_only",
+    "network": "none",
+    "filesystem": "read-only except private temporary filesystem",
+    "database_mounts_or_media": false
+  },
+  "comparison": {
+    "main_commit": "6af538ecd5c46da7691fa973c33869f263945a25",
+    "module_inventory": "openspec/changes/restore-production-facial-runtime/runtime-inventory.json",
+    "baseline_comparison": "openspec/changes/restore-production-facial-runtime/baseline-comparison.json",
+    "overview_module_preserved": "app/storage_metrics.py",
+    "schema": "20261026_0090",
+    "migration_added": false
+  },
+  "test_evidence": {
+    "backend_facial_suite": "115 passed, 6 warnings",
+    "linux_operator_and_candidate_helpers": "56 passed, 27 subtests passed, 0 skipped",
+    "postgres_admission_claim": {
+      "result": "2 passed",
+      "duration_seconds": 52.47,
+      "database": "PostgreSQL 17.11 synthetic, tmpfs, no volume",
+      "network": "Docker internal network without egress",
+      "runner": "ARM64 candidate under local amd64 emulation",
+      "mounts": "app, tests and pyproject.toml read-only; no .env or media mounts",
+      "synthetic_data_only": true,
+      "container_and_network_removed": true
+    },
+    "linux_operator_contract": {
+      "result": "59 passed, 37 subtests passed, 0 skipped",
+      "runner": "ARM64 candidate under local amd64 emulation",
+      "network": "none",
+      "root_filesystem": "read-only with a temporary filesystem only",
+      "test_source_mounts": "scripts, backend/app, backend/tests, backend/pyproject.toml, backend/facial-assets; all read-only",
+      "database_or_media": false,
+      "container_removed": true
+    },
+    "five_service_runtime_contract": {
+      "result": "passed",
+      "schema": "20261026_0090",
+      "runner": "local ARM64 candidates under amd64 emulation",
+      "runtime_probes": 8,
+      "each_candidate_modules": 144,
+      "changed_modules_by_service": {
+        "api": [
+          "app/facial/config.py",
+          "app/facial/rollout.py"
+        ],
+        "worker": [
+          "app/facial/config.py",
+          "app/facial/rollout.py"
+        ],
+        "face-search-worker": [
+          "app/facial/config.py",
+          "app/facial/rollout.py",
+          "app/facial/face_worker.py"
+        ],
+        "face-index-worker": [
+          "app/facial/config.py",
+          "app/facial/rollout.py",
+          "app/facial/face_worker.py"
+        ],
+        "face-maintenance-worker": [
+          "app/facial/config.py",
+          "app/facial/rollout.py",
+          "app/facial/face_worker.py"
+        ]
+      },
+      "api_worker_packages_added": [
+        "numpy==2.2.6",
+        "opencv-python-headless==4.12.0.88"
+      ],
+      "facial_worker_packages_added": [],
+      "all_model_manifests_verified": true,
+      "operator_validate_images": "passed with synthetic support_sha; this is not Git-bound",
+      "probe_limit": "local runtime contract only; no production inventory or Git-bound support-commit proof",
+      "network": "none",
+      "filesystem": "read-only with private temporary filesystem only",
+      "database_or_media": false,
+      "production_mutation": false
+    },
+    "local_continuation_windows": {
+      "result": "119 passed, 4 skipped, 1 deselected, 6 warnings",
+      "runtime": "Windows x86_64, Python 3.12.9, backend/.venv, mercadopago 3.6.0",
+      "database": "SQLite in-memory override; no application database writes",
+      "scope": "restoration/operator/candidate helpers and facial config, rollout, observability tests",
+      "excluded_test": "test_admin_endpoint_is_authenticated_and_exports_only_aggregates; global app engine performs Base.metadata.drop_all and did not complete under isolated TestClient startup",
+      "restoration_contract_after_fault_injection": "14 passed, including interruption after each service during activation and recovery"
+    },
+    "limitations": [
+      "ARM64 execution used the local Docker Desktop environment; this is not production hardware load evidence.",
+      "Facial SLO thresholds are documented in docs/OPERACAO-BUSCA-FACIAL-PRODUCAO.md and backend/app/facial/observability.py; this candidate has no comparable native ARM64 capacity run.",
+      "No production container, database, flag, approval, image, or service was modified.",
+      "No absolute regression guarantee; local contract tests and image allowlists reduce risk but do not replace post-release monitoring.",
+      "No Git-bound support commit proof is recorded until the scoped local commit is verified against the candidate overlay hashes."
+    ],
+    "local_operator_revision": {
+      "date": "2026-11-02",
+      "scope": "local implementation and contract tests only",
+      "face_worker_sha256": "9dccd26e72fc8fb3686032d7f380b37e680de9e580d8d718074fb89649ae0c88",
+      "operator_host_sha256": "d7056a52333116357b2de6f87aa1696cfd96afb512ad6749650768707dc77113",
+      "cli_sha256": "90bee345b7e8cf078a414f14064d19afd2ec90f74fdbd33cd7b44e91c2d7161e",
+      "cooperative_stop": "same-container SIGTERM exit receipt; no out-of-band ACK file",
+      "candidate_root_filesystem": "read-only; bounded /tmp and /run tmpfs",
+      "candidate_images_current": true,
+      "candidate_images_reason": "three facial-worker descendants rebuilt from verified local parent candidates; only the allowlisted app/facial/face_worker.py overlay was added",
+      "focused_tests": "55 passed, 4 skipped",
+      "ruff": "passed",
+      "broad_facial_suite": "interrupted after stalling at 37 percent; no failure attribution",
+      "git_diff_review": "The current worktree is a valid Git checkout; the scoped facial-change diff was reviewed in the 2026-11-02 capacity checkpoint. The worktree remains dirty and no clean support commit or Git-bound operational manifest exists.",
+      "production_mutation": false,
+      "linux_host_integration": "operator contracts passed in a Linux ARM64 container under x86_64 emulation; no target-host adapter execution",
+      "limitations": [
+        "Host and CLI tests use simulated commands; no target-host restoration run was performed.",
+        "ARM64 emulation is not native capacity evidence, and the candidate support commit is not Git-bound."
+      ]
+    },
+    "continued_local_validation": {
+      "recorded_at_utc": "2026-11-02T19:39:28Z",
+      "scope": "local only; production read-only",
+      "candidate_rebuilds": {
+        "face-search-worker": {
+          "tag": "pyp-facial-restore:search-20261102-b",
+          "image_id": "sha256:260a1e0e3e048f1e1e4640b8c695cd6e37a35cb67bbc7dd3066b9f0c46b43b5c",
+          "parent_tag": "pyp-facial-restore:search-20261102-a",
+          "parent_image_id": "sha256:02fec55cbceec52822676f8b266a173dd037920105a44e73dc0aa1c4fe59c4aa"
+        },
+        "face-index-worker": {
+          "tag": "pyp-facial-restore:face-index-20261102-b",
+          "image_id": "sha256:6655faae42991d6c8af5f38a8eab83e891a3db8a8b96418bb5427dbb8cf1da36",
+          "parent_tag": "pyp-facial-restore:face-index-20261102-a",
+          "parent_image_id": "sha256:9b7a957cfc0c668e0f6532397737a10c5218a9375656b71fb8bc276954eb0378"
+        },
+        "face-maintenance-worker": {
+          "tag": "pyp-facial-restore:maintenance-20261102-b",
+          "image_id": "sha256:e732da168e6876b2086abe7ce310636e34c93388b5c10c59b559d904db8e10a6",
+          "parent_tag": "pyp-facial-restore:maintenance-20261102-a",
+          "parent_image_id": "sha256:a4aa7adc1f398d5efaf6eec83dc5507b0a6466f804e9fc60c23d2bf77aa68ff4"
+        }
+      },
+      "support_aliases_retained": [
+        "pyp-facial-restore-base:02fec55cbceec52822676f8b266a173dd037920105a44e73dc0aa1c4fe59c4aa",
+        "pyp-facial-restore-donor:02fec55cbceec52822676f8b266a173dd037920105a44e73dc0aa1c4fe59c4aa",
+        "pyp-facial-restore-base:9b7a957cfc0c668e0f6532397737a10c5218a9375656b71fb8bc276954eb0378",
+        "pyp-facial-restore-donor:9b7a957cfc0c668e0f6532397737a10c5218a9375656b71fb8bc276954eb0378",
+        "pyp-facial-restore-base:a4aa7adc1f398d5efaf6eec83dc5507b0a6466f804e9fc60c23d2bf77aa68ff4",
+        "pyp-facial-restore-donor:a4aa7adc1f398d5efaf6eec83dc5507b0a6466f804e9fc60c23d2bf77aa68ff4"
+      ],
+      "build": "no pulls; build network none; each verified parent recipe retained its original baseline/donor lineage; new workers add only face_worker.py",
+      "five_service_runtime_contract": "passed; ARM64 emulation; read-only/no-network containers; synthetic support_sha; not operational",
+      "postgres_admission_claim": "2 passed; PostgreSQL 17.11 synthetic; internal network; tmpfs only; no ports or volumes; test schemas removed; resources cleaned",
+      "linux_operator_contract": "59 passed, 37 subtests passed; Linux ARM64 emulation; read-only sources; no database/media",
+      "candidate_builder_tests": "22 passed, 1 skipped",
+      "ruff": "passed",
+      "openspec_strict": "passed",
+      "scoped_secret_pattern_scan": "no matches in scoped source/spec files; limited scan, not full diff review",
+      "docker_cleanup": "0 task containers and 0 task networks; local daemon remains 14 containers, 7 running; no prune",
+      "production_status_recheck": {
+        "at_utc": "2026-11-02T19:42:40Z",
+        "method": "SSH docker inspect; read-only; sanitized fields only",
+        "api": "running/healthy; APP_ENV=production; FACIAL_PROCESSING_ENABLED=false",
+        "worker": "running/healthy; APP_ENV=production; FACIAL_PROCESSING_ENABLED=false",
+        "facial_workers": "search/index/maintenance exited; preserved APP_ENV=staging and FACIAL_PROCESSING_ENABLED=true",
+        "production_mutation": false
+      },
+      "git_diff_review": "The current worktree is a valid Git checkout; scoped facial-change diff and service allowlist reviewed in the 2026-11-02 capacity checkpoint. The worktree remains dirty and no clean support commit or Git-bound operational manifest exists.",
+      "production_mutation": false
+    },
+    "capacity_restart_checkpoint": {
+      "recorded_at_utc": "2026-11-02T21:35:11Z",
+      "scope": "local only; production was read-only",
+      "docker": {
+        "context": "desktop-linux",
+        "host_architecture": "x86_64",
+        "target_architecture": "arm64 emulated",
+        "task_containers_after_run": 0,
+        "prune_executed": false,
+        "system_df_snapshot": {
+          "images": "39 total, 14 GB",
+          "containers": "10 total, 3 active",
+          "volumes": "30 total, 2.149 GB",
+          "build_cache": "342 records, 25.34 GB, 15.63 GB reclaimable"
+        }
+      },
+      "disk": {
+        "drive": "C:",
+        "free_bytes": 11231305728,
+        "free_gib_approx": 10.46
+      },
+      "interrupted_synthetic_batch": {
+        "image": "pyp-facial-restore:search-20261102-b",
+        "image_id": "sha256:260a1e0e3e048f1e1e4640b8c695cd6e37a35cb67bbc7dd3066b9f0c46b43b5c",
+        "input": "20 generated vector-face images; synthetic only",
+        "limits": "1 CPU, 768 MiB memory, read-only root and input, private output only, no network/database/production media",
+        "observed_cpu_seconds_before_stop": 212,
+        "observed_cpu_percent_approx": 99,
+        "observed_memory_mib_approx": 256.9,
+        "result": "Stopped to contain sustained emulation CPU use; no benchmark report, p95, queue, or SLO comparison produced"
+      },
+      "bounded_restart_smoke": {
+        "result": "Model manifest verified; one synthetic image loaded and processed; same container stopped cooperatively and restarted",
+        "first_startup_seconds": 3.276471,
+        "first_inference_seconds": 14.238142,
+        "first_process_rss_bytes": 255066112,
+        "restart_startup_seconds": 3.499925,
+        "restart_inference_seconds": 14.111796,
+        "restart_process_rss_bytes": 253898752,
+        "limitations": "Single-image synthetic smoke under x86_64 emulation; not end-to-end search latency, queue recovery, concurrent load, native ARM64 capacity, or proof of production SLOs"
+      },
+      "model_manifest_reconciliation": {
+        "local_raw_manifest_sha256": "f02f392c16b92977640f0f050a2fe61c836741d7bf876e58752b92f9fa4305dc",
+        "candidate_raw_manifest_sha256": "c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075",
+        "normalized_local_and_candidate_sha256": "c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075",
+        "canonical_json_sha256_both": "f2cb1af4c1a6761d20793a032c769e5073dd5e738b00a4956ed7718d98933c8c",
+        "cause": "CRLF/LF line-ending normalization; model version, individual model sizes and SHA-256 values match"
+      },
+      "focused_validation": {
+        "result": "66 passed, 3 skipped",
+        "skips": "POSIX-only native lock/persistence/filesystem tests under Windows",
+        "ruff": "passed",
+        "openspec_strict": "passed",
+        "git_diff_check": "passed",
+        "scoped_secret_pattern_scan": "no matches; limited pattern scan, not proof of absence of all secrets"
+      },
+      "production_read_only_recheck": {
+        "at_utc": "2026-11-02T21:35Z",
+        "method": "SSH Docker inspect; output restricted to name, image, state, health, APP_ENV and facial flag",
+        "api": "running/healthy; APP_ENV=production; FACIAL_PROCESSING_ENABLED=false",
+        "worker": "running/healthy; APP_ENV=production; FACIAL_PROCESSING_ENABLED=false",
+        "facial_workers": "search/index/maintenance exited/unhealthy; preserved APP_ENV=staging; FACIAL_PROCESSING_ENABLED=true",
+        "production_mutation": false
+      },
+      "git_review": "Valid but dirty worktree at feature/pickyourpic-saas-mainline, HEAD 6af538e; facial-change scoped diff and service allowlist reviewed; no clean support commit or Git-bound operational manifest",
+      "production_mutation": false
+    },
+    "production_backup_metadata_recheck": {
+      "at_utc": "2026-11-02T21:38Z",
+      "method": "SSH find/stat metadata only with read-only intent; no backup payload or key bytes read or copied",
+      "operation": "env-mp-20261030-04",
+      "backup_package": {
+        "name": "env-mp-20261030-04.json",
+        "bytes": 304226757,
+        "mode": "0600",
+        "modified_at_utc": "2026-10-30T03:01Z"
+      },
+      "separate_key_metadata": {
+        "exists": true,
+        "bytes": 32,
+        "mode": "0600",
+        "key_value_read": false
+      },
+      "source_records": "transition-biometric-app-env-context/validation.md records that the package was persisted and authenticated before the SQL operation; operations.md records that the prior operation 03 stopped before package persistence",
+      "independent_restore_proven": false,
+      "production_mutation": false,
+      "data_handling_gate": "Package may contain production personal and financial data; no local copy/decryption/restore without explicit scope and isolated destination approval"
+    },
+    "mercado_pago_preservation": {
+      "result": "98 passed, 7 skipped, 76 warnings in 411.40 seconds",
+      "runtime": "Windows x86_64, Python 3.12.9, backend/.venv, mercadopago 3.6.0",
+      "command": "pytest backend/tests/test_mercadopago_checkout.py backend/tests/test_mercadopago_webhook.py backend/tests/test_mercadopago_worker.py backend/tests/test_mercadopago_settings.py backend/tests/test_mercadopago_operations.py backend/tests/test_mercadopago_projections.py backend/tests/test_unified_checkout.py backend/tests/test_provider_payment_persistence.py -q",
+      "coverage": [
+        "checkout/Orders",
+        "webhooks",
+        "payment worker",
+        "provider settings",
+        "operations",
+        "projections",
+        "payment persistence",
+        "unified checkout"
+      ],
+      "warnings_summary": "FastAPI on_event deprecation and SQLAlchemy cyclic-FK drop warnings; pytest reported no failures. Seven tests were skipped.",
+      "production_mutation": false
+    },
+    "git_bound_candidate_rebuild": {
+      "recorded_at_utc": "2026-11-02T22:09:36Z",
+      "scope": "local only; production read-only",
+      "builder": "Docker Desktop desktop-linux, driver docker",
+      "target": "linux/arm64 under x86_64 host emulation",
+      "build_network": "none",
+      "image_pull": false,
+      "isolated_probes": "All five images rebuilt; baseline and candidate recipes verified during build, and each candidate passed a final read-only/no-network runtime probe.",
+      "candidate_ids": {
+        "api": "sha256:8efd620b5957e550993559a57f90b1bfc4b6c996144fdb416aa2167358231288",
+        "worker": "sha256:d862c934a429c64ec37bdc2141b0bcb1831586cd6b553c622d48d0899674cf0d",
+        "face-search-worker": "sha256:2cb4fab05124c725104aa69e0e9293735257e29b3b508bd6331d4b996c3d7ce6",
+        "face-index-worker": "sha256:a3700220adda4ea79badf21282759a6756b0e08908e3b52316cc16a116e1fe49",
+        "face-maintenance-worker": "sha256:0e09c30b8591d6c686eae00cf698d8c1d0f3248794a3cf0dcdb8186b17cd6add"
+      },
+      "module_delta_by_service": {
+        "api": [
+          "app/facial/config.py",
+          "app/facial/rollout.py"
+        ],
+        "worker": [
+          "app/facial/config.py",
+          "app/facial/rollout.py"
+        ],
+        "face-search-worker": [
+          "app/facial/config.py",
+          "app/facial/face_worker.py",
+          "app/facial/rollout.py"
+        ],
+        "face-index-worker": [
+          "app/facial/config.py",
+          "app/facial/face_worker.py",
+          "app/facial/rollout.py"
+        ],
+        "face-maintenance-worker": [
+          "app/facial/config.py",
+          "app/facial/face_worker.py",
+          "app/facial/rollout.py"
+        ]
+      },
+      "package_delta_by_service": {
+        "api": [
+          "numpy==2.2.6",
+          "opencv-python-headless==4.12.0.88"
+        ],
+        "worker": [
+          "numpy==2.2.6",
+          "opencv-python-headless==4.12.0.88"
+        ],
+        "face-search-worker": [],
+        "face-index-worker": [],
+        "face-maintenance-worker": []
+      },
+      "marketplace_related_modules_unchanged_per_service": 11,
+      "support_commit_sha": "pending local scoped commit and git-show proof",
+      "production_mutation": false
+    }
+  },
+  "candidate_build_history": [
+    {
+      "recorded_at_utc": "2026-11-02T22:09:36Z",
+      "reason": "Previous candidates contained CRLF overlays while Git stores LF; preserved as build history, superseded for provenance checks.",
+      "candidate_images": {
+        "api": {
+          "tag": "pyp-facial-restore:api-20261102-a",
+          "image_id": "sha256:5b7d6c20e8d96cb315aef8b09d5bd837136a9373b15c9969036c3d79b9c8577f",
+          "baseline_image_id": "sha256:0d14e294a7581f0f863e19a030f158ef2b59c6e409cf0c4a763124906459ef6f",
+          "donor_image_id": "sha256:a0c1aa1ba4b19e8b3f6cd1198ff6ca78feab0dde14c5e10bc15490066975cd92",
+          "architecture": "arm64",
+          "python": "3.13.18",
+          "module_count": 144,
+          "source_overlay_allowlist": [
+            "app/facial/config.py",
+            "app/facial/rollout.py"
+          ]
+        },
+        "worker": {
+          "tag": "pyp-facial-restore:worker-20261102-a",
+          "image_id": "sha256:9bf4b17fffd738ebdd61678e3c20e50f2c358e239ef92824d34832286f894e91",
+          "baseline_image_id": "sha256:06e3c1127212fab1629157f7e9c90f801d88e8a949b67795c8d22186a105e815",
+          "donor_image_id": "sha256:a0c1aa1ba4b19e8b3f6cd1198ff6ca78feab0dde14c5e10bc15490066975cd92",
+          "architecture": "arm64",
+          "python": "3.13.17",
+          "module_count": 144,
+          "source_overlay_allowlist": [
+            "app/facial/config.py",
+            "app/facial/rollout.py"
+          ]
+        },
+        "face-index-worker": {
+          "tag": "pyp-facial-restore:face-index-20261102-b",
+          "image_id": "sha256:6655faae42991d6c8af5f38a8eab83e891a3db8a8b96418bb5427dbb8cf1da36",
+          "baseline_image_id": "sha256:fc2cb47fa432f880dfe380cb6f6efd8b91e241379d280f06a13d8e8b5739c0a4",
+          "donor_image_id": "sha256:fc2cb47fa432f880dfe380cb6f6efd8b91e241379d280f06a13d8e8b5739c0a4",
+          "build_parent_tag": "pyp-facial-restore:face-index-20261102-a",
+          "build_parent_image_id": "sha256:9b7a957cfc0c668e0f6532397737a10c5218a9375656b71fb8bc276954eb0378",
+          "local_image_binding": {
+            "local_manifest_id": "sha256:cf84450197c7cbb590f7026eab95deda6f30af1882dc2e2b065825cae2dbaf7e",
+            "layer_count": 17
+          },
+          "architecture": "arm64",
+          "python": "3.13.16",
+          "module_count": 144,
+          "source_overlay_allowlist": [
+            "app/facial/config.py",
+            "app/facial/rollout.py",
+            "app/facial/face_worker.py"
+          ],
+          "packages_added": [],
+          "models_verified": true
+        },
+        "face-maintenance-worker": {
+          "tag": "pyp-facial-restore:maintenance-20261102-b",
+          "image_id": "sha256:e732da168e6876b2086abe7ce310636e34c93388b5c10c59b559d904db8e10a6",
+          "baseline_image_id": "sha256:a02de031663488c6a238a745e1cd86a15292812723f22c86a26edab645d6eccc",
+          "donor_image_id": "sha256:a02de031663488c6a238a745e1cd86a15292812723f22c86a26edab645d6eccc",
+          "build_parent_tag": "pyp-facial-restore:maintenance-20261102-a",
+          "build_parent_image_id": "sha256:a4aa7adc1f398d5efaf6eec83dc5507b0a6466f804e9fc60c23d2bf77aa68ff4",
+          "local_image_binding": {
+            "local_manifest_id": "sha256:042269ae17088db71365623f061394432756fb54c289c25286d8eca0ea7fd130",
+            "layer_count": 17
+          },
+          "architecture": "arm64",
+          "python": "3.13.16",
+          "module_count": 144,
+          "source_overlay_allowlist": [
+            "app/facial/config.py",
+            "app/facial/rollout.py",
+            "app/facial/face_worker.py"
+          ],
+          "packages_added": [],
+          "models_verified": true
+        },
+        "face-search-worker": {
+          "tag": "pyp-facial-restore:search-20261102-b",
+          "image_id": "sha256:260a1e0e3e048f1e1e4640b8c695cd6e37a35cb67bbc7dd3066b9f0c46b43b5c",
+          "baseline_image_id": "sha256:a0c1aa1ba4b19e8b3f6cd1198ff6ca78feab0dde14c5e10bc15490066975cd92",
+          "donor_image_id": "sha256:a0c1aa1ba4b19e8b3f6cd1198ff6ca78feab0dde14c5e10bc15490066975cd92",
+          "build_parent_tag": "pyp-facial-restore:search-20261102-a",
+          "build_parent_image_id": "sha256:02fec55cbceec52822676f8b266a173dd037920105a44e73dc0aa1c4fe59c4aa",
+          "local_image_binding": {
+            "local_manifest_id": "sha256:70dba04d412f78e3f6f350170d600f580e214913b649e5ec895b56239a49863d",
+            "layer_count": 17
+          },
+          "architecture": "arm64",
+          "python": "3.13.16",
+          "module_count": 144,
+          "source_overlay_allowlist": [
+            "app/facial/config.py",
+            "app/facial/rollout.py",
+            "app/facial/face_worker.py"
+          ],
+          "packages_added": [],
+          "models_verified": true
+        }
+      }
+    }
+  ]
+}
