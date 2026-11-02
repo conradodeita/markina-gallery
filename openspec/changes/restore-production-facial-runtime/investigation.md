@@ -149,3 +149,9 @@ Resposta posterior do proprietário: as fotos reais atuais já foram usadas pelo
 - Os **7 cenários PostgreSQL-only passaram** em 27,90 s: concorrência de Orders/finalização, seleção canônica, preparação e comunicação, decisões administrativas e reset financeiro protegido.
 - A repetição da suíte relacionada inteira no PostgreSQL terminou com **101 passed, 4 setup errors**. Os quatro erros ocorrem antes das asserções no fixture compartilhado `backend/tests/test_global_pix.py:45`, quando `Base.metadata.drop_all()` tenta compilar a remoção de uma FK `use_alter` sem nome. O mesmo conjunto de testes funcionais passou na suíte SQLite (98 passed). Nenhum teste financeiro marcou uma falha de asserção.
 - Container PostgreSQL descartável parado e removido automaticamente; porta 55458 fechada. Os containers locais de API, DB e Redis permaneceram saudáveis. As imagens candidatas `20261102-c` permanecem locais; nenhum prune foi feito. Nenhuma leitura ou mutação de produção foi feita durante esta validação local.
+
+## Comparação de produção somente leitura — 02/11/2026, 22:37 UTC
+
+- Por SSH, executei apenas `docker inspect` dos cinco serviços faciais/comerciais e filtrei a saída para image ID, estado, health, `APP_ENV` e `FACIAL_PROCESSING_ENABLED`. Nenhum segredo, dado de cliente ou banco foi consultado.
+- API `sha256:0d14e294…` e worker `sha256:06e3c112…` seguem `running/healthy`, em `production`, com facial `false`; os IDs ainda coincidem com os baselines que alimentam os candidatos locais. Search/index/maintenance seguem `exited/unhealthy`, em `staging`, com facial `true`.
+- Essa consulta não mudou produção. Não substitui inventário imediatamente antes de eventual janela, aprovação de rollout ou validação funcional pós-ativação; as tasks operacionais continuam abertas.
