@@ -155,3 +155,8 @@ Resposta posterior do proprietário: as fotos reais atuais já foram usadas pelo
 - Por SSH, executei apenas `docker inspect` dos cinco serviços faciais/comerciais e filtrei a saída para image ID, estado, health, `APP_ENV` e `FACIAL_PROCESSING_ENABLED`. Nenhum segredo, dado de cliente ou banco foi consultado.
 - API `sha256:0d14e294…` e worker `sha256:06e3c112…` seguem `running/healthy`, em `production`, com facial `false`; os IDs ainda coincidem com os baselines que alimentam os candidatos locais. Search/index/maintenance seguem `exited/unhealthy`, em `staging`, com facial `true`.
 - Essa consulta não mudou produção. Não substitui inventário imediatamente antes de eventual janela, aprovação de rollout ou validação funcional pós-ativação; as tasks operacionais continuam abertas.
+
+## Acompanhamento da CI do PR #353 — 02/11/2026
+
+- A execução `41546846981` confirmou como aprovados `openspec`, `ci-scope`, `backend-quality`, `frontend` e os builds de runtime AMD64/ARM64. No último estado consultado, `backend-tests (0)` e `(2)` ainda estavam em execução; `(1)` havia concluído.
+- O Gitleaks reportou 40 ocorrências em `runtime-inventory.json`, todas no commit `44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc`. Cada ocorrência foi conferida contra a linha do blob histórico: o caminho de um módulo Python mapeia diretamente para um SHA-256 de 64 caracteres e o valor coincide com o reportado. Foram adicionados apenas os 40 fingerprints completos (commit, arquivo, regra e linha) ao `.gitleaksignore`; a regra e a varredura do restante do histórico permanecem ativas. A nova execução da CI após o push ainda está pendente.
