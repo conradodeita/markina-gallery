@@ -77,7 +77,8 @@ def validate_inventory(inventory: dict, *, now: datetime | None = None) -> None:
             require(item.get("status") == "running" and item.get("health") == "healthy", "servico_nao_saudavel")
         expected_ports = {"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]} if name == "nginx" else {}
         require(item.get("ports") == expected_ports, "porta_fora_do_escopo")
-        require(item.get("compose_files"), "proveniencia_ausente")
+        if name in SERVICES:
+            require(item.get("compose_files"), "proveniencia_ausente")
     for service in ("api", "worker"):
         require(services[service].get("environment") == "production", "ambiente_divergente")
         require(services[service].get("facial_enabled") == "false", "restauracao_exige_runtime_desligado")

@@ -98,6 +98,8 @@ Os baselines da API e do worker SHALL permanecer nos digests saudáveis identifi
 
 Refinamento operacional de 02/11: `docker diff` pode conter somente diretórios que o Docker criou para montar volumes, mesmo sem dados gravados na camada. Esse caso SHALL ser aceito apenas com exportação TAR em streaming: cada caminho alterado deve ser diretório e destino de mount declarado ou ancestral; o conteúdo subjacente dos mounts não pode conter arquivo, link ou entrada especial; identidade, mounts e diff devem coincidir antes/depois da prova. A checagem ocorre antes e depois da parada e antes de recuperação, sem extrair ou persistir a exportação. Qualquer outra alteração continua bloqueando a recriação. Isso preserva o requisito de ausência de dados na camada, sem descartar diretórios estruturais como se fossem dados desconhecidos.
 
+O inventário SHALL exigir manifests reproduzíveis/protegidos somente dos cinco consumidores que podem ser recriados. Serviços preservados são vinculados por ID, imagem, configuração efetiva, mounts e portas; seus manifests históricos não serão executados nem terão permissões alteradas por esta operação. Git recebe `safe.directory` apenas para as duas raízes fixas via argumento por comando, sem configuração global; Docker retorna IDs integrais com `--no-trunc`.
+
 - [Imagem sem dependência, arquivo ou ABI compatível] → Inventário por baseline, dependências fixadas, validação ARM64 isolada e recusa anterior à troca de serviços.
 - [Flag não torna o recurso funcional] → Verificar configuração completa, calibração, admissão, claims, resultado autenticado e caixas faciais na UI.
 - [Fallback legado amplia o canary] → Modo estrito em todos os consumidores, cenários para galerias novas e allowlist revisada.

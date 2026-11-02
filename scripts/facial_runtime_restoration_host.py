@@ -212,7 +212,11 @@ class RestorationHost:
 
     def _command(self, args, data, timeout):
         try:
-            return subprocess.run(list(args), cwd=self.root, input=data, capture_output=True,
+            command = list(args)
+            if command and command[0] == "git":
+                command = ["git", "-c", "safe.directory=" + str(self.root),
+                           "-c", "safe.directory=" + str(self.code_root), *command[1:]]
+            return subprocess.run(command, cwd=self.root, input=data, capture_output=True,
                 timeout=timeout, check=True, env=COMMAND_ENV).stdout
         except (OSError, subprocess.SubprocessError):
             raise RestorationError("comando_operacional_falhou") from None
@@ -344,7 +348,7 @@ class RestorationHost:
             and not self.run("git", "-C", str(self.code_root), "status", "--porcelain"), "suporte_sujo_ou_divergente")
         require(not any((self.state / name).exists() or (self.state / name).is_symlink() for name in PENDING), "operacao_concorrente_pendente")
         require(not list(self.state.glob("facial-restore-*/in-flight.json")), "restauracao_pendente")
-        ids = self.run("docker", "ps", "-aq", "--filter", "label=com.docker.compose.project=" + PROJECT).split()
+        ids = self.run("docker", "ps", "-aq", "--no-trunc", "--filter", "label=com.docker.compose.project=" + PROJECT).split()
         require(1 <= len(ids) <= 100 and all(HEX.fullmatch(x) for x in ids), "inventario_containers_invalido")
         values = self.obj("docker", "inspect", *ids)
         selected, extras = {}, []
@@ -368,7 +372,7 @@ class RestorationHost:
         services = {}
         for name, item in selected.items():
             config = configuration(item)
-            services[name] = {"container_id": item["Id"], "image_id": item["Image"], "status": item["State"]["Status"], "health": item["State"].get("Health", {}).get("Status"), "configuration_digest": digest(config), "ports": {k:v for k,v in (item["HostConfig"].get("PortBindings") or {}).items() if v}, "compose_files": self._compose_files(item), "environment": environment(item).get("APP_ENV"), "facial_enabled": environment(item).get("FACIAL_PROCESSING_ENABLED"), "started_at": item["State"].get("StartedAt")}
+            services[name] = {"container_id": item["Id"], "image_id": item["Image"], "status": item["State"]["Status"], "health": item["State"].get("Health", {}).get("Status"), "configuration_digest": digest(config), "ports": {k:v for k,v in (item["HostConfig"].get("PortBindings") or {}).items() if v}, "compose_files": self._compose_files(item) if name in SERVICES else [], "environment": environment(item).get("APP_ENV"), "facial_enabled": environment(item).get("FACIAL_PROCESSING_ENABLED"), "started_at": item["State"].get("StartedAt")}
         revisions = self._sql("SELECT json_agg(version_num) FROM alembic_version")
         require(revisions == [SCHEMA], "schema_divergente")
         architecture = self.run("uname", "-m")
@@ -642,6 +646,7 @@ class RestorationHost:
                 result.pop(key, None)
         general = saved.get("activation_policy", "strict") == GENERAL_RESTORE_MODE
         result.update(APP_ENV="production", FACIAL_CREDENTIAL_ENV="production",
+                      PYTHONDONTWRITEBYTECODE="1",
                       FACIAL_PROCESSING_ENABLED="true" if enabled else "false",
                       FACIAL_REQUIRE_EXPLICIT_ROLLOUT="false" if general else "true",
                       FACIAL_REQUIRE_PRODUCTION_CALIBRATION="false" if general else "true")
