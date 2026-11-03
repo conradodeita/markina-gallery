@@ -555,7 +555,7 @@ class RestorationHost:
 
     def _current(self, service):
         require(service in SERVICES, "servico_fora_do_escopo")
-        ids = self.run("docker", "ps", "-aq", "--filter", "label=com.docker.compose.project=" + PROJECT, "--filter", "label=com.docker.compose.service=" + service).split()
+        ids = self.run("docker", "ps", "-aq", "--no-trunc", "--filter", "label=com.docker.compose.project=" + PROJECT, "--filter", "label=com.docker.compose.service=" + service).split()
         values = [self.inspect(x) for x in ids]
         active = [x for x in values if x["State"]["Status"] == "running"]
         require(len(active) <= 1, "consumidor_ambiguo")

@@ -63,6 +63,26 @@ class HostContractTests(unittest.TestCase):
             "manifest":{"services":{s:{"image_id":"sha256:"+"f"*64} for s in SERVICES}},
         }
 
+    def test_current_requests_full_container_id_before_inspect(self):
+        item = self.containers["api"]
+        full_id = item["Id"]
+        calls = []
+
+        def command(args, _data, _timeout):
+            call = tuple(args)
+            calls.append(call)
+            if call[:2] == ("docker", "ps"):
+                self.assertIn("--no-trunc", call)
+                return (full_id + "\n").encode()
+            if call[:2] == ("docker", "inspect"):
+                self.assertEqual(call[2], full_id)
+                return json.dumps([item]).encode()
+            raise AssertionError(call)
+
+        self.host.command = command
+        self.assertEqual(RestorationHost._current(self.host, "api")["Id"], full_id)
+        self.assertEqual(calls[0][:3], ("docker", "ps", "-aq"))
+
     def use_docker_simulator(self, *, failing_exit_service=None, timeout_service=None, post_stop_diff_service=None):
         clock = [0.0]
         self.host.monotonic = lambda: clock[0]
