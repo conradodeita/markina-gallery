@@ -231,6 +231,17 @@ class HostContractTests(unittest.TestCase):
         with self.assertRaises(RestorationError):
             configuration(changed)
 
+    def test_empty_dns_representations_match_but_explicit_servers_remain_strict(self):
+        baseline = copy.deepcopy(self.containers["api"])
+        candidate = copy.deepcopy(baseline)
+        baseline["HostConfig"]["Dns"] = []
+        candidate["HostConfig"]["Dns"] = None
+        self.assertEqual(configuration(baseline), configuration(candidate))
+
+        baseline["HostConfig"]["Dns"] = ["192.0.2.53"]
+        candidate["HostConfig"]["Dns"] = ["192.0.2.54"]
+        self.assertNotEqual(configuration(baseline), configuration(candidate))
+
     def test_command_failure_does_not_return_raw_stderr_or_arguments(self):
         def failed(*args):
             raise subprocess.CalledProcessError(1,["secret-sentinel"],stderr=b"secret-sentinel")

@@ -55,6 +55,8 @@ O operador terá fases explícitas de inventário, preparação isolada, aplica�
 
 API, worker geral e três workers faciais devem concordar em ambiente, configuração, modelos e modo de admissão. Reusar manifests efetivos sob controle protegido, comparando fontes/destinos/permissões de mounts e hashes por serviço. Não recalcular tudo a partir do Compose local ignorando patches e overlays ativos. A pausa é curta e delimitada aos consumidores aprovados; não há promessa de interrupção zero para esses consumidores.
 
+Na comparação de `HostConfig.Dns`, `[]` e `null` representam a ausência de servidores DNS explícitos e SHALL ser normalizados para o mesmo valor. Qualquer lista não vazia permanece estrita; nenhuma outra divergência de configuração pode ser normalizada por conveniência.
+
 #### Separação do estado operacional compartilhado
 
 O adaptador real SHALL executar com UID/GID root, pois precisa ler o manifesto root-only e arquivos Compose protegidos. Execução com outra identidade MUST falhar antes de acessar Docker ou alterar estado. O diretório fixo `/var/lib/markina-gallery/deploy-state` é compartilhado por fluxos de release e pertence a `ubuntu:ubuntu`, modo `0700`. O operador facial SHALL validá-lo nesse proprietário e modo, sem exigir que o diretório pertença ao UID efetivo do operador. MUST NOT alterar proprietário, modo ou conteúdo preexistente do diretório compartilhado.

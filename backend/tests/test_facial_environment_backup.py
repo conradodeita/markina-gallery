@@ -120,7 +120,8 @@ def test_backup_payload_roundtrips_encrypted_snapshot_without_exposing_fields(tm
 def test_corrupted_backup_fails_before_any_restore_artifact_is_written(tmp_path):
     record = _record()
     backup = _backup(record)
-    corrupt = replace(backup, ciphertext=backup.ciphertext[:-1] + b"x")
+    corrupted_last_byte = bytes([backup.ciphertext[-1] ^ 0x01])
+    corrupt = replace(backup, ciphertext=backup.ciphertext[:-1] + corrupted_last_byte)
     restore_path = tmp_path / "must-not-exist"
 
     with pytest.raises(FacialBackupError) as error:
