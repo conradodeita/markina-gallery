@@ -332,7 +332,10 @@ class RestorationHost:
 
     def _read_file(self, path: Path, *, limit=8_000_000, parent_owner_uid=None, parent_owner_gid=None):
         self._safe_directory(path.parent, private=True, owner_uid=parent_owner_uid, owner_gid=parent_owner_gid)
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError:
+            raise RestorationError("arquivo_privado_ausente") from None
         with os.fdopen(fd, "rb") as stream:
             info = os.fstat(stream.fileno())
             require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o600 and info.st_size <= limit, "arquivo_privado_inseguro")
@@ -368,18 +371,32 @@ class RestorationHost:
     def lock(self):
         try:
             import fcntl
+        except ImportError:
+            raise RestorationError("lock_posix_indisponivel_ou_ocupado") from None
+        fd = None
+        try:
             owner_uid, owner_gid = self._shared_state_owner_ids()
             self._safe_directory(self.shared_state, private=True, owner_uid=owner_uid, owner_gid=owner_gid)
             path = self.shared_state / "production-release.lock"
             fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
-            with os.fdopen(fd, "r+") as stream:
+            stream = os.fdopen(fd, "r+")
+            fd = None
+        except OSError:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise RestorationError("lock_posix_indisponivel_ou_ocupado") from None
+        with stream:
+            try:
                 info = os.fstat(stream.fileno())
                 require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == owner_uid and info.st_gid == owner_gid
                         and stat.S_IMODE(info.st_mode) == 0o600, "lock_inseguro")
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                yield
-        except (ImportError, OSError):
-            raise RestorationError("lock_posix_indisponivel_ou_ocupado") from None
+            except OSError:
+                raise RestorationError("lock_posix_indisponivel_ou_ocupado") from None
+            yield
 
     def inspect(self, identity):
         require(HEX.fullmatch(identity) or IMAGE.fullmatch(identity), "identidade_invalida")

@@ -114,6 +114,10 @@ jobs:
           python scripts/test_owner_reset_policy.py
           python scripts/check_prod_facial_release_gates.py
           ruff check scripts/reset_homolog_owner.py
+      - name: Contratos POSIX do operador de restauração facial
+        run: |
+          ruff check scripts/facial_runtime_restoration_host.py scripts/test_facial_runtime_restoration_host.py
+          python -m unittest scripts.test_facial_runtime_restoration_host -v
       - name: Provar SIGINT gracioso para Python como PID 1 ocioso
         shell: bash
         run: |
