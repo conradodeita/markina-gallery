@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     phase = commands.add_parser("execute", help="executa uma fase fixa do operador")
     phase.add_argument("--support-sha", required=True, type=_support_sha)
     phase.add_argument("--operation", required=True, type=_operation)
-    phase.add_argument("--phase", required=True, choices=("dark", "activate", "verify", "recover"))
+    phase.add_argument("--phase", required=True, choices=("dark", "activate", "verify", "recover", "align-notifications", "rollback-notifications"))
     phase.add_argument("--fingerprint", required=True, type=_fingerprint)
     phase.add_argument("--allowlist", nargs="*", default=[])
     phase.add_argument("--stage", choices=("canary", "limited", "general"), default="canary")

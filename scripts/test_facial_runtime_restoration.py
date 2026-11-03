@@ -5,7 +5,7 @@ import copy
 import sys
 import unittest
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -29,7 +29,7 @@ from facial_runtime_restoration import (
 
 def fixture():
     inventory = {"format": 1, "project": PROJECT, "schema": SCHEMA, "architecture": "arm64",
-        "support_sha": "a" * 40, "collected_at": datetime.now(timezone.utc).isoformat(),
+        "support_sha": "a" * 40, "collected_at": datetime.now(UTC).isoformat(),
         "services": {}}
     for n, service in enumerate((*SERVICES, "web", "nginx", "db", "redis"), 1):
         inventory["services"][service] = {"container_id": f"{n:064x}", "image_id": "sha256:" + f"{n:064x}", "status": "exited" if service in FACIAL else "running", "health": "healthy", "environment": "staging" if service in FACIAL else "production", "facial_enabled": "false", "configuration_digest": digest({"service": service}), "compose_files": [{"path": "/fixture/compose.json", "sha256": "c" * 64}], "ports": {"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]} if service == "nginx" else {}}
@@ -127,8 +127,49 @@ class SyntheticHost:
         self.events.append("functional_proof")
         return {"fingerprint":approval.fingerprint, "scope_digest":approval.scope_digest(), "request_ready":True, "reference_purged":True, "ui_artifact_sha256":"d" * 64}
 
+    def align_notifications(self, operation, receipt, record, *, rollback=False):
+        self.events.append("rollback-notifications" if rollback else "align-notifications")
+        if self.failure:
+            raise RestorationError("falha_sintetica_no_alinhamento")
+        record["notification_alignment"] = {"status": "rolled_back" if rollback else "complete"}
+        return record["notification_alignment"]["status"]
+
 
 class ContractTests(unittest.TestCase):
+    def test_notification_phases_keep_fingerprint_enabled_runtime_and_pending_functional_proof(self):
+        host, approval = self.ready()
+        execute(host, "local-test", "dark", approval)
+        execute(host, "local-test", "activate", approval)
+        for phase, status in (("align-notifications", "complete"), ("rollback-notifications", "rolled_back")):
+            result = execute(host, "local-test", phase, approval)
+            self.assertEqual(result["status"], status)
+            self.assertTrue(result["enabled"])
+            self.assertEqual(host.records["local-test"]["phase"], "runtime_verified")
+            self.assertEqual(host.receipt["fingerprint"], approval.fingerprint)
+            self.assertIn("local-test", host.records)
+
+    def test_notification_phase_failure_stays_journaled_and_cannot_be_declared_verified(self):
+        host, approval = self.ready()
+        execute(host, "local-test", "dark", approval)
+        execute(host, "local-test", "activate", approval)
+        host.failure = True
+        with self.assertRaisesRegex(RestorationError, "falha_sintetica_no_alinhamento"):
+            execute(host, "local-test", "align-notifications", approval)
+        self.assertEqual(host.records["local-test"]["phase"], "aligning_notifications")
+        with self.assertRaisesRegex(RestorationError, "alinhamento_de_notificacao_pendente"):
+            execute(host, "local-test", "verify", approval)
+        host.failure = None
+        self.assertEqual(execute(host, "local-test", "rollback-notifications", approval)["status"], "rolled_back")
+
+    def test_notification_phase_rejects_scope_or_disabled_runtime(self):
+        host, approval = self.ready()
+        execute(host, "local-test", "dark", approval)
+        with self.assertRaisesRegex(RestorationError, "runtime_nao_verificado"):
+            execute(host, "local-test", "align-notifications", approval)
+        execute(host, "local-test", "activate", approval)
+        with self.assertRaisesRegex(RestorationError, "escopo_de_verificacao_divergente"):
+            execute(host, "local-test", "align-notifications", Approval(approval.fingerprint, ("22345678-1234-4234-8234-123456789abc",)))
+
     def test_signal_handler_overlay_is_allowed_only_for_facial_worker_candidates(self):
         inventory, manifest = fixture()
         service = FACIAL[0]
@@ -151,7 +192,7 @@ class ContractTests(unittest.TestCase):
 
     def test_inventory_rejects_schema_ports_and_stale_evidence(self):
         inventory, _ = fixture()
-        for field, value in (("schema", "wrong"), ("project", "other"), ("architecture", "amd64"), ("collected_at", (datetime.now(timezone.utc)-timedelta(hours=2)).isoformat())):
+        for field, value in (("schema", "wrong"), ("project", "other"), ("architecture", "amd64"), ("collected_at", (datetime.now(UTC)-timedelta(hours=2)).isoformat())):
             changed = copy.deepcopy(inventory)
             changed[field] = value
             with self.subTest(field=field), self.assertRaises(RestorationError):
