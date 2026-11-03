@@ -242,3 +242,33 @@ Ao comparar a configuração dos containers, o operador SHALL tratar `HostConfig
 - **WHEN** o baseline e o candidato representam DNS não configurado como `[]` e `null`, em qualquer ordem
 - **THEN** a comparação aceita essa diferença de representação e mantém todas as demais verificações de configuração, mounts, camada gravável e identidade
 - **AND** qualquer lista DNS não vazia divergente continua bloqueando a operação
+
+### Requirement: Recuperação identifica o candidato parado pelo journal
+
+Quando containers históricos compartilham os labels de projeto e serviço, a recuperação SHALL selecionar o candidato pelo ID integral de `active_ids` no journal e conferir seus labels, imagem e configuração. Outro container ativo SHALL bloquear a recuperação. Sem identidade persistida, a recusa por ambiguidade SHALL permanecer.
+
+#### Scenario: Projeto contém containers históricos do mesmo serviço
+
+- **WHEN** o candidato atual está parado e existem containers antigos parados com os mesmos labels de projeto/serviço
+- **THEN** a recuperação seleciona o ID integral comprovado pelo journal e restaura a imagem/configuração original
+- **AND** a ausência ou divergência do ID, ou outro container ativo, bloqueia a substituição
+
+### Requirement: Recuperação aceita retry somente após restauração comprovada
+
+Se uma recuperação recriar o baseline e falhar antes de registrar a conclusão, a próxima tentativa SHALL aceitar somente o baseline ativo cujo ID, imagem, configuração, política de reinício e saúde correspondam ao recibo. Para API, SHALL repetir a validação e reload do Nginx. Qualquer estado parcial divergente SHALL continuar bloqueado.
+
+#### Scenario: Recuperação interrompida após substituir a API
+
+- **WHEN** o baseline foi recriado, mas o journal ainda contém a identidade do candidato e a intenção de recuperar a API
+- **THEN** a nova tentativa verifica o baseline restaurado e repete o reload gracioso no mesmo Nginx
+- **AND** um estado sem essa intenção, sem saúde ou configuração compatível é recusado
+
+### Requirement: Nginx recarrega a resolução após substituir a API
+
+Após recriar o container da API, o operador SHALL validar a configuração do Nginx e emitir reload gracioso no mesmo container inventariado, para atualizar o endereço do upstream. SHALL manter identidade, imagem, configuração montada e bind de porta do Nginx. A verificação SHALL confirmar `/api/health` e `/healthz` em 200; nenhuma configuração, imagem, container ou porta será alterada.
+
+#### Scenario: API recebe novo endereço de rede
+
+- **WHEN** uma fase substitui o container da API e o Nginx pode manter em memória o endereço anterior
+- **THEN** o operador executa `nginx -t` e reload gracioso, mantém o mesmo container/configuração/porta e confirma os dois health checks
+- **AND** falha na validação, reload ou health check mantém a fase incompleta e segue o procedimento de recuperação

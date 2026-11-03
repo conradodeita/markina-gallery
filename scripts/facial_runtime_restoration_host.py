@@ -557,16 +557,44 @@ class RestorationHost:
         except (ValueError, UnicodeError):
             raise RestorationError("journal_invalido") from None
 
-    def _current(self, service):
+    def _current(self, service, *, expected_id=None):
         require(service in SERVICES, "servico_fora_do_escopo")
         ids = self.run("docker", "ps", "-aq", "--no-trunc", "--filter", "label=com.docker.compose.project=" + PROJECT, "--filter", "label=com.docker.compose.service=" + service).split()
         values = [self.inspect(x) for x in ids]
         active = [x for x in values if x["State"]["Status"] == "running"]
         require(len(active) <= 1, "consumidor_ambiguo")
+        if expected_id is not None:
+            require(HEX.fullmatch(expected_id) and expected_id in ids, "id_de_consumidor_registrado_ausente")
+            selected = next(item for item in values if item["Id"] == expected_id)
+            labels = selected.get("Config", {}).get("Labels") or {}
+            require(labels.get("com.docker.compose.project") == PROJECT
+                    and labels.get("com.docker.compose.service") == service, "id_de_consumidor_registrado_divergente")
+            require(not active or active[0]["Id"] == expected_id, "consumidor_ambiguo")
+            return selected
         if active:
             return active[0]
         require(len(values) == 1, "consumidor_parado_ambiguo_ou_ausente")
         return values[0]
+
+    def _refresh_nginx_api_upstream(self, saved):
+        baseline = saved["containers"]["nginx"]
+        item = self.inspect(baseline["Id"])
+        require(item["Id"] == baseline["Id"] and item["Image"] == baseline["Image"]
+                and configuration(item) == configuration(baseline)
+                and item["State"]["Status"] == "running"
+                and item["State"].get("Health", {}).get("Status") == "healthy",
+                "nginx_inventariado_divergente")
+        self.run("docker", "exec", item["Id"], "nginx", "-t")
+        self.run("docker", "exec", item["Id"], "nginx", "-s", "reload")
+        current = self.inspect(baseline["Id"])
+        require(current["Id"] == baseline["Id"] and current["Image"] == baseline["Image"]
+                and configuration(current) == configuration(baseline)
+                and current["State"]["Status"] == "running"
+                and current["State"].get("Health", {}).get("Status") == "healthy",
+                "nginx_mudou_apos_reload")
+        codes = [self.run("curl", "--proto", "=https", "--tlsv1.2", "--max-time", "10", "-sS", "-o", "/dev/null", "-w", "%{http_code}", ORIGIN + path)
+                 for path in ("/api/health", "/healthz")]
+        require(codes == ["200", "200"], "nginx_reload_health_falhou")
 
     @staticmethod
     def _restart_option(item):
@@ -752,7 +780,36 @@ class RestorationHost:
         saved = self._private(operation, receipt)
         baseline = saved["containers"][service]
         if previous:
-            current = self._current(service)
+            record = self.read_journal(operation)
+            candidate_id = record.get("active_ids", {}).get(service)
+            require(candidate_id, "id_de_candidato_ausente_no_journal")
+            try:
+                current = self._current(service, expected_id=candidate_id)
+            except RestorationError as error:
+                # A prior recovery attempt may have recreated the baseline and
+                # then failed while refreshing Nginx or checking public health.
+                # The caller leaves intent in the journal until this method
+                # returns, so accept only that exact, already-restored state.
+                if (str(error) != "id_de_consumidor_registrado_ausente"
+                        or record.get("intent") != service):
+                    raise
+                current = self._current(service)
+                require(current["Image"] == baseline["Image"]
+                        and configuration_without_restart(current) == configuration_without_restart(baseline)
+                        and self._restart_option(current) == self._restart_option(baseline)
+                        and baseline["State"]["Status"] == "running"
+                        and current["State"]["Status"] == "running",
+                        "baseline_parcial_de_recuperacao_divergente")
+                deadline = self.monotonic() + 120
+                while current["State"].get("Health", {}).get("Status") not in {None, "healthy"}:
+                    require(current["State"]["Status"] == "running"
+                            and self.monotonic() < deadline,
+                            "retomada_de_consumidor_nao_confirmada")
+                    self.sleeper(0.5)
+                    current = self.inspect(current["Id"])
+                if service == "api":
+                    self._refresh_nginx_api_upstream(saved)
+                return current["Id"]
             require(current["State"]["Status"] != "running", "consumidor_nao_pausado")
             if current["Image"] == baseline["Image"] and configuration_without_restart(current) == configuration_without_restart(baseline):
                 policy = self._restart_option(baseline)
@@ -764,6 +821,8 @@ class RestorationHost:
                         current = self.inspect(current["Id"])
                         health = current["State"].get("Health", {}).get("Status")
                         if current["State"]["Status"] == "running" and health in {None, "healthy"}:
+                            if service == "api":
+                                self._refresh_nginx_api_upstream(saved)
                             return current["Id"]
                         require(current["State"]["Status"] in {"running", "starting"}
                                 and self.monotonic() < deadline, "retomada_de_consumidor_nao_confirmada")
@@ -792,7 +851,7 @@ class RestorationHost:
         # Recovery returns originally stopped facial services to a stopped state.
         action = "create" if previous and baseline["State"]["Status"] != "running" else "up"
         if previous:
-            current = self._current(service)
+            current = self._current(service, expected_id=candidate_id)
             require(current.get("HostConfig", {}).get("ReadonlyRootfs") is True
                     and current.get("HostConfig", {}).get("Tmpfs") == CANDIDATE_TMPFS,
                     "candidato_nao_preservavel")
@@ -801,6 +860,8 @@ class RestorationHost:
             self.run(*args, action, "--no-deps", "--no-build", "--pull", "never", "--force-recreate", service)
         else:
             self.run(*args, action, "-d", "--no-deps", "--no-build", "--pull", "never", "--force-recreate", service)
+        if service == "api":
+            self._refresh_nginx_api_upstream(saved)
         return self._current(service)["Id"]
 
     def verify(self, operation, receipt, *, enabled, previous=False):

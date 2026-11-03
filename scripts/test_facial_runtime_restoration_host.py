@@ -52,7 +52,7 @@ class HostContractTests(unittest.TestCase):
         self.host = RestorationHost(support_sha="a"*40, root=self.root, state=self.root, command=command)
         self.private_snapshot = self.host._private
         self.host._private = lambda _operation, _receipt: {"containers": self.containers, "models": {}}
-        self.host._current = lambda service: self.containers[service]
+        self.host._current = lambda service, **_kwargs: self.containers[service]
         self.host._sql = lambda _query: 0
         self.records = []
         self.host.journal = lambda _operation, value, **_kwargs: self.records.append(copy.deepcopy(value))
@@ -82,6 +82,44 @@ class HostContractTests(unittest.TestCase):
         self.host.command = command
         self.assertEqual(RestorationHost._current(self.host, "api")["Id"], full_id)
         self.assertEqual(calls[0][:3], ("docker", "ps", "-aq"))
+
+    def test_current_selects_journaled_candidate_among_historical_stopped_services(self):
+        candidate = copy.deepcopy(self.containers["api"])
+        candidate_id = candidate["Id"]
+        candidate["State"]["Status"] = "exited"
+        historical = copy.deepcopy(candidate)
+        historical["Id"] = "f" * 64
+        containers = {candidate_id: candidate, historical["Id"]: historical}
+
+        def command(args, _data, _timeout):
+            if args[:2] == ("docker", "ps"):
+                return (candidate_id + "\n" + historical["Id"] + "\n").encode()
+            if args[:2] == ("docker", "inspect"):
+                return json.dumps([containers[args[2]]]).encode()
+            raise AssertionError(args)
+
+        self.host.command = command
+        selected = RestorationHost._current(self.host, "api", expected_id=candidate_id)
+        self.assertEqual(selected["Id"], candidate_id)
+
+    def test_current_refuses_an_active_container_other_than_journaled_candidate(self):
+        candidate = copy.deepcopy(self.containers["api"])
+        candidate["State"]["Status"] = "exited"
+        active = copy.deepcopy(candidate)
+        active["Id"] = "f" * 64
+        active["State"]["Status"] = "running"
+        containers = {candidate["Id"]: candidate, active["Id"]: active}
+
+        def command(args, _data, _timeout):
+            if args[:2] == ("docker", "ps"):
+                return (candidate["Id"] + "\n" + active["Id"] + "\n").encode()
+            if args[:2] == ("docker", "inspect"):
+                return json.dumps([containers[args[2]]]).encode()
+            raise AssertionError(args)
+
+        self.host.command = command
+        with self.assertRaisesRegex(RestorationError, "consumidor_ambiguo"):
+            RestorationHost._current(self.host, "api", expected_id=candidate["Id"])
 
     def use_docker_simulator(self, *, failing_exit_service=None, timeout_service=None, post_stop_diff_service=None):
         clock = [0.0]
@@ -159,6 +197,7 @@ class HostContractTests(unittest.TestCase):
         models = {"api": {"services": {"api": {"environment": {}, "image": baseline["Image"]}}}}
         self.host._private = lambda _operation, _receipt: {"containers": self.containers, "models": models}
         self.host._write = lambda _path, value, **_kwargs: self.events.append(("compose-bytes", value))
+        self.host._refresh_nginx_api_upstream = lambda _saved: None
         candidate = copy.deepcopy(baseline)
         candidate["Id"] = "e" * 64
         candidate["Image"] = "sha256:" + "f" * 64
@@ -186,7 +225,8 @@ class HostContractTests(unittest.TestCase):
         candidate["State"]["Status"] = "exited"
         candidate["HostConfig"]["ReadonlyRootfs"] = True
         candidate["HostConfig"]["Tmpfs"] = CANDIDATE_TMPFS
-        self.host._current = lambda _service: candidate
+        self.host._current = lambda _service, **_kwargs: candidate
+        self.host.read_journal = lambda _operation: {"active_ids":{"api":candidate["Id"]}}
         self.host._private = lambda _operation, _receipt: {"containers": self.containers, "models":{"api":{"services":{"api":{}}}}}
         self.host._write = lambda *_args, **_kwargs: None
 
@@ -203,6 +243,62 @@ class HostContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RestorationError, "candidato_nao_preservavel"):
             self.host.replace("local-test", receipt, "api", enabled=False, previous=True)
         self.assertFalse(any("force-recreate" in x[0] for x in self.events))
+
+    def test_api_replacement_refreshes_upstream_without_replacing_nginx(self):
+        nginx = copy.deepcopy(self.containers["api"])
+        nginx["Id"] = "b" * 64
+        nginx["Image"] = "sha256:" + "c" * 64
+        nginx["Config"]["Labels"]["com.docker.compose.service"] = "nginx"
+        calls = []
+        self.host.inspect = lambda _identity: nginx
+
+        def run(*args, **_kwargs):
+            calls.append(args)
+            return "200" if args[0] == "curl" else "ok"
+
+        self.host.run = run
+        self.host._refresh_nginx_api_upstream({"containers":{"nginx":nginx}})
+        self.assertEqual(calls[0], ("docker", "exec", nginx["Id"], "nginx", "-t"))
+        self.assertEqual(calls[1], ("docker", "exec", nginx["Id"], "nginx", "-s", "reload"))
+        self.assertEqual([call[0] for call in calls[2:]], ["curl", "curl"])
+        self.assertTrue(all("restart" not in call for call in calls))
+
+    def test_recovery_retry_accepts_only_an_already_restored_baseline(self):
+        baseline = copy.deepcopy(self.containers["api"])
+        baseline["State"]["Status"] = "running"
+        baseline["State"]["Health"] = {"Status": "healthy"}
+        baseline["HostConfig"]["RestartPolicy"] = {"Name": "unless-stopped", "MaximumRetryCount": 0}
+        calls = []
+
+        def current(_service, *, expected_id=None):
+            if expected_id is not None:
+                raise RestorationError("id_de_consumidor_registrado_ausente")
+            return baseline
+
+        self.host._current = current
+        self.host.read_journal = lambda _operation: {
+            "active_ids": {"api": "e" * 64},
+            "intent": "api",
+        }
+        self.host._private = lambda _operation, _receipt: {"containers": {"api": baseline}, "models": {}}
+        self.host.run = lambda *args, **_kwargs: calls.append(args) or "ok"
+        self.host._refresh_nginx_api_upstream = lambda _saved: calls.append(("nginx-refresh",))
+
+        result = self.host.replace("local-test", {}, "api", enabled=False, previous=True)
+
+        self.assertEqual(result, baseline["Id"])
+        self.assertIn(("nginx-refresh",), calls)
+
+    def test_recovery_retry_does_not_accept_an_unjournaled_state(self):
+        self.host._current = lambda _service, *, expected_id=None: (_ for _ in ()).throw(
+            RestorationError("id_de_consumidor_registrado_ausente")
+        )
+        self.host.read_journal = lambda _operation: {
+            "active_ids": {"api": "e" * 64},
+            "intent": "worker",
+        }
+        with self.assertRaisesRegex(RestorationError, "id_de_consumidor_registrado_ausente"):
+            self.host.replace("local-test", {}, "api", enabled=False, previous=True)
 
     def test_timeout_never_escalates_to_sigkill_and_resumes_original(self):
         self.use_docker_simulator(timeout_service="api")
