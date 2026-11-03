@@ -9,7 +9,10 @@
   "enabled": true,
   "schema": "20261026_0090",
   "origin": "https://markina.pickyourpic.com.br",
-  "https_status": {"/api/health": 200, "/healthz": 200},
+  "https_status": {
+    "/api/health": 200,
+    "/healthz": 200
+  },
   "peers_unchanged": true,
   "authorization_reference": "owner-general-restore-20261102",
   "additional_owner_decision": "owner-minor-production-unblock-20261103",
@@ -20,11 +23,46 @@
   "calibration_waived_by_owner": true,
   "similarity_threshold_milli": 750,
   "services": {
-    "api": {"image_id": "sha256:6e732610932d5e7eb01c1fbed5ddbc7a1f4b05a39da9de8179c0ed0ab8375aea", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0},
-    "worker": {"image_id": "sha256:e7eb35840d59f71fbb6e0437525448b761d12bdcb571c9b5416afdb034025f5b", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0},
-    "face-search-worker": {"image_id": "sha256:cfbf33b3b1004db5f68964afcf9d2ba760b8c776b83377f8ddfbdaad9929f8cd", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0},
-    "face-index-worker": {"image_id": "sha256:965b33751d4cd4df7b1fe1954ad536e1a00e20d47d31df3dc5ebd77b1a1e384d", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0},
-    "face-maintenance-worker": {"image_id": "sha256:5cf540247c3e77b0f48bd19a556c416a6e493ba6ff36c724e7b9cc043ceeb0b1", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0}
+    "api": {
+      "image_id": "sha256:6e732610932d5e7eb01c1fbed5ddbc7a1f4b05a39da9de8179c0ed0ab8375aea",
+      "state": "running",
+      "health": "healthy",
+      "environment": "production",
+      "enabled": true,
+      "restart_count": 0
+    },
+    "worker": {
+      "image_id": "sha256:e7eb35840d59f71fbb6e0437525448b761d12bdcb571c9b5416afdb034025f5b",
+      "state": "running",
+      "health": "healthy",
+      "environment": "production",
+      "enabled": true,
+      "restart_count": 0
+    },
+    "face-search-worker": {
+      "image_id": "sha256:cfbf33b3b1004db5f68964afcf9d2ba760b8c776b83377f8ddfbdaad9929f8cd",
+      "state": "running",
+      "health": "healthy",
+      "environment": "production",
+      "enabled": true,
+      "restart_count": 0
+    },
+    "face-index-worker": {
+      "image_id": "sha256:965b33751d4cd4df7b1fe1954ad536e1a00e20d47d31df3dc5ebd77b1a1e384d",
+      "state": "running",
+      "health": "healthy",
+      "environment": "production",
+      "enabled": true,
+      "restart_count": 0
+    },
+    "face-maintenance-worker": {
+      "image_id": "sha256:5cf540247c3e77b0f48bd19a556c416a6e493ba6ff36c724e7b9cc043ceeb0b1",
+      "state": "running",
+      "health": "healthy",
+      "environment": "production",
+      "enabled": true,
+      "restart_count": 0
+    }
   },
   "application_read_only_probe": {
     "settings_and_assets_valid": true,
@@ -74,8 +112,41 @@
     "searches_since_activation": 0
   },
   "limitations": [
-    "Runtime habilitado e disponibilidade real da aplicacao comprovados; jornada autenticada no navegador e resultado de busca posterior a ativacao ainda pendentes.",
-    "Sem amostras de busca nas observacoes registradas; nao ha medicao de p95 real de consulta nem precisao.",
+    "Jornada real e resultado satisfatorio confirmados pelo proprietario e UI; fechamento formal do operador depende de nova requisicao vigente apos corrigir a notificacao.",
+    "A unica busca observada levou 179,6 s e excedeu o SLO de 120 s; nao ha p95 representativo ou calibracao medida.",
+    "A notificacao pos-busca falhou por marcadores ambientais antigos no consumidor; OTP foi confirmado pelo proprietario; correcao persistente ainda pendente.",
     "A indexacao real de quatro ativos foi comprovada; o acervo anteriormente pronto nao foi reindexado."
-  ]
+  ],
+  "owner_client_test": {
+    "method": "indexed_region",
+    "created_at_utc": "2026-11-03T14:08:38.927397+00:00",
+    "completed_at_utc": "2026-11-03T14:11:38.543243+00:00",
+    "status": "ready",
+    "comparison_total": 2691,
+    "candidate_count": 25,
+    "duration_seconds": 179.615846,
+    "reference_locator_removed": true,
+    "reference_deleted_marked": true,
+    "owner_confirmed_results": true,
+    "owner_result_satisfactory": true,
+    "ui_ready_png_sha256": "8b8fc6e31fd113c6f7a6168735eb8ab3dd363433b5c80175db87b824fe00711a",
+    "formal_operator_verification": "pending_fresh_request_after_notification_repair",
+    "slo_seconds": 120,
+    "slo_met": false
+  },
+  "notification_incident": {
+    "outbox_status": "failed",
+    "attempts": 3,
+    "last_error_category": "channel_unavailable",
+    "external_message_id_present": false,
+    "otp_working_confirmed_by_owner": true,
+    "channel_refresh_status": "ready",
+    "channel_refresh_receipt_sha256": "9eab245a7de2aaaec1c59743e65140539f1365ed4ddb584bb85d5f9fb795b928",
+    "search_worker_marker_environment": "staging",
+    "api_and_general_worker_marker_environment": "production",
+    "isolated_process_marker_alignment_resolves_provider": true,
+    "live_channel_open_and_identity_matches": true,
+    "persistent_alignment_applied": false,
+    "old_event_automatically_resent": false
+  }
 }

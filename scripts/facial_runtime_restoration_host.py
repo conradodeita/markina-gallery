@@ -60,6 +60,11 @@ CANDIDATE_TMPFS = {
     "/run": "rw,nosuid,nodev,noexec,size=16m",
 }
 
+
+def notification_environment_markers(values):
+    return {key: value for key, value in values.items()
+            if key == "WHATSAPP_CREDENTIAL_ENV" or re.fullmatch(r"WHATSAPP_BINDING_[A-Z0-9_]+_CREDENTIAL_ENV", key)}
+
 IMAGE_PROBE = r'''
 import hashlib,importlib.util,json,platform,sys
 from importlib.metadata import distributions
@@ -659,10 +664,13 @@ class RestorationHost:
         self.journal(operation, record)
         return errors
 
-    def quiesce(self, operation, receipt, record):
+    def quiesce(self, operation, receipt, record, *, services=SERVICES):
+        require(services in {SERVICES, ("face-search-worker",)}, "escopo_de_parada_invalido")
         saved = self._private(operation, receipt)
         # Verifica todos os consumidores antes do primeiro sinal/restart-policy change.
-        current = {name:self._current(name) for name in SERVICES}
+        current = {name:self._current(name, expected_id=record.get("active_ids", {}).get(name))
+                   if services == ("face-search-worker",) and name == "face-search-worker"
+                   else self._current(name) for name in SERVICES}
         for name, item in current.items():
             allowed = {receipt["inventory"]["services"][name]["image_id"], receipt["manifest"]["services"][name]["image_id"]}
             require(item["Image"] in allowed, "imagem_atual_desconhecida")
@@ -680,13 +688,16 @@ class RestorationHost:
                 expected["environment"] = self._target_environment(saved, name, environment(item).get("FACIAL_PROCESSING_ENABLED") == "true")
                 expected["host"]["ReadonlyRootfs"] = True
                 expected["host"]["Tmpfs"] = CANDIDATE_TMPFS
-                require(configuration(item) == expected, "configuracao_candidata_divergente")
+                legacy = copy.deepcopy(expected)
+                if name == "face-search-worker" and record.get("phase") in {"aligning_notifications", "recovering"}:
+                    legacy["environment"] = self._target_environment(saved, name, environment(item).get("FACIAL_PROCESSING_ENABLED") == "true", align_notifications=False)
+                require(configuration(item) in (expected, legacy), "configuracao_candidata_divergente")
             if item["State"]["Status"] == "running":
                 self._assert_known_process(name, item)
         for item in current.values():
             self._assert_preserved_layer(item)
 
-        affected = set(SERVICES)
+        affected = set(services)
         if record.get("phase") == "recovering":
             affected = set(record.get("replaced", [])) | {record.get("intent")}
             affected.discard(None)
@@ -712,6 +723,13 @@ class RestorationHost:
                 item = current[name]
                 if item["State"]["Status"] != "running":
                     require(item["State"]["Status"] in {"exited", "created"}, "estado_de_parada_desconhecido")
+                    if services == ("face-search-worker",):
+                        require(item["State"].get("ExitCode") == 0 and any(
+                            entry.get("service") == name and entry.get("id") == item["Id"]
+                            and entry.get("image_id") == item["Image"] and entry.get("exit_code") == 0
+                            and entry.get("started_at") == item["State"].get("StartedAt")
+                            for entry in record.get("drain_receipts", [])
+                        ), "parada_anterior_nao_comprovada")
                     continue
                 receipt_entry = {
                     "service": name,
@@ -761,12 +779,13 @@ class RestorationHost:
                     "identidade_de_parada_divergente",
                 )
                 self._assert_preserved_layer(item)
-            busy = self._sql(
-                "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
-                "AND pid<>pg_backend_pid() AND state IN "
-                "('active','idle in transaction','idle in transaction (aborted)')"
-            )
-            require(busy == 0, "sessao_ativa_impede_troca")
+            if services == SERVICES:
+                busy = self._sql(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
+                    "AND pid<>pg_backend_pid() AND state IN "
+                    "('active','idle in transaction','idle in transaction (aborted)')"
+                )
+                require(busy == 0, "sessao_ativa_impede_troca")
             for entry in record["stop_restore"]:
                 self.run("docker", "update", "--restart=" + entry["restart"], entry["id"])
         except RestorationError as error:
@@ -780,7 +799,7 @@ class RestorationHost:
         record.pop("last_stop_failure", None)
         self.journal(operation, record)
 
-    def _target_environment(self, saved, service, enabled):
+    def _target_environment(self, saved, service, enabled, *, align_notifications=True):
         result = environment(saved["containers"][service])
         api = environment(saved["containers"]["api"])
         for key in COHERENT:
@@ -788,6 +807,8 @@ class RestorationHost:
                 result[key] = api[key]
             else:
                 result.pop(key, None)
+        if service == "face-search-worker" and align_notifications:
+            result.update(notification_environment_markers(api))
         general = saved.get("activation_policy", "strict") == GENERAL_RESTORE_MODE
         result.update(APP_ENV="production", FACIAL_CREDENTIAL_ENV="production",
                       PYTHONDONTWRITEBYTECODE="1",
@@ -796,7 +817,7 @@ class RestorationHost:
                       FACIAL_REQUIRE_PRODUCTION_CALIBRATION="false" if general else "true")
         return result
 
-    def replace(self, operation, receipt, service, *, enabled, previous=False):
+    def replace(self, operation, receipt, service, *, enabled, previous=False, align_notifications=True):
         require(service in SERVICES, "servico_fora_do_escopo")
         saved = self._private(operation, receipt)
         baseline = saved["containers"][service]
@@ -848,7 +869,7 @@ class RestorationHost:
         require(service in model.get("services", {}), "modelo_incompleto")
         target = model["services"][service]
         target["image"] = baseline["Image"] if previous else receipt["manifest"]["services"][service]["image_id"]
-        target["environment"] = environment(baseline) if previous else self._target_environment(saved, service, enabled)
+        target["environment"] = environment(baseline) if previous else self._target_environment(saved, service, enabled, align_notifications=align_notifications)
         target["command"] = baseline["Config"].get("Cmd")
         target["entrypoint"] = baseline["Config"].get("Entrypoint")
         target.pop("build", None)
@@ -856,7 +877,10 @@ class RestorationHost:
             target["read_only"] = True
             target["tmpfs"] = [f"{path}:{options}" for path, options in sorted(CANDIDATE_TMPFS.items())]
         data = json.dumps(_escape(model), sort_keys=True).encode()
-        path = self._work(operation) / (service + ("-previous" if previous else "-enabled" if enabled else "-dark") + ".compose.json")
+        suffix = "-previous" if previous else "-enabled" if enabled else "-dark"
+        if not previous and service == "face-search-worker" and align_notifications:
+            suffix += "-notifications-v1"
+        path = self._work(operation) / (service + suffix + ".compose.json")
         if path.exists():
             require(self._read(path) == data, "modelo_persistido_divergente")
         else:
@@ -879,7 +903,64 @@ class RestorationHost:
             self._refresh_nginx_api_upstream(saved)
         return self._current(service)["Id"]
 
-    def verify(self, operation, receipt, *, enabled, previous=False):
+    def align_notifications(self, operation, receipt, record, *, rollback=False):
+        """Troca somente o consumidor de busca; o snapshot selado define ambos os modelos."""
+        service = "face-search-worker"
+        saved = self._private(operation, receipt)
+        baseline = saved["containers"][service]
+        desired = configuration(baseline)
+        desired["environment"] = self._target_environment(saved, service, True, align_notifications=not rollback)
+        desired["host"]["ReadonlyRootfs"] = True
+        desired["host"]["Tmpfs"] = CANDIDATE_TMPFS
+        if not rollback:
+            markers = notification_environment_markers(environment(saved["containers"]["api"]))
+            require(markers and all(value == "production" for value in markers.values()), "ambiente_do_canal_nao_comprovado")
+        if record.get("stop_restore"):
+            require(all(entry.get("service") == service for entry in record["stop_restore"]), "escopo_de_parada_invalido")
+            require(not self._restore_stopped(operation, record), "parada_falhou_retomada_incompleta")
+        expected_id = record.get("active_ids", {}).get(service)
+        resumed_intent = record.get("intent") == service
+        require(expected_id, "id_de_candidato_ausente_no_journal")
+        try:
+            item = self._current(service, expected_id=expected_id)
+        except RestorationError:
+            require(resumed_intent, "id_de_consumidor_divergente")
+            item = self._current(service)
+        require(item["Image"] == receipt["manifest"]["services"][service]["image_id"], "imagem_carregada_divergente")
+        in_flight = copy.deepcopy(desired)
+        in_flight["environment"] = self._target_environment(saved, service, True, align_notifications=not record.get("notification_alignment", {}).get("rollback", False))
+        require(item["Id"] == expected_id or (resumed_intent and configuration(item) == in_flight), "id_de_consumidor_divergente")
+        alignment = record.setdefault("notification_alignment", {})
+        preserved = alignment.setdefault("preserved", {
+            name: {"id": current["Id"], "started_at": current["State"]["StartedAt"]}
+            for name in SERVICES if name != service for current in [self._current(name)]
+        })
+        require(set(preserved) == set(SERVICES) - {service}, "recibo_de_preservacao_incompleto")
+        for name, proof in preserved.items():
+            current = self._current(name)
+            require(current["Id"] == proof["id"] and current["State"]["StartedAt"] == proof["started_at"], "consumidor_preservado_alterado")
+        alignment.update(status="applying", rollback=rollback, support_sha=self.support_sha)
+        record.setdefault("active_ids", {})[service] = item["Id"]
+        if configuration(item) != desired or item["State"]["Status"] != "running":
+            record["intent"] = service
+            alignment.setdefault("previous_id", item["Id"])
+            self.journal(operation, record)
+            self.quiesce(operation, receipt, record, services=(service,))
+            identity = self.replace(operation, receipt, service, enabled=True, align_notifications=not rollback)
+            record["active_ids"][service] = identity
+            self.journal(operation, record)
+        else:
+            self._assert_preserved_layer(item, reason="camada_candidata_nao_vazia")
+        observed = self.verify(operation, receipt, enabled=True, align_notifications=not rollback)
+        require(observed.get("schema") == SCHEMA and observed.get("peers_unchanged") is True, "verificacao_final_falhou")
+        for name, proof in preserved.items():
+            current = self._current(name)
+            require(current["Id"] == proof["id"] and current["State"]["StartedAt"] == proof["started_at"], "consumidor_preservado_alterado")
+        record.pop("intent", None)
+        alignment.update(status="rolled_back" if rollback else "complete", active_id=record["active_ids"][service], verification_digest=digest(observed))
+        return alignment["status"]
+
+    def verify(self, operation, receipt, *, enabled, previous=False, align_notifications=True):
         saved = self._private(operation, receipt)
         for service, baseline in saved["containers"].items():
             if service not in SERVICES:
@@ -895,7 +976,7 @@ class RestorationHost:
             require(actual["Image"] == expected_image, "imagem_carregada_divergente")
             expected = configuration(baseline)
             if not previous and not untouched:
-                expected["environment"] = self._target_environment(saved, service, enabled)
+                expected["environment"] = self._target_environment(saved, service, enabled, align_notifications=align_notifications)
                 expected["host"]["ReadonlyRootfs"] = True
                 expected["host"]["Tmpfs"] = CANDIDATE_TMPFS
             require(configuration(actual) == expected, "configuracao_carregada_divergente")

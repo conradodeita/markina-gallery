@@ -163,6 +163,173 @@ class HostContractTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def notification_runtime(self, *, interrupt_after_create=False, interrupt_after_signal=False, timeout=False, unhealthy=False):
+        """Docker sintético, com quiescência/recriação/verificação reais do adaptador."""
+        saved = {"containers": copy.deepcopy(self.containers), "models": {}}
+        markers = ["WHATSAPP_CREDENTIAL_ENV", "WHATSAPP_BINDING_LEGACY_A_CREDENTIAL_ENV", "WHATSAPP_BINDING_PILOT_B_CREDENTIAL_ENV"]
+        saved["containers"]["api"]["Config"]["Env"] += [f"{key}=production" for key in markers]
+        saved["containers"]["api"]["Config"]["Env"] += ["WHATSAPP_OTP_ENCRYPTION_KEY=api-key-sentinel", "WHATSAPP_BINDING_LEGACY_A_API_KEY=api-binding-sentinel"]
+        saved["containers"]["face-search-worker"]["Config"]["Env"] += [f"{key}=staging" for key in markers]
+        saved["containers"]["face-search-worker"]["Config"]["Env"] += ["WHATSAPP_OTP_ENCRYPTION_KEY=search-key-sentinel", "WHATSAPP_BINDING_LEGACY_A_API_KEY=search-binding-sentinel", "MERCADOPAGO_SENTINEL=preserved"]
+        receipt = self.drain_receipt()
+        for name, baseline in saved["containers"].items():
+            saved["models"][name] = {"services": {name: {"image": baseline["Image"]}}}
+            current = copy.deepcopy(baseline)
+            current["Image"] = receipt["manifest"]["services"][name]["image_id"]
+            current["Config"]["Env"] = [f"{key}={value}" for key, value in self.host._target_environment(saved, name, True, align_notifications=False).items()]
+            current["HostConfig"].update(ReadonlyRootfs=True, Tmpfs=CANDIDATE_TMPFS)
+            current["State"]["Status"] = "running"
+            self.containers[name] = current
+        self.host._private = lambda _operation, _receipt: saved
+        self.host._work("local-test").mkdir(mode=0o700)
+        self.host._write = lambda path, value, **_kwargs: path.write_bytes(value)
+        self.host._read = lambda path: path.read_bytes()
+        self.host._sql = lambda query: ["20261026_0090"] if query == "SELECT json_agg(version_num) FROM alembic_version" else self.fail("a troca parcial não exige inatividade global do banco")
+        self.use_docker_simulator(timeout_service="face-search-worker" if timeout else None)
+        docker_command = self.host.command
+        created = []
+        signal_interrupted = []
+
+        def command(args, data, limit):
+            if args[:2] == ("docker", "compose"):
+                self.events.append((tuple(args), data))
+                if "up" in args:
+                    self.assertEqual(args[-1], "face-search-worker")
+                    self.assertIn("--no-deps", args)
+                    self.assertIn("--no-build", args)
+                    self.assertNotIn("--volumes", args)
+                    path = Path(args[args.index("-f") + 1])
+                    model = json.loads(path.read_bytes())["services"]["face-search-worker"]
+                    current = self.containers["face-search-worker"]
+                    current["Id"] = f"{10000 + len(created):064x}"
+                    current["Config"]["Env"] = [f"{key}={value}" for key, value in model["environment"].items()]
+                    current["State"].update(Status="running", Pid=100, StartedAt="2026-11-03T14:40:00Z")
+                    current["State"]["Health"]["Status"] = "unhealthy" if unhealthy and not created else "healthy"
+                    created.append(current["Id"])
+                    if interrupt_after_create and len(created) == 1:
+                        raise RestorationError("interrupcao_sintetica_apos_recriar")
+                return b""
+            if args[0] == "curl":
+                return b"200"
+            if args[:2] == ("docker", "kill") and interrupt_after_signal and not signal_interrupted:
+                docker_command(args, data, limit)
+                signal_interrupted.append(True)
+                raise KeyboardInterrupt
+            return docker_command(args, data, limit)
+
+        self.host.command = command
+        record = {"phase": "aligning_notifications", "replaced": list(SERVICES), "enabled": True,
+                  "active_ids": {name: current["Id"] for name, current in self.containers.items()}}
+        return saved, receipt, record, created
+
+    def test_notification_alignment_preserves_keys_otp_payments_and_other_consumers(self):
+        saved, receipt, record, created = self.notification_runtime()
+        before = copy.deepcopy(self.containers)
+        result = self.host.align_notifications("local-test", receipt, record)
+        self.assertEqual(result, "complete")
+        actual = environment(self.containers["face-search-worker"])
+        old = self.host._target_environment(saved, "face-search-worker", True, align_notifications=False)
+        changed = {key for key in set(old) | set(actual) if old.get(key) != actual.get(key)}
+        self.assertEqual(changed, {"WHATSAPP_CREDENTIAL_ENV", "WHATSAPP_BINDING_LEGACY_A_CREDENTIAL_ENV", "WHATSAPP_BINDING_PILOT_B_CREDENTIAL_ENV"})
+        self.assertTrue(all(actual[key] == "production" for key in changed))
+        for name in SERVICES:
+            if name != "face-search-worker":
+                self.assertEqual(self.containers[name], before[name])
+        self.assertEqual(len(created), 1)
+        self.assertNotIn("intent", record)
+        self.assertEqual(self.host.align_notifications("local-test", receipt, record), "complete")
+        self.assertEqual(len(created), 1)
+
+    def test_notification_alignment_rollback_restores_only_search_configuration(self):
+        _saved, receipt, record, created = self.notification_runtime()
+        before = copy.deepcopy(self.containers)
+        self.host.align_notifications("local-test", receipt, record)
+        self.assertEqual(self.host.align_notifications("local-test", receipt, record, rollback=True), "rolled_back")
+        self.assertEqual(configuration(self.containers["face-search-worker"]), configuration(before["face-search-worker"]))
+        self.assertEqual(len(created), 2)
+        work = self.host._work("local-test")
+        self.assertTrue((work / "face-search-worker-enabled-notifications-v1.compose.json").exists())
+        self.assertTrue((work / "face-search-worker-enabled.compose.json").exists())
+
+    def test_notification_alignment_retry_recognizes_exact_recreated_consumer(self):
+        _saved, receipt, record, created = self.notification_runtime(interrupt_after_create=True)
+        with self.assertRaisesRegex(RestorationError, "interrupcao_sintetica"):
+            self.host.align_notifications("local-test", receipt, record)
+        persisted = self.records[-1]
+        self.assertEqual(persisted["intent"], "face-search-worker")
+        self.assertEqual(self.host.align_notifications("local-test", receipt, persisted), "complete")
+        self.assertEqual(len(created), 1)
+
+    def test_notification_alignment_timeout_resumes_same_consumer_without_recreation(self):
+        _saved, receipt, record, created = self.notification_runtime(timeout=True)
+        before = copy.deepcopy(self.containers)
+        with self.assertRaisesRegex(RestorationError, "timeout_sem_sigkill"):
+            self.host.align_notifications("local-test", receipt, record)
+        self.assertEqual(created, [])
+        self.assertEqual(self.containers, before)
+        self.assertFalse(any("SIGKILL" in part for args, _ in self.events for part in args))
+
+    def test_notification_alignment_retry_restores_interrupted_stop_before_replacing(self):
+        _saved, receipt, record, created = self.notification_runtime(interrupt_after_signal=True)
+        with self.assertRaises(KeyboardInterrupt):
+            self.host.align_notifications("local-test", receipt, record)
+        self.assertEqual(self.containers["face-search-worker"]["State"]["Status"], "exited")
+        persisted = self.records[-1]
+        self.assertTrue(persisted["stop_restore"])
+        self.assertEqual(self.host.align_notifications("local-test", receipt, persisted), "complete")
+        self.assertEqual(len(created), 1)
+        self.assertEqual(sum(args[:2] == ("docker", "start") for args, _ in self.events), 1)
+
+    def test_notification_alignment_refuses_unproven_stopped_consumer(self):
+        _saved, receipt, record, created = self.notification_runtime()
+        self.containers["face-search-worker"]["State"]["Status"] = "exited"
+        with self.assertRaisesRegex(RestorationError, "parada_anterior_nao_comprovada"):
+            self.host.align_notifications("local-test", receipt, record)
+        self.assertEqual(created, [])
+
+    def test_notification_alignment_refuses_credential_or_image_drift_before_stopping(self):
+        _saved, receipt, record, created = self.notification_runtime()
+        self.containers["face-search-worker"]["Config"]["Env"].append("WHATSAPP_API_KEY=unexpected")
+        with self.assertRaisesRegex(RestorationError, "configuracao_candidata_divergente"):
+            self.host.align_notifications("local-test", receipt, record)
+        self.assertEqual(created, [])
+        self.assertFalse(any(args[:2] == ("docker", "kill") for args, _ in self.events))
+
+    def test_notification_alignment_failed_health_keeps_intent_and_allows_rollback(self):
+        _saved, receipt, record, created = self.notification_runtime(unhealthy=True)
+        with self.assertRaisesRegex(RestorationError, "healthcheck_nao_confirmado"):
+            self.host.align_notifications("local-test", receipt, record)
+        self.assertEqual(record["intent"], "face-search-worker")
+        self.assertEqual(len(created), 1)
+        self.assertEqual(self.host.align_notifications("local-test", receipt, record, rollback=True), "rolled_back")
+        self.assertEqual(len(created), 2)
+
+    def test_notification_rollback_accepts_recreation_interrupted_before_identity_receipt(self):
+        _saved, receipt, record, created = self.notification_runtime(interrupt_after_create=True)
+        with self.assertRaisesRegex(RestorationError, "interrupcao_sintetica"):
+            self.host.align_notifications("local-test", receipt, record)
+        self.assertEqual(self.host.align_notifications("local-test", receipt, self.records[-1], rollback=True), "rolled_back")
+        self.assertEqual(len(created), 2)
+
+    def test_notification_alignment_refuses_nonproduction_source_before_stopping(self):
+        saved, receipt, record, created = self.notification_runtime()
+        saved["containers"]["api"]["Config"]["Env"] = [
+            "WHATSAPP_BINDING_PILOT_B_CREDENTIAL_ENV=staging" if value.startswith("WHATSAPP_BINDING_PILOT_B_CREDENTIAL_ENV=") else value
+            for value in saved["containers"]["api"]["Config"]["Env"]
+        ]
+        with self.assertRaisesRegex(RestorationError, "ambiente_do_canal_nao_comprovado"):
+            self.host.align_notifications("local-test", receipt, record)
+        self.assertEqual(created, [])
+        self.assertEqual(self.events, [])
+
+    def test_notification_markers_are_scoped_to_search_worker(self):
+        saved, _receipt, _record, _created = self.notification_runtime()
+        for name in SERVICES:
+            old = self.host._target_environment(saved, name, True, align_notifications=False)
+            aligned = self.host._target_environment(saved, name, True)
+            if name != "face-search-worker":
+                self.assertEqual(aligned, old)
+
     def test_exact_container_exit_zero_is_the_drain_receipt(self):
         self.use_docker_simulator()
         record = {"phase":"applying_dark", "replaced":[]}

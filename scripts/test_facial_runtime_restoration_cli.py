@@ -107,3 +107,14 @@ def test_matching_confirmation_invokes_only_the_requested_phase(monkeypatch):
     )
     assert code == 0
     assert calls == [("local-test", "dark", "canary")]
+
+
+@pytest.mark.parametrize("phase", ["align-notifications", "rollback-notifications"])
+def test_notification_maintenance_requires_its_own_confirmation(monkeypatch, phase):
+    calls = []
+    monkeypatch.setattr(cli, "execute", lambda *_args: calls.append(phase) or {"status": "complete"})
+    args = ["execute", "--support-sha", "a" * 40, "--operation", "local-test", "--phase", phase, "--fingerprint", "b" * 64]
+    assert cli.main(args, host_factory=lambda _sha: FakeHost(), input_fn=lambda _prompt: "CONFIRMO ACTIVATE local-test", stdout=io.StringIO(), stderr=io.StringIO()) == 2
+    assert not calls
+    assert cli.main(args, host_factory=lambda _sha: FakeHost(), input_fn=lambda _prompt: f"CONFIRMO {phase.upper()} local-test", stdout=io.StringIO(), stderr=io.StringIO()) == 0
+    assert calls == [phase]

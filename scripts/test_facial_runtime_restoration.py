@@ -127,8 +127,49 @@ class SyntheticHost:
         self.events.append("functional_proof")
         return {"fingerprint":approval.fingerprint, "scope_digest":approval.scope_digest(), "request_ready":True, "reference_purged":True, "ui_artifact_sha256":"d" * 64}
 
+    def align_notifications(self, operation, receipt, record, *, rollback=False):
+        self.events.append("rollback-notifications" if rollback else "align-notifications")
+        if self.failure:
+            raise RestorationError("falha_sintetica_no_alinhamento")
+        record["notification_alignment"] = {"status": "rolled_back" if rollback else "complete"}
+        return record["notification_alignment"]["status"]
+
 
 class ContractTests(unittest.TestCase):
+    def test_notification_phases_keep_fingerprint_enabled_runtime_and_pending_functional_proof(self):
+        host, approval = self.ready()
+        execute(host, "local-test", "dark", approval)
+        execute(host, "local-test", "activate", approval)
+        for phase, status in (("align-notifications", "complete"), ("rollback-notifications", "rolled_back")):
+            result = execute(host, "local-test", phase, approval)
+            self.assertEqual(result["status"], status)
+            self.assertTrue(result["enabled"])
+            self.assertEqual(host.records["local-test"]["phase"], "runtime_verified")
+            self.assertEqual(host.receipt["fingerprint"], approval.fingerprint)
+            self.assertIn("local-test", host.records)
+
+    def test_notification_phase_failure_stays_journaled_and_cannot_be_declared_verified(self):
+        host, approval = self.ready()
+        execute(host, "local-test", "dark", approval)
+        execute(host, "local-test", "activate", approval)
+        host.failure = True
+        with self.assertRaisesRegex(RestorationError, "falha_sintetica_no_alinhamento"):
+            execute(host, "local-test", "align-notifications", approval)
+        self.assertEqual(host.records["local-test"]["phase"], "aligning_notifications")
+        with self.assertRaisesRegex(RestorationError, "alinhamento_de_notificacao_pendente"):
+            execute(host, "local-test", "verify", approval)
+        host.failure = None
+        self.assertEqual(execute(host, "local-test", "rollback-notifications", approval)["status"], "rolled_back")
+
+    def test_notification_phase_rejects_scope_or_disabled_runtime(self):
+        host, approval = self.ready()
+        execute(host, "local-test", "dark", approval)
+        with self.assertRaisesRegex(RestorationError, "runtime_nao_verificado"):
+            execute(host, "local-test", "align-notifications", approval)
+        execute(host, "local-test", "activate", approval)
+        with self.assertRaisesRegex(RestorationError, "escopo_de_verificacao_divergente"):
+            execute(host, "local-test", "align-notifications", Approval(approval.fingerprint, ("22345678-1234-4234-8234-123456789abc",)))
+
     def test_signal_handler_overlay_is_allowed_only_for_facial_worker_candidates(self):
         inventory, manifest = fixture()
         service = FACIAL[0]

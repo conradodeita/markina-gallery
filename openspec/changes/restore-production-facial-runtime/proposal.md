@@ -17,6 +17,7 @@ A transição ambiental de 30/10/2026 preservou os índices e desligou a busca f
 - Habilitar `FACIAL_PROCESSING_ENABLED=true` após os gates técnicos, uso autorizado e escopo exigidos pelo modo aprovado; registrar a dispensa de calibração e a autorização infantil do proprietário como decisões explícitas distintas, sem criar aprovação fictícia para satisfazer o código.
 - Comprovar o escopo explícito da etapa: no modo estrito, respeitar a allowlist do canary; no modo geral autorizado, conferir o conjunto de políticas ativas compatíveis, preservando os controles de acesso existentes.
 - Registrar fases, evidências, pendências e recuperação por serviço, sem parar bancos, proxy ou outros projetos e sem alteração de schema.
+- Reconciliar os marcadores não secretos de ambiente WhatsApp do consumidor de busca com a API de produção, preservando credenciais, instância, OTP e pagamentos; permitir correção e recuperação delimitadas ao worker de busca pelo mesmo operador.
 
 ## Capabilities
 

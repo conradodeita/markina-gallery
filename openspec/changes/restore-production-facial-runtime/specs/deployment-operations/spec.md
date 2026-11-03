@@ -1,5 +1,21 @@
 ## ADDED Requirements
 
+### Requirement: Notificação facial preserva o ambiente do canal de produção
+
+O operador SHALL alinhar somente marcadores não secretos `WHATSAPP_CREDENTIAL_ENV` e `WHATSAPP_BINDING_*_CREDENTIAL_ENV` do worker de busca à API. Credenciais, instância, OTP, pagamentos e demais configurações SHALL permanecer intactos. Correção e rollback SHALL usar o mesmo fingerprint, imagem e escopo, com journal, confirmação interativa e parada cooperativa somente desse consumidor.
+
+#### Scenario: Busca funciona mas o consumidor preservou marcadores de staging
+
+- **WHEN** a restauração habilitada precisa alinhar os marcadores do canal
+- **THEN** o operador recria somente `face-search-worker`, mantém ID e início dos demais consumidores e verifica configuração completa, saúde, schema e pares
+- **AND** nenhum evento terminal é reenviado automaticamente
+
+#### Scenario: Correção interrompida ou recuperação delimitada
+
+- **WHEN** a troca falha ou o operador retoma uma intenção persistida
+- **THEN** somente o modelo exato anterior ou alinhado pode ser reconhecido, e rollback restaura o modelo anterior sem alterar imagem, mounts, dados ou outros serviços
+- **AND** timeout de parada retoma o mesmo container e não permite SIGKILL ou recriação
+
 ### Requirement: Ordem específica do proprietário resolve o bloqueio infantil de retomada
 
 Para esta restauração, a operação SHALL registrar `owner-minor-production-unblock-20261103` como autorização operacional do proprietário para o fluxo infantil vigente, substituindo o bloqueio adicional do `AGENTS.md`. O recibo SHALL NOT afirmar parecer jurídico independente, representação comprovada ou calibração medida.

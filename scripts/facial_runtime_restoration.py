@@ -164,6 +164,7 @@ class Host(Protocol):
     def recovery_proof(self, operation: str, receipt: dict) -> None: ...
     def functional_proof(self, operation: str, approval: Approval) -> dict: ...
     def complete(self, operation: str, result: dict) -> None: ...
+    def align_notifications(self, operation: str, receipt: dict, record: dict, *, rollback: bool = False) -> str: ...
 
 
 def prepare(host: Host, operation: str, manifest: dict) -> dict:
@@ -181,7 +182,7 @@ def prepare(host: Host, operation: str, manifest: dict) -> dict:
 
 
 def execute(host: Host, operation: str, mode: str, approval: Approval) -> dict:
-    require(OPERATION.fullmatch(operation) and mode in {"dark", "activate", "verify", "recover"}, "operacao_ou_fase_invalida")
+    require(OPERATION.fullmatch(operation) and mode in {"dark", "activate", "verify", "recover", "align-notifications", "rollback-notifications"}, "operacao_ou_fase_invalida")
     with host.lock():
         receipt = host.load(operation)
         expected = digest({k: v for k, v in receipt.items() if k != "fingerprint"})
@@ -198,7 +199,7 @@ def execute(host: Host, operation: str, mode: str, approval: Approval) -> dict:
         else:
             record = host.read_journal(operation)
             require(record.get("fingerprint") == expected, "journal_divergente")
-            phases = {"approved", "applying_dark", "dark_verified", "activating", "runtime_verified", "functional_verified", "recovering", "complete"}
+            phases = {"approved", "applying_dark", "dark_verified", "activating", "runtime_verified", "functional_verified", "recovering", "complete", "aligning_notifications"}
             require(record.get("format") == 1 and record.get("phase") in phases
                 and isinstance(record.get("replaced"), list)
                 and len(set(record["replaced"])) == len(record["replaced"])
@@ -209,6 +210,17 @@ def execute(host: Host, operation: str, mode: str, approval: Approval) -> dict:
                 and set(record.get("active_ids", {})) <= set(SERVICES)
                 and isinstance(record.get("previous_ids", {}), dict)
                 and set(record.get("previous_ids", {})) <= set(SERVICES), "journal_invalido")
+            if mode in {"align-notifications", "rollback-notifications"}:
+                require(record["phase"] in {"runtime_verified", "aligning_notifications"}
+                        and record.get("enabled") is True, "runtime_nao_verificado")
+                require(record.get("scope_digest") == approval.scope_digest(), "escopo_de_verificacao_divergente")
+                record["phase"] = "aligning_notifications"
+                host.journal(operation, record)
+                status = host.align_notifications(operation, receipt, record, rollback=mode == "rollback-notifications")
+                record["phase"] = "runtime_verified"
+                host.journal(operation, record)
+                return {"status": status, "operation": operation, "fingerprint": expected, "enabled": True}
+            require(record["phase"] != "aligning_notifications" or mode == "recover", "alinhamento_de_notificacao_pendente")
             if mode == "recover" and record["phase"] == "complete" and record.get("enabled") is False:
                 observed = host.verify(operation, receipt, enabled=False, previous=True)
                 require(observed.get("schema") == SCHEMA and observed.get("peers_unchanged") is True, "recuperacao_nao_confirmada")
