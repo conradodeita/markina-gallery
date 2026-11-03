@@ -592,9 +592,17 @@ class RestorationHost:
                 and current["State"]["Status"] == "running"
                 and current["State"].get("Health", {}).get("Status") == "healthy",
                 "nginx_mudou_apos_reload")
-        codes = [self.run("curl", "--proto", "=https", "--tlsv1.2", "--max-time", "10", "-sS", "-o", "/dev/null", "-w", "%{http_code}", ORIGIN + path)
-                 for path in ("/api/health", "/healthz")]
-        require(codes == ["200", "200"], "nginx_reload_health_falhou")
+        deadline = self.monotonic() + 120
+        while True:
+            try:
+                codes = [self.run("curl", "--proto", "=https", "--tlsv1.2", "--max-time", "10", "-sS", "-o", "/dev/null", "-w", "%{http_code}", ORIGIN + path)
+                         for path in ("/api/health", "/healthz")]
+            except RestorationError:
+                codes = []
+            if codes == ["200", "200"]:
+                return
+            require(self.monotonic() < deadline, "nginx_reload_health_falhou")
+            self.sleeper(1.0)
 
     @staticmethod
     def _restart_option(item):
@@ -682,6 +690,19 @@ class RestorationHost:
         if record.get("phase") == "recovering":
             affected = set(record.get("replaced", [])) | {record.get("intent")}
             affected.discard(None)
+            intent = record.get("intent")
+            if intent in affected:
+                item = current[intent]
+                baseline = saved["containers"][intent]
+                already_restored = (
+                    item["Image"] == baseline["Image"]
+                    and configuration_without_restart(item) == configuration_without_restart(baseline)
+                    and self._restart_option(item) == self._restart_option(baseline)
+                    and baseline["State"]["Status"] == "running"
+                    and item["State"]["Status"] == "running"
+                )
+                if already_restored:
+                    affected.discard(intent)
         record.setdefault("drain_receipts", [])
         record["stop_restore"] = []
         try:
@@ -783,33 +804,27 @@ class RestorationHost:
             record = self.read_journal(operation)
             candidate_id = record.get("active_ids", {}).get(service)
             require(candidate_id, "id_de_candidato_ausente_no_journal")
-            try:
-                current = self._current(service, expected_id=candidate_id)
-            except RestorationError as error:
-                # A prior recovery attempt may have recreated the baseline and
-                # then failed while refreshing Nginx or checking public health.
-                # The caller leaves intent in the journal until this method
-                # returns, so accept only that exact, already-restored state.
-                if (str(error) != "id_de_consumidor_registrado_ausente"
-                        or record.get("intent") != service):
-                    raise
+            if record.get("intent") == service:
                 current = self._current(service)
-                require(current["Image"] == baseline["Image"]
-                        and configuration_without_restart(current) == configuration_without_restart(baseline)
-                        and self._restart_option(current) == self._restart_option(baseline)
-                        and baseline["State"]["Status"] == "running"
-                        and current["State"]["Status"] == "running",
-                        "baseline_parcial_de_recuperacao_divergente")
-                deadline = self.monotonic() + 120
-                while current["State"].get("Health", {}).get("Status") not in {None, "healthy"}:
-                    require(current["State"]["Status"] == "running"
-                            and self.monotonic() < deadline,
-                            "retomada_de_consumidor_nao_confirmada")
-                    self.sleeper(0.5)
-                    current = self.inspect(current["Id"])
-                if service == "api":
-                    self._refresh_nginx_api_upstream(saved)
-                return current["Id"]
+                already_restored = (
+                    current["Image"] == baseline["Image"]
+                    and configuration_without_restart(current) == configuration_without_restart(baseline)
+                    and self._restart_option(current) == self._restart_option(baseline)
+                    and baseline["State"]["Status"] == "running"
+                    and current["State"]["Status"] == "running"
+                )
+                if already_restored:
+                    deadline = self.monotonic() + 120
+                    while current["State"].get("Health", {}).get("Status") not in {None, "healthy"}:
+                        require(current["State"]["Status"] == "running"
+                                and self.monotonic() < deadline,
+                                "retomada_de_consumidor_nao_confirmada")
+                        self.sleeper(0.5)
+                        current = self.inspect(current["Id"])
+                    if service == "api":
+                        self._refresh_nginx_api_upstream(saved)
+                    return current["Id"]
+            current = self._current(service, expected_id=candidate_id)
             require(current["State"]["Status"] != "running", "consumidor_nao_pausado")
             if current["Image"] == baseline["Image"] and configuration_without_restart(current) == configuration_without_restart(baseline):
                 policy = self._restart_option(baseline)

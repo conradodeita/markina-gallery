@@ -173,6 +173,20 @@ class HostContractTests(unittest.TestCase):
         self.assertEqual([x["service"] for x in record["drain_receipts"]], ["api", "worker"])
         self.assertFalse(any(x[0][:2] == ("docker", "exec") for x in self.events))
 
+    def test_recovery_quiesce_keeps_already_restored_baseline_running(self):
+        self.use_docker_simulator()
+        record = {
+            "phase": "recovering",
+            "replaced": ["api"],
+            "intent": "api",
+            "active_ids": {"api": "e" * 64},
+        }
+
+        self.host.quiesce("local-test", self.drain_receipt(), record)
+
+        self.assertEqual(self.containers["api"]["State"]["Status"], "running")
+        self.assertFalse(any(event[0][:2] in {("docker", "kill"), ("docker", "update")} for event in self.events))
+
     def test_nonzero_exit_restores_same_container_without_force_recreate(self):
         self.use_docker_simulator(failing_exit_service="worker")
         receipt = self.drain_receipt()
@@ -262,6 +276,51 @@ class HostContractTests(unittest.TestCase):
         self.assertEqual(calls[1], ("docker", "exec", nginx["Id"], "nginx", "-s", "reload"))
         self.assertEqual([call[0] for call in calls[2:]], ["curl", "curl"])
         self.assertTrue(all("restart" not in call for call in calls))
+
+    def test_api_reload_waits_for_transient_upstream_health(self):
+        nginx = copy.deepcopy(self.containers["api"])
+        nginx["Id"] = "b" * 64
+        nginx["Image"] = "sha256:" + "c" * 64
+        nginx["Config"]["Labels"]["com.docker.compose.service"] = "nginx"
+        clock = [0.0]
+        statuses = iter(("502", "502", "200", "200"))
+        calls = []
+        self.host.inspect = lambda _identity: nginx
+
+        def run(*args, **_kwargs):
+            calls.append(args)
+            return next(statuses) if args[0] == "curl" else "ok"
+
+        self.host.run = run
+        self.host.monotonic = lambda: clock[0]
+        self.host.sleeper = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+
+        self.host._refresh_nginx_api_upstream({"containers":{"nginx":nginx}})
+
+        self.assertEqual(sum(call[0] == "curl" for call in calls), 4)
+        self.assertEqual(clock[0], 1.0)
+
+    def test_api_reload_health_retry_is_bounded(self):
+        nginx = copy.deepcopy(self.containers["api"])
+        nginx["Id"] = "b" * 64
+        nginx["Image"] = "sha256:" + "c" * 64
+        nginx["Config"]["Labels"]["com.docker.compose.service"] = "nginx"
+        calls = []
+        clock = [0.0]
+        self.host.inspect = lambda _identity: nginx
+
+        def run(*args, **_kwargs):
+            calls.append(args)
+            return "503" if args[0] == "curl" else "ok"
+
+        self.host.run = run
+        self.host.monotonic = lambda: clock[0]
+        self.host.sleeper = lambda _seconds: clock.__setitem__(0, 120.0)
+
+        with self.assertRaisesRegex(RestorationError, "nginx_reload_health_falhou"):
+            self.host._refresh_nginx_api_upstream({"containers":{"nginx":nginx}})
+
+        self.assertEqual(sum(call[0] == "curl" for call in calls), 4)
 
     def test_recovery_retry_accepts_only_an_already_restored_baseline(self):
         baseline = copy.deepcopy(self.containers["api"])
