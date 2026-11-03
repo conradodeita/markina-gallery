@@ -255,20 +255,20 @@ Quando containers históricos compartilham os labels de projeto e serviço, a re
 
 ### Requirement: Recuperação aceita retry somente após restauração comprovada
 
-Se uma recuperação recriar o baseline e falhar antes de registrar a conclusão, a próxima tentativa SHALL aceitar somente o baseline ativo cujo ID, imagem, configuração, política de reinício e saúde correspondam ao recibo. Para API, SHALL repetir a validação e reload do Nginx. Qualquer estado parcial divergente SHALL continuar bloqueado.
+Se uma recuperação recriar o baseline e falhar antes de registrar a conclusão, a próxima tentativa SHALL manter esse baseline ativo durante a quiescência e aceitá-lo somente quando imagem, configuração, política de reinício e saúde correspondam ao recibo. Para API, SHALL repetir a validação e reload do Nginx. Qualquer estado parcial divergente SHALL continuar bloqueado.
 
 #### Scenario: Recuperação interrompida após substituir a API
 
 - **WHEN** o baseline foi recriado, mas o journal ainda contém a identidade do candidato e a intenção de recuperar a API
-- **THEN** a nova tentativa verifica o baseline restaurado e repete o reload gracioso no mesmo Nginx
+- **THEN** a nova tentativa não para o baseline já restaurado, verifica seu estado e repete o reload gracioso no mesmo Nginx
 - **AND** um estado sem essa intenção, sem saúde ou configuração compatível é recusado
 
 ### Requirement: Nginx recarrega a resolução após substituir a API
 
-Após recriar o container da API, o operador SHALL validar a configuração do Nginx e emitir reload gracioso no mesmo container inventariado, para atualizar o endereço do upstream. SHALL manter identidade, imagem, configuração montada e bind de porta do Nginx. A verificação SHALL confirmar `/api/health` e `/healthz` em 200; nenhuma configuração, imagem, container ou porta será alterada.
+Após recriar o container da API, o operador SHALL validar a configuração do Nginx e emitir reload gracioso no mesmo container inventariado, para atualizar o endereço do upstream. SHALL manter identidade, imagem, configuração montada e bind de porta do Nginx. A verificação SHALL aguardar ambos `/api/health` e `/healthz` retornarem 200, com retry limitado a 120 segundos para a prontidão do upstream; esgotado o prazo, a operação permanece incompleta.
 
 #### Scenario: API recebe novo endereço de rede
 
 - **WHEN** uma fase substitui o container da API e o Nginx pode manter em memória o endereço anterior
 - **THEN** o operador executa `nginx -t` e reload gracioso, mantém o mesmo container/configuração/porta e confirma os dois health checks
-- **AND** falha na validação, reload ou health check mantém a fase incompleta e segue o procedimento de recuperação
+- **AND** falha na validação/reload ou ausência de 200 após 120 segundos mantém a fase incompleta e segue o procedimento de recuperação
