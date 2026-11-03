@@ -120,6 +120,8 @@ Refinamento operacional de 02/11: `docker diff` pode conter somente diretórios 
 
 O inventário SHALL exigir manifests reproduzíveis/protegidos somente dos cinco consumidores que podem ser recriados. Serviços preservados são vinculados por ID, imagem, configuração efetiva, mounts e portas; seus manifests históricos não serão executados nem terão permissões alteradas por esta operação. Git recebe `safe.directory` apenas para as duas raízes fixas via argumento por comando, sem configuração global; Docker retorna IDs integrais com `--no-trunc`.
 
+**Registro operacional (02/11/2026, BRT):** a primeira tentativa da fase `dark` foi recusada com `identidade_invalida` porque `_current` chamava `docker ps -aq` sem `--no-trunc`; o Docker retornou IDs curtos, recusados pelo próprio validador de `inspect`. O journal ficou em `applying_dark`, sem `stop_intent`, `stop_restore`, serviços parados ou substituídos; inventário independente confirmou API, worker e serviços preservados saudáveis nas imagens anteriores. Corrigir o consumidor de IDs integrais e reconciliar o journal somente pela fase `recover` do operador atualizado, preservando o recibo original.
+
 - [Imagem sem dependência, arquivo ou ABI compatível] → Inventário por baseline, dependências fixadas, validação ARM64 isolada e recusa anterior à troca de serviços.
 - [Flag não torna o recurso funcional] → Verificar configuração completa, calibração, admissão, claims, resultado autenticado e caixas faciais na UI.
 - [Fallback legado amplia o canary] → Modo estrito em todos os consumidores, cenários para galerias novas e allowlist revisada.
