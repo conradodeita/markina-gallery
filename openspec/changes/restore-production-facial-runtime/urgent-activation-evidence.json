@@ -1,0 +1,69 @@
+{
+  "recorded_at_utc": "2026-11-02T23:23:28Z",
+  "authorization_reference": "owner-general-restore-20261102",
+  "activation_policy": "owner-authorized-general-restore-v1",
+  "calibration_measured": false,
+  "calibration_waived_by_owner": true,
+  "scope": "Todas as políticas faciais ativas, mantendo regras existentes de tenant/galeria/cliente. A pasta de teste será configurada pelo proprietário na UI existente.",
+  "thresholds": {
+    "match": 0.75,
+    "indexed_region_ambiguous": 0.6,
+    "uploaded_reference_ambiguous": 0.5
+  },
+  "tests": {
+    "windows": "87 passed, 3 skipped",
+    "native_arm64": "90 passed, 26 subtests passed",
+    "layer_contracts_native": "42 passed, 26 subtests passed",
+    "ruff": "passed"
+  },
+  "native_load": {
+    "admissions": 100,
+    "architecture": "aarch64",
+    "average_cpu_percent": 44.14976101123834,
+    "duration_p95_seconds": 24.287404,
+    "elapsed_seconds": 34.714257493033074,
+    "max_job_age_seconds": 14.486218,
+    "peak_rss_bytes": 327884800,
+    "queue_peak": 100,
+    "queue_remaining": 0,
+    "real_yunet_provider": true,
+    "references_remaining": 0,
+    "lease_recovery": "passed",
+    "backpressure": "passed",
+    "synthetic_vector_comparison_p95_seconds": 0.0003242239530663937,
+    "scope": "JPEG sintético sem rosto com detector real, admissão/fila/leases/retenção e microbenchmark vetorial. Não prova precisão nem latência de retrieval positivo com PostgreSQL/acervo real."
+  },
+  "backup_restore": {
+    "backup_sha256": "49a8ce0780d3d4d11a9db431127018a060ea31e5abe7090cc6483ab96d10a366",
+    "backup_utc": "20261102T060907Z",
+    "dump_sha256": "f207b15c24f2016ef74575672bf84beb457a7c7d11550e249ec2556e4449ce3b",
+    "destination": "pyp-facial-restore-rehearsal-7789b11889",
+    "restore_exit_code": 0,
+    "schema": "20261026_0090",
+    "tables": 99,
+    "indexes": 622,
+    "invalid_indexes": 0,
+    "elapsed_seconds": 20.461,
+    "network": "none",
+    "ports": false,
+    "persistent_mounts": false,
+    "data_stayed_on_server": true,
+    "test_container_removed": true
+  },
+  "candidate_native_ids": {
+    "api": "sha256:6e732610932d5e7eb01c1fbed5ddbc7a1f4b05a39da9de8179c0ed0ab8375aea",
+    "worker": "sha256:e7eb35840d59f71fbb6e0437525448b761d12bdcb571c9b5416afdb034025f5b",
+    "face-search-worker": "sha256:cfbf33b3b1004db5f68964afcf9d2ba760b8c776b83377f8ddfbdaad9929f8cd",
+    "face-index-worker": "sha256:965b33751d4cd4df7b1fe1954ad536e1a00e20d47d31df3dc5ebd77b1a1e384d",
+    "face-maintenance-worker": "sha256:5cf540247c3e77b0f48bd19a556c416a6e493ba6ff36c724e7b9cc043ceeb0b1"
+  },
+  "source_overlays": {
+    "app/facial/config.py": "27458617e4a26497f9d888fd3cf5c11fa592225308a48375f7efc8c876207d0d",
+    "app/facial/rollout.py": "bf44804780a81430c880fb26463f863087fa8a6ca455d476e1278b40fd6a3f3c"
+  },
+  "active_checkout": "0dd015a62447e0c8d4c6af16b381140c8118f2ec",
+  "reviewed_main": "6af538ecd5c46da7691fa973c33869f263945a25",
+  "main_ci": "https://github.com/conradodeita/markina-gallery/actions/runs/41194332664",
+  "main_ci_result": "success",
+  "production_services_replaced": false
+}

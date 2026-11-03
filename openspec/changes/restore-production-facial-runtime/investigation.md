@@ -1,0 +1,162 @@
+# Investigação e matriz de rastreabilidade — restauração facial
+
+## Escopo e origem
+
+Continuidade assumida do chat **“Investigue busca facial em produção”**, id `01a19c3c-1ade-7333-9e80-781c6bf71537`, consultado pela ferramenta de leitura de chats. O usuário determinou naquele chat `FACIAL_PROCESSING_ENABLED=true` e pediu descobrir o caminho de reativação; nesta conversa solicitou assumir o trabalho e continuar também o desenvolvimento SaaS. O chat de origem estava idle e declarou não ter feito mutações.
+
+Consultas atuais iniciadas em **02/11/2026, 15:52:23 UTC**, via SSH autorizado. Foram lidos estado/configuração de containers, código carregado, metadados e contagens agregadas. Consultas SQL foram delimitadas por `BEGIN READ ONLY`. Não foram lidos valores de imagens, embeddings, chaves, credenciais ou linhas identificáveis de clientes.
+
+## Inventário atual
+
+| Item | Evidência confirmada |
+|---|---|
+| Git remoto main | `6af538ecd5c46da7691fa973c33869f263945a25`, confirmado por `git ls-remote`; HEAD da worktree SaaS coincide com essa base, mas contém alterações locais não publicadas |
+| API | Healthy; `APP_ENV=production`, `APP_VERSION=74f61300e7a818d1605afda3db1d07574c443110`; imagem `sha256:0d14e294a7581f0f863e19a030f158ef2b59c6e409cf0c4a763124906459ef6f` |
+| Worker geral | Healthy; `APP_ENV=production`, `APP_VERSION=c1944189761799be96eeeb921cad9906484d8b09`; imagem `sha256:06e3c1127212fab1629157f7e9c90f801d88e8a949b67795c8d22186a105e815` |
+| Flag efetiva | `false` na API e worker; nenhum valor persistido foi alterado |
+| Workers faciais | Search/index/maintenance existem, parados com saída 130; sua configuração preservada ainda é `staging`, credencial `staging`, flag `true` |
+| Imagem de busca preservada | `sha256:a0c1aa1ba4b19e8b3f6cd1198ff6ca78feab0dde14c5e10bc15490066975cd92` |
+| Imagem de índice preservada | `sha256:fc2cb47fa432f880dfe380cb6f6efd8b91e241379d280f06a13d8e8b5739c0a4` |
+| Imagem de manutenção preservada | `sha256:a02de031663488c6a238a745e1cd86a15292812723f22c86a26edab645d6eccc` |
+| Schema | `20261026_0090` |
+| Índices | 14.267 embeddings; número atual observado, não promessa de correspondência com contagens históricas |
+| Políticas e filas | Sete políticas ativas; zero registros de calibração; zero rollouts; zero jobs nos estados queued/running/leased consultados |
+| Modelos | Manifesto da API fixa YuNet/SFace; marcador correspondente existe na imagem de busca preservada; pesos não foram copiados para disco nem verificados integralmente |
+| API — dependências | `importlib.util.find_spec` não encontra `cv2` nem `numpy`; diretório `/opt/markina-face-models` inexistente |
+| Prova da configuração | Processo de diagnóstico na API com flag alterada somente em sua memória: sem verificar assets, configuração válida e chave ativa presente; verificação completa recusa `Marcador do cache facial ausente ou inválido` |
+| Rede e recursos | Nginx Markina saudável em `127.0.0.1:8080`; API/DB/worker sem portas publicadas; ARM64, RAM disponível ~20 GiB e disco livre ~137 GiB no instante do inventário. Snapshot não é teste de carga |
+
+`APP_VERSION`, labels e nomes de chaves não substituem prova de conteúdo. Os valores de política/chave que contêm `homolog` foram observados, mas não provam isoladamente que o contexto de cifra esteja errado: a validação estrutural com credencial `production` passou. Origem e adequação operacional das chaves continuam exigindo a prova apropriada, sem exposição de seus valores.
+
+## Matriz persistente da restauração
+
+| ID | Requisito verificável | Estado | Evidência / próxima ação |
+|---|---|---|---|
+| RF01 | Autorização de reativar recuperada | Confirmado | Mensagens humanas do chat de origem e pedido atual; não pedir novamente autorização genérica da flag |
+| RF02 | Ausência de execução concorrente no outro chat | Confirmado no checkpoint | Status idle e declarações de não mutação; reconfirmar antes da aplicação |
+| RF03 | Main e baselines reais identificados | Confirmado localmente | `runtime-inventory.json`, `baseline-comparison.json` e `candidate-build-evidence.json` registram cinco runtimes, 144 módulos e comparação dos candidatos com os baselines; API/worker alteram somente `app/facial/config.py` e `app/facial/rollout.py`, e cada worker facial acrescenta somente `app/facial/face_worker.py` |
+| RF04 | Explicação da indisponibilidade | Confirmado | O corte `env-mp-20261030-04` deixou `FACIAL_PROCESSING_ENABLED=false` e os três workers faciais parados como decisão expressa para priorizar o Mercado Pago; não foi uma falha espontânea dos pesos. A API ativa também não contém `cv2`/`numpy` nem o cache de modelos, portanto ligar só a flag não restauraria o recurso. Ver `transition-biometric-app-env-context/validation.md` e `operations.md` |
+| RF05 | Configuração habilitada aceita no runtime | Confirmado nos candidatos locais; pendente em produção | API e worker candidatos passaram validação habilitada, isolada e sem rede/dados reais; a imagem atualmente ativa em produção não foi alterada e sua validação completa anterior falhou por ausência do cache e de cv2/numpy |
+| RF06 | Modelos preservados e íntegros | Confirmado nos candidatos locais | Os candidatos verificaram tamanho e SHA-256 dos bytes YuNet/SFace contra o manifesto; nenhum modelo foi escrito em produção |
+| RF07 | Chaves e APP_ENV coerentes | Parcial | Contexto estrutural válido e chave ativa presente; prova de origem/rotação/adequação não foi feita |
+| RF08 | Índices existentes preservados | Confirmado no checkpoint | Apenas `count(*)=14267`; sem escrita ou reindexação nesta investigação |
+| RF09 | Calibração compatível aprovada em production | Ausente | Zero registros; código carregado recusa produção sem aprovação. Proprietário confirmou uso prévio das fotos reais; isso não contém resultado de medição. Busca dirigida no histórico mantém a calibração como pendência técnica |
+| RF10 | Escopo canário delimitado | Confirmado no código local; pendente para operação | Modo opt-in de rollout explícito foi implementado e testado; produção permanece sem alteração, e a allowlist real precisa de aprovação própria |
+| RF11 | Decisão de uso para a retomada | Decisão do proprietário registrada | Em 02/11 confirmou o uso anterior do acervo real e dispensou documento jurídico adicional; preservar consentimentos e a revisão de 21/09, sem declarar um parecer jurídico |
+| RF12 | Capacidade ARM sob carga | Parcial (emulação) | Smoke de uma imagem sintética e reinício cooperativo executados em ARM64 sob emulação x86_64; ensaio de 20 imagens interrompido por CPU sustentada; sem p95/fila/carga comparável, portanto não comprova SLO nem capacidade nativa; ver `candidate-build-evidence.json` |
+| RF13 | Backup/restore e recuperação por fase | Parcial | `transition-biometric-app-env-context/validation.md` registra que o pacote cifrado de 30/10 foi persistido/autenticado antes do SQL; consulta SSH somente-leitura confirmou metadados do arquivo (304.226.757 bytes, modo 0600) e a chave separada (32 bytes, modo 0600), sem ler conteúdo/valor. Falta restauração independente em destino descartável; o recibo local da change facial não a substitui |
+| RF14 | Operador suporta runtime desligado/schema0090 | Parcial; contratos locais implementados | Parada cooperativa por SIGTERM, CLI fail-closed e candidatos read-only; contratos Linux ARM64 emulados (`59 passed, 37 subtests`) e PostgreSQL sintético (`2 passed`); nenhum adaptador foi executado contra o host real |
+| RF15 | Serviços fora do escopo preservados | Confirmado para a investigação | Nenhum start/stop/restart/build/migration ou configuração persistida alterada |
+| RF16 | Busca, caixas e resultado real autenticados | Não executado | Não foi usada sessão de cliente nem referência de pessoa real nesta investigação |
+| RF17 | SaaS local preservado | Confirmado | A worktree SaaS preexistente em `feature/pickyourpic-saas-mainline`, HEAD `6af538e`, foi preservada. A implementação facial foi commitada separadamente em `feature/restore-production-facial-runtime-support` (`44ab1498…`), sem push |
+| RF18 | Rollout/release concluído | Não executado | Flag permanece false; todos os passos mutáveis permanecem nas tasks abertas |
+| RF19 | Sem regressão nos fluxos Mercado Pago | Confirmado nos cenários funcionais exercitados; observação pós-release pendente | SQLite: 98 passaram; 7 cenários PostgreSQL-only passaram isoladamente. Execução PG ampla: 101 passaram e 4 erros de fixture antes das asserções em `drop_all` de FK sem nome. Os cinco candidatos mantêm 144 módulos e 11 módulos comerciais sem alteração; `prove_images` Git-bound e `validate_images` passaram; produção não foi alterada |
+
+## Diferenças esclarecidas em relação ao resumo do outro chat
+
+1. Os workers faciais não foram removidos: os containers existem parados com o contexto antigo. Iniciá-los diretamente seria incorreto.
+2. Rótulo de chave/política com `homolog` não prova, por si só, falha de contexto. A validação estrutural passou; os assets e dependências da API são um bloqueio real adicional.
+3. Uma galeria sem rollout não é sempre recusada pelo código atual: existe fallback legado depois do gate de calibração. A necessidade de delimitação da etapa deve ser demonstrada, não presumida.
+4. Não foi provado que os pesos foram perdidos: o marcador está na imagem preservada; a API corrente é que não tem o diretório. Verificação integral dos bytes segue pendente.
+
+## Continuidade
+
+Planejamento completo não significa recurso restaurado. Não rotacionar chaves, criar aprovação fictícia ou suspender rollouts para aproveitar o efeito de purge. Antes de qualquer escrita real, revalidar fingerprint e apresentar o pacote/impacto concreto conforme AGENTS.md.
+
+Resposta posterior do proprietário: as fotos reais atuais já foram usadas pelo reconhecimento facial; ele não considera necessário documento jurídico adicional para a retomada. A decisão foi incorporada sem pedir novamente autorização de ativação. A busca dirigida em `productionize-facial-search` e `improve-client-face-reference-capture` encontrou critérios e baseline sintético, mas não relatório representativo aprovado. O bloqueio de calibração é uma condição efetiva do código em production; não foi removido nem satisfeito com um registro fictício nesta investigação.
+
+## Progresso local após o checkpoint inicial — 02/11/2026
+
+- Cinco candidatos ARM64 foram construídos sobre os digests próprios da API, worker geral e três workers faciais. Todos verificaram o manifesto/pesos e alteraram somente os dois módulos permitidos; API/worker acrescentaram NumPy/OpenCV fixados, e os workers faciais preservaram os pacotes já instalados.
+- Dez probes de runtime (baseline e candidato de cada serviço) passaram na validação `validate_images`: cinco serviços, 144 módulos por candidato, apenas os dois módulos faciais alterados, schema alvo `20261026_0090` e modelos verificados. Essa validação local não executou o inventário do host nem a prova Git-bound do adaptador.
+- A suíte facial backend passou `115 passed`; a suíte Linux ARM64 de candidatos/importação/operador passou `56 passed, 27 subtests passed, 0 skipped`. Ruff focado e OpenSpec strict também passaram após as correções.
+- `backend/tests/test_facial_restore_postgres.py` passou `2 passed` contra PostgreSQL 17.11 sintético em tmpfs e rede Docker interna sem egress. Foi usado somente JPEG sintético; o container e a rede descartáveis foram removidos.
+- A evidência detalhada está em `candidate-build-evidence.json`. Estes resultados não são prova de carga em hardware de produção, backup/restore independente nem autorização para mudar produção.
+- Em `02/11/2026 17:48:43 UTC`, as três imagens doadoras importadas localmente foram reexecutadas com `--network none`, `--read-only`, sem volumes e `--pull=never`; cada resultado comparado ao inventário registrou os mesmos 144 hashes de módulos e 62 pacotes, Python `3.13.16`, ARM64, OpenCV `4.12.0`, NumPy `2.2.6` e manifesto. Os três probes verificaram os modelos. As imagens originais do servidor não foram executadas nem alteradas.
+- A prova de código do adaptador exige que os hashes dos overlays coincidam com o `support_sha` limpo. Os candidatos locais carregam `config.py=d728775ccebbc39e80aa694b51e56fc5b0c19ec6164a062aecdee25e80d36429` e `rollout.py=130f198bce643095dbc8e6d7c8a4fb8b2e70f509785d6ad4f083985c96ff37b7`; os baselines comparados com main carregam `config.py=5d59eda5302a6beb9dd67e0e7592e2b2a48666f9e456f96bd8a0b35109bf9220` e `rollout.py=6713a330e7a10b941c6e7e461e17d629a868709f9712302c6cb1f4235f4def80`. O SHA limpo que contém os overlays ainda não existe; `git status` nesta worktree retorna `fatal: this operation must be run in a work tree`. Não usar o contrato local como prova operacional até a revisão/commit do suporte e a confirmação em checkout limpo.
+
+## Validação do checkpoint inicial documental
+
+- `openspec validate restore-production-facial-runtime --strict --no-interactive` com CLI 1.14.0: aprovado. O status de planejamento completo indica existência dos artefatos; há uma task comprovada e 17 pendentes, sem implementação declarada.
+- `git diff --check`: aprovado, com aviso preexistente LF/CRLF em teste administrativo fora desta alteração. Os cinco Markdown novos também foram lidos e conferidos quanto a conteúdo não vazio, espaços finais e caracteres de substituição.
+- Matriz SaaS: JSON válido, 694 IDs únicos e contagens reconciliadas; R03-120–123/R13-004 atualizados com as evidências já executadas. Não foram repetidas suítes de runtime por alterações documentais.
+- Conferência final do servidor: mesmos containers API `c4e00befa1b8`, worker `988d2415d4e7` e Nginx `6056df0d352f`, todos running/healthy; HTTPS `/api/health` e `/healthz` retornaram 200. Sem escrita de configuração, restart, build, deploy ou migration no servidor.
+
+## Continuidade local — 02/11/2026
+
+- Reconciliada uma afirmação incorreta do checkpoint: os SLOs faciais existem em `docs/OPERACAO-BUSCA-FACIAL-PRODUCAO.md` e `backend/app/facial/observability.py`. A tabela define, entre outros, p95 de busca de 120 s sob até 100 clientes, idade de fila de 300 s, falhas terminais de até 5%, CPU e memória por classe. Isso fornece os limites para comparação; não prova que esta candidata os atende.
+- Docker local foi consultado somente para leitura: host `x86_64`; candidatos locais continuam presentes. O disco C: tinha cerca de 3,0 GiB livres; `docker system df` reportou 20,96 GB em imagens, 2,149 GB em volumes e 25,22 GB de cache compartilhado. Não houve prune ou remoção. Emulação ARM não mede capacidade ARM nativa, e nenhum ensaio de carga foi executado neste checkpoint.
+- A suíte focada local passou **119 testes, 4 ignorados e 1 teste de endpoint excluído** (`DATABASE_URL=sqlite:///:memory:`; Python 3.12.9, SDK Mercado Pago 3.6.0). Ruff passou nos arquivos focados; OpenSpec strict aprovou a change. `scripts/test_facial_runtime_restoration.py` passou **14 testes**, incluindo interrupção após cada serviço na ativação e durante recuperação, retomada, preservação do ledger sintético e dos serviços pares.
+- Limite do teste de endpoint: `backend/tests/test_facial_observability.py::test_admin_endpoint_is_authenticated_and_exports_only_aggregates` executa `Base.metadata.drop_all()` na engine global da aplicação. Sem isolamento, SQLite recusou `DROP TABLE` por estar somente leitura; nada foi alterado. Reexecutar com banco em memória ficou preso no ciclo `TestClient`/startup e foi interrompido, sem resultado conclusivo. Não repetir até o fixture usar um banco descartável comprovadamente isolado.
+- `git rev-parse HEAD` retorna `6af538ecd5c46da7691fa973c33869f263945a25`, mas `git status`, `git diff --check` e a coleta de diff falham com `fatal: this operation must be run in a work tree`. O SHA de suporte limpo e a revisão completa do diff permanecem pendentes; nenhum manifesto operacional foi gerado e o operador não foi invocado.
+- Produção continuou somente leitura. Flag, configurações, schema, registros de calibração, serviços e imagens remotas não foram alterados.
+- Em resposta às perguntas de continuidade, o proprietário pediu explicação antes de decidir sobre a revisão do design do operador e não soube indicar host ARM64 de homologação, backup ou destino descartável. Registrei esses itens como **não confirmados**, sem inferir que não existam. A documentação histórica descreve o caminho de backup no servidor, mas exige confirmação de permissões, checksum e restauração; nenhuma restauração foi executada.
+
+## Revisão local do operador — 02/11/2026
+
+- O proprietário aprovou revisar o desenho e implementar/testar somente localmente. Produção permaneceu em leitura; nenhuma flag, imagem, configuração, container, serviço, banco, aprovação ou dado remoto foi alterado.
+- O worker facial agora recebe SIGTERM de forma cooperativa, termina o ciclo corrente e não inicia outro. O host exige o encerramento normal do mesmo ID e imagem, confere comando/configuração/início/código de saída, restaura a política e reinicia o mesmo container se uma parada falhar, sem SIGKILL automático.
+- O operador verifica `docker diff` antes/depois da parada. Candidatos são gerados com raiz read-only e `/tmp`/`/run` em `tmpfs` limitado; a recuperação bloqueia a recriação se mounts, camada ou configuração não corresponderem.
+- A allowlist do empacotamento agora permite `app/facial/face_worker.py` somente nos três candidatos de worker facial. A CLI aceita fases fixas, caminhos/host/projeto internos constantes e confirmação digitada vinculada a fase/operação; inventário e erros têm saída sanitizada.
+- Testes focados locais: `55 passed, 4 skipped`; Ruff: aprovado. Os contratos simulam Docker/host e não substituem integração Linux/PostgreSQL.
+- A tentativa da suíte facial mais ampla ficou sem progresso em 37% e foi interrompida após mais de um minuto. A tentativa reduzida parou no primeiro teste de `test_facial_http.py`; não foi obtido traceback nem atribuída causa. Não declarar essa suíte aprovada.
+- Os candidatos ARM64 construídos antes desta revisão estão obsoletos para os três workers faciais, pois não contêm o novo overlay. Tasks 2.1 e 2.3 foram reabertas; é necessário rebuild e nova prova antes de usar esses candidatos.
+- `git status`/diff continuam falhando (`fatal: this operation must be run in a work tree`); a `.git` da pasta aponta para outro checkout e `git show HEAD:scripts/facial_runtime_restoration_host.py` não encontra o arquivo em HEAD. Metadados Git não foram reparados; a revisão integral do diff e a prova de suporte limpo não estão disponíveis.
+- Continuam pendentes: calibração técnica aprovada, evidência de backup/restore independente, host ARM64 isolado, revisão de diff em checkout válido e revisão/execução operacional. Esta mudança não reativou reconhecimento facial em produção.
+
+## Continuação local — 02/11/2026, 19:39 UTC
+
+- Corrigido `scripts/facial_runtime_candidate.py`: o contexto de worker facial permitia `app/facial/face_worker.py`, mas o Dockerfile gerado não o copiava. Agora as instruções `COPY` derivam da allowlist exata do serviço. `scripts/test_facial_runtime_candidate.py` verifica o overlay nos workers e garante que API/worker geral não o recebam.
+- Os candidatos faciais ARM64 foram reconstruídos, sem pull e com rede do build desativada, como descendentes dos candidatos locais `-a` já verificados. Antes do build, os digests dos pais e as receitas foram conferidos contra os IDs, baselines, doadores e manifesto registrados; os módulos comuns atuais tinham o mesmo SHA do pai. As receitas do build novo usam cada pai verificado como base e doador e adicionam apenas `face_worker.py`. Os pais foram preservados.
+
+| Serviço | Nova tag local | Novo image ID | Pai verificado |
+|---|---|---|---|
+| face-search-worker | `pyp-facial-restore:search-20261102-b` | `sha256:260a1e0e3e048f1e1e4640b8c695cd6e37a35cb67bbc7dd3066b9f0c46b43b5c` | `sha256:02fec55cbceec52822676f8b266a173dd037920105a44e73dc0aa1c4fe59c4aa` |
+| face-index-worker | `pyp-facial-restore:face-index-20261102-b` | `sha256:6655faae42991d6c8af5f38a8eab83e891a3db8a8b96418bb5427dbb8cf1da36` | `sha256:9b7a957cfc0c668e0f6532397737a10c5218a9375656b71fb8bc276954eb0378` |
+| face-maintenance-worker | `pyp-facial-restore:maintenance-20261102-b` | `sha256:e732da168e6876b2086abe7ce310636e34c93388b5c10c59b559d904db8e10a6` | `sha256:a4aa7adc1f398d5efaf6eec83dc5507b0a6466f804e9fc60c23d2bf77aa68ff4` |
+
+- Build-local verification passou para as três imagens. A validação conjunta `validate_images` passou nos cinco candidatos: API e worker geral alteram apenas `config.py`/`rollout.py`; cada worker facial altera esses dois módulos e `face_worker.py`; todos preservam 144 módulos, versões de Python, dependências esperadas e hashes do manifesto/modelos. O ensaio foi Linux ARM64 emulado sobre host Windows/x86_64. O `support_sha` dessa prova foi sintético e **não** é prova Git-bound nem pode ser usado no operador.
+- Para a compilação, ficaram seis aliases locais `pyp-facial-restore-base`/`pyp-facial-restore-donor` apontando aos três pais `-a`; eles não adicionam camadas nem substituem as tags dos pais. Não foram removidos.
+- `backend/tests/test_facial_restore_postgres.py`: **2 passed** (43,25 s), PostgreSQL 17.11 sintético em container novo, rede Docker interna, sem portas publicadas, volumes ou acesso externo, `PGDATA` em `tmpfs`; código/testes montados read-only. Os schemas descartáveis foram removidos pelos fixtures.
+- Contratos focados em Linux: **59 passed, 37 subtests passed**. A primeira execução revelou que o `setUp` do teste POSIX substituía `_private` por um stub; o teste não exercitava a cifra real. Corrigido o teste para restaurar o método original; o caso isolado passou e a suíte repetida passou. Nenhuma alteração na implementação AES-GCM foi necessária por essa falha.
+- Teste do empacotador: **22 passed, 1 skipped**; Ruff passou nos arquivos Python afetados; `openspec validate restore-production-facial-runtime --type change --strict` passou. Scan limitado a padrões comuns de credenciais em código/spec escopados: sem correspondências; não substitui uma revisão do diff completo.
+- Os containers e rede de ensaio foram removidos; inventário local posterior: 14 containers, 7 ativos, 0 containers/redes com o rótulo desta task. Não houve prune; nenhum dado, container, imagem, configuração, flag, banco ou serviço de produção foi alterado.
+- Tasks 2.1 e 2.3 foram concluídas com essas evidências. Task 3.4 permanece aberta pela impossibilidade de revisar o diff completo e provar allowlist/secrets em worktree Git válida; os testes em container não equivalem a execução do adaptador no host alvo. Também permanecem os gates 4.1–4.4 e 5.1–5.4, incluindo capacidade ARM64 nativa, calibração, backup/restore, escopo/janela e validação/ação em produção. Reconhecimento facial em produção não foi reativado.
+- Reconfirmação da produção em **02/11/2026, 19:42:40 UTC**, por SSH e `docker inspect` somente leitura, exibindo apenas nome, estado, health, image ID e os booleanos de ambiente/flag: API e worker geral continuam `running/healthy` em `production` com `FACIAL_PROCESSING_ENABLED=false`; search/index/maintenance facial continuam `exited`, preservados em `staging` com a flag `true`. Não houve alteração remota.
+
+## Continuação local — 02/11/2026, 21:38 UTC
+
+- A worktree foi confirmada como checkout Git válido: branch `feature/pickyourpic-saas-mainline`, HEAD `6af538ec`. Foi possível revisar o diff dos três módulos faciais diretamente afetados e a allowlist correspondente por serviço; o restante do estado local contém alterações SaaS preexistentes e foi preservado. Ruff, `git diff --check`, validação OpenSpec strict e 66 testes focados passaram; três testes condicionados a POSIX foram ignorados no Windows. As evidências Linux ARM64 emulado (`59 passed, 37 subtests`) e PostgreSQL sintético (`2 passed`) permanecem válidas para seus limites documentados. O scan de padrões de segredo foi limitado ao escopo da change e não substitui ferramenta dedicada nem revisão de arquivos fora dele.
+- Task 3.4 concluída após a revisão proporcional: `design.md` documenta comandos, portas, impacto e recuperação; o diff da change foi inspecionado; a allowlist por serviço está registrada em `candidate-build-evidence.json`; não foi criado commit limpo ou manifesto operacional. O estado de `git status` é válido mas sujo, e não foi normalizado ou descartado.
+- Reconciliação dos manifestos YuNet/SFace: o hash bruto do arquivo local difere do arquivo da imagem candidata por normalização CRLF/LF. Após normalizar CRLF para LF, o SHA-256 coincide (`c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075`); o hash do JSON canônico, versões, tamanhos e hashes dos dois modelos também coincidem. A divergência inicial não indica alteração dos modelos.
+- Capacidade local: o host Docker é `x86_64`, executando imagem ARM64 por emulação; C: tinha 11.231.305.728 bytes livres (aprox. 10,46 GiB). A tentativa isolada com 20 imagens vetoriais sintéticas atingiu aproximadamente 99% de CPU, consumiu 3m32s de CPU e cerca de 256,9 MiB dos 768 MiB limitados; foi interrompida para conter carga e não produziu relatório, p95 ou métricas de fila. Um smoke menor carregou os modelos, processou uma imagem vetorial e reiniciou cooperativamente: inicialização 3,28 s e inferência 14,24 s no primeiro ciclo; após reinício, 3,50 s e 14,11 s. RSS observado ficou perto de 242–243 MiB. Esses tempos medem somente a emulação e uma imagem sintética; não são latência ponta a ponta nem prova dos SLOs. Não há medição de fila, 100 clientes ou ARM64 nativo.
+- O smoke usou `pyp-facial-restore:search-20261102-b` (`sha256:260a1e0e3e048f1e1e4640b8c695cd6e37a35cb67bbc7dd3066b9f0c46b43b5c`), sem rede, banco ou dados reais, com filesystem read-only, 1 CPU e 768 MiB. O container de teste foi parado/removido; não há container rotulado desta change. Nenhum prune foi executado; imagens candidatas, aliases e volumes foram preservados.
+- A produção foi reconferida por SSH somente leitura. API e worker geral estão `running/healthy`, em `APP_ENV=production`, com `FACIAL_PROCESSING_ENABLED=false`; os três workers faciais seguem `exited/unhealthy`, preservados em `APP_ENV=staging`, com a flag `true`. Imagens e configurações não foram alteradas.
+- O requisito 4.1 permanece aberto, pois falta ensaio comparável em host ARM64 nativo com duração/carga/fila/CPU/memória e confronto com os SLOs. Também permanecem os gates 4.2 (calibração técnica aprovada ainda ausente), 4.3 (restauração independente de backup em destino descartável), 4.4 e 5.1–5.4. A reativação em produção não foi realizada.
+- Atualização do gate de backup: revisão dos registros de `transition-biometric-app-env-context` encontrou que a aplicação 04 persistiu/autenticou um pacote de aproximadamente 305 MB antes da transação e a validação posterior registrou a conclusão. O inventário remoto de metadados (sem leitura de conteúdo ou chave) localizou o pacote e os sidecars de recibo/chave em armazenamento restrito com modo `0600`. A aplicação 03 havia falhado antes da persistência; não confundir os dois resultados. A restauração independente continua por provar, e transferir o pacote/chave a um ambiente local requer decisão específica sobre uso de dados reais de produção.
+
+## Continuação local — 02/11/2026, 22:14 UTC
+
+- O proprietário determinou que preservar o comportamento do Mercado Pago após 30/10 é requisito obrigatório. O design e `tasks.md` agora registram um gate explícito de continuidade de checkout, Orders, webhooks, worker e persistência.
+- A suíte direcionada do Mercado Pago passou **98 testes**, com **7 ignorados** e nenhum teste falho, em 411,40 s; foram registrados 76 warnings de depreciação do FastAPI e teardown de chaves estrangeiras cíclicas. Nenhuma cobrança real ou chamada de produção foi executada.
+- Corrigida a normalização dos overlays para produzir bytes LF iguais aos blobs do Git. Os cinco candidatos ARM64 `20261102-c` foram reconstruídos offline, sem pull e sem rede de build; todos passaram a verificação de runtime, módulos, pacotes e modelos em container isolado read-only/sem rede. IDs e receitas estão em `candidate-build-evidence.json`.
+- `RestorationHost.prove_images()` foi executado contra os cinco baselines e candidatos locais; os hashes dos três overlays faciais coincidem com o commit limpo `44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc`. `validate_images()` passou nos cinco serviços: 144 módulos por imagem, mudanças somente na allowlist facial e dependências adicionais restritas a `numpy==2.2.6` e `opencv-python-headless==4.12.0.88` na API e no worker; 11 módulos ligados a checkout/pagamentos preservados por serviço.
+- O commit é local na branch isolada `feature/restore-production-facial-runtime-support`; não houve push. A worktree SaaS preexistente não foi alterada. Nenhum container, configuração, flag, aprovação, banco, imagem ou serviço de produção foi alterado; ativação e monitoramento pós-release continuam pendentes.
+
+## Continuação local — 02/11/2026, 22:36 UTC
+
+- Para cobrir os sete testes PostgreSQL-only omitidos pela suíte SQLite, foi preparado um PostgreSQL 17.11 descartável. O container não tinha volume/bind mount; `PGDATA` ficou em `tmpfs` e a porta foi publicada somente em `127.0.0.1:55458`. A rede `internal` inicial não publicou a porta; após confirmar o motivo, usei bridge padrão com loopback, sem credenciais ou transações reais do Mercado Pago. Os transportes nos testes são sintéticos/mock.
+- Os **7 cenários PostgreSQL-only passaram** em 27,90 s: concorrência de Orders/finalização, seleção canônica, preparação e comunicação, decisões administrativas e reset financeiro protegido.
+- A repetição da suíte relacionada inteira no PostgreSQL terminou com **101 passed, 4 setup errors**. Os quatro erros ocorrem antes das asserções no fixture compartilhado `backend/tests/test_global_pix.py:45`, quando `Base.metadata.drop_all()` tenta compilar a remoção de uma FK `use_alter` sem nome. O mesmo conjunto de testes funcionais passou na suíte SQLite (98 passed). Nenhum teste financeiro marcou uma falha de asserção.
+- Container PostgreSQL descartável parado e removido automaticamente; porta 55458 fechada. Os containers locais de API, DB e Redis permaneceram saudáveis. As imagens candidatas `20261102-c` permanecem locais; nenhum prune foi feito. Nenhuma leitura ou mutação de produção foi feita durante esta validação local.
+
+## Comparação de produção somente leitura — 02/11/2026, 22:37 UTC
+
+- Por SSH, executei apenas `docker inspect` dos cinco serviços faciais/comerciais e filtrei a saída para image ID, estado, health, `APP_ENV` e `FACIAL_PROCESSING_ENABLED`. Nenhum segredo, dado de cliente ou banco foi consultado.
+- API `sha256:0d14e294…` e worker `sha256:06e3c112…` seguem `running/healthy`, em `production`, com facial `false`; os IDs ainda coincidem com os baselines que alimentam os candidatos locais. Search/index/maintenance seguem `exited/unhealthy`, em `staging`, com facial `true`.
+- Essa consulta não mudou produção. Não substitui inventário imediatamente antes de eventual janela, aprovação de rollout ou validação funcional pós-ativação; as tasks operacionais continuam abertas.
+
+## Acompanhamento da CI do PR #353 — 02/11/2026
+
+- A execução `41546846981` confirmou como aprovados `openspec`, `ci-scope`, `backend-quality`, `frontend` e os builds de runtime AMD64/ARM64. No último estado consultado, `backend-tests (0)` e `(2)` ainda estavam em execução; `(1)` havia concluído.
+- O Gitleaks reportou 40 ocorrências em `runtime-inventory.json`, todas no commit `44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc`. Cada ocorrência foi conferida contra a linha do blob histórico: o caminho de um módulo Python mapeia diretamente para um SHA-256 de 64 caracteres e o valor coincide com o reportado. Foram adicionados apenas os 40 fingerprints completos (commit, arquivo, regra e linha) ao `.gitleaksignore`; a regra e a varredura do restante do histórico permanecem ativas. A nova execução da CI após o push ainda está pendente.

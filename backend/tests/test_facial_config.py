@@ -11,6 +11,7 @@ from app.facial.config import FacialConfigurationError, facial_settings_from_env
 def _clear_facial_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "FACIAL_PROCESSING_ENABLED",
+        "FACIAL_REQUIRE_PRODUCTION_CALIBRATION",
         "FACIAL_CREDENTIAL_ENV",
         "FACIAL_MODEL_MANIFEST_PATH",
         "FACIAL_MODEL_ROOT",
@@ -71,10 +72,20 @@ def test_facial_configuration_is_disabled_without_secrets(
     _clear_facial_environment(monkeypatch)
     settings = facial_settings_from_environment()
     assert settings.enabled is False
+    assert settings.require_production_calibration is True
     assert settings.aead_keys == {}
     assert settings.reference_retention_seconds == 900
     assert settings.candidate_retention_seconds == 86400
     assert settings.max_reference_bytes == 31_457_280
+
+
+def test_production_calibration_requires_explicit_configuration_to_be_waived(monkeypatch):
+    _clear_facial_environment(monkeypatch)
+    monkeypatch.setenv("FACIAL_REQUIRE_PRODUCTION_CALIBRATION", "false")
+    assert facial_settings_from_environment().require_production_calibration is False
+    monkeypatch.setenv("FACIAL_REQUIRE_PRODUCTION_CALIBRATION", "invalid")
+    with pytest.raises(FacialConfigurationError, match="FACIAL_REQUIRE_PRODUCTION_CALIBRATION"):
+        facial_settings_from_environment()
 
 
 def test_facial_configuration_rejects_reference_above_30_mib(

@@ -1,4 +1,5 @@
 """Transições e auditoria do rollout facial persistente."""
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -6,7 +7,15 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AdminUser, AuditEvent, Base, FacialRollout, ParentGallery
+from app.auth import (
+    AdminUser,
+    AuditEvent,
+    Base,
+    FacialCalibrationApproval,
+    FacialRollout,
+    ParentGallery,
+    Tenant,
+)
 from app.facial.config import FacialSettings
 from app.facial.rollout import (
     FacialRolloutError,
@@ -57,6 +66,9 @@ def _fixture() -> tuple[Session, ParentGallery, AdminUser]:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
+    if db.get(Tenant, FIXTURE_TENANT_ID) is None:
+        db.add(Tenant(id=FIXTURE_TENANT_ID, status="active"))
+        db.flush()
     gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento rollout")
     admin = fixture_admin(AdminUser(
         id=uuid4(),
@@ -67,6 +79,34 @@ def _fixture() -> tuple[Session, ParentGallery, AdminUser]:
     db.add_all((gallery, admin))
     db.commit()
     return db, gallery, admin
+
+
+def test_explicit_restore_bypasses_only_calibration_without_inventing_approval() -> None:
+    db, gallery, _admin = _fixture()
+    strict = _settings(environment="production")
+    assert not rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID,
+                                 settings=strict, parent_gallery_id=gallery.id)
+    restored = replace(strict, require_production_calibration=False)
+    assert rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID,
+                             settings=restored, parent_gallery_id=gallery.id)
+    assert db.scalar(select(func.count(FacialCalibrationApproval.id))) == 0
+    assert not rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID,
+                                 settings=replace(restored, enabled=False), parent_gallery_id=gallery.id)
+    assert not rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID,
+                                 settings=restored, parent_gallery_id=uuid4())
+    gallery.active = False
+    assert not rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID,
+                                 settings=restored, parent_gallery_id=gallery.id)
+    db.close()
+
+
+def test_explicit_rollout_is_still_required_when_calibration_is_waived() -> None:
+    db, gallery, _admin = _fixture()
+    settings = replace(_settings(environment="production"),
+                       require_production_calibration=False, require_explicit_rollout=True)
+    assert not rollout_is_active(db, tenant_id=FIXTURE_TENANT_ID,
+                                 settings=settings, parent_gallery_id=gallery.id)
+    db.close()
 
 
 def test_prepare_and_activate_require_matching_enabled_environment() -> None:
