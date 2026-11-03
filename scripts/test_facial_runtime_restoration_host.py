@@ -406,14 +406,26 @@ class HostContractTests(unittest.TestCase):
         self.host._raw = self.containers
         self.host._private = self.private_snapshot
         receipt = {"fingerprint":"f"*64, "manifest":{}, "inventory":{"services":{s:{"compose_files":[{"path":"/fixture/compose"}]} for s in SERVICES}}}
+        profile_calls = []
         def command(args,data,timeout):
             if args[-2:] == ("--format","json"):
+                config_index = args.index("config")
+                profile_index = args.index("--profile")
+                self.assertEqual(args[profile_index+1], "facial")
+                self.assertLess(profile_index, config_index)
+                profile_calls.append("model")
                 return json.dumps({"services":{s:{"environment":{"TOKEN":"secret-sentinel"}} for s in SERVICES}}).encode()
             if "--hash" in args:
+                config_index = args.index("config")
+                profile_index = args.index("--profile")
+                self.assertEqual(args[profile_index+1], "facial")
+                self.assertLess(profile_index, config_index)
+                profile_calls.append("hash")
                 return (args[-1]+" "+"a"*64).encode()
             raise AssertionError(args)
         self.host.command = command
         self.host.prepare("local-test",receipt)
+        self.assertEqual(profile_calls, ["model", "hash"] * len(SERVICES))
         work = self.host._work("local-test")
         for path in work.iterdir():
             self.assertNotIn(b"secret-sentinel",path.read_bytes())
@@ -422,6 +434,26 @@ class HostContractTests(unittest.TestCase):
         changed["fingerprint"] = "e"*64
         with self.assertRaises(RestorationError):
             self.host._private("local-test",changed)
+
+    @unittest.skipUnless(os.name == "posix","Persistência e autenticação exigem Linux/POSIX")
+    def test_compose_hash_failure_does_not_reserve_operation_directory(self):
+        self.root.chmod(0o700)
+        self.host._raw = self.containers
+        receipt = {"fingerprint":"f"*64, "manifest":{}, "inventory":{"services":{s:{"compose_files":[{"path":"/fixture/compose"}]} for s in SERVICES}}}
+        def command(args,data,timeout):
+            if args[-2:] == ("--format","json"):
+                return json.dumps({"services":{s:{} for s in SERVICES}}).encode()
+            if "--hash" in args:
+                config_index = args.index("config")
+                profile_index = args.index("--profile")
+                self.assertEqual(args[profile_index+1], "facial")
+                self.assertLess(profile_index, config_index)
+                raise RestorationError("compose_hash_indisponivel")
+            raise AssertionError(args)
+        self.host.command = command
+        with self.assertRaisesRegex(RestorationError, "compose_hash_indisponivel"):
+            self.host.prepare("local-test",receipt)
+        self.assertFalse(self.host._work("local-test").exists())
 
 
 if __name__ == "__main__":
