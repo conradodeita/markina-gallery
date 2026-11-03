@@ -204,3 +204,17 @@ O manifesto SHALL permanecer no caminho fixo `deploy-state/facial-runtime-candid
 
 - **WHEN** há marcador compartilhado listado em `PENDING` ou journal facial in-flight no estado novo ou legado
 - **THEN** a operação recusa a preparação e preserva integralmente os artefatos encontrados
+
+### Requirement: Preparação reproduz o perfil Compose dos consumidores faciais
+
+`prepare` SHALL resolver o modelo e calcular `config --hash` com `--profile facial` habilitado para os cinco serviços candidatos. Cada hash SHALL corresponder ao label `com.docker.compose.config-hash` do container inventariado. Todas as verificações Compose SHALL terminar antes de criar o diretório privado específico da operação ou alterar containers.
+
+#### Scenario: Hash de worker facial exige perfil
+
+- **WHEN** um serviço candidato é declarado no perfil Compose `facial`
+- **THEN** a resolução do modelo e o cálculo de hash incluem `--profile facial`, e o hash observado coincide com o baseline inventariado
+
+#### Scenario: Falha ao resolver ou comparar configuração Compose
+
+- **WHEN** a configuração ou o hash de qualquer consumidor não puder ser resolvido ou não coincidir com seu baseline
+- **THEN** `prepare` recusa a operação antes de criar o diretório privado da operação ou substituir qualquer serviço

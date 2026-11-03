@@ -470,14 +470,16 @@ class RestorationHost:
         work = self._work(operation)
         self._ensure_private_state(create=True)
         require(not work.exists() and not work.is_symlink(), "preparacao_existente")
-        work.mkdir(mode=0o700)
         models = {}
         for service in SERVICES:
             files = receipt["inventory"]["services"][service]["compose_files"]
-            args = ["docker", "compose", "--project-directory", str(self.root / "docker"), "-p", PROJECT]
+            args = [
+                "docker", "compose", "--project-directory", str(self.root / "docker"),
+                "-p", PROJECT, "--profile", "facial",
+            ]
             for f in files:
                 args += ["-f", f["path"]]
-            models[service] = self.obj(*args, "--profile", "facial", "config", "--format", "json")
+            models[service] = self.obj(*args, "config", "--format", "json")
             hash_result = self.run(*args, "config", "--hash", service)
             expected = self._raw[service]["Config"].get("Labels", {}).get("com.docker.compose.config-hash")
             require(hash_result.split() == [service, expected], "compose_nao_reproduz_baseline")
@@ -488,6 +490,8 @@ class RestorationHost:
                           "authorization_reference": receipt["manifest"].get("authorization_reference")},
                          sort_keys=True).encode()
         encrypted = AESGCM(key).encrypt(nonce, raw, (operation + ":" + receipt["fingerprint"]).encode())
+        require(not work.exists() and not work.is_symlink(), "preparacao_existente")
+        work.mkdir(mode=0o700)
         self._write(work / "config.key", key)
         self._write(work / "config.sealed", nonce + encrypted)
         self._write(work / "prepared.json", json.dumps(receipt, sort_keys=True).encode())
