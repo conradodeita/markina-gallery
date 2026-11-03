@@ -152,3 +152,50 @@ A restauração SHALL ser declarada concluída somente com evidência da versão
 
 - **WHEN** a flag está verdadeira, mas a consulta não chega a um estado terminal verificável ou a interface não apresenta o resultado autorizado
 - **THEN** a restauração permanece inconclusiva, com estado e próxima ação registrados
+
+### Requirement: Operador facial preserva a coordenação de release compartilhada
+
+O adaptador real SHALL exigir UID/GID root antes do acesso ao host. O operador SHALL validar o diretório fixo `deploy-state` como `ubuntu:ubuntu 0700` e manter nele o lock e os marcadores conhecidos em `PENDING`. SHALL NOT alterar proprietário, modo ou conteúdo compartilhado.
+
+#### Scenario: Diretório compartilhado pertence a ubuntu e operador é root
+
+- **WHEN** o operador root valida o diretório compartilhado `ubuntu:ubuntu 0700` e o lock existente `ubuntu:ubuntu 0600`
+- **THEN** obtém o lock global sem alterar proprietário, modo, tamanho ou conteúdo do pai, lock ou manifesto
+
+#### Scenario: Adaptador é executado sem UID/GID root
+
+- **WHEN** o adaptador operacional é iniciado por uma identidade diferente de root:root
+- **THEN** recusa o destino antes de acessar Docker, ler o manifesto ou criar o estado privado
+
+#### Scenario: Lock global tem metadados inseguros
+
+- **WHEN** o lock não é arquivo regular, único hard link, `ubuntu:ubuntu 0600`, ou já está ocupado
+- **THEN** o operador recusa a operação sem truncar, recriar ou corrigir o lock
+
+### Requirement: Estado da restauração facial é privado e isolado
+
+Diários, recibos e snapshots faciais SHALL ficar somente em `deploy-state/facial-runtime-restoration`, `root:root 0700`. `inventory` SHALL ser somente leitura; `prepare` pode criar o filho ausente. Symlink, tipo, dono, grupo ou modo divergente SHALL bloquear sem reparo automático.
+
+#### Scenario: Estado facial dedicado está ausente
+
+- **WHEN** `inventory` verifica o estado e o filho privado ainda não existe
+- **THEN** a consulta continua sem criar arquivos ou diretórios, e `prepare` pode criar somente o filho fixo `root:root 0700`
+
+#### Scenario: Estado facial tem metadados inseguros
+
+- **WHEN** o filho privado é symlink, tem tipo, proprietário ou modo divergente
+- **THEN** a operação é recusada antes de qualquer alteração de serviço ou configuração e não corrige metadados automaticamente
+
+### Requirement: Manifesto de candidatos permanece protegido no caminho existente
+
+O manifesto SHALL permanecer no caminho fixo `deploy-state/facial-runtime-candidates.json`, como arquivo regular root-owned `0600`. A validação SHALL conferir separadamente o pai `ubuntu:ubuntu 0700`; nenhum caminho pode ser escolhido pela CLI.
+
+#### Scenario: Manifesto possui caminho ou metadados inseguros
+
+- **WHEN** o manifesto está ausente, é symlink, tem tipo, proprietário, modo ou contagem de links divergente
+- **THEN** a preparação é recusada sem relocá-lo ou alterar o pai compartilhado
+
+#### Scenario: Outra operação deixou marcador pendente
+
+- **WHEN** há marcador compartilhado listado em `PENDING` ou journal facial in-flight no estado novo ou legado
+- **THEN** a operação recusa a preparação e preserva integralmente os artefatos encontrados

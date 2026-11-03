@@ -39,7 +39,8 @@ from facial_runtime_restoration import (
 
 ROOT = Path("/opt/markina-gallery")
 CODE = Path(__file__).resolve().parents[1]
-STATE = Path("/var/lib/markina-gallery/deploy-state")
+DEPLOY_STATE = Path("/var/lib/markina-gallery/deploy-state")
+STATE = DEPLOY_STATE / "facial-runtime-restoration"
 CANDIDATE_MANIFEST = "facial-runtime-candidates.json"
 ORIGIN = "https://markina.pickyourpic.com.br"
 KNOWN = set(SERVICES) | {"web", "nginx", "db", "redis", "evolution-api", "evolution-db", "evolution-redis", "preview-adjustment-worker"}
@@ -199,13 +200,18 @@ def _escape(value):
 
 
 class RestorationHost:
-    def __init__(self, *, support_sha: str, root: Path = ROOT, state: Path = STATE, code_root: Path = CODE,
+    def __init__(self, *, support_sha: str, root: Path = ROOT, state: Path = STATE,
+                 shared_state: Path | None = None, code_root: Path = CODE,
                  command: Callable[[Sequence[str], bytes | None, int], bytes] | None = None,
                  sleeper=time.sleep, monotonic=time.monotonic):
         require(SHA.fullmatch(support_sha), "sha_invalido")
-        self.support_sha, self.root, self.state, self.code_root = support_sha, root, state, code_root
+        if shared_state is None:
+            shared_state = DEPLOY_STATE if state == STATE else state
+        self.support_sha, self.root, self.state = support_sha, root, state
+        self.shared_state, self.code_root = shared_state, code_root
         if command is None:
-            require(root == ROOT and state == STATE and socket.gethostname() == "clearbudget-vnic", "destino_nao_autorizado")
+            require(os.geteuid() == 0 and os.getegid() == 0 and root == ROOT and state == STATE and shared_state == DEPLOY_STATE
+                    and socket.gethostname() == "clearbudget-vnic", "destino_nao_autorizado")
         self.command = command or self._command
         self.sleeper, self.monotonic = sleeper, monotonic
         self._raw = {}
@@ -255,18 +261,77 @@ class RestorationHost:
                          timeout=120)
         require(proof == {"safe": True, "proof_sha256": digest(expected)}, reason)
 
-    def _safe_directory(self, path: Path, *, private=False):
+    def _safe_directory(self, path: Path, *, private=False, owner_uid=None, owner_gid=None):
         require(path.is_absolute(), "diretorio_relativo")
         for parent in reversed((path, *path.parents[:-1])):
             info = parent.lstat()
             require(stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode), "diretorio_inseguro")
         info = path.lstat()
-        require(info.st_uid == os.geteuid() and not (stat.S_IMODE(info.st_mode) & 0o022), "diretorio_owner_ou_modo_invalido")
+        expected_owner = os.geteuid() if owner_uid is None else owner_uid
+        expected_group = os.getegid() if owner_gid is None else owner_gid
+        require(info.st_uid == expected_owner and info.st_gid == expected_group
+                and not (stat.S_IMODE(info.st_mode) & 0o022), "diretorio_owner_ou_modo_invalido")
         if private:
             require(stat.S_IMODE(info.st_mode) == 0o700, "diretorio_privado_invalido")
 
+    def _shared_state_owner_ids(self):
+        if self.shared_state != DEPLOY_STATE:
+            return os.geteuid(), os.getegid()
+        try:
+            import pwd
+            owner = pwd.getpwnam("ubuntu")
+            return owner.pw_uid, owner.pw_gid
+        except (ImportError, KeyError):
+            raise RestorationError("proprietario_estado_compartilhado_indisponivel") from None
+
+    def _shared_state_owner_uid(self):
+        return self._shared_state_owner_ids()[0]
+
+    def _safe_shared_state(self):
+        owner_uid, owner_gid = self._shared_state_owner_ids()
+        self._safe_directory(self.shared_state, private=True, owner_uid=owner_uid, owner_gid=owner_gid)
+
+    def _ensure_private_state(self, *, create=False):
+        self._safe_shared_state()
+        require(self.state == self.shared_state or self.state.parent == self.shared_state, "estado_fora_do_diretorio")
+        if self.state == self.shared_state:
+            self._safe_directory(self.state, private=True)
+            return True
+        if self.state.exists() or self.state.is_symlink():
+            owner_gid = 0 if self.state == STATE else os.getegid()
+            self._safe_directory(self.state, private=True, owner_gid=owner_gid)
+            return True
+        if not create:
+            return False
+        try:
+            self.state.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        owner_gid = 0 if self.state == STATE else os.getegid()
+        self._safe_directory(self.state, private=True, owner_gid=owner_gid)
+        return True
+
+    def _assert_no_pending_operations(self):
+        self._safe_shared_state()
+        require(not any((self.shared_state / name).exists() or (self.shared_state / name).is_symlink()
+                        for name in PENDING), "operacao_concorrente_pendente")
+        locations = [self.shared_state]
+        if self.state != self.shared_state and self._ensure_private_state():
+            locations.append(self.state)
+        for location in locations:
+            for work in location.glob("facial-restore-*"):
+                require(not work.is_symlink(), "estado_restauracao_inseguro")
+                if not work.is_dir():
+                    continue
+                journal = work / "in-flight.json"
+                require(not journal.is_symlink(), "estado_restauracao_inseguro")
+                require(not journal.exists(), "restauracao_pendente")
+
     def _read(self, path: Path, *, limit=8_000_000):
-        self._safe_directory(path.parent, private=True)
+        return self._read_file(path, limit=limit)
+
+    def _read_file(self, path: Path, *, limit=8_000_000, parent_owner_uid=None, parent_owner_gid=None):
+        self._safe_directory(path.parent, private=True, owner_uid=parent_owner_uid, owner_gid=parent_owner_gid)
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(fd, "rb") as stream:
             info = os.fstat(stream.fileno())
@@ -303,12 +368,14 @@ class RestorationHost:
     def lock(self):
         try:
             import fcntl
-            self._safe_directory(self.state)
-            path = self.state / "production-release.lock"
+            owner_uid, owner_gid = self._shared_state_owner_ids()
+            self._safe_directory(self.shared_state, private=True, owner_uid=owner_uid, owner_gid=owner_gid)
+            path = self.shared_state / "production-release.lock"
             fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
             with os.fdopen(fd, "r+") as stream:
                 info = os.fstat(stream.fileno())
-                require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid() and not stat.S_IMODE(info.st_mode) & 0o022, "lock_inseguro")
+                require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == owner_uid and info.st_gid == owner_gid
+                        and stat.S_IMODE(info.st_mode) == 0o600, "lock_inseguro")
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 yield
         except (ImportError, OSError):
@@ -329,7 +396,7 @@ class RestorationHost:
             path = Path(text)
             require(path.is_absolute() and not path.is_symlink(), "manifesto_inseguro")
             resolved = path.resolve(strict=True)
-            require(self.root in resolved.parents or self.state in resolved.parents, "manifesto_fora_das_raizes")
+            require(self.root in resolved.parents or self.shared_state in resolved.parents, "manifesto_fora_das_raizes")
             info = path.stat()
             require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and not stat.S_IMODE(info.st_mode) & 0o022, "manifesto_inseguro")
             result.append({"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
@@ -346,8 +413,7 @@ class RestorationHost:
         require(SHA.fullmatch(checkout_sha) and not self.run("git", "status", "--porcelain"), "checkout_ativo_sujo_ou_desconhecido")
         require(self.run("git", "-C", str(self.code_root), "rev-parse", "HEAD") == self.support_sha
             and not self.run("git", "-C", str(self.code_root), "status", "--porcelain"), "suporte_sujo_ou_divergente")
-        require(not any((self.state / name).exists() or (self.state / name).is_symlink() for name in PENDING), "operacao_concorrente_pendente")
-        require(not list(self.state.glob("facial-restore-*/in-flight.json")), "restauracao_pendente")
+        self._assert_no_pending_operations()
         ids = self.run("docker", "ps", "-aq", "--no-trunc", "--filter", "label=com.docker.compose.project=" + PROJECT).split()
         require(1 <= len(ids) <= 100 and all(HEX.fullmatch(x) for x in ids), "inventario_containers_invalido")
         values = self.obj("docker", "inspect", *ids)
@@ -402,7 +468,7 @@ class RestorationHost:
 
     def prepare(self, operation, receipt):
         work = self._work(operation)
-        self._safe_directory(self.state)
+        self._ensure_private_state(create=True)
         require(not work.exists() and not work.is_symlink(), "preparacao_existente")
         work.mkdir(mode=0o700)
         models = {}
@@ -434,8 +500,12 @@ class RestorationHost:
             raise RestorationError("recibo_invalido") from None
 
     def candidate_manifest(self):
+        owner_uid, owner_gid = self._shared_state_owner_ids()
         try:
-            value = json.loads(self._read(self.state / CANDIDATE_MANIFEST, limit=2_000_000))
+            value = json.loads(self._read_file(self.shared_state / CANDIDATE_MANIFEST,
+                                               limit=2_000_000,
+                                               parent_owner_uid=owner_uid,
+                                               parent_owner_gid=owner_gid))
         except (ValueError, UnicodeError):
             raise RestorationError("manifesto_candidato_invalido") from None
         require(isinstance(value, dict) and value.get("format") == 1, "manifesto_candidato_invalido")

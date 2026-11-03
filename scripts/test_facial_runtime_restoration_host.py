@@ -9,6 +9,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from facial_runtime_restoration import SERVICES, RestorationError
@@ -269,6 +271,134 @@ class HostContractTests(unittest.TestCase):
         path.chmod(0o600)
         with self.host.lock(), self.assertRaises(RestorationError), self.host.lock():
             self.fail("lock duplicado")
+
+    @unittest.skipUnless(os.name == "posix","Metadados POSIX exigem Linux/POSIX")
+    def test_dedicated_state_preserves_shared_directory_and_global_lock(self):
+        shared = self.root/"deploy-state"
+        shared.mkdir(mode=0o700)
+        shared.chmod(0o700)
+        lock_path = shared/"production-release.lock"
+        lock_path.write_bytes(b"")
+        lock_path.chmod(0o600)
+        state = shared/"facial-runtime-restoration"
+        host = RestorationHost(support_sha="a"*40, root=self.root, state=state,
+                               shared_state=shared, command=self.host.command)
+        shared_before = shared.stat()
+        lock_before = lock_path.stat()
+        self.assertFalse(host._ensure_private_state())
+        self.assertFalse(state.exists())
+        with host.lock():
+            self.assertFalse(state.exists())
+        host._ensure_private_state(create=True)
+        state_after = state.stat()
+        self.assertEqual((state_after.st_uid, state_after.st_mode & 0o777),
+                         (os.geteuid(), 0o700))
+        shared_after = shared.stat()
+        lock_after = lock_path.stat()
+        self.assertEqual((shared_after.st_uid, shared_after.st_gid, shared_after.st_mode & 0o777),
+                         (shared_before.st_uid, shared_before.st_gid, shared_before.st_mode & 0o777))
+        self.assertEqual((lock_after.st_uid, lock_after.st_gid, lock_after.st_mode & 0o777, lock_path.read_bytes()),
+                         (lock_before.st_uid, lock_before.st_gid, lock_before.st_mode & 0o777, b""))
+
+    @unittest.skipUnless(os.name == "posix","Symlinks POSIX exigem Linux/POSIX")
+    def test_dedicated_state_rejects_symlink_without_following_it(self):
+        shared = self.root/"deploy-state"
+        shared.mkdir(mode=0o700)
+        shared.chmod(0o700)
+        target = self.root/"outside-state"
+        target.mkdir(mode=0o700)
+        state = shared/"facial-runtime-restoration"
+        state.symlink_to(target, target_is_directory=True)
+        host = RestorationHost(support_sha="a"*40, root=self.root, state=state,
+                               shared_state=shared, command=self.host.command)
+        with self.assertRaisesRegex(RestorationError, "diretorio_inseguro"):
+            host._ensure_private_state()
+
+    @unittest.skipUnless(os.name == "posix","Permissões POSIX exigem Linux/POSIX")
+    def test_lock_rejects_wrong_mode_without_repair(self):
+        shared = self.root/"deploy-state"
+        shared.mkdir(mode=0o700)
+        shared.chmod(0o700)
+        lock_path = shared/"production-release.lock"
+        lock_path.write_bytes(b"preserve")
+        lock_path.chmod(0o644)
+        host = RestorationHost(support_sha="a"*40, root=self.root,
+                               state=shared/"facial-runtime-restoration",
+                               shared_state=shared, command=self.host.command)
+        with self.assertRaisesRegex(RestorationError, "lock_inseguro"), host.lock():
+            self.fail("lock inseguro foi aceito")
+        self.assertEqual((lock_path.stat().st_mode & 0o777, lock_path.read_bytes()), (0o644, b"preserve"))
+
+    @unittest.skipUnless(os.name == "posix","Permissões POSIX exigem Linux/POSIX")
+    def test_candidate_manifest_stays_in_shared_parent_and_is_read_without_relocation(self):
+        shared = self.root/"deploy-state"
+        shared.mkdir(mode=0o700)
+        shared.chmod(0o700)
+        state = shared/"facial-runtime-restoration"
+        state.mkdir(mode=0o700)
+        manifest_path = shared/"facial-runtime-candidates.json"
+        manifest = {"format":1,"services":{}}
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        manifest_path.chmod(0o600)
+        host = RestorationHost(support_sha="a"*40, root=self.root, state=state,
+                               shared_state=shared, command=self.host.command)
+        self.assertEqual(host.candidate_manifest(), manifest)
+        self.assertFalse((state/"facial-runtime-candidates.json").exists())
+        manifest_path.unlink()
+        manifest_path.symlink_to(state, target_is_directory=True)
+        with self.assertRaises(OSError):
+            host.candidate_manifest()
+
+    @unittest.skipUnless(os.name == "posix","Permissões POSIX exigem Linux/POSIX")
+    def test_pending_markers_are_checked_in_shared_parent_and_new_private_state(self):
+        shared = self.root/"deploy-state"
+        shared.mkdir(mode=0o700)
+        shared.chmod(0o700)
+        state = shared/"facial-runtime-restoration"
+        host = RestorationHost(support_sha="a"*40, root=self.root, state=state,
+                               shared_state=shared, command=self.host.command)
+        host._assert_no_pending_operations()
+        marker = shared/"orders-in-flight.json"
+        marker.write_text("pending", encoding="utf-8")
+        with self.assertRaisesRegex(RestorationError, "operacao_concorrente_pendente"):
+            host._assert_no_pending_operations()
+        marker.unlink()
+        host._ensure_private_state(create=True)
+        work = state/"facial-restore-current"
+        work.mkdir(mode=0o700)
+        (work/"in-flight.json").write_text("pending", encoding="utf-8")
+        (work/"in-flight.json").chmod(0o600)
+        with self.assertRaisesRegex(RestorationError, "restauracao_pendente"):
+            host._assert_no_pending_operations()
+
+    @unittest.skipUnless(os.name == "posix","Ownership POSIX exige Linux/POSIX")
+    def test_shared_directory_rejects_unexpected_owner(self):
+        self.root.chmod(0o700)
+        with self.assertRaisesRegex(RestorationError, "diretorio_owner_ou_modo_invalido"):
+            self.host._safe_directory(self.root, private=True, owner_uid=os.geteuid()+1)
+        with self.assertRaisesRegex(RestorationError, "diretorio_owner_ou_modo_invalido"):
+            self.host._safe_directory(self.root, private=True, owner_gid=os.getegid()+1)
+
+    @unittest.skipUnless(os.name == "posix","Lookup de usuários POSIX exige Linux/POSIX")
+    def test_fixed_shared_directory_resolves_ubuntu_owner(self):
+        host = RestorationHost(support_sha="a"*40, root=self.root,
+                               state=Path("/var/lib/markina-gallery/deploy-state/facial-runtime-restoration"),
+                               shared_state=Path("/var/lib/markina-gallery/deploy-state"),
+                               command=self.host.command)
+        with patch("pwd.getpwnam", return_value=SimpleNamespace(pw_uid=4242, pw_gid=4343)) as lookup:
+            self.assertEqual(host._shared_state_owner_ids(), (4242, 4343))
+        lookup.assert_called_once_with("ubuntu")
+
+    @unittest.skipUnless(os.name == "posix","Identidade POSIX exige Linux/POSIX")
+    def test_production_adapter_rejects_non_root_identity(self):
+        with patch("facial_runtime_restoration_host.os.geteuid", return_value=1000), \
+             patch("facial_runtime_restoration_host.os.getegid", return_value=1000), \
+             patch("facial_runtime_restoration_host.socket.gethostname", return_value="clearbudget-vnic"), \
+             self.assertRaisesRegex(RestorationError, "destino_nao_autorizado"):
+            RestorationHost(support_sha="a"*40,
+                            root=Path("/opt/markina-gallery"),
+                            state=Path("/var/lib/markina-gallery/deploy-state/facial-runtime-restoration"),
+                            shared_state=Path("/var/lib/markina-gallery/deploy-state"))
 
     @unittest.skipUnless(os.name == "posix","Persistência e autenticação exigem Linux/POSIX")
     def test_private_snapshot_is_encrypted_reopened_and_bound_to_receipt(self):
