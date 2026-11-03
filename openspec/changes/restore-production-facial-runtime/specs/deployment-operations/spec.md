@@ -232,3 +232,13 @@ O manifesto SHALL permanecer no caminho fixo `deploy-state/facial-runtime-candid
 
 - **WHEN** a configuração ou o hash de qualquer consumidor não puder ser resolvido ou não coincidir com seu baseline
 - **THEN** `prepare` recusa a operação antes de criar o diretório privado da operação ou substituir qualquer serviço
+
+### Requirement: Comparação de configuração normaliza somente DNS não configurado
+
+Ao comparar a configuração dos containers, o operador SHALL tratar `HostConfig.Dns` igual a `[]` e `null` como ausência equivalente de DNS explícito. Listas não vazias SHALL continuar sendo comparadas exatamente.
+
+#### Scenario: Docker reporta DNS vazio com representações distintas
+
+- **WHEN** o baseline e o candidato representam DNS não configurado como `[]` e `null`, em qualquer ordem
+- **THEN** a comparação aceita essa diferença de representação e mantém todas as demais verificações de configuração, mounts, camada gravável e identidade
+- **AND** qualquer lista DNS não vazia divergente continua bloqueando a operação

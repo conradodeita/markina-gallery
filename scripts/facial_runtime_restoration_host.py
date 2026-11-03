@@ -180,7 +180,11 @@ def configuration(item: dict) -> dict:
     config = item["Config"]
     host = item["HostConfig"]
     host_keys = ("RestartPolicy", "Memory", "NanoCpus", "ReadonlyRootfs", "CapDrop", "CapAdd", "SecurityOpt", "Privileged", "Devices", "DeviceRequests", "Runtime", "PidMode", "IpcMode", "NetworkMode", "PortBindings", "Dns", "ExtraHosts", "Ulimits", "Tmpfs", "LogConfig")
-    return {"environment": environment(item), "command": config.get("Cmd"), "entrypoint": config.get("Entrypoint"), "user": config.get("User"), "working_dir": config.get("WorkingDir"), "healthcheck": config.get("Healthcheck"), "labels": {k:v for k,v in (config.get("Labels") or {}).items() if not k.startswith("com.docker.compose.")}, "mounts": sorted(mounts, key=lambda x:x["Destination"]), "host": {k:host.get(k) for k in host_keys}, "networks": sorted(item.get("NetworkSettings", {}).get("Networks", {}))}
+    host_configuration = {k:host.get(k) for k in host_keys}
+    # Docker may serialize an unset DNS override as either [] or null.
+    if host_configuration["Dns"] == []:
+        host_configuration["Dns"] = None
+    return {"environment": environment(item), "command": config.get("Cmd"), "entrypoint": config.get("Entrypoint"), "user": config.get("User"), "working_dir": config.get("WorkingDir"), "healthcheck": config.get("Healthcheck"), "labels": {k:v for k,v in (config.get("Labels") or {}).items() if not k.startswith("com.docker.compose.")}, "mounts": sorted(mounts, key=lambda x:x["Destination"]), "host": host_configuration, "networks": sorted(item.get("NetworkSettings", {}).get("Networks", {}))}
 
 
 def configuration_without_restart(item: dict) -> dict:
