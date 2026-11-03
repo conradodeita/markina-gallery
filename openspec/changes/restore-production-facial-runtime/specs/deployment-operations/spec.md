@@ -188,12 +188,17 @@ Diários, recibos e snapshots faciais SHALL ficar somente em `deploy-state/facia
 
 ### Requirement: Manifesto de candidatos permanece protegido no caminho existente
 
-O manifesto SHALL permanecer no caminho fixo `deploy-state/facial-runtime-candidates.json`, como arquivo regular root-owned `0600`. A validação SHALL conferir separadamente o pai `ubuntu:ubuntu 0700`; nenhum caminho pode ser escolhido pela CLI.
+O manifesto SHALL permanecer no caminho fixo `deploy-state/facial-runtime-candidates.json`, como arquivo regular root-owned `0600`. A validação SHALL conferir separadamente o pai `ubuntu:ubuntu 0700` e vincular `support_sha` ao checkout limpo do operador; nenhum caminho pode ser escolhido pela CLI. Rebind pode alterar somente esse campo, atomicamente sob o lock global.
 
 #### Scenario: Manifesto possui caminho ou metadados inseguros
 
 - **WHEN** o manifesto está ausente, é symlink, tem tipo, proprietário, modo ou contagem de links divergente
 - **THEN** a preparação é recusada sem relocá-lo ou alterar o pai compartilhado
+
+#### Scenario: Manifesto diverge do checkout do operador
+
+- **WHEN** `support_sha` não corresponde ao checkout limpo, ou o rebind altera qualquer outro valor do manifesto
+- **THEN** o operador recusa a preparação e preserva o arquivo existente
 
 #### Scenario: Outra operação deixou marcador pendente
 
