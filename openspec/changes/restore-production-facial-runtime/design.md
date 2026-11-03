@@ -55,6 +55,22 @@ O operador terá fases explícitas de inventário, preparação isolada, aplica�
 
 API, worker geral e três workers faciais devem concordar em ambiente, configuração, modelos e modo de admissão. Reusar manifests efetivos sob controle protegido, comparando fontes/destinos/permissões de mounts e hashes por serviço. Não recalcular tudo a partir do Compose local ignorando patches e overlays ativos. A pausa é curta e delimitada aos consumidores aprovados; não há promessa de interrupção zero para esses consumidores.
 
+#### Separação do estado operacional compartilhado
+
+O adaptador real SHALL executar com UID/GID root, pois precisa ler o manifesto root-only e arquivos Compose protegidos. Execução com outra identidade MUST falhar antes de acessar Docker ou alterar estado. O diretório fixo `/var/lib/markina-gallery/deploy-state` é compartilhado por fluxos de release e pertence a `ubuntu:ubuntu`, modo `0700`. O operador facial SHALL validá-lo nesse proprietário e modo, sem exigir que o diretório pertença ao UID efetivo do operador. MUST NOT alterar proprietário, modo ou conteúdo preexistente do diretório compartilhado.
+
+O lock global `/var/lib/markina-gallery/deploy-state/production-release.lock` permanece no local usado pelos demais releases. O operador SHALL abrir e bloquear esse arquivo sem truncá-lo, validando arquivo regular, único hard link, proprietário/grupo `ubuntu:ubuntu` e modo `0600`; SHALL NOT substituí-lo, recriá-lo, alterar dono ou modo. Os marcadores conhecidos na lista fixa `PENDING` SHALL continuar sendo verificados diretamente no diretório compartilhado.
+
+Diários, recibos e snapshots cifrados da restauração facial SHALL ficar somente em `/var/lib/markina-gallery/deploy-state/facial-runtime-restoration`, diretório filho fixo `root:root 0700`. `inventory` não o cria. `prepare` pode criá-lo uma única vez com `mkdir` sem recursão e confirmar dono, grupo, modo e ausência de symlink; estado existente incompatível MUST interromper a operação sem reparo automático. Diários faciais legados no pai compartilhado também SHALL ser verificados para impedir concorrência durante a transição.
+
+O manifesto fixo `/var/lib/markina-gallery/deploy-state/facial-runtime-candidates.json` continua no diretório compartilhado, com arquivo regular, proprietário root, modo `0600` e caminho não configurável pela CLI. Sua leitura valida separadamente o diretório pai de `ubuntu:ubuntu 0700` e o arquivo de root. Arquivos Compose protegidos podem continuar nesse diretório compartilhado; o inventário SHALL aceitar apenas arquivos regulares, protegidos contra gravação por grupo/outros, sob as raízes fixas de código ou de estado compartilhado.
+
+#### Proveniência do suporte e dos candidatos
+
+O manifesto e o checkout de suporte existentes estão vinculados ao SHA `775f84e83a64bb5a0e60581f3b386ddb5f0fc7de`. Depois do merge do operador revisado, o suporte SHALL ser disponibilizado em um novo checkout Git detached, limpo e root-only `facial-runtime-support-<12 caracteres do SHA do merge>`, sem substituir o checkout anterior nem atualizar a árvore de aplicação `/opt/markina-gallery`. O checkout SHALL apontar exatamente para o SHA de `main` revisado, e o operador SHALL verificar esse SHA e o estado Git limpo antes de ler o manifesto.
+
+O manifesto existente SHALL permanecer no lugar; antes de `prepare`, sob o lock global, uma atualização controlada pode alterar somente o campo `support_sha` do SHA antigo para o SHA do merge. A gravação SHALL ser atômica, preservar owner/group root e modo `0600`, e conferir que todos os demais valores JSON permaneceram idênticos. Registrar SHA-256 antigo e novo do arquivo. Depois, `prove_images`/`validate_images` SHALL comprovar os cinco candidatos contra o novo checkout; qualquer diferença de módulo, dependência, imagem ou outro campo mantém a operação bloqueada. O manifesto não será regenerado a partir de ambiente local nem seus candidatos reconstruídos por causa apenas da troca de suporte.
+
 #### Protocolo de parada cooperativa e CLI
 
 Não exigir um arquivo ACK em `/run`: nenhum processo atual o escreve e um arquivo antigo não provaria que o processo está ocioso agora. O recibo cooperativo será produzido pelo próprio host ao observar o encerramento do container exato que inventariou. Antes do primeiro sinal, o operador SHALL conferir ID, imagem, comando, ambiente/configuração, horário de início e `docker diff` de todos os consumidores. Para cada processo em execução, SHALL registrar a intenção no journal, desativar temporariamente sua política de reinício, enviar somente `SIGTERM` e aguardar no máximo 120 segundos. Uvicorn conclui requisições em andamento; o worker geral usa o encerramento gracioso já existente; cada worker facial SHALL instalar handlers que apenas solicitem parada e sair depois do ciclo atual, sem iniciar outro ciclo. O recibo SHALL vincular operação, serviço, ID, imagem, digest da configuração, início, código de saída zero e fase do journal.
@@ -76,7 +92,7 @@ python3 scripts/facial_runtime_restoration_cli.py execute --support-sha <sha40> 
 python3 scripts/facial_runtime_restoration_cli.py execute --support-sha <sha40> --operation <id> --phase recover --fingerprint <sha256>
 ```
 
-`prepare` lê somente `facial-runtime-candidates.json` protegido em `/var/lib/markina-gallery/deploy-state/`; não recebe caminho por argumento. Antes de cada gravação, a CLI pede a frase `CONFIRMO <FASE> <id>`. Nenhuma fase muda portas ou ingressos: somente API/worker geral na fase `dark`, os cinco consumidores na ativação, mantendo Nginx, web, PostgreSQL, Redis e outros serviços intocados. A verificação usa o HTTPS existente em `/api/health` e `/healthz`. Uma falha após troca exige `recover`, que restaura imagens/configuração por fase sem tocar o banco; divergência de camada ou mount recusa a remoção.
+`prepare` lê somente `facial-runtime-candidates.json` protegido em `/var/lib/markina-gallery/deploy-state/`, sob as regras de proprietário/modo descritas acima; não recebe caminho por argumento. Antes de cada gravação, a CLI pede a frase `CONFIRMO <FASE> <id>`. Nenhuma fase muda portas ou ingressos: somente API/worker geral na fase `dark`, os cinco consumidores na ativação, mantendo Nginx, web, PostgreSQL, Redis e outros serviços intocados. A verificação usa o HTTPS existente em `/api/health` e `/healthz`. Uma falha após troca exige `recover`, que restaura imagens/configuração por fase sem tocar o banco; divergência de camada ou mount recusa a remoção.
 
 ### 5. Evidências operacionais não são inferidas
 
@@ -110,11 +126,12 @@ O inventário SHALL exigir manifests reproduzíveis/protegidos somente dos cinco
 ## Migration Plan
 
 1. Revisar os artefatos e implementar/validar o operador e o modo estrito em base isolada; nenhuma migration faz parte desta change.
-2. Conferir `main`, CI, imagens, módulos, schema e recuperação, e produzir fingerprint atual com o plano concreto de serviços/portas para a janela operacional autorizada.
-3. Construir/verificar os candidatos sem dados reais; ensaiar falhas, recuperação e capacidade ARM com dados sintéticos.
-4. Satisfeitos os gates, aplicar a fase `dark` preservando schema/configuração e conferir saúde e não regressão dos fluxos comerciais.
-5. Registrar evidência verdadeira de calibração e escopo; ativar a etapa aprovada e fazer a busca autenticada sob autorização para os dados usados.
-6. Observar SLOs; promover somente com evidência e revisão da etapa ou recuperar conforme o recibo. Não declarar disponibilidade geral com base em canary.
+2. Conferir `main`, CI, criar checkout root-only separado do suporte no SHA exato do merge e revalidar os cinco candidatos após rebind controlado somente do campo `support_sha` no manifesto.
+3. Conferir imagens, módulos, schema e recuperação, e produzir fingerprint atual com o plano concreto de serviços/portas para a janela operacional autorizada.
+4. Construir/verificar os candidatos sem dados reais; ensaiar falhas, recuperação e capacidade ARM com dados sintéticos.
+5. Satisfeitos os gates, aplicar a fase `dark` preservando schema/configuração e conferir saúde e não regressão dos fluxos comerciais.
+6. Registrar evidência verdadeira de calibração e escopo; ativar a etapa aprovada e fazer a busca autenticada sob autorização para os dados usados.
+7. Observar SLOs; promover somente com evidência e revisão da etapa ou recuperar conforme o recibo. Não declarar disponibilidade geral com base em canary.
 
 ## Gates externos atuais
 
