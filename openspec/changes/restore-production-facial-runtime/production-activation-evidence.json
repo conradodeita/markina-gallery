@@ -114,8 +114,8 @@
   "limitations": [
     "Jornada real e resultado satisfatorio confirmados pelo proprietario e UI; fechamento formal do operador depende de nova requisicao vigente apos corrigir a notificacao.",
     "A unica busca observada levou 179,6 s e excedeu o SLO de 120 s; nao ha p95 representativo ou calibracao medida.",
-    "A notificacao pos-busca falhou por marcadores ambientais antigos no consumidor; OTP foi confirmado pelo proprietario; correcao persistente ainda pendente.",
-    "A indexacao real de quatro ativos foi comprovada; o acervo anteriormente pronto nao foi reindexado."
+    "A indexacao real de quatro ativos foi comprovada; o acervo anteriormente pronto nao foi reindexado.",
+    "Marcadores da notificacao corrigidos e canal conferido em producao; recebimento depende de nova busca iniciada pelo proprietario. O evento terminal antigo nao foi reenviado."
   ],
   "owner_client_test": {
     "method": "indexed_region",
@@ -146,7 +146,45 @@
     "api_and_general_worker_marker_environment": "production",
     "isolated_process_marker_alignment_resolves_provider": true,
     "live_channel_open_and_identity_matches": true,
-    "persistent_alignment_applied": false,
+    "persistent_alignment_applied": true,
     "old_event_automatically_resent": false
+  },
+  "notification_alignment": {
+    "observed_at_utc": "2026-11-03T15:40:36.230125+00:00",
+    "operator_support_sha": "855be42b826c61c8ebdb2bd1e471ca1d28147061",
+    "pr_number": 363,
+    "pr_ci_run": 41662928739,
+    "pr_ci_result": "success",
+    "tested_head_sha": "0fc7e86172c3e054bf169af3d0eb625071c33f98",
+    "tested_and_main_tree": "3d9a904a4bcb8c00e88314531aedbf7a1c91cd23",
+    "main_ci_run": 41665405443,
+    "main_ci_result": "success",
+    "status": "aligned_and_channel_ready",
+    "changed_services": [
+      "face-search-worker"
+    ],
+    "changed_environment_keys": [
+      "WHATSAPP_BINDING_LEGACY_A_CREDENTIAL_ENV",
+      "WHATSAPP_BINDING_PILOT_B_CREDENTIAL_ENV",
+      "WHATSAPP_CREDENTIAL_ENV"
+    ],
+    "all_image_ids_preserved": true,
+    "other_consumers_identity_and_start_preserved": true,
+    "schema": "20261026_0090",
+    "https_status": [
+      200,
+      200
+    ],
+    "live_connection": "open",
+    "stored_channel": "ready",
+    "live_identity_matches_expected": true,
+    "public_origin_matches_production": true,
+    "old_event_automatically_resent": false,
+    "owner_fresh_test_pending": true,
+    "readiness_receipt_sha256": "d6448f254b63a0f03173b59ef605c098b69a961e222dd92660c794a43d50f812",
+    "private_receipt_sha256": "b8b4488c4ef2a7e4ca4e37359ce680906b17e35d662c7f8767490cc92100e5e6",
+    "post_main_ci_observed_at_utc": "2026-11-03T15:50:26.951954+00:00",
+    "post_main_ci_receipt_sha256": "27d99732119986a3c76bb42c6503b79909522b5a42be4492e787ce3d660b3a1b",
+    "owner_fresh_test_reply": "not_yet_tested"
   }
 }
