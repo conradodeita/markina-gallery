@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -62,7 +62,7 @@ def validate_inventory(inventory: dict, *, now: datetime | None = None) -> None:
     require(bool(SHA.fullmatch(inventory.get("support_sha", ""))), "sha_suporte_invalido")
     try:
         collected = datetime.fromisoformat(inventory["collected_at"])
-        age = ((now or datetime.now(timezone.utc)) - collected).total_seconds()
+        age = ((now or datetime.now(UTC)) - collected).total_seconds()
     except (ValueError, TypeError, KeyError):
         raise RestorationError("timestamp_invalido") from None
     require(0 <= age <= 3600, "inventario_vencido")
@@ -262,7 +262,7 @@ def execute(host: Host, operation: str, mode: str, approval: Approval) -> dict:
                 require(proof.get("gates") == sorted(GATES), "gates_nao_comprovados")
                 record["activation_proof_digest"] = digest(proof)
                 record["scope_digest"] = scope
-                record["activation_started_at"] = datetime.now(timezone.utc).isoformat()
+                record["activation_started_at"] = datetime.now(UTC).isoformat()
         record["phase"] = "recovering" if mode == "recover" else ("activating" if mode == "activate" else "applying_dark")
         host.journal(operation, record)
         # A real host must prove cooperative quiescence. Empty queues alone are insufficient.

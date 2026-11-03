@@ -5,7 +5,7 @@ import copy
 import sys
 import unittest
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -29,7 +29,7 @@ from facial_runtime_restoration import (
 
 def fixture():
     inventory = {"format": 1, "project": PROJECT, "schema": SCHEMA, "architecture": "arm64",
-        "support_sha": "a" * 40, "collected_at": datetime.now(timezone.utc).isoformat(),
+        "support_sha": "a" * 40, "collected_at": datetime.now(UTC).isoformat(),
         "services": {}}
     for n, service in enumerate((*SERVICES, "web", "nginx", "db", "redis"), 1):
         inventory["services"][service] = {"container_id": f"{n:064x}", "image_id": "sha256:" + f"{n:064x}", "status": "exited" if service in FACIAL else "running", "health": "healthy", "environment": "staging" if service in FACIAL else "production", "facial_enabled": "false", "configuration_digest": digest({"service": service}), "compose_files": [{"path": "/fixture/compose.json", "sha256": "c" * 64}], "ports": {"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]} if service == "nginx" else {}}
@@ -192,7 +192,7 @@ class ContractTests(unittest.TestCase):
 
     def test_inventory_rejects_schema_ports_and_stale_evidence(self):
         inventory, _ = fixture()
-        for field, value in (("schema", "wrong"), ("project", "other"), ("architecture", "amd64"), ("collected_at", (datetime.now(timezone.utc)-timedelta(hours=2)).isoformat())):
+        for field, value in (("schema", "wrong"), ("project", "other"), ("architecture", "amd64"), ("collected_at", (datetime.now(UTC)-timedelta(hours=2)).isoformat())):
             changed = copy.deepcopy(inventory)
             changed[field] = value
             with self.subTest(field=field), self.assertRaises(RestorationError):
