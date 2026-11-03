@@ -1,0 +1,81 @@
+{
+  "operation": "facial-restore-8ca145d2-20261103",
+  "support_sha": "8ca145d267ba7611634632eb46a3a3192ab17cb4",
+  "fingerprint": "059ec8efd2db7fc29de081b0e813cee46cfa3f21a1ebb31a0eb00d4466e4396c",
+  "activation_started_at_utc": "2026-11-03T13:08:34.131932+00:00",
+  "activation_date_local": "2026-11-03",
+  "timezone": "America/Sao_Paulo",
+  "operator_result": "runtime_verified",
+  "enabled": true,
+  "schema": "20261026_0090",
+  "origin": "https://markina.pickyourpic.com.br",
+  "https_status": {"/api/health": 200, "/healthz": 200},
+  "peers_unchanged": true,
+  "authorization_reference": "owner-general-restore-20261102",
+  "additional_owner_decision": "owner-minor-production-unblock-20261103",
+  "scope_count": 6,
+  "scope_digest": "d47f8ddfa190825f158081c0dd84715e5567c25253d82fc555f31704d6f4752c",
+  "gate_index_sha256": "5e108ddef11cd1bb913d90f66a47fa0fc69200d095c6de16da557b7c7f878b34",
+  "calibration_measured": false,
+  "calibration_waived_by_owner": true,
+  "similarity_threshold_milli": 750,
+  "services": {
+    "api": {"image_id": "sha256:6e732610932d5e7eb01c1fbed5ddbc7a1f4b05a39da9de8179c0ed0ab8375aea", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0},
+    "worker": {"image_id": "sha256:e7eb35840d59f71fbb6e0437525448b761d12bdcb571c9b5416afdb034025f5b", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0},
+    "face-search-worker": {"image_id": "sha256:cfbf33b3b1004db5f68964afcf9d2ba760b8c776b83377f8ddfbdaad9929f8cd", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0},
+    "face-index-worker": {"image_id": "sha256:965b33751d4cd4df7b1fe1954ad536e1a00e20d47d31df3dc5ebd77b1a1e384d", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0},
+    "face-maintenance-worker": {"image_id": "sha256:5cf540247c3e77b0f48bd19a556c416a6e493ba6ff36c724e7b9cc043ceeb0b1", "state": "running", "health": "healthy", "environment": "production", "enabled": true, "restart_count": 0}
+  },
+  "application_read_only_probe": {
+    "settings_and_assets_valid": true,
+    "gallery_admission_available": 6,
+    "authorized_client_contexts": 6,
+    "client_consent_required": 6,
+    "minor_availability_true": 6,
+    "gallery_index_completed": 5,
+    "gallery_index_processing": 1,
+    "index_photo_total": 3517,
+    "index_ready_total": 3513,
+    "unindexed": 4,
+    "failed": 0,
+    "waiting_previews": 0,
+    "detected_faces": 14267
+  },
+  "initial_observation": {
+    "observed_at_utc": "2026-11-03T13:13:49.745218+00:00",
+    "pending_jobs": 0,
+    "jobs_updated_since_activation": 0,
+    "search_terminal_samples": 0,
+    "search_p95_seconds": null,
+    "overdue_references": 0,
+    "overdue_candidates": 0
+  },
+  "bounded_catchup": {
+    "method": "enqueue_photo_index_if_eligible",
+    "queued_at_utc": "2026-11-03T13:24:30.228557+00:00",
+    "admitted": 4,
+    "completed": 4,
+    "max_attempts": 1,
+    "jobs_with_error_category": 0,
+    "faces_detected": 15,
+    "private_receipt_sha256": "31e82b968376d5c91d503466e58298a3d93d6097fa82354044b98708a3df5d58"
+  },
+  "post_catchup_observation": {
+    "observed_at_utc": "2026-11-03T13:26:50.876446+00:00",
+    "gallery_index_completed": 6,
+    "index_photo_total": 3517,
+    "index_ready_total": 3517,
+    "unindexed": 0,
+    "failed": 0,
+    "queued": 0,
+    "processing": 0,
+    "detected_faces": 14282,
+    "overdue_references": 0,
+    "searches_since_activation": 0
+  },
+  "limitations": [
+    "Runtime habilitado e disponibilidade real da aplicacao comprovados; jornada autenticada no navegador e resultado de busca posterior a ativacao ainda pendentes.",
+    "Sem amostras de busca nas observacoes registradas; nao ha medicao de p95 real de consulta nem precisao.",
+    "A indexacao real de quatro ativos foi comprovada; o acervo anteriormente pronto nao foi reindexado."
+  ]
+}
