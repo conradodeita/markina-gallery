@@ -263,6 +263,12 @@ class HostContractTests(unittest.TestCase):
             self.host._write(path,b'{}',create=False)
         self.assertEqual(path.read_bytes(),b'{"format":1}')
 
+    @unittest.skipUnless(os.name == "posix","Validação de filesystem exige Linux/POSIX")
+    def test_missing_private_file_has_specific_refusal(self):
+        self.root.chmod(0o700)
+        with self.assertRaisesRegex(RestorationError, "arquivo_privado_ausente"):
+            self.host._read(self.root/"recovery-proof.json")
+
     @unittest.skipUnless(os.name == "posix","Lock nativo exige Linux/POSIX")
     def test_lock_is_exclusive_and_uses_existing_markina_release_lock(self):
         self.root.chmod(0o700)
@@ -271,6 +277,16 @@ class HostContractTests(unittest.TestCase):
         path.chmod(0o600)
         with self.host.lock(), self.assertRaises(RestorationError), self.host.lock():
             self.fail("lock duplicado")
+
+    @unittest.skipUnless(os.name == "posix","Lock nativo exige Linux/POSIX")
+    def test_oserror_inside_locked_operation_is_not_reported_as_lock_conflict(self):
+        self.root.chmod(0o700)
+        path = self.root/"production-release.lock"
+        path.write_bytes(b"")
+        path.chmod(0o600)
+        with self.host.lock(), self.assertRaisesRegex(OSError, "operation failure") as raised:
+            raise OSError("operation failure")
+        self.assertNotIsInstance(raised.exception, RestorationError)
 
     @unittest.skipUnless(os.name == "posix","Metadados POSIX exigem Linux/POSIX")
     def test_dedicated_state_preserves_shared_directory_and_global_lock(self):

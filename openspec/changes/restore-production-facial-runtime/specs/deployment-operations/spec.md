@@ -157,6 +157,8 @@ A restauração SHALL ser declarada concluída somente com evidência da versão
 
 O adaptador real SHALL exigir UID/GID root antes do acesso ao host. O operador SHALL validar o diretório fixo `deploy-state` como `ubuntu:ubuntu 0700` e manter nele o lock e os marcadores conhecidos em `PENDING`. SHALL NOT alterar proprietário, modo ou conteúdo compartilhado.
 
+A conversão de `OSError` para recusa do lock SHALL limitar-se à abertura, validação de metadados e aquisição do lock. Exceções do corpo protegido SHALL preservar a causa operacional original.
+
 #### Scenario: Diretório compartilhado pertence a ubuntu e operador é root
 
 - **WHEN** o operador root valida o diretório compartilhado `ubuntu:ubuntu 0700` e o lock existente `ubuntu:ubuntu 0600`
@@ -172,9 +174,16 @@ O adaptador real SHALL exigir UID/GID root antes do acesso ao host. O operador S
 - **WHEN** o lock não é arquivo regular, único hard link, `ubuntu:ubuntu 0600`, ou já está ocupado
 - **THEN** o operador recusa a operação sem truncar, recriar ou corrigir o lock
 
+#### Scenario: Operação protegida falha depois de adquirir o lock
+
+- **WHEN** o corpo protegido lança `OSError` depois da aquisição bem-sucedida
+- **THEN** o operador preserva o erro operacional e não o apresenta como lock ocupado
+
 ### Requirement: Estado da restauração facial é privado e isolado
 
 Diários, recibos e snapshots faciais SHALL ficar somente em `deploy-state/facial-runtime-restoration`, `root:root 0700`. `inventory` SHALL ser somente leitura; `prepare` pode criar o filho ausente. Symlink, tipo, dono, grupo ou modo divergente SHALL bloquear sem reparo automático.
+
+Arquivo privado obrigatório ausente SHALL produzir a recusa específica `arquivo_privado_ausente`; o operador não SHALL inferir, sintetizar ou contornar evidência ausente.
 
 #### Scenario: Estado facial dedicado está ausente
 
@@ -185,6 +194,11 @@ Diários, recibos e snapshots faciais SHALL ficar somente em `deploy-state/facia
 
 - **WHEN** o filho privado é symlink, tem tipo, proprietário ou modo divergente
 - **THEN** a operação é recusada antes de qualquer alteração de serviço ou configuração e não corrige metadados automaticamente
+
+#### Scenario: Recibo privado obrigatório está ausente
+
+- **WHEN** uma operação tenta ler um recibo de recuperação obrigatório que não existe
+- **THEN** recusa com `arquivo_privado_ausente` antes de alterar serviços, configuração ou dados
 
 ### Requirement: Manifesto de candidatos permanece protegido no caminho existente
 
