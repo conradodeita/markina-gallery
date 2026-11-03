@@ -5,7 +5,7 @@ import copy
 import sys
 import unittest
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -16,6 +16,7 @@ from facial_runtime_restoration import (
     PROJECT,
     SCHEMA,
     SERVICES,
+    UTC,
     Approval,
     RestorationError,
     digest,

@@ -106,6 +106,8 @@ Se a tentativa de recuperação recriar a API baseline mas falhar antes de persi
 
 #### Correção delimitada da notificação pós-busca (03/11/2026)
 
+O adaptador executa no Python 3.10 do host; as imagens de aplicação e o CI usam Python 3.13. O suporte SHALL manter compatibilidade com Python 3.10 e testar importação/contratos sintéticos nessa versão antes da operação. Para UTC, usar alias local de `timezone.utc`, com exceção de lint pontual justificada; não atualizar o Python do servidor para satisfazer uma sugestão do linter.
+
 A busca real por região terminou com 25 resultados, confirmados na UI pelo proprietário. O outbox facial terminou `failed/channel_unavailable`, três tentativas, sem ID externo. A API e o worker geral usam credenciais identificadas como `production`; o worker de busca conservou três marcadores `WHATSAPP_*CREDENTIAL_ENV=staging`. As chaves, URLs e instâncias do canal coincidem. Uma execução isolada de diagnóstico, alterando somente esses três marcadores no subprocesso, resolveu o provider e confirmou conexão aberta com a identidade esperada, sem enviar mensagem. O proprietário confirmou recebimento e login por OTP; esse fluxo não será alterado.
 
 Isso refina a coerência ambiental já exigida na restauração, sem novo comportamento de produto. `_target_environment` SHALL copiar da API somente `WHATSAPP_CREDENTIAL_ENV` e marcadores de aliases `WHATSAPP_BINDING_*_CREDENTIAL_ENV`, exclusivamente para `face-search-worker`. Nenhuma chave, binding, destinatário, timeout ou configuração de OTP será copiada. A configuração anterior derivada do snapshot selado continuará reconhecida somente para parada/recuperação; verificação de sucesso exigirá os marcadores alinhados.

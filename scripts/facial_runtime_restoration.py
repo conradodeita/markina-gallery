@@ -10,10 +10,11 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import UUID
 
+UTC = timezone.utc  # noqa: UP017 -- operador do host usa Python 3.10, sem datetime.UTC.
 PROJECT = "markina-gallery"
 SCHEMA = "20261026_0090"
 SERVICES = ("api", "worker", "face-search-worker", "face-index-worker", "face-maintenance-worker")
