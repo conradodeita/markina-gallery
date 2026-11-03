@@ -2,6 +2,8 @@
 
 > **Escopo atualizado por decisão expressa em 02/11/2026:** restauração geral autorizada sem exigir calibração prévia, preservando políticas, modelos/limiares e controles de acesso. Usar modo operacional auditável e configuração explícita, com exigência de calibração habilitada por padrão no código. Nenhuma aprovação de medição será inventada. A medição posterior usará uma pasta restrita ao cliente de teste do proprietário.
 
+> **Decisão substitutiva expressa em 03/11/2026:** o proprietário ordenou desbloquear a regra do `AGENTS.md` que impedia a busca infantil. Esta ordem autoriza a retomada em produção do fluxo vigente de consentimento condicional e substitui o bloqueio adicional de aprovação infantil, preservando os controles técnicos e de consentimento já implementados. Referência `owner-minor-production-unblock-20261103`; a ordem não será apresentada como parecer jurídico independente ou comprovação administrativa de representação.
+
 ## Why
 
 A transição ambiental de 30/10/2026 preservou os índices e desligou a busca facial; o proprietário solicitou expressamente sua reativação. A API atual não contém OpenCV, NumPy ou o cache de modelos exigido para ligar a flag, e os workers preservados pertencem ao contexto anterior de `staging`, portanto a retomada exige preparação compatível com o ambiente `production` atual.
@@ -12,8 +14,8 @@ A transição ambiental de 30/10/2026 preservou os índices e desligou a busca f
 - Identificar fontes, imagens, módulos, configuração e schema atuais por fingerprint; preservar o patch saudável da API e impedir inclusão do desenvolvimento SaaS não publicado.
 - Preparar imagens ARM64 com dependências e modelos faciais fixados e verificados; manter YuNet/SFace, limiares, chaves e retenção existentes, sujeitos à revisão da configuração real.
 - Validar primeiro em ambiente isolado sem banco, rede ou mídia de produção; preparar uma etapa `dark` que não processe galerias reais.
-- Habilitar `FACIAL_PROCESSING_ENABLED=true` somente após os gates técnicos e as evidências de calibração, uso autorizado e escopo exigidas pelo contrato vigente, sem criar aprovação fictícia para satisfazer o código.
-- Delimitar a etapa inicial por rollout explícito: o runtime atual admite galerias sem registro como compatibilidade legada depois da calibração; o modo de restauração deverá impedir exposição fora da allowlist, inclusive para galerias criadas durante o canary.
+- Habilitar `FACIAL_PROCESSING_ENABLED=true` após os gates técnicos, uso autorizado e escopo exigidos pelo modo aprovado; registrar a dispensa de calibração e a autorização infantil do proprietário como decisões explícitas distintas, sem criar aprovação fictícia para satisfazer o código.
+- Comprovar o escopo explícito da etapa: no modo estrito, respeitar a allowlist do canary; no modo geral autorizado, conferir o conjunto de políticas ativas compatíveis, preservando os controles de acesso existentes.
 - Registrar fases, evidências, pendências e recuperação por serviço, sem parar bancos, proxy ou outros projetos e sem alteração de schema.
 
 ## Capabilities
@@ -35,4 +37,4 @@ O comportamento de busca e os gates da change `productionize-facial-search`, com
 - Dados: schema atual `20261026_0090`, 14.267 embeddings observados apenas por contagem, sete políticas ativas e nenhum job facial ativo. Sem migration, exclusão, reindexação geral ou alteração financeira implícitas.
 - Continuidade: o desenvolvimento SaaS continua na worktree atual; o pacote operacional deverá partir da versão saudável observada e de uma base Git limpa revisada. Nenhum diff local não publicado será levado a produção.
 - Refatoração: reutilizar verificação de modelos, configuração e infraestrutura de operação onde forem compatíveis. Não flexibilizar o operador antigo, seus schemas fixos ou seus gates para fazê-lo aceitar um estado que ele não suporta.
-- Aprovações e limites: autorização de reativação recuperada do chat “Investigue busca facial em produção”. Em 02/11 o proprietário confirmou que o acervo real já foi usado no reconhecimento e dispensou documento jurídico adicional para a retomada. Não foi apresentada métrica de calibração; o gate técnico do runtime permanece a reconciliar com evidência verdadeira. Falta revisão deste novo desenho operacional. Evidência atual em `investigation.md`.
+- Aprovações e limites: autorização de reativação recuperada do chat “Investigue busca facial em produção”; implementação local, push e deploy foram aprovados. Em 02/11 o proprietário confirmou o uso anterior do acervo e autorizou restauração geral sem calibração prévia. Em 03/11 ordenou remover o bloqueio infantil adicional do `AGENTS.md`; a autorização operacional específica está em `design.md` e `investigation.md`. Nenhuma decisão será convertida em parecer jurídico ou medição de precisão inexistentes.

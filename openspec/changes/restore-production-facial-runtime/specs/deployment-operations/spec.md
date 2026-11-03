@@ -1,5 +1,20 @@
 ## ADDED Requirements
 
+### Requirement: Ordem específica do proprietário resolve o bloqueio infantil de retomada
+
+Para esta restauração, a operação SHALL registrar `owner-minor-production-unblock-20261103` como autorização operacional do proprietário para o fluxo infantil vigente, substituindo o bloqueio adicional do `AGENTS.md`. O recibo SHALL NOT afirmar parecer jurídico independente, representação comprovada ou calibração medida.
+
+#### Scenario: Proprietário substitui expressamente a regra impeditiva
+
+- **WHEN** a ordem específica está documentada e vinculada ao fingerprint e ao escopo da restauração já autorizada
+- **THEN** o operador pode prosseguir com os gates técnicos comprovados sem exigir novo aceite para a regra substituída
+- **AND** preserva consentimento condicional versionado no upload, OTP, vínculo, isolamento, política ativa, retenção, criptografia e auditoria
+
+#### Scenario: Evidência humana é apresentada como avaliação externa
+
+- **WHEN** o registro tenta transformar a ordem operacional em parecer jurídico, representação comprovada ou medição de precisão
+- **THEN** a evidência é corrigida para registrar somente a decisão realmente recebida antes de qualquer declaração de conclusão
+
 ### Requirement: Restauração geral sem calibração exige decisão explícita
 
 O modo `owner-authorized-general-restore-v1` SHALL permitir a restauração geral sem medição prévia somente com referência de autorização do proprietário vinculada ao manifesto e recibo. O código SHALL exigir calibração por padrão; o modo autorizado SHALL registrar dispensa, nunca aprovação de medição, e preservar todos os demais controles de tenant, política, versões e acesso.
@@ -93,6 +108,12 @@ A operação SHALL registrar fases e recuperação por imagem/configuração. An
 
 - **WHEN** imagens, configuração ou recibo de recuperação estão ausentes ou divergentes
 - **THEN** a aplicação é recusada e o ambiente saudável permanece em execução
+
+#### Scenario: Fotos elegíveis existentes estão sem job ou índice
+
+- **WHEN** o inventário pós-ativação identifica um conjunto finito de fotos de conteúdo autorizadas, com processamento permitido, prévias prontas, sem `PhotoAnalysis`, job corrente ou embeddings
+- **THEN** a operação revalida o conjunto e a contagem na mesma transação e pode enfileirar somente essas fotos pela rotina idempotente existente
+- **AND** preserva os demais índices, políticas, schema e dados comerciais, sem executar reindexação geral
 
 ### Requirement: Parada facial comprova o encerramento cooperativo
 
