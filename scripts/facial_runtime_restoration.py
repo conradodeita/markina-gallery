@@ -15,7 +15,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 # The operational host uses Python 3.10, where datetime.UTC is unavailable.
-UTC = timezone.utc
+UTC = timezone.utc  # noqa: UP017, RUF100 -- Operational host uses Python 3.10.
 PROJECT = "markina-gallery"
 SCHEMA = "20261026_0090"
 SERVICES = ("api", "worker", "face-search-worker", "face-index-worker", "face-maintenance-worker")
