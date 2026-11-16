@@ -4,6 +4,8 @@ import base64
 import json
 import os
 
+import pytest
+
 if os.environ.get("APP_ENV") not in {None, "development", "test"}:
     raise RuntimeError("A suíte não pode iniciar com APP_ENV protegido configurado.")
 
@@ -35,3 +37,19 @@ os.environ.setdefault(
         "pytest-only": base64.b64encode(b"pyp-test-integration-key-not-for-any-env"[:32]).decode(),
     }),
 )
+
+
+@pytest.fixture(autouse=True)
+def isolate_shared_metadata_ddl_rules():
+    from app.auth import Base
+
+    # SQLAlchemy attaches DDL rules when PostgreSQL emits cyclic FKs through
+    # ALTER TABLE. Restore the shared model state after every case so a later
+    # SQLite schema cannot inherit another test's dialect-specific rules.
+    rules = [(constraint, constraint._create_rule)
+             for table in Base.metadata.tables.values() for constraint in table.constraints]
+    try:
+        yield
+    finally:
+        for constraint, rule in rules:
+            constraint._create_rule = rule

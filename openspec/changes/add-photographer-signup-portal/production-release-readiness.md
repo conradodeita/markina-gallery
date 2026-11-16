@@ -1,5 +1,12 @@
 # Prontidão de release do cadastro SaaS em produção
 
+## Isolamento de DDL e pacote intermediário — 16/11/2026
+
+- [x] CI `43974306450` aprovou qualidade backend, frontend, OpenSpec, Gitleaks, imagens amd64/arm64 e shards 0/1. O shard 2 manteve14 erros de setup SQLite; não foram contados como falhas de negócio resolvidas.
+- [x] Reprodução da segunda origem: o teste concorrente PostgreSQL do agendador de arquivo, seguido do contrato SQLite de pagamentos, resultou em uma aprovação e um erro de FK ausente. Esse ponto agora usa metadata copiado. A fixture comum também restaura as regras DDL originais após cada caso, isolando efeitos do SQLAlchemy entre dialetos sem retirar a assertion de FKs. Sequência agendador + operações/atalhos de pagamentos: **15 passed**, sem skips; evidência `scheduler-sqlite-green.xml`.
+- [x] Preparador local do pacote TOTP intermediário implementado na change própria, com **8 testes aprovados**, hashes de origem/cipher/resultado e manifesto. O artefato da API observada foi construído e ensaiado exclusivamente no banco restaurado a0126: fator existente legível após contract e inserção sintética cifrada/revertida. Detalhes e limites em `../protect-admin-totp-secrets/validation.md`.
+- [ ] Obter CI integral verde no novo SHA e então seguir com PR/merge. Startup HTTP completo, roteamento, drenagem e rollback produtivos ainda dependem do procedimento de corte; não foram inferidos da leitura TOTP isolada.
+
 ## Correção da fixture compartilhada e configurações pós-deploy — 16/11/2026
 
 - [x] Correção da segunda fixture TOTP publicada em `7f08eaf4`; CI `43972329043` iniciado. No CI anterior `43968880785`, shard 0 e todos os gates independentes do backend passaram; shard 1 teve a fixture curta já corrigida e shard 2 revelou outro uso de metadata compartilhado.

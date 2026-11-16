@@ -499,7 +499,9 @@ def postgres_schema():
 
 def test_concurrent_discovery_enqueues_only_one_operation(postgres_schema):
     engine = postgres_schema
-    Base.metadata.create_all(engine)
+    from tests.schema_fixtures import create_test_schema
+
+    create_test_schema(engine)
     with Session(engine, expire_on_commit=False) as db:
         db.add(MediaArchiveCoordinator(id=1))
         _seed_folder(db)
