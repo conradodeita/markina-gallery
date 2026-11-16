@@ -1,5 +1,19 @@
 # Prontidão de release do cadastro SaaS em produção
 
+## Backup e ensaio com cópia restaurada — 16/11/2026, 22:26–22:34 UTC
+
+- [x] Backup online consistente de produção `0090`, sem restart: arquivo de 126.666.855 bytes, SHA-256 `9da9591fbe9b7261ef53ff649a52d542af3349e688ba16db2256f1ea9fda7e90`, catálogo validado por `pg_restore`. Custódia root, diretório 0700 e arquivo 0600 em `/var/lib/markina-gallery/deploy-state/saas-preflight-20261116-24f2fba2/`. Nenhum dump ou segredo foi transferido para a máquina local ou para o Git.
+- [x] Restauração efetiva em PostgreSQL isolado, usando a imagem do banco observado, `network=none`, sem portas publicadas e com dados em tmpfs; limites de 3 GiB de RAM e uma CPU. Constraints restauradas válidas; evidência sanitizada em `production-backup-restore-receipt-20261116.json` na pasta local de revisão.
+- [x] Ensaio `0090→0092→0126` nessa cópia, com fonte backend do commit `24f2fba2ea195827db7b90c014785902d7ac2278` montada somente leitura sobre a imagem API observada. Expansão levou 1,118 s e cadeia restante 0,958 s nesse laboratório sem tráfego concorrente; esses tempos não estimam locks nem duração em produção. O primeiro comando de ensaio teve erro de quoting antes de acessar o banco; o payload corrigido foi compilado antes da execução.
+- [x] Comparação dos valores de todas as colunas anteriores em seis tabelas financeiras/configuração permaneceu idêntica: 68 pedidos, 674 itens, 3 registros provider, 6 pagamentos Mercado Pago, 2 contas Mercado Pago e 1 configuração PIX. O mesmo fator TOTP foi validado antes/depois por decifragem e comparação em memória, sem imprimir material de autenticação. Nenhuma constraint ficou inválida.
+- [x] O keyring usado no ensaio é exclusivo da cópia isolada. O runtime produtivo e suas credenciais permaneceram intactos; seu banco continua em `0090`. O ensaio valida a cadeia sobre essa cópia; ainda não certifica a imagem final, disponibilidade contínua, tráfego, filas ou serviços externos no corte.
+- [x] CI `43968880785`, no SHA `24f2fba2`, aprovou qualidade backend, frontend, OpenSpec, Gitleaks e imagens nas duas arquiteturas. O shard 1 chegou a 853 aprovações e uma falha: uma segunda fixture TOTP de 80 bits. As fixtures correspondentes foram atualizadas; os dois módulos completos, incluindo dois testes PostgreSQL, passaram com PyOTP 2.12.0: **10 passed, zero skips**. Evidência `totp-secondary-ci-fix.xml`.
+- [ ] Obter todos os gates verdes no SHA corrigido antes de PR/merge.
+- [ ] Encerrar o procedimento compatível de troca de API/workers antes de `0093`, conforme `docs/OPERACAO-SEGREDO-TOTP.md`; não executar `upgrade head` em produção com consumidores antigos ativos.
+- [ ] Preparar o keyring TOTP produtivo no store seguro e fechar a configuração do cadastro público. O keyring TOTP e as chaves Turnstile não estão presentes no ambiente da API consultado; isso não prova ausência em outros stores. A configuração SMTP usa os nomes `SMTP_USER`/`SMTP_FROM_ADDRESS` e deve ser preservada com seu contexto de ambiente.
+
+Recibo do ensaio: `C:/codex-data/local-review/saas-release-review-20261115/production-copy-migration-rehearsal-20261116.json`. Os logs completos ficam restritos no diretório remoto de revisão. Os serviços do projeto produtivo continuam ativos; o container temporário de restauração é separado e identificado pelo label `com.pickyourpic.saas-review=20261116-24f2fba2`.
+
 ## Atualização pós-push — 16/11/2026
 
 - [x] Primeiro push concluído no commit `cc5ebe1652e9c6a24715977ef9b2eccdded60dd3`, após revisão final de 808 caminhos incluídos, gate visual autenticado, OpenSpec e Gitleaks. `output` permanece fora do Git. Os snapshots abaixo são históricos.

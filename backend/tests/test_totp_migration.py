@@ -99,12 +99,12 @@ def test_contract_reconciles_legacy_write_and_refuses_to_run_during_dual_write(m
             "VALUES (:id,:legacy,:envelope)"
         ), {
             "id": str(admin_id),
-            "legacy": "MFRGGZDFMZTWQ2LK",
+            "legacy": "MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK",
             "envelope": cipher().encrypt("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", admin_id=admin_id),
         })
         with pytest.raises(TotpSecretError):
             contract_legacy_totp(connection, cipher())
-        assert connection.scalar(text("SELECT totp_secret FROM admin_user")) == "MFRGGZDFMZTWQ2LK"
+        assert connection.scalar(text("SELECT totp_secret FROM admin_user")) == "MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK"
 
         monkeypatch.setenv("ADMIN_TOTP_LEGACY_DUAL_WRITE", "false")
         assert contract_legacy_totp(connection, cipher()) == 1
@@ -112,7 +112,7 @@ def test_contract_reconciles_legacy_write_and_refuses_to_run_during_dual_write(m
             "SELECT totp_secret,totp_secret_envelope FROM admin_user"
         )).one()
         assert row.totp_secret is None
-        assert cipher().decrypt(row.totp_secret_envelope, admin_id=admin_id) == "MFRGGZDFMZTWQ2LK"
+        assert cipher().decrypt(row.totp_secret_envelope, admin_id=admin_id) == "MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK"
     engine.dispose()
 
 
@@ -129,11 +129,11 @@ def test_rollback_preserves_newer_plaintext_written_by_legacy_binary():
             "VALUES (:id,:legacy,:envelope)"
         ), {
             "id": str(admin_id),
-            "legacy": "MFRGGZDFMZTWQ2LK",
+            "legacy": "MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK",
             "envelope": cipher().encrypt("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", admin_id=admin_id),
         })
         assert restore_legacy_totp(connection, cipher()) == 0
-        assert connection.scalar(text("SELECT totp_secret FROM admin_user")) == "MFRGGZDFMZTWQ2LK"
+        assert connection.scalar(text("SELECT totp_secret FROM admin_user")) == "MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK"
     engine.dispose()
 
 
@@ -352,7 +352,7 @@ def test_postgresql_expand_keeps_legacy_orm_live_and_contract_is_reversible(monk
         engine = create_engine(migration_url)
         admin_id = UUID(int=4101)
         original_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
-        legacy_updated_secret = "MFRGGZDFMZTWQ2LK"
+        legacy_updated_secret = "MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK"
         with engine.begin() as connection:
             connection.execute(text(
                 "INSERT INTO admin_user "

@@ -42,7 +42,7 @@ def test_dual_write_keeps_legacy_reader_working_and_reconciles_legacy_writes(mon
     AdminUser.__table__.create(engine)
     admin_id = uuid4()
     original = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
-    updated_by_legacy = "MFRGGZDFMZTWQ2LK"
+    updated_by_legacy = "MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK"
     try:
         with Session(engine) as db:
             db.add(AdminUser(
