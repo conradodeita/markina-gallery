@@ -1,5 +1,12 @@
 # Prontidão de release do cadastro SaaS em produção
 
+## Correção da fixture compartilhada e configurações pós-deploy — 16/11/2026
+
+- [x] Correção da segunda fixture TOTP publicada em `7f08eaf4`; CI `43972329043` iniciado. No CI anterior `43968880785`, shard 0 e todos os gates independentes do backend passaram; shard 1 teve a fixture curta já corrigida e shard 2 revelou outro uso de metadata compartilhado.
+- [x] Reprodução mínima da origem da falha de FKs: `test_tenant_foundation` em PostgreSQL seguido pelo contrato SQLite de atalhos de pagamento resultou em uma aprovação e um erro de FK ausente. A fixture `tenant_db`, também reutilizada por outros módulos, agora usa a cópia de metadata do helper comum. Sequência completa da fundação, operações de pagamento e atalhos: **21 passed**, sem skips; JUnit `foundation-sqlite-green.xml`. Não houve alteração de schema nem de código da aplicação.
+- [x] [Checklist pós-deploy](../../../docs/saas-evolution/post-deploy-configuration-checklist.md) recupera os adiamentos explícitos e diferencia configuração de implementação pendente: Drive, backup global, recuperação por tenant, arquivo de fotos, domínios, SMTP/Turnstile, créditos, Termos/retenção e fidelidade. Esses itens não reabrem o primeiro push concluído.
+- [ ] Publicar a correção da fixture e obter CI integral verde no SHA atualizado antes de PR/merge.
+
 ## Backup e ensaio com cópia restaurada — 16/11/2026, 22:26–22:34 UTC
 
 - [x] Backup online consistente de produção `0090`, sem restart: arquivo de 126.666.855 bytes, SHA-256 `9da9591fbe9b7261ef53ff649a52d542af3349e688ba16db2256f1ea9fda7e90`, catálogo validado por `pg_restore`. Custódia root, diretório 0700 e arquivo 0600 em `/var/lib/markina-gallery/deploy-state/saas-preflight-20261116-24f2fba2/`. Nenhum dump ou segredo foi transferido para a máquina local ou para o Git.

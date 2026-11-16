@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     AdminUser,
-    Base,
     Client,
     DerivedGallery,
     ParentGallery,
@@ -19,6 +18,7 @@ from app.auth import (
     Tenant,
     TenantAdmin,
 )
+from tests.schema_fixtures import create_test_schema
 
 
 @pytest.fixture
@@ -46,7 +46,7 @@ def tenant_db(tmp_path):
         @event.listens_for(engine, "connect")
         def enable_fk(connection, _):
             connection.execute("PRAGMA foreign_keys=ON")
-    Base.metadata.create_all(engine)
+    create_test_schema(engine)
     with Session(engine) as db:
         yield db
     if schema:
