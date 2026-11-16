@@ -117,7 +117,7 @@ def test_delivery_persistence_scope_validation_and_audit():
 def test_delivery_notice_uses_only_the_order_tenant_subdomain():
     admin, customer, orders, _ = setup_order()
     order_id = orders[0]
-    drive_album = "https://drive.google.com/file/d/AlbumA/view?usp=sharing"
+    album_url = SECOND
     with SessionLocal() as db:
         owner_a = db.scalar(select(Client).where(Client.tenant_id == FIXTURE_TENANT_ID))
         tenant_b = Tenant(status="active", canonical_host="b.fotografo.exemplo.com")
@@ -126,15 +126,15 @@ def test_delivery_notice_uses_only_the_order_tenant_subdomain():
         db.add(Client(tenant_id=tenant_b.id, full_name="Cadastro independente B",
                       phone_e164=owner_a.phone_e164))
         db.commit()
-    response = send(admin, order_id, drive_album)
+    response = send(admin, order_id, album_url)
     assert response.status_code == 200
     notice = events()[0]
     assert f"https://{PURCHASE_HOST}/library/purchases#order-{order_id}" in notice.whatsapp_body
-    assert "drive.google.com" not in notice.whatsapp_body
+    assert album_url not in notice.whatsapp_body
     assert "b.fotografo.exemplo.com" not in notice.whatsapp_body
     assert notice.target_path == f"/library/purchases#order-{order_id}"
     customer_order = next(order for order in customer.get("/library/purchases").json()["orders"] if order["id"] == str(order_id))
-    assert customer_order["delivery_album_url"] == drive_album
+    assert customer_order["delivery_album_url"] == album_url
 
 
 def test_purchase_link_reauthentication_is_host_and_client_scoped(monkeypatch):
@@ -344,7 +344,7 @@ def test_correction_reconfirmation_never_replays_old_notice(monkeypatch):
     admin, client, orders, communication = setup_order()
     order = orders[0]
     send(admin, order)
-    corrected = admin.post(f"/admin/payment-communications/{communication}/correction", json={"idempotency_key": "delivery-correction-1"})
+    corrected = admin.post(f"/admin/payment-communications/{communication}/correction", json={"idempotency_key": 'unit-test-idempotency-key-unique-001'})
     assert corrected.status_code == 200, corrected.text
     assert client.get("/library/purchases").json()["orders"][0]["delivery_album_url"] is None
     with SessionLocal() as db:

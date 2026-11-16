@@ -269,11 +269,8 @@ def reauthenticate_admin(admin: AdminUser, current_password: str) -> None:
         raise AdminAccountError("Não foi possível confirmar a credencial atual.")
 
 
-def issue_password_reset_email(db: Session, challenge: AdminSecurityChallenge) -> None:
-    if not challenge.admin_id:
-        raise AdminAccountError("Não foi possível concluir a recuperação.")
-    admin = db.get(AdminUser, challenge.admin_id)
-    if not admin or not admin.email_verified:
+def issue_password_reset_link(db: Session, admin: AdminUser) -> None:
+    if not admin.email_verified:
         raise AdminAccountError("Não foi possível concluir a recuperação.")
     token, raw_token = issue_admin_action_token(
         db, admin_id=admin.id, purpose="password_reset"
@@ -295,6 +292,15 @@ def issue_password_reset_email(db: Session, challenge: AdminSecurityChallenge) -
     )
     audit(db, "admin_security.password_reset_link.queued", pii_fingerprint(admin.email))
     db.commit()
+
+
+def issue_password_reset_email(db: Session, challenge: AdminSecurityChallenge) -> None:
+    if not challenge.admin_id:
+        raise AdminAccountError("Não foi possível concluir a recuperação.")
+    admin = db.get(AdminUser, challenge.admin_id)
+    if not admin:
+        raise AdminAccountError("Não foi possível concluir a recuperação.")
+    issue_password_reset_link(db, admin)
 
 
 def challenge_target(challenge: AdminSecurityChallenge) -> str:

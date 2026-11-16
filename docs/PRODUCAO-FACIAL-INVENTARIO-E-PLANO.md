@@ -2,6 +2,10 @@
 
 Data: 2026-09-08. Este inventário foi produzido somente a partir do repositório e da configuração Compose renderizada localmente. Nenhum host de produção foi acessado ou alterado. Campos que exigem inspeção imediatamente anterior no servidor permanecem explicitamente pendentes.
 
+## Instrução vigente do proprietário — 15/11/2026
+
+O proprietário informou que o reconhecimento facial está funcionando em produção e determinou que `FACIAL_PROCESSING_ENABLED` permaneça `true` em qualquer deploy futuro. Esta instrução substitui as orientações históricas abaixo que exigem `false` no primeiro deploy de produção. Os wrappers atuais de release devem continuar recusando uma configuração alvo que desabilite a flag. Esta atualização não autoriza deploy, migration ou alteração de serviço.
+
 ## Estado da candidata
 
 - branch candidata: `feature/productionize-facial-search`;

@@ -106,6 +106,9 @@ services:
       <<: *facial-environment
       PUBLIC_APP_ORIGINS: ${PUBLIC_APP_ORIGINS:-}
       APP_ENV: ${APP_ENV:-development}
+      ADMIN_TOTP_SECRET_ENV: ${ADMIN_TOTP_SECRET_ENV:-}
+      ADMIN_TOTP_ACTIVE_KEY_ID: ${ADMIN_TOTP_ACTIVE_KEY_ID:-}
+      ADMIN_TOTP_KEYS: ${ADMIN_TOTP_KEYS:-}
       MERCADOPAGO_ALLOW_LIVE_PAYMENTS: ${MERCADOPAGO_ALLOW_LIVE_PAYMENTS:-false}
       MERCADOPAGO_TEST_CUSTOMERS: ${MERCADOPAGO_TEST_CUSTOMERS:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
@@ -157,8 +160,10 @@ services:
       - media-history:/var/lib/markina/history
       - facial-references:/var/lib/markina/facial-references
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health >/dev/null || exit 1"]
       interval: 10s
@@ -170,8 +175,13 @@ services:
 
   migrate:
     build: ../backend
-    command: ["alembic", "upgrade", "head"]
+    profiles: ["maintenance"]
+    command: ["python", "-m", "app.schema_revision_check"]
     environment:
+      APP_ENV: ${APP_ENV:-development}
+      ADMIN_TOTP_SECRET_ENV: ${ADMIN_TOTP_SECRET_ENV:-}
+      ADMIN_TOTP_ACTIVE_KEY_ID: ${ADMIN_TOTP_ACTIVE_KEY_ID:-}
+      ADMIN_TOTP_KEYS: ${ADMIN_TOTP_KEYS:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
     depends_on:
       db:
@@ -185,13 +195,17 @@ services:
     command: ["python", "-m", "app.seed_admin"]
     profiles: ["bootstrap"]
     environment:
+      APP_ENV: ${APP_ENV:-development}
+      ADMIN_TOTP_SECRET_ENV: ${ADMIN_TOTP_SECRET_ENV:-}
+      ADMIN_TOTP_ACTIVE_KEY_ID: ${ADMIN_TOTP_ACTIVE_KEY_ID:-}
+      ADMIN_TOTP_KEYS: ${ADMIN_TOTP_KEYS:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
       ADMIN_SEED_EMAIL: ${ADMIN_SEED_EMAIL:-}
       ADMIN_SEED_PASSWORD: ${ADMIN_SEED_PASSWORD:-}
       ADMIN_SEED_TOTP_SECRET: ${ADMIN_SEED_TOTP_SECRET:-}
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
     restart: "no"
     networks:
       - internal
@@ -332,6 +346,9 @@ services:
     environment:
       <<: *facial-environment
       APP_ENV: ${APP_ENV:-development}
+      ADMIN_TOTP_SECRET_ENV: ${ADMIN_TOTP_SECRET_ENV:-}
+      ADMIN_TOTP_ACTIVE_KEY_ID: ${ADMIN_TOTP_ACTIVE_KEY_ID:-}
+      ADMIN_TOTP_KEYS: ${ADMIN_TOTP_KEYS:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://markina_gallery:markina_gallery_dev_local@db:5432/markina_gallery}
       AUTH_PII_FINGERPRINT_SALT: ${AUTH_PII_FINGERPRINT_SALT:-}
       AUTH_OTP_PII_RETENTION_MINUTES: ${AUTH_OTP_PII_RETENTION_MINUTES:-60}
@@ -378,8 +395,10 @@ services:
       - media-derivatives:/var/lib/markina/derivatives
       - media-history:/var/lib/markina/history
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f \"app.worker\" >/dev/null || exit 1"]
       interval: 15s
@@ -417,8 +436,8 @@ services:
       - media-derivatives:/var/lib/markina/derivatives:ro
       - facial-references:/var/lib/markina/facial-references
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -451,8 +470,8 @@ services:
       - media-source:/var/lib/markina/source:ro
       - facial-references:/var/lib/markina/facial-references
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -482,8 +501,8 @@ services:
     volumes:
       - facial-references:/var/lib/markina/facial-references
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:

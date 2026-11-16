@@ -375,7 +375,9 @@ def test_worker_expires_otp_without_calling_provider(monkeypatch) -> None:
         assert expired_delivery.encrypted_payload is None
 
 
-def authenticated_admin_client() -> TestClient:
+def authenticated_admin_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    # The fixture encrypts a synthetic factor in the selected test environment.
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", os.getenv("APP_ENV", "development"))
     raw_token = "synthetic-admin-session"
     with SessionLocal() as db:
         admin = fixture_admin(AdminUser(email="channel@example.test", password_hash="synthetic",
@@ -413,7 +415,7 @@ def test_admin_whatsapp_channel_requires_admin_and_masks_identity(monkeypatch) -
     monkeypatch.setattr('app.main.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=ConnectedProvider()))
     with TestClient(app) as anonymous:
         assert anonymous.get("/admin/whatsapp/channel").status_code == 403
-    with authenticated_admin_client() as client:
+    with authenticated_admin_client(monkeypatch) as client:
         configured = client.patch(
             "/admin/whatsapp/channel", json={"expected_phone_e164": phone}
         )
@@ -442,7 +444,7 @@ def test_admin_whatsapp_channel_blocks_mismatched_sender(monkeypatch) -> None:
     monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "homolog")
     monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
     monkeypatch.setattr('app.main.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=MismatchedProvider()))
-    with authenticated_admin_client() as client:
+    with authenticated_admin_client(monkeypatch) as client:
         assert client.patch(
             "/admin/whatsapp/channel",
             json={"expected_phone_e164": "+5511555550007"},
@@ -483,7 +485,7 @@ def test_admin_whatsapp_channel_accepts_brazilian_legacy_jid(monkeypatch) -> Non
     monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "homolog")
     monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
     monkeypatch.setattr('app.main.provider_for', lambda db, *, tenant_id, adapter=None: owned_provider(db, tenant_id=tenant_id, adapter=LegacyJidProvider()))
-    with authenticated_admin_client() as client:
+    with authenticated_admin_client(monkeypatch) as client:
         assert client.patch(
             "/admin/whatsapp/channel", json={"expected_phone_e164": expected}
         ).status_code == 200
@@ -725,7 +727,7 @@ def test_manual_retry_enforces_ambiguity_window_and_hides_recipient(monkeypatch)
         db.add(delivery)
         db.commit()
         delivery_id = delivery.id
-    with authenticated_admin_client() as client:
+    with authenticated_admin_client(monkeypatch) as client:
         listing = client.get("/admin/whatsapp/deliveries")
         assert listing.status_code == 200
         assert phone not in listing.text

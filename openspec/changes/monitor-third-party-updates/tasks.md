@@ -6,3 +6,9 @@
 - [x] 4. Implementar resumo semanal somente-leitura no GitHub Actions, com origem/horário, risco/prioridade, lista vazia distinta de falha/permissão e sem PRs/issues/notificações.
 - [x] 5. Criar testes de pins/revisões, tags/digests, candidatos, estado de API, paginação, falhas e proteção contra mutação/deploy/automerge.
 - [x] 6. Validar OpenSpec estrito, testes direcionados, CI do PR e revisar branch/diff final. OpenSpec estrito, 9 testes direcionados e revisão manual do diff passaram; os seis checks obrigatórios do PR passaram no SHA `f413d98507f1aa30bdedb169f93ebe90662afb73`. A integração do Code Review não estava conectada. Proteção vigente exige os seis checks e nenhuma aprovação humana; validar novamente no SHA com este registro antes do merge.
+
+## Revalidação pré-push — 16/11/2026
+
+- `backend/.venv/Scripts/python.exe -m unittest scripts.test_third_party_report -v`: **11 testes passaram** em 0,038 s. Esta é a contagem atual da suíte; a execução de nove testes e os checks do PR acima permanecem como evidência histórica daquele SHA.
+- Os testes de relatório injetam respostas sintéticas para as fontes HTTP; não houve consulta real ao GitHub/Hugging Face nem efeito externo.
+- `openspec validate monitor-third-party-updates --strict` passou. A revisão documental confirmou runner hospedado pelo GitHub, permissões de leitura, distinção entre alerta desabilitado/sem permissão/falha e ausência de caminhos de merge/deploy.

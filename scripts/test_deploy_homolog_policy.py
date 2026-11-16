@@ -48,7 +48,8 @@ def main() -> int:
     require('git switch --detach "$DEPLOY_SHA"', "seleção explícita de SHA", SCRIPT)
     require('return 1', "falha encaminhada ao trap de recuperação", SCRIPT)
     require('compose build migrate', "imagem de migration reconstruída no SHA alvo", SCRIPT)
-    require('compose run --rm --no-deps migrate', "migration isolada", SCRIPT)
+    require('compose run --rm --no-deps migrate alembic upgrade "$target_heads"', "migration isolada com revisão explícita", SCRIPT)
+    forbid(r'compose\s+run\s+--rm\s+--no-deps\s+migrate\s*\|\|', "migration pelo comando padrão do Compose", SCRIPT)
     require('SELECT version_num FROM alembic_version', "revisão consultada diretamente no PostgreSQL", SCRIPT)
     forbid(
         r'compose\s+run\s+--rm\s+--no-deps\s+migrate\s+alembic\s+current',

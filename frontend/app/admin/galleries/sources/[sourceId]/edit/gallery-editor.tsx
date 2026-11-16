@@ -1,5 +1,6 @@
 "use client";
-import { isJpegFilename, jpegStorageKey, uploadJpeg } from "../../../../../upload-jpeg";
+import { confirmDuplicateJpegs, isJpegFilename, jpegStorageKey, uploadJpeg } from "../../../../../upload-jpeg";
+import { notifyPhotographerOnboardingGate } from "../../../../../photographer-onboarding-gate";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -13,7 +14,11 @@ import {
 } from "../../../../clients/client-controls";
 import { ClientGalleryCard, type ClientGalleryRow } from "../../../client-gallery-card";
 import { FolderUploadProgress, type FolderUpload } from "../../../folder-upload-progress";
+import { FolderDeadlineFields } from "../../../folder-deadline-fields";
+import { folderAccessStatusLabel, mediaArchiveStatusLabel, type MediaArchiveStatus } from "../../../../../media-archive-status";
+import { useFolderAccessClock } from "../../../../../use-folder-access-clock";
 import { FolderProcessingPanel } from "../../../folder-processing-panel";
+import { isDefinitiveUploadRejection, useCreditUploadStatus } from "../../../../credits/credit-upload-status";
 import { GlobalPixSummary, type GlobalPix } from "../../../../settings/pix-panel";
 import { formatBrazilianCurrency, maskBrazilianCurrencyInput, parseBrazilianCurrency, type PriceTier } from "../../../pricing-rules";
 
@@ -22,14 +27,14 @@ type EditorStep = { id: StepId; label: string; status: "complete" | "pending" | 
 type CoverReadiness = { status: "missing" | "processing" | "failed" | "ready"; message: string };
 type Editor = { cover_readiness?: CoverReadiness; gallery: { id: string; name: string; event_name: string; description: string; active: boolean; access_mode: "standard" | "invite_only" | "collective_protected"; unlisted_link: string | null; public_link?: { status: string; capability_id: string | null; expires_at: string | null; secret_available: boolean }; cover_photo_id: string | null; cover_preview_url: string | null; folder_display_mode: string; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string }; steps: EditorStep[]; counts: { folders: number; registrations: number; derived_galleries: number }; capabilities: Record<string, boolean>; actions: { can_create_folder: boolean; can_upload: boolean; can_complete?: boolean } };
 type PublicationCounts = { published: number; ready_to_publish: number; processing: number; failed: number };
-type Folder = { audience_scope?: "all" | "selected"; client_names?: string[]; id: string; name: string; status: string; position: number; photo_count: number; preview_url: string | null; released_at: string | null; publication_counts?: PublicationCounts };
+type Folder = { can_renew_deadline?: boolean; audience_scope?: "all" | "selected"; client_names?: string[]; id: string; name: string; status: string; position: number; photo_count: number; preview_url: string | null; media_state?: MediaArchiveStatus; released_at: string | null; access_duration_days?: number | null; access_expires_at?: string | null; publication_counts?: PublicationCounts };
 type Photo = { id: string; name: string; preview_url: string | null; status: string; publication_state?: "published" | "ready_to_publish" | "processing" | "failed"; available?: boolean; width?: number | null; height?: number | null; error: string | null; can_delete: boolean; is_cover: boolean };
 type ClientRow = ClientGalleryRow;
 type ClientOption = ClientDirectoryItem;
 type PricingMode = "fixed" | "progressive" | "legacy_volume";
 type PricingPreset = { id: string; code: string; name: string; label: string; version: number; active: boolean; tiers: PriceTier[] };
 type PricingQuote = { quantity: number; parcels: Array<PriceTier & { quantity: number; subtotal_cents: number }>; base_total_cents: number; savings_cents: number; total_cents: number };
-type SalesData = { payment_methods?: { available: boolean; pix_available: boolean; card_available: boolean }; payment_required?: boolean; available: boolean; reason?: string; capabilities: string[]; pricing_mode: PricingMode; fixed_unit_price_cents: number | null; progressive_pricing_preset_id: string | null; pricing_snapshot: Record<string, unknown> | null; pricing_review_required: boolean; tiers: PriceTier[]; pix: GlobalPix; sales_message: string; selection_duration_days: number | null; favorites_enabled: boolean; comments_enabled: boolean };
+type SalesData = { payment_methods?: { available: boolean; pix_available: boolean; card_available: boolean }; payment_required?: boolean; available: boolean; reason?: string; capabilities: string[]; pricing_mode: PricingMode; fixed_unit_price_cents: number | null; progressive_pricing_preset_id: string | null; pricing_snapshot: Record<string, unknown> | null; pricing_review_required: boolean; tiers: PriceTier[]; pix: GlobalPix; sales_message: string; favorites_enabled: boolean; comments_enabled: boolean };
 type GalleryLink = { status: "active" | "unavailable" | "legacy_unrecoverable"; capability_id: string | null; expires_at: string | null; secret_available: boolean; link: string | null };
 type FontOption = { token: string; label: string; category: "sans" | "editorial" | "handwritten"; css_family: string };
 type CoverOption = { id: string; name: string; source: "content" | "cover_assets"; status: "ready" | "processing" | "failed"; preview_url: string | null; width: number | null; height: number | null; error?: string | null };
@@ -68,10 +73,12 @@ function folderPublicationClass(folder: Folder) {
   return "is-empty";
 }
 
-function FolderPublicationSummary({ folder }: { folder: Folder }) {
+function FolderPublicationSummary({ folder, at }: { folder: Folder; at: number }) {
+  if (folder.media_state && folder.media_state !== "available") return <span className="folder-publication-summary"><small>Seleções e histórico preservados</small></span>;
   const counts = folder.publication_counts ?? { published: folder.status === "released" ? folder.photo_count : 0, ready_to_publish: 0, processing: 0, failed: 0 };
+  const expired = folder.access_expires_at && Date.parse(folder.access_expires_at) <= at;
   return <span className="folder-publication-summary" aria-label={`Publicação de ${folder.name}`}>
-    <small className="is-published">{counts.published} disponíveis</small>
+    <small className="is-published">{counts.published} {expired ? "prévias prontas" : "disponíveis"}</small>
     <small className="is-ready">{counts.ready_to_publish} aguardando liberação automática</small>
     <small className="is-processing">{counts.processing} preparando prévia</small>
     <small className="has-failures">{counts.failed} falhas</small>
@@ -83,6 +90,7 @@ async function jsonRequest(path: string, init?: RequestInit) {
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
     const detail = payload?.detail;
+    notifyPhotographerOnboardingGate(detail);
     throw new Error(typeof detail === "string" ? detail : detail?.message ?? "Não foi possível concluir a operação.");
   }
   return response.status === 204 ? { cleanup_pending: response.headers.get("X-Asset-Cleanup") === "failed" } : response.json();
@@ -105,6 +113,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const currentStep = step as StepId;
   const [editor, setEditor] = useState<Editor | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
+  const observedAt = useFolderAccessClock(folders);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([]);
   const [expandedPhoto, setExpandedPhoto] = useState<Photo | null>(null);
@@ -130,7 +139,9 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   const [message, setMessage] = useState("");
   const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
   const [folderDeleteBusy, setFolderDeleteBusy] = useState(false);
+  const [folderRenameBusy, setFolderRenameBusy] = useState(false);
   const [uploads, setUploads] = useState<Record<string, FolderUpload>>({});
+  const creditUpload = useCreditUploadStatus(currentStep === "imagens");
   const uploading = Object.values(uploads).some((upload) => upload.phase === "uploading");
   const selectedFolderId = useRef("");
   const photoRequestVersion = useRef(0);
@@ -342,6 +353,28 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     }
   }
 
+  async function renameFolder(folder: Folder) {
+    if (folderRenameBusy || folderDeleteBusy || bulkDeleteBusy || uploading) return;
+    const proposedName = window.prompt("Novo nome da pasta", folder.name);
+    if (proposedName === null) return;
+    const name = proposedName.trim();
+    if (!name) { setMessage("Informe um nome para a pasta."); return; }
+    setFolderRenameBusy(true);
+    try {
+      const result = await jsonRequest(`/api/admin/photo-folders/${folder.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      setFolders((current) => current.map((item) => item.id === folder.id
+        ? { ...item, name: result.name ?? name } : item));
+      setMessage("Nome da pasta atualizado.");
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível renomear a pasta.");
+    } finally { setFolderRenameBusy(false); }
+  }
+
   async function inspectFolder(folderId: string) {
     if (selectedFolderId.current !== folderId) { setPhotos([]); setSelectedPhotoIds([]); }
     selectedFolderId.current = folderId;
@@ -512,7 +545,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           progressive_pricing_preset_id: sales.payment_required !== false && sales.pricing_mode === "progressive" ? sales.progressive_pricing_preset_id : null,
           confirm_legacy_conversion: confirmLegacyConversion,
           sales_message: sales.sales_message,
-          selection_duration_days: sales.selection_duration_days,
           favorites_enabled: sales.favorites_enabled,
           comments_enabled: sales.comments_enabled,
         }),
@@ -617,8 +649,34 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const created = await mutate(`/api/admin/parent-galleries/${sourceId}/folders`, "POST", { name: form.get("name") });
+    const created = await mutate(`/api/admin/parent-galleries/${sourceId}/folders`, "POST", {
+      name: form.get("name"),
+      access_duration_days: Number(form.get("access_duration_days")),
+    });
     if (created) formElement.reset();
+  }
+
+  async function configureFolderDeadline(folder: Folder, event: FormEvent<HTMLFormElement>, renew = false) {
+    event.preventDefault();
+    if (savingStep) return;
+    const form = event.currentTarget;
+    const accessDurationDays = Number(new FormData(form).get("access_duration_days"));
+    setSavingStep(true);
+    try {
+      await jsonRequest(`/api/admin/photo-folders/${folder.id}/${renew ? "renew-deadline" : "deadline"}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ access_duration_days: accessDurationDays }),
+      });
+      setMessage(renew ? "Prazo renovado para todos os clientes autorizados da pasta. A contagem começa agora." : folder.released_at
+        ? "Prazo configurado. A contagem começa agora."
+        : "Prazo atualizado. A contagem começa quando você liberar a pasta.");
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível configurar o prazo da pasta.");
+    } finally {
+      setSavingStep(false);
+    }
   }
 
   async function uploadPhotos(event: FormEvent<HTMLFormElement>) {
@@ -642,7 +700,26 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     let batchId: string | null = null;
     let firstFailure: { error: unknown; file: File; index: number } | null = null;
     let closeFailure: unknown = null;
+    let uploadFiles = files;
+    let skippedDuplicates = 0;
+    let duplicateIndexes = new Set<number>();
     try {
+      const folderPhotos = await jsonRequest(`/api/admin/photo-folders/${folderId}/photos`) as {
+        photos: Array<{ content_fingerprint?: string | null }>;
+      };
+      const review = await confirmDuplicateJpegs(files, (file) => file,
+        folderPhotos.photos.map((photo) => photo.content_fingerprint));
+      uploadFiles = review.items;
+      skippedDuplicates = review.skippedCount;
+      duplicateIndexes = new Set(review.confirmed ? review.duplicateIndexes : []);
+      if (!uploadFiles.length) {
+        updateUpload({ phase: "success", current: files.length, progress: files.length,
+          total: files.length });
+        setMessage(`${skippedDuplicates} foto(s) repetida(s) ignorada(s). Nenhuma foto nova para enviar.`);
+        formElement.reset();
+        return;
+      }
+      updateUpload({ phase: "uploading", current: 0, progress: 0, total: uploadFiles.length });
       if (folders.find((folder) => folder.id === folderId)?.audience_scope === "selected") {
         const batch = await jsonRequest(`/api/admin/photo-folders/${folderId}/upload-batches`, {
           method: "POST",
@@ -652,18 +729,29 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         batchId = batch.id;
       }
       try {
-        for (const [index, file] of files.entries()) {
-          updateUpload({ phase: "uploading", current: index + 1, progress: index, total: files.length, filename: file.name });
+        for (const [index, file] of uploadFiles.entries()) {
+          updateUpload({ phase: "uploading", current: index + 1, progress: index, total: uploadFiles.length, filename: file.name });
+          let photoId: string | null = null;
           try {
             const storageKey = await jpegStorageKey(sourceId, folderId, file);
             const photo = await jsonRequest(`/api/admin/photo-folders/${folderId}/photos`, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ filename: file.name, storage_key: storageKey, ...(batchId ? { upload_batch_id: batchId } : {}) }),
+              body: JSON.stringify({ filename: file.name, storage_key: storageKey,
+                allow_duplicate_content: duplicateIndexes.has(index),
+                ...(batchId ? { upload_batch_id: batchId } : {}) }),
             });
-            await uploadJpeg(`/api/admin/photo-assets/${photo.id}/source`, file, () => updateUpload({ phase: "uploading", current: index + 1, progress: index, total: files.length, filename: file.name, waiting: true }),
-              (loaded, total) => updateUpload({ phase: "uploading", current: index + 1, progress: index + loaded / Math.max(total, 1), total: files.length, filename: file.name }));
+            const registeredPhotoId = typeof photo.id === "string" ? photo.id : "";
+            if (!registeredPhotoId) throw new Error("O servidor não confirmou o cadastro da foto.");
+            photoId = registeredPhotoId;
+            creditUpload.startPhoto(registeredPhotoId, file.name);
+            await uploadJpeg(`/api/admin/photo-assets/${registeredPhotoId}/source`, file, () => updateUpload({ phase: "uploading", current: index + 1, progress: index, total: uploadFiles.length, filename: file.name, waiting: true }),
+              (loaded, total) => updateUpload({ phase: "uploading", current: index + 1, progress: index + loaded / Math.max(total, 1), total: uploadFiles.length, filename: file.name }));
+            await creditUpload.refreshPhoto(registeredPhotoId, file.name);
           } catch (error) {
+            if (photoId) {
+              void creditUpload.refreshPhoto(photoId, file.name, isDefinitiveUploadRejection(error));
+            }
             firstFailure ??= { error, file, index };
           }
         }
@@ -685,16 +773,17 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     }
     if (closeFailure) {
       const error = closeFailure instanceof Error ? closeFailure.message : "Não foi possível encerrar o lote de upload.";
-      updateUpload({ phase: "error", current: files.length, total: files.length, filename: firstFailure?.file.name ?? files.at(-1)?.name });
+      updateUpload({ phase: "error", current: uploadFiles.length, total: uploadFiles.length, filename: firstFailure?.file.name ?? uploadFiles.at(-1)?.name });
       setMessage(firstFailure ? `${firstFailure.error instanceof Error ? firstFailure.error.message : `Falha ao enviar ${firstFailure.file.name}.`} ${error}` : error);
       return;
     }
     if (firstFailure) {
-      updateUpload({ phase: "error", current: firstFailure.index, total: files.length, filename: firstFailure.file.name });
+      updateUpload({ phase: "error", current: firstFailure.index, total: uploadFiles.length, filename: firstFailure.file.name });
       setMessage(firstFailure.error instanceof Error ? firstFailure.error.message : `Falha ao enviar ${firstFailure.file.name}.`);
     } else {
-      updateUpload({ phase: "success", current: files.length, total: files.length });
-      setMessage(`${files.length} foto(s) enviada(s). As prévias serão preparadas e disponibilizadas automaticamente.`);
+      updateUpload({ phase: "success", current: uploadFiles.length, total: uploadFiles.length });
+      const skippedNote = skippedDuplicates ? `${skippedDuplicates} repetida(s) ignorada(s). ` : "";
+      setMessage(`${skippedNote}${uploadFiles.length} foto(s) enviada(s). As prévias serão preparadas e disponibilizadas automaticamente.`);
     }
     setRefresh((value) => value + 1);
     if (selectedFolderId.current === folderId) await inspectFolder(folderId);
@@ -833,7 +922,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                   <Link href="/admin/settings#pix">Configurar formas de pagamento</Link>
                 </> : null}
                 <label>Mensagem comercial<textarea name="sales_message" rows={4} value={sales.sales_message} onChange={(event) => setSales((current) => current ? { ...current, sales_message: event.target.value } : current)} /></label>
-                <label>Prazo padrão de seleção (dias)<input name="selection_duration_days" type="number" min={1} max={3650} value={sales.selection_duration_days ?? 14} onChange={(event) => setSales((current) => current ? { ...current, selection_duration_days: Number(event.target.value) } : current)} required /></label>
+                <p>O prazo de acesso é definido individualmente em cada pasta de fotos.</p>
                 <label className="gallery-toggle"><input name="favorites_enabled" type="checkbox" checked={sales.favorites_enabled} onChange={(event) => setSales((current) => current ? { ...current, favorites_enabled: event.target.checked } : current)} /> Permitir favoritos</label>
                 <label className="gallery-toggle"><input name="comments_enabled" type="checkbox" checked={sales.comments_enabled} onChange={(event) => setSales((current) => current ? { ...current, comments_enabled: event.target.checked } : current)} /> Permitir comentários</label>
               </fieldset>
@@ -887,14 +976,28 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
             <div className={`gallery-organization-preview gallery-organization-preview--${visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode}`} aria-label={(visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode) === "sequential" ? "Prévia em sequência cronológica" : "Prévia com pastas lado a lado"}><span>1</span><span>2</span><span>3</span></div>
             <p>{(visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode) === "sequential" ? "A galeria percorre todas as pastas em sequência cronológica." : "A cliente escolhe uma pasta por vez para navegar."}</p>
           </fieldset>
-          <form className="gallery-inline-form" onSubmit={createFolder}><label>Nome da nova pasta<input name="name" required placeholder="Ex.: Apresentação da manhã" /></label><MarkinaButton disabled={!editor.actions.can_create_folder}>Criar pasta</MarkinaButton></form>
-          <FolderUploadProgress uploads={uploads} />
-          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => { const title = folder.audience_scope === "selected" && folder.client_names?.length ? `${folder.name} — ${folder.client_names.join(", ")}` : folder.name; return <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" aria-label={`Abrir pasta ${title}`} disabled={folderDeleteBusy} onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{title}</strong><small>{folder.audience_scope === "selected" ? "Privada · " : "Pública · "}{folder.status === "released" ? "Disponível" : "Preparando prévias"}</small><FolderPublicationSummary folder={folder} />{uploads[folder.id] ? <small>{uploads[folder.id].current}/{uploads[folder.id].total} · {uploads[folder.id].phase === "uploading" ? "Enviando" : uploads[folder.id].phase === "success" ? "Enviado" : "Interrompido"}</small> : null}</button><div className="gallery-folder-actions">{folder.status === "preparing" ? <button type="button" className="link-button" disabled={folderDeleteBusy} onClick={() => { const name = window.prompt("Novo nome da pasta", folder.name); if (name) mutate(`/api/admin/photo-folders/${folder.id}`, "PATCH", { name }); }}>Renomear</button> : null}<button type="button" className="link-button danger-action" disabled={folderDeleteBusy || bulkDeleteBusy || uploading} onClick={() => deleteFolder(folder)} aria-label={`Excluir pasta ${folder.name}`}>{folderDeleteBusy ? "Excluindo…" : "Excluir pasta"}</button></div></article>; })}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
+          <form className="gallery-inline-form gallery-folder-create-form" onSubmit={createFolder}>
+            <label>Nome da nova pasta<input name="name" required placeholder="Ex.: Apresentação da manhã" /></label>
+            <FolderDeadlineFields mode="creation" startsAt="release" />
+            <MarkinaButton disabled={!editor.actions.can_create_folder}>Criar pasta</MarkinaButton>
+          </form>
+          <FolderUploadProgress uploads={uploads} wallet={creditUpload.wallet} walletState={creditUpload.walletState}
+            creditItems={creditUpload.items} onVerifyPending={creditUpload.verifyPending} />
+          {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => { const title = folder.audience_scope === "selected" && folder.client_names?.length ? `${folder.name} — ${folder.client_names.join(", ")}` : folder.name; return <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" aria-label={`Abrir pasta ${title}`} disabled={folderDeleteBusy || folderRenameBusy} onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{title}</strong><small>{folder.audience_scope === "selected" ? "Privada · " : "Pública · "}{folderAccessStatusLabel(folder, observedAt)}</small><FolderPublicationSummary folder={folder} at={observedAt} />{uploads[folder.id] ? <small>{uploads[folder.id].current}/{uploads[folder.id].total} · {uploads[folder.id].phase === "uploading" ? "Enviando" : uploads[folder.id].phase === "success" ? "Enviado" : "Interrompido"}</small> : null}</button><div className="gallery-folder-actions"><button type="button" className="link-button" disabled={folderRenameBusy || folderDeleteBusy || bulkDeleteBusy || uploading || (folder.media_state !== undefined && folder.media_state !== "available")} onClick={() => { void renameFolder(folder); }}>Renomear</button><button type="button" className="link-button danger-action" disabled={folderDeleteBusy || bulkDeleteBusy || uploading || folderRenameBusy || (folder.media_state !== undefined && folder.media_state !== "available")} onClick={() => deleteFolder(folder)} aria-label={`Excluir pasta ${folder.name}`}>{folderDeleteBusy ? "Excluindo…" : "Excluir pasta"}</button></div><div className="gallery-folder-deadline"><strong>{folder.access_expires_at ? `Acesso até ${new Date(folder.access_expires_at).toLocaleString("pt-BR")}` : folder.access_duration_days ? `${folder.access_duration_days} dias após a liberação` : "Prazo indeterminado"}</strong>{folder.status !== "released" || (!folder.access_duration_days && !folder.access_expires_at) ? <form className="gallery-inline-form" onSubmit={(event) => { void configureFolderDeadline(folder, event); }}><FolderDeadlineFields mode="existing" startsAt={folder.released_at ? "save" : "release"} initialDays={folder.released_at ? null : folder.access_duration_days} /><MarkinaButton disabled={savingStep}>{folder.released_at ? "Definir prazo" : "Salvar prazo"}</MarkinaButton></form> : null}
+            {folder.can_renew_deadline && folder.audience_scope !== "selected" ? <details className="gallery-folder-renewal">
+              <summary>Renovar prazo</summary>
+              <form className="gallery-inline-form" onSubmit={(event) => { void configureFolderDeadline(folder, event, true); }}>
+                <p>O novo prazo começa agora e vale para todos os clientes autorizados desta pasta.</p>
+                <FolderDeadlineFields mode="existing" startsAt="save" />
+                <MarkinaButton disabled={savingStep}>Salvar novo prazo</MarkinaButton>
+              </form>
+            </details> : null}
+          </div></article>; })}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
           {selectedFolder ? (
             <div className="gallery-folder-workspace">
-              <FolderProcessingPanel key={selectedFolder.id} folderId={selectedFolder.id} folderName={selectedFolder.name} uploading={uploads[selectedFolder.id]?.phase === "uploading"} />
-                {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} disabled={bulkDeleteBusy} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={bulkDeleteBusy || !selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>{bulkDeleteBusy ? "Excluindo…" : "Excluir selecionadas"}</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={bulkDeleteBusy || !photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">Preparando prévia</div>}<strong>{photo.name}</strong><small>{photo.error ?? (photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button danger-action" disabled={bulkDeleteBusy || !photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione arquivos JPEG para iniciar o processamento." />}
-                <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg,.jpg,.jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload || uploading} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
+              {selectedFolder.media_state && selectedFolder.media_state !== "available" ? <p role="status">{mediaArchiveStatusLabel(selectedFolder.media_state)}{selectedFolder.media_state === "archived" ? <>. Consulte <Link href="/admin/credits">Créditos</Link> para solicitar a recuperação.</> : "."}</p> : <FolderProcessingPanel key={selectedFolder.id} folderId={selectedFolder.id} folderName={selectedFolder.name} uploading={uploads[selectedFolder.id]?.phase === "uploading"} />}
+                {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} disabled={bulkDeleteBusy} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={bulkDeleteBusy || !selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>{bulkDeleteBusy ? "Excluindo…" : "Excluir selecionadas"}</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={bulkDeleteBusy || !photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : selectedFolder.media_state && selectedFolder.media_state !== "available" ? "Mídia arquivada" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">{selectedFolder.media_state && selectedFolder.media_state !== "available" ? mediaArchiveStatusLabel(selectedFolder.media_state) : "Preparando prévia"}</div>}<strong>{photo.name}</strong><small>{photo.error ?? (selectedFolder.media_state && selectedFolder.media_state !== "available" ? mediaArchiveStatusLabel(selectedFolder.media_state) : photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button danger-action" disabled={bulkDeleteBusy || !photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : selectedFolder.media_state && selectedFolder.media_state !== "available" ? "Indisponível" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione arquivos JPEG para iniciar o processamento." />}
+                <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg,.jpg,.jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload || uploading || (selectedFolder.media_state !== undefined && selectedFolder.media_state !== "available")} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
             </div>
           ) : null}
         </section>

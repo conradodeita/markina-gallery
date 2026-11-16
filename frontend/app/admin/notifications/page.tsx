@@ -1,7 +1,9 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { MarkinaButton, PageHeading, SystemState } from "../../ui-kit";
+import { MediaArchiveNoticeCenter } from "./media-archive-notice-center";
 import styles from "./notifications.module.css";
 
 export type NotificationSetting = {
@@ -19,8 +21,11 @@ function preview(text: string, contextoPagamento = "da compra 1234abcd", whatsap
   return text.replace(/\{\{(\w+)\}\}/g, (match, key) => values[key] ?? match);
 }
 
-function EventCard({ initial }: { initial: NotificationSetting }) {
+function EventCard({ initial, whatsappEditable, onWhatsAppUnavailable }: {
+  initial: NotificationSetting; whatsappEditable: boolean; onWhatsAppUnavailable: () => void;
+}) {
   const [item, setItem] = useState(initial);
+  const [persisted, setPersisted] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState(false);
@@ -29,12 +34,15 @@ function EventCard({ initial }: { initial: NotificationSetting }) {
     try {
       const response = await fetch(`/api/admin/notification-settings/${item.event_type}`, {
         method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version: item.version, whatsapp_enabled: item.whatsapp_enabled,
-          push_enabled: item.push_enabled, whatsapp_body: item.whatsapp_body, push_title: item.push_title, push_body: item.push_body }),
+        body: JSON.stringify({ version: item.version, whatsapp_enabled: whatsappEditable ? item.whatsapp_enabled : persisted.whatsapp_enabled,
+          push_enabled: item.push_enabled, whatsapp_body: whatsappEditable ? item.whatsapp_body : persisted.whatsapp_body, push_title: item.push_title, push_body: item.push_body }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Revise o texto e as variáveis permitidas.");
-      setItem(data); setMessage("Configuração da sua conta salva.");
+      if (!response.ok) {
+        if (data.detail?.code === "whatsapp_channel_required") onWhatsAppUnavailable();
+        throw new Error(typeof data.detail === "string" ? data.detail : data.detail?.message ?? "Revise o texto e as variáveis permitidas.");
+      }
+      setItem(data); setPersisted(data); setMessage("Configuração da sua conta salva.");
     } catch (cause) {
       setError(true); setMessage(cause instanceof Error && cause.message !== "Failed to fetch" ? cause.message : "Não foi possível salvar. Tente novamente.");
     } finally { setBusy(false); }
@@ -50,6 +58,7 @@ function EventCard({ initial }: { initial: NotificationSetting }) {
         <label>Mensagem do push <span>{item.push_body.length}/140</span><textarea required maxLength={140} rows={3} value={item.push_body} onChange={(event) => setItem({ ...item, push_body: event.target.value.replace(/[\r\n]/g, " ") })} /></label>
       </div>
       <aside className={styles.preview} aria-label="Prévia do push"><small>PRÉVIA · PUSH</small><strong>{preview(item.push_title)}</strong><p>{preview(item.push_body)}</p></aside>
+      <fieldset disabled={!whatsappEditable} aria-describedby="whatsapp-status"><legend>Mensagens pelo WhatsApp</legend>
       <label className={styles.toggle}><input type="checkbox" checked={item.whatsapp_enabled} onChange={(event) => setItem({ ...item, whatsapp_enabled: event.target.checked })} />Enviar WhatsApp</label>
       <label>Mensagem do WhatsApp <span>{item.whatsapp_body.length}/500</span><textarea required maxLength={500} rows={4} value={item.whatsapp_body} onChange={(event) => setItem({ ...item, whatsapp_body: event.target.value })} /></label>
       <aside className={styles.preview} aria-label="Prévia do WhatsApp"><small>PRÉVIA · WHATSAPP</small>
@@ -59,6 +68,7 @@ function EventCard({ initial }: { initial: NotificationSetting }) {
         </> : <p>{preview(item.whatsapp_body, "da compra 1234abcd", true)}</p>}
       </aside>
       <p className={styles.variables}>Variáveis do WhatsApp: {item.whatsapp_variables.map((variable) => <code key={variable}>{`{{${variable}}}`}</code>)}</p>
+      </fieldset>
     </fieldset>
     <footer><MarkinaButton type="submit" disabled={busy}>{busy ? "Salvando…" : "Salvar evento"}</MarkinaButton>{message && <p role={error ? "alert" : "status"}>{message}</p>}</footer>
     </form>
@@ -69,6 +79,7 @@ export default function NotificationsPage() {
   const [settings, setSettings] = useState<NotificationSetting[] | null>(null);
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
+  const [whatsappEditable, setWhatsappEditable] = useState(false);
   useEffect(() => {
     let current = true;
     fetch("/api/admin/notification-settings", { credentials: "same-origin", cache: "no-store" })
@@ -76,13 +87,19 @@ export default function NotificationsPage() {
         if (!response.ok) throw new Error();
         const data = await response.json();
         if (!Array.isArray(data.settings) || !data.settings.length) throw new Error();
-        if (current) { setSettings(data.settings); setError(false); }
+        if (current) { setSettings(data.settings); setWhatsappEditable(data.whatsapp_editable === true); setError(false); }
       }).catch(() => { if (current) setError(true); });
     return () => { current = false; };
   }, [reload]);
   return <div className="admin-shell">
     <PageHeading eyebrow="Comunicação" title="Notificações" detail="Escolha os canais e personalize os avisos automáticos." />
     <div className={styles.notice}><strong>As alterações afetam os clientes da sua conta.</strong><p>Os textos podem aparecer na tela bloqueada. Evite dados sensíveis. Ligar um canal vale para novos eventos, sem reenviar o histórico. O push depende da ativação no dispositivo e da configuração do servidor.</p></div>
-    {error ? <><SystemState tone="error" title="Não foi possível carregar as mensagens" detail="Tente novamente sem alterar suas configurações." /><MarkinaButton type="button" onClick={() => { setError(false); setReload((value) => value + 1); }}>Tentar novamente</MarkinaButton></> : settings ? <section className={styles.grid} aria-label="Configuração dos eventos">{settings.map((item) => <EventCard key={`${reload}-${item.event_type}`} initial={item} />)}</section> : <SystemState tone="loading" title="Carregando mensagens" detail="Consultando configurações dos canais." />}
+    <MediaArchiveNoticeCenter />
+    {settings && !error ? <div id="whatsapp-status" className={styles.notice} role="status">
+      <strong>{whatsappEditable ? "WhatsApp conectado" : "Conecte seu WhatsApp para personalizar as mensagens"}</strong>
+      <p>{whatsappEditable ? "Seu canal está pronto para personalizar os avisos aos clientes." : "A edição e a ativação das mensagens por WhatsApp ficam bloqueadas até conectar seu número em Configurações. Isso melhora a comunicação com seus clientes."} As mensagens push são independentes do WhatsApp e continuam editáveis.</p>
+      <Link href="/admin/settings#whatsapp">Configurar WhatsApp</Link>
+    </div> : null}
+    {error ? <><SystemState tone="error" title="Não foi possível carregar as mensagens" detail="Tente novamente sem alterar suas configurações." /><MarkinaButton type="button" onClick={() => { setError(false); setReload((value) => value + 1); }}>Tentar novamente</MarkinaButton></> : settings ? <section className={styles.grid} aria-label="Configuração dos eventos">{settings.map((item) => <EventCard key={`${reload}-${item.event_type}`} initial={item} whatsappEditable={whatsappEditable} onWhatsAppUnavailable={() => setWhatsappEditable(false)} />)}</section> : <SystemState tone="loading" title="Carregando mensagens" detail="Consultando configurações dos canais." />}
   </div>;
 }

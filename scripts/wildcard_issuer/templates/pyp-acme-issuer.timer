@@ -1,0 +1,10 @@
+[Unit]
+Description=Pick-your-Pic wildcard renewal schedule candidate
+
+[Timer]
+OnCalendar=*-*-* 03,15:00:00 UTC
+RandomizedDelaySec=1800
+Persistent=true
+Unit=pyp-acme-issuer.service
+
+# Sem [Install]; agendamento não é habilitado pelo pacote local.

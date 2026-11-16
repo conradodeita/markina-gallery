@@ -10,10 +10,10 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
-from app.acervo_context import require_active_owner
 from app.auth import (
     Client,
     MercadoPagoAccount,
+    MercadoPagoCreditPurchase,
     MercadoPagoPayment,
     MercadoPagoWebhook,
     SessionLocal,
@@ -22,17 +22,17 @@ from app.auth import (
 )
 from app.integration_secrets import IntegrationCipher, IntegrationSecretError, SecretEnvelope
 from app.mercadopago_checkout import apply_order, lock_customer, own_payment, reconcile, utc
+from app.mercadopago_credit_purchases import apply_credit_order
 from app.mercadopago_provider import MercadoPagoError
 from app.mercadopago_settings import account_for, credential_provider
 from app.payment_availability import lock_payment_account
-from app.tenancy import domain_session
+from app.tenancy import bind_financial_reconciliation, domain_session
 
 
 def receive_notification(db, account_id, query, body, signature, request_id):
     account = db.scalar(select(MercadoPagoAccount).where(MercadoPagoAccount.id == account_id))
     if not account:
         raise HTTPException(status_code=401, detail="Notificação não autorizada.")
-    require_active_owner(db, account.tenant_id)
     data_id = query.get("data.id", "")
     if (not re.fullmatch(r"ORD[A-Za-z0-9]{1,61}", data_id)
             or not isinstance(body, dict) or body.get("type") != "order"
@@ -54,12 +54,21 @@ def receive_notification(db, account_id, query, body, signature, request_id):
         secret = IntegrationCipher().decrypt(
             SecretEnvelope.from_payload(account.webhook_secret_envelope),
             tenant_id=account.tenant_id, credential_id=account.id)
-        manifest = f"id:{data_id.lower()};request-id:{request_id};ts:{ts};"
+        # Orders preserva o ID no manifesto atual do SDK oficial. Mantém-se a
+        # canonicalização minúscula legada, sempre sob HMAC com o mesmo segredo.
+        manifest = f"id:{data_id};request-id:{request_id};ts:{ts};"
         expected = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, digest):
-            raise ValueError()
+            legacy_manifest = f"id:{data_id.lower()};request-id:{request_id};ts:{ts};"
+            legacy_expected = hmac.new(
+                secret.encode(), legacy_manifest.encode(), hashlib.sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(legacy_expected, digest):
+                raise ValueError()
     except (ValueError, KeyError, IntegrationSecretError):
         raise HTTPException(status_code=401, detail="Notificação não autorizada.") from None
+    # Exceção somente após autenticar o callback; não habilita novo checkout.
+    bind_financial_reconciliation(db, account.tenant_id)
     identity = hashlib.sha256(f"{data_id}:{request_id}:{signature}".encode()).hexdigest()
     existing = db.scalar(select(MercadoPagoWebhook.id).where(
         MercadoPagoWebhook.tenant_id == account.tenant_id,
@@ -84,21 +93,21 @@ def receive_notification(db, account_id, query, body, signature, request_id):
 def process_next_mercadopago_event(*, session_factory=SessionLocal):
     with domain_session(session_factory) as db:
         candidate = db.scalar(select(MercadoPagoWebhook).where(
-            MercadoPagoWebhook.tenant_id.in_(select(Tenant.id).where(Tenant.status == "active")),
+            MercadoPagoWebhook.tenant_id.in_(select(Tenant.id).where(Tenant.status.in_(("active", "suspended")))),
             MercadoPagoWebhook.state.in_(("queued", "processing")),
             MercadoPagoWebhook.next_attempt_at <= now(),
             or_(MercadoPagoWebhook.lease_until.is_(None), MercadoPagoWebhook.lease_until < now()),
         ).order_by(MercadoPagoWebhook.created_at).with_for_update(skip_locked=True).limit(1))
         if not candidate:
             return False
-        require_active_owner(db, candidate.tenant_id)
+        bind_financial_reconciliation(db, candidate.tenant_id)
         candidate.state = "processing"
         candidate.lease_until = now() + timedelta(seconds=90)
         candidate.attempts += 1
         event_id, owner, claim = candidate.id, candidate.tenant_id, candidate.attempts
         db.commit()
     with domain_session(session_factory) as db:
-        lock_payment_account(db, owner)
+        lock_payment_account(db, owner, reconciliation=True)
         event = db.scalar(select(MercadoPagoWebhook).where(
             MercadoPagoWebhook.id == event_id, MercadoPagoWebhook.tenant_id == owner,
             MercadoPagoWebhook.state == "processing", MercadoPagoWebhook.attempts == claim,
@@ -106,7 +115,7 @@ def process_next_mercadopago_event(*, session_factory=SessionLocal):
         if not event:
             return True
         payment = db.scalar(select(MercadoPagoPayment).where(
-            MercadoPagoPayment.tenant_id.in_(select(Tenant.id).where(Tenant.status == "active")),
+            MercadoPagoPayment.tenant_id.in_(select(Tenant.id).where(Tenant.status.in_(("active", "suspended")))),
             MercadoPagoPayment.tenant_id == owner, MercadoPagoPayment.account_id == event.account_id,
             MercadoPagoPayment.provider_order_id == event.provider_order_id))
         resource = None
@@ -124,13 +133,49 @@ def process_next_mercadopago_event(*, session_factory=SessionLocal):
                 _retry_event(event)
                 db.commit()
                 return True
+        if not payment and resource is not None:
+            external_reference = resource.get("external_reference")
+            credit_purchase = None
+            if isinstance(external_reference, str):
+                try:
+                    reference = UUID(external_reference)
+                except ValueError:
+                    reference = None
+                if reference is not None:
+                    credit_purchase = db.scalar(select(MercadoPagoCreditPurchase).where(
+                        MercadoPagoCreditPurchase.id == reference,
+                        MercadoPagoCreditPurchase.external_reference == external_reference,
+                        MercadoPagoCreditPurchase.receiver_tenant_id == owner,
+                        MercadoPagoCreditPurchase.receiver_account_id == event.account_id,
+                    ).with_for_update())
+            if credit_purchase:
+                if not credit_purchase.submitted_at:
+                    event.state, event.processed_at, event.lease_until = "ignored", now(), None
+                    db.commit()
+                    return True
+                apply_credit_order(db, credit_purchase, resource)
+                event = db.scalar(select(MercadoPagoWebhook).where(
+                    MercadoPagoWebhook.id == event_id,
+                    MercadoPagoWebhook.tenant_id == owner,
+                    MercadoPagoWebhook.state == "processing",
+                    MercadoPagoWebhook.attempts == claim,
+                ).with_for_update())
+                if not event:
+                    db.rollback()
+                    return True
+                if credit_purchase.error_category:
+                    _retry_event(event)
+                else:
+                    event.state, event.processed_at, event.lease_until = "done", now(), None
+                db.commit()
+                return True
         if not payment or not payment.sent_at:
             event.state, event.processed_at, event.lease_until = "ignored", now(), None
             db.commit()
             return True
         client = db.scalar(select(Client).where(
             Client.id == payment.client_id, Client.tenant_id == owner))
-        lock_customer(db, client)
+        lock_customer(db, client, reconciliation=True)
         payment = own_payment(db, payment.id, client, lock=True)
         if not payment.provider_order_id:
             payment.provider_order_id = event.provider_order_id
@@ -163,7 +208,7 @@ def _retry_event(event):
 def reconcile_next_mercadopago_payment(*, session_factory=SessionLocal):
     with domain_session(session_factory) as db:
         payment = db.scalar(select(MercadoPagoPayment).where(
-            MercadoPagoPayment.tenant_id.in_(select(Tenant.id).where(Tenant.status == "active")),
+            MercadoPagoPayment.tenant_id.in_(select(Tenant.id).where(Tenant.status.in_(("active", "suspended")))),
             MercadoPagoPayment.sent_at.is_not(None),
             MercadoPagoPayment.next_check_at <= now(),
         ).order_by(MercadoPagoPayment.next_check_at).limit(1))
@@ -171,7 +216,7 @@ def reconcile_next_mercadopago_payment(*, session_factory=SessionLocal):
             return False
         client = db.scalar(select(Client).where(
             Client.id == payment.client_id, Client.tenant_id == payment.tenant_id))
-        lock_customer(db, client)
+        lock_customer(db, client, reconciliation=True)
         payment = own_payment(db, payment.id, client, lock=True)
         if utc(payment.next_check_at) > now():
             return False

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AdminSettingsPage, { calculateWatermarkPreviewFontSize } from "./page";
@@ -22,16 +22,72 @@ const branding = {
   watermark_security_lines: false,
 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.history.replaceState({}, "", "/");
+});
+
+function renderBrandSettings() {
+  window.history.replaceState({}, "", "/admin/settings#settings-brand");
+  return render(<AdminSettingsPage />);
+}
 
 function stubBrandingFetch(fetcher: (path: string, init?: RequestInit) => Promise<Response>) {
   vi.stubGlobal("fetch", (path: string, init?: RequestInit) =>
-    path === "/api/admin/facial-engine-experiment"
+    path === "/api/admin/closure"
+      ? Promise.resolve(new Response(JSON.stringify({
+        lifecycle: "open", credits_remaining: 0,
+        terms: { available: false, accepted: false, version: null, sha256: null },
+        request: null, blockers: [],
+      }), { status: 200 }))
+      : path === "/api/admin/facial-engine-experiment"
       ? Promise.resolve(new Response(null, { status: 403 }))
       : fetcher(path, init));
 }
 
 describe("configurações administrativas de marca", () => {
+  it("recolhe grupos sem perder o formulário e abre os destinos da navegação", async () => {
+    stubBrandingFetch(async () => new Response(JSON.stringify(branding)));
+    render(<AdminSettingsPage />);
+    await screen.findByRole("heading", { name: "Configurações" });
+    const groups = Array.from(document.querySelectorAll<HTMLDetailsElement>("main > details"));
+    expect(groups).toHaveLength(7);
+    expect(groups[0].open).toBe(true);
+    expect(groups.slice(1).every((group) => !group.open)).toBe(true);
+    const nav = screen.getByRole("navigation", { name: "Seções de configurações" });
+    fireEvent.click(within(nav).getByRole("link", { name: "Marca e aparência" }));
+    const brand = document.getElementById("settings-brand") as HTMLDetailsElement;
+    expect(brand.open).toBe(true);
+    const title = screen.getByLabelText("Título da entrada") as HTMLInputElement;
+    fireEvent.change(title, { target: { value: "Minha entrada personalizada" } });
+    fireEvent.click(brand.querySelector("summary")!);
+    expect(brand.open).toBe(false);
+    fireEvent.click(brand.querySelector("summary")!);
+    expect(brand.open).toBe(true);
+    expect(screen.getByLabelText("Título da entrada")).toBe(title);
+    expect(title.value).toBe("Minha entrada personalizada");
+    fireEvent.click(within(nav).getByRole("link", { name: "Termos de uso" }));
+    const terms = document.getElementById("settings-terms") as HTMLDetailsElement;
+    expect(terms.open).toBe(true);
+    expect(groups.at(-1)).toBe(terms);
+    expect(within(terms).getByText("Aceite e histórico dos Termos")).toBeTruthy();
+  });
+
+  it("abre os ancestrais de links diretos para PIX e WhatsApp", async () => {
+    window.history.replaceState({}, "", "/admin/settings#pix");
+    stubBrandingFetch(async () => new Response(JSON.stringify(branding)));
+    render(<AdminSettingsPage />);
+    await screen.findByRole("heading", { name: "Configurações" });
+    const payments = document.getElementById("settings-payments") as HTMLDetailsElement;
+    await waitFor(() => expect(payments.open).toBe(true));
+    const whatsapp = document.getElementById("settings-whatsapp") as HTMLDetailsElement;
+    expect(whatsapp.open).toBe(false);
+    window.history.replaceState({}, "", "/admin/settings#whatsapp");
+    fireEvent(window, new HashChangeEvent("hashchange"));
+    expect(whatsapp.open).toBe(true);
+    expect(payments.open).toBe(true);
+  });
+
   it("apresenta fallback e envia cada ativo ao endpoint autorizado", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (init?.method === "PUT") {
@@ -41,7 +97,7 @@ describe("configurações administrativas de marca", () => {
       return Promise.resolve(new Response(JSON.stringify(branding), { status: 200 }));
     });
     stubBrandingFetch(fetchMock);
-    render(<AdminSettingsPage />);
+    renderBrandSettings();
 
     expect((await screen.findAllByText("Ainda não configurado")).length).toBe(3);
     const logo = new File(["logo"], "logo.png", { type: "image/png" });
@@ -56,7 +112,7 @@ describe("configurações administrativas de marca", () => {
       init?.method === "PUT" ? { ...branding, [`${asset.replace("-", "_")}_url`]: `/branding/${asset}` } : branding,
     ), { status: 200 }));
     stubBrandingFetch(fetchMock);
-    render(<AdminSettingsPage />);
+    renderBrandSettings();
     const input = await screen.findByLabelText(`Enviar ${label}`);
     const file = new File(["arte oficial"], "icone.png", { type: "image/png" });
     fireEvent.change(input, { target: { files: [file] } });
@@ -70,7 +126,7 @@ describe("configurações administrativas de marca", () => {
       if (init?.method === "PUT") throw new Error("offline");
       return new Response(JSON.stringify(branding), { status: 200 });
     }));
-    render(<AdminSettingsPage />);
+    renderBrandSettings();
     const input = await screen.findByLabelText("Enviar Favicon");
     fireEvent.change(input, { target: { files: [new File(["arte"], "icon.png", { type: "image/png" })] } });
     await screen.findByText("Não foi possível enviar favicon.");
@@ -79,7 +135,7 @@ describe("configurações administrativas de marca", () => {
 
   it("informa indisponibilidade quando a configuração não carrega", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 403 })));
-    render(<AdminSettingsPage />);
+    renderBrandSettings();
     expect(await screen.findByText("Configurações indisponíveis")).toBeTruthy();
   });
 
@@ -90,7 +146,7 @@ describe("configurações administrativas de marca", () => {
       return Promise.resolve(new Response(JSON.stringify(branding), { status: 200 }));
     });
     stubBrandingFetch(fetchMock);
-    render(<AdminSettingsPage />);
+    renderBrandSettings();
     fireEvent.change(await screen.findByLabelText("Texto da marca-d’água"), { target: { value: "MARCA GLOBAL" } });
     expect((await screen.findAllByText("MARCA GLOBAL")).length).toBe(2);
     expect(screen.getByRole("group", { name: "Conteúdo" })).toBeTruthy();
@@ -114,7 +170,7 @@ describe("configurações administrativas de marca", () => {
       return Promise.resolve(new Response(JSON.stringify(branding), { status: 200 }));
     });
     stubBrandingFetch(fetchMock);
-    const { container } = render(<AdminSettingsPage />);
+    const { container } = renderBrandSettings();
     const size = await screen.findByLabelText("Cobertura da marca-d’água (%)");
     expect(size.getAttribute("min")).toBe("10");
     expect(size.getAttribute("max")).toBe("96");
@@ -160,7 +216,7 @@ describe("configurações administrativas de marca", () => {
       new Response(JSON.stringify(branding), { status: path.endsWith("/protection") && options?.method === "PATCH" ? 500 : 200 }),
     ));
     stubBrandingFetch(fetchMock);
-    render(<AdminSettingsPage />);
+    renderBrandSettings();
     await screen.findByLabelText("Direção");
     fireEvent.click(screen.getByRole("button", { name: "Salvar proteção da sua conta" }));
     expect(await screen.findByText("Não foi possível salvar a proteção visual.")).toBeTruthy();
@@ -169,7 +225,7 @@ describe("configurações administrativas de marca", () => {
   it("não duplica o editor de mensagens nem consulta os templates antigos", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(branding))));
     stubBrandingFetch(fetchMock);
-    render(<AdminSettingsPage />);
+    renderBrandSettings();
     await screen.findByLabelText("Direção");
     expect(screen.queryByText("Mensagens de pagamento")).toBeNull();
     expect(fetchMock.mock.calls.some(([path]) => String(path).includes("payment-message-templates"))).toBe(false);

@@ -5,11 +5,10 @@ import CartPage from "./page";
 
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: { children: React.ReactNode; href: string }) => <a href={href} {...props}>{children}</a> }));
 vi.mock("../../purchase-preview", () => ({ PurchasePreview: ({ name }: { name: string }) => <img alt={name} /> }));
-vi.mock("../../selection-deadline", () => ({ SelectionDeadline: () => null }));
 
 const cart = {
   groups: [{ gallery_id: "gallery-1", parent_gallery_id: "parent-1", name: "Evento", quantity: 1,
-    total_cents: 100, error: null, browse_url: "/gallery/gallery-1", selection_expires_at: null,
+    total_cents: 100, error: null, browse_url: "/gallery/gallery-1",
     items: [{ id: "photo-1", name: "Foto 1", folder_name: null, preview_url: "/preview" }] }],
   quantity: 1, can_prepare: true, pix_available: true, total_cents: 100,
 };
@@ -29,6 +28,38 @@ describe("carrinho após aposentadoria da InfinitePay", () => {
     expect(screen.queryByText(/InfinitePay/)).toBeNull();
     expect(screen.queryByRole("button", { name: /cartão|InfinitePay/i })).toBeNull();
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/library/cart/prepare", expect.objectContaining({ method: "POST" })));
+  });
+
+  it("mantém a prévia selecionada e o checkout disponíveis durante a janela de expiração", async () => {
+    const expiringCart = {
+      ...cart,
+      groups: [{ ...cart.groups[0], items: [{ id: "photo-1", name: "Foto 1", folder_name: "Retratos", preview_url: "/selected-preview", media_status: "expired" as const }] }],
+    };
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(
+      JSON.stringify(init?.method === "POST" ? { ...prepared, ...expiringCart } : expiringCart), { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetch);
+    render(<CartPage />);
+
+    expect(await screen.findByRole("img", { name: "Foto 1" })).toBeTruthy();
+    expect(screen.getByText("O prazo desta pasta terminou e as fotos não estão disponíveis no momento.")).toBeTruthy();
+    expect(screen.getByText("Foto 1")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Informar pagamento" })).toBeTruthy();
+  });
+
+  it("oculta a prévia do carrinho depois do fim da janela de expiração", async () => {
+    const archivedCart = {
+      ...cart,
+      groups: [{ ...cart.groups[0], items: [{ id: "photo-1", name: "Foto 1", folder_name: "Retratos", preview_url: null, media_status: "archived" as const }] }],
+    };
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(
+      JSON.stringify(init?.method === "POST" ? { ...prepared, ...archivedCart } : archivedCart), { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetch);
+    render(<CartPage />);
+
+    expect(await screen.findByRole("img", { name: "Prévia indisponível de Foto 1" })).toBeTruthy();
+    expect(screen.getByText("Foto 1")).toBeTruthy();
   });
 
   it("explica o mínimo Mercado Pago e mantém o PIX manual abaixo de R$ 1,00", async () => {

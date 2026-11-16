@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event
 
 from app.auth import (
+    AuditEvent,
     Client,
     DerivedGallery,
     MediaDerivative,
@@ -15,6 +16,8 @@ from app.auth import (
     PaymentCommunication,
     PhotoAsset,
     PhotoFolder,
+    ProviderPayment,
+    ProviderPaymentReceipt,
     SaleOrder,
     SaleOrderItem,
     SessionLocal,
@@ -26,6 +29,7 @@ from app.payment_export import HEADERS, safe_text
 from tests.test_derived_galleries import (  # noqa: F401
     FIXTURE_TENANT_ID,
     authenticate_admin,
+    authenticate_client,
     clean_database,
     set_test_global_pix,
 )
@@ -75,6 +79,160 @@ def orders():
 def csv_rows(response):
     assert response.content.startswith(b"\xef\xbb\xbf")
     return list(csv.reader(StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+
+
+def test_retired_provider_recovery_is_history_only_and_never_reopens_checkout(browser, orders):
+    from app.auth import now
+
+    _parent_id, records = orders
+    payment_orders = {}
+    phones = {}
+    with SessionLocal() as db:
+        for index, state, recovery_kind in [
+            (0, "exception", "historical"),
+            (3, "exception", "late_receipt"),
+            (5, "awaiting_payment", "incompatible_state"),
+            (1, "confirmed", "confirmed"),
+            (6, "exception", "no_recovery"),
+            (7, "exception", "blocked_queued"),
+            (8, "exception", "blocked_processing"),
+            (9, "exception", "blocked_verified"),
+            (11, "exception", "nsu"),
+        ]:
+            client_id, order_id = records[index]
+            order = db.get(SaleOrder, order_id)
+            client = db.get(Client, client_id)
+            phones[recovery_kind] = client.phone_e164
+            payment = ProviderPayment(
+                tenant_id=FIXTURE_TENANT_ID,
+                client_id=client_id,
+                checkout_key=f"retired-recovery-{index}",
+                cart_revision=f"synthetic-cart-{index}",
+                total_cents=order.total_cents,
+                handle_snapshot="retired-synthetic",
+                configuration_version=1,
+                verification_profile="retired-synthetic-only",
+                capture_method="credit_card",
+                state=state,
+                provider_transaction_nsu=(
+                    f"synthetic-nsu-{index}" if state == "confirmed" or recovery_kind == "nsu" else None
+                ),
+                confirmed_at=now() if state == "confirmed" else None,
+            )
+            db.add(payment)
+            db.flush()
+            order.provider_payment_id = payment.id
+            if state == "confirmed":
+                order.payment_status = "confirmed"
+                order.confirmed_at = payment.confirmed_at
+            else:
+                order.payment_status = "cancelled"
+                order.frozen_at = now()
+            payment_orders[recovery_kind] = (payment.id, order.id, client_id)
+            if recovery_kind != "no_recovery":
+                reopened_at = now()
+                is_legacy_audit = recovery_kind == "historical"
+                db.add(AuditEvent(
+                    tenant_id=FIXTURE_TENANT_ID,
+                    event=("provider_payment.owner_recovery" if is_legacy_audit
+                           else "provider_payment.cart_reopened"),
+                    subject=(f"IP_RECOVERY_20261021_V1:{payment.id}:synthetic-decision"
+                             if is_legacy_audit else f"{payment.id}:synthetic-decision"),
+                    created_at=reopened_at,
+                ))
+                if recovery_kind in {"historical", "late_receipt", "blocked_queued", "blocked_processing", "blocked_verified"}:
+                    receipt_state = {
+                        "historical": "ignored",
+                        "late_receipt": "failed",
+                        "blocked_queued": "queued",
+                        "blocked_processing": "processing",
+                        "blocked_verified": "verified",
+                    }[recovery_kind]
+                    receipt_created_at = reopened_at - timedelta(minutes=10)
+                    receipt_processed_at = (
+                        reopened_at + timedelta(seconds=1)
+                        if recovery_kind == "late_receipt" else receipt_created_at
+                    )
+                    db.add(ProviderPaymentReceipt(
+                        tenant_id=FIXTURE_TENANT_ID,
+                        client_id=client_id,
+                        payment_id=payment.id,
+                        digest=f"{index:064x}",
+                        transaction_nsu=f"synthetic-late-{index}",
+                        slug="synthetic-retired",
+                        verification_profile=payment.verification_profile,
+                        state=receipt_state,
+                        created_at=receipt_created_at,
+                        processed_at=receipt_processed_at,
+                    ))
+        db.commit()
+
+    authenticate_admin(browser)
+    history = browser.get("/admin/payment-communications", params={"financial_status": "reopened"})
+    assert history.status_code == 200, history.text
+    historical_rows = [order for group in history.json()["groups"] for order in group["orders"]]
+    assert [row["provider_payment_id"] for row in historical_rows] == [str(payment_orders["historical"][0])]
+    assert historical_rows[0]["financial_status"] == "reopened"
+    assert historical_rows[0]["provider_cart_recovery"]["requires_reconciliation"] is False
+
+    active = browser.get("/admin/payment-communications", params={"payment_provider": "infinitepay"})
+    assert active.status_code == 200, active.text
+    active_rows = [order for group in active.json()["groups"] for order in group["orders"]]
+    active_payment_ids = {row["provider_payment_id"] for row in active_rows}
+    assert str(payment_orders["historical"][0]) not in active_payment_ids
+    assert {
+        str(payment_orders["late_receipt"][0]),
+        str(payment_orders["incompatible_state"][0]),
+        str(payment_orders["confirmed"][0]),
+        str(payment_orders["no_recovery"][0]),
+        str(payment_orders["blocked_queued"][0]),
+        str(payment_orders["blocked_processing"][0]),
+        str(payment_orders["blocked_verified"][0]),
+        str(payment_orders["nsu"][0]),
+    } <= active_payment_ids
+    late_row = next(row for row in active_rows if row["provider_payment_id"] == str(payment_orders["late_receipt"][0]))
+    assert late_row["provider_cart_recovery"]["requires_reconciliation"] is True
+    assert late_row["financial_status"] == "exception"
+
+    export = browser.get("/admin/payment-communications/export.csv", params={
+        "financial_status": "reopened", "include_financial_details": "true",
+    })
+    rows = csv_rows(export)
+    assert len(rows) == 2
+    assert rows[1][9] == "reopened"
+
+    for recovery_kind in (
+        "historical", "late_receipt", "incompatible_state", "confirmed",
+        "blocked_queued", "blocked_processing", "blocked_verified", "nsu",
+    ):
+        with TestClient(app) as buyer:
+            authenticate_client(buyer, phones[recovery_kind])
+            response = buyer.get("/library/purchases")
+            assert response.status_code == 200, response.text
+            groups = response.json().get("provider_payment_groups", [])
+            matching = [group for group in groups if group["id"] == str(payment_orders[recovery_kind][0])]
+            if recovery_kind == "historical":
+                assert matching == []
+            else:
+                assert len(matching) == 1
+                assert "checkout_url" not in matching[0]
+                assert "checkout_url" not in matching[0]["orders"][0]
+                if recovery_kind in {
+                    "late_receipt", "incompatible_state", "blocked_queued",
+                    "blocked_processing", "blocked_verified", "nsu",
+                }:
+                    assert matching[0]["requires_reconciliation"] is True
+                    assert matching[0]["orders"][0]["provider_requires_reconciliation"] is True
+                if recovery_kind == "confirmed":
+                    assert matching[0]["state"] == "confirmed"
+
+    with SessionLocal() as db:
+        for recovery_kind, (payment_id, order_id, _client_id) in payment_orders.items():
+            payment = db.get(ProviderPayment, payment_id)
+            order = db.get(SaleOrder, order_id)
+            assert payment.state == ("confirmed" if recovery_kind == "confirmed" else
+                                     "awaiting_payment" if recovery_kind == "incompatible_state" else "exception")
+            assert order.payment_status == ("confirmed" if recovery_kind == "confirmed" else "cancelled")
 
 
 def test_priority_filter_and_complete_csv_share_financial_scope(browser, orders):

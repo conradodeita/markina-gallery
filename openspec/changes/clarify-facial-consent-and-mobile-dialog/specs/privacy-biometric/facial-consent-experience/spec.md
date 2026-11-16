@@ -8,7 +8,7 @@ Definir uma experiência clara, específica e responsiva para a cliente compreen
 
 ### Requirement: Aviso específico descreve o tratamento facial real
 
-Antes do envio, o sistema SHALL apresentar aviso destacado e separado dos termos gerais informando que a foto escolhida e a representação biométrica extraída serão usadas temporariamente apenas para procurar possíveis correspondências na galeria atual. O aviso SHALL informar os prazos efetivos de eliminação da referência e expiração dos resultados, SHALL esclarecer que não há cadastro biométrico permanente e SHALL NOT afirmar que a imagem nunca passa por armazenamento temporário durante o processamento.
+Antes do envio, o sistema SHALL apresentar aviso destacado e separado dos termos gerais: a foto escolhida e a representação biométrica extraída serão usadas temporariamente apenas para procurar correspondências na galeria atual. O aviso SHALL informar os prazos efetivos de eliminação da referência e expiração dos resultados, esclarecer que não há cadastro biométrico permanente e SHALL NOT negar o armazenamento temporário durante o processamento.
 
 #### Scenario: Cliente consulta finalidade e retenção
 - **WHEN** a cliente abre o diálogo de busca facial
@@ -24,15 +24,15 @@ O diálogo SHALL informar que as correspondências são sugestões, não confirm
 
 ### Requirement: Consentimento infantil destacado e comprovável
 
-Quando a referência for declarada como pertencente a criança ou adolescente e o backend informar que o fluxo infantil está disponível, o sistema SHALL exigir confirmação explícita de que a cliente é pai, mãe ou responsável legal e consentimento específico para o tratamento temporário da foto e dos dados biométricos naquela galeria. O controle SHALL iniciar desmarcado, SHALL NOT ser agrupado com autorização para publicidade, treinamento ou outra finalidade e SHALL continuar subordinado à representação legal válida exigida pelo backend.
+Quando o serviço disponibilizar upload infantil, SHALL exigir um único checkbox desmarcado que reúna autodeclaração de responsável e consentimento versionado para uso temporário naquela galeria. Não SHALL exigir cadastro prévio nem prova administrativa, nem combinar o aceite com publicidade ou treinamento. Busca direta por região indexada permanece sem declaração de idade ou consentimento de upload, conforme `simplify-mobile-gallery-face-search`.
 
-#### Scenario: Responsável autoriza a busca infantil
-- **WHEN** a cliente seleciona `Criança ou adolescente`, possui representação vigente, escolhe uma referência válida e marca a confirmação específica
-- **THEN** a ação de iniciar a busca é habilitada com a versão vigente do consentimento sem ampliar o escopo além da galeria atual
+#### Scenario: Responsável consente upload infantil
+- **WHEN** a cliente declara que a referência é de `Criança ou adolescente`, marca o checkbox específico e escolhe uma referência válida
+- **THEN** o upload pode iniciar com a versão vigente do consentimento, limitada à galeria atual e sem exigir cadastro ou prova administrativa prévios
 
-#### Scenario: Confirmação infantil ausente
-- **WHEN** a cliente seleciona `Criança ou adolescente` e não confirma ser responsável legal
-- **THEN** o sistema mantém a ação de iniciar desabilitada e não envia a referência
+#### Scenario: Consentimento de upload infantil ausente
+- **WHEN** a cliente seleciona `Criança ou adolescente` e deixa o checkbox de consentimento desmarcado
+- **THEN** o sistema não envia a referência; a busca direta por uma região já indexada permanece independente desse fluxo
 
 ### Requirement: Orientação segura para uma referência adequada
 

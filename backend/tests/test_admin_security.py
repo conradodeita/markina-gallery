@@ -24,12 +24,15 @@ from app.admin_security import (
 from app.auth import (
     AdminActionToken,
     AdminSecurityChallenge,
+    AdminTotpRecoveryCode,
     AdminUser,
     AuditEvent,
     Base,
     EmailDelivery,
     EmailDeliveryAttempt,
+    PhotographerSignup,
     SessionLocal,
+    Tenant,
     WhatsAppChannelSettings,
     engine,
     now,
@@ -47,6 +50,7 @@ from app.email_delivery import (
     sensitive_link,
 )
 from app.main import app
+from app.totp_recovery import create_recovery_codes, hash_recovery_code, recovery_code_selector
 from app.worker import process_next_email_delivery
 from tests.tenant_fixtures import fixture_admin
 
@@ -70,7 +74,7 @@ def client():
         yield test_client
 
 
-def create_admin(*, email: str = "admin@markina.test", password: str = "Atual-forte-2026"):
+def create_admin(*, email: str = "admin@markina.test", password: str = 'test-password-for-unit-tests-old'):
     secret = pyotp.random_base32()
     with SessionLocal() as db:
         admin = fixture_admin(AdminUser(
@@ -91,19 +95,23 @@ def create_admin(*, email: str = "admin@markina.test", password: str = "Atual-fo
         return admin.id, secret
 
 
-def login_admin(client: TestClient, *, email="admin@markina.test", password="Atual-forte-2026"):
+def login_admin(client: TestClient, *, email="admin@markina.test", password='test-password-for-unit-tests-old'):
     with SessionLocal() as db:
         admin = db.scalar(select(AdminUser).where(AdminUser.email == email))
         secret = admin.totp_secret
+        last_used_step = admin.totp_last_used_step
     password_response = client.post(
         "/auth/admin/password", json={"email": email, "password": password}
     )
     assert password_response.status_code == 202
+    totp = pyotp.TOTP(secret)
+    current_step = totp.timecode(now())
+    step = max(current_step, (last_used_step + 1) if last_used_step is not None else current_step)
     response = client.post(
         "/auth/admin/totp",
         json={
             "challenge_id": password_response.json()["challenge_id"],
-            "code": pyotp.TOTP(secret).now(),
+            "code": totp.at(step * totp.interval),
         },
     )
     assert response.status_code == 200
@@ -141,22 +149,22 @@ def test_admin_password_policy_rejects_weak_values(password: str, message: str) 
 
 
 def test_admin_password_policy_rejects_current_and_accepts_strong_value() -> None:
-    current_hash = password_hasher.hash("Atual-forte-2026")
+    current_hash = password_hasher.hash('test-password-for-unit-tests-old')
     with pytest.raises(ValueError, match="diferente"):
         validate_admin_password(
-            "Atual-forte-2026",
+            'test-password-for-unit-tests-old',
             email="foto@markina.test",
             current_password_hash=current_hash,
         )
 
     validate_admin_password(
-        "Nova-frase-forte-2027",
+        'test-password-for-unit-tests-new',
         email="foto@markina.test",
         current_password_hash=current_hash,
     )
-    generated_hash = password_hasher.hash("Nova-frase-forte-2027")
+    generated_hash = password_hasher.hash('test-password-for-unit-tests-new')
     assert generated_hash.startswith("$argon2id$")
-    assert password_hasher.verify(generated_hash, "Nova-frase-forte-2027")
+    assert password_hasher.verify(generated_hash, 'test-password-for-unit-tests-new')
 
 
 def test_sensitive_payload_is_authenticated_and_requires_key_outside_dev(monkeypatch) -> None:
@@ -171,6 +179,7 @@ def test_sensitive_payload_is_authenticated_and_requires_key_outside_dev(monkeyp
         decrypt_sensitive_payload(encrypted[:-2] + "xx", context="test")
 
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "homolog")
     with pytest.raises(AdminSecurityConfigurationError, match="obrigatória"):
         encrypt_sensitive_payload({"value": "x"}, context="test")
 
@@ -179,7 +188,7 @@ def test_action_token_is_hash_only_single_use_and_new_issue_invalidates_previous
     with SessionLocal() as db:
         admin = fixture_admin(AdminUser(
             email="admin@markina.test",
-            password_hash=password_hasher.hash("Atual-forte-2026"),
+            password_hash=password_hasher.hash('test-password-for-unit-tests-old'),
             email_verified=True,
             totp_secret="TESTSECRET",
         ))
@@ -220,7 +229,7 @@ def test_cleanup_is_idempotent_and_removes_recoverable_terminal_payloads() -> No
     with SessionLocal() as db:
         admin = fixture_admin(AdminUser(
             email="admin@markina.test",
-            password_hash=password_hasher.hash("Atual-forte-2026"),
+            password_hash=password_hasher.hash('test-password-for-unit-tests-old'),
             email_verified=True,
             totp_secret="TESTSECRET",
         ))
@@ -619,7 +628,7 @@ def test_public_recovery_is_neutral_and_resets_without_creating_session(
 
     reset = client.post(
         "/auth/admin/recovery/reset",
-        json={"token": raw_token, "new_password": "Nova-frase-forte-2027"},
+        json={"token": raw_token, "new_password": 'test-password-for-unit-tests-new'},
     )
     assert reset.status_code == 200
     assert "markina_session" not in client.cookies
@@ -627,7 +636,111 @@ def test_public_recovery_is_neutral_and_resets_without_creating_session(
         "/auth/admin/recovery/reset",
         json={"token": raw_token, "new_password": "Outra-frase-forte-2028"},
     ).status_code == 400
-    login_admin(client, password="Nova-frase-forte-2027")
+    login_admin(client, password='test-password-for-unit-tests-new')
+
+
+def test_website_photographer_without_totp_recovers_by_email_once(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://testserver")
+    monkeypatch.setenv("EMAIL_PROVIDER", "sandbox")
+    monkeypatch.setenv("PHOTOGRAPHER_SIGNUP_LOCAL_PROOF_ENABLED", "true")
+    admin_id, _secret = create_admin(email="exploratory@example.test")
+    login_admin(client, email="exploratory@example.test")
+    with SessionLocal() as db:
+        admin = db.get(AdminUser, admin_id)
+        admin.totp_enabled = False
+        admin._totp_secret_envelope = None
+        admin._totp_secret_legacy = None
+        admin._totp_secret_value = None
+        admin._totp_secret_needs_encryption = False
+        db.add(PhotographerSignup(
+            photographer_name="Conta exploratória", email=admin.email, state="active",
+            otp_expires_at=now(), reserved_admin_id=admin_id,
+            activated_tenant_id=FIXTURE_TENANT_ID, activated_at=now(),
+        ))
+        db.commit()
+    assert client.post("/auth/photographer-signup/recovery/email-link", json={"email": "exploratory@example.test"}).status_code == 202
+    with SessionLocal() as db:
+        token = raw_token_from_delivery(db.scalar(select(EmailDelivery).where(EmailDelivery.kind == "password_recovery")))
+    reset = "/auth/admin/recovery/reset"
+    changed = client.post(reset, json={"token": token, "new_password": 'test-password-for-unit-tests-new'})
+    assert changed.status_code == 200
+    assert client.get("/auth/destination").status_code == 401
+    assert client.post(reset, json={"token": token, "new_password": "Outra-frase-forte-2028"}).status_code == 400
+    login = client.post("/auth/admin/password", json={"email": "exploratory@example.test", "password": 'test-password-for-unit-tests-new'})
+    assert login.json() == {"destination": "/admin"}
+    assert client.get("/admin").status_code == 200
+
+
+def test_website_photographer_recovery_requires_email_link_and_totp(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://testserver")
+    monkeypatch.setenv("EMAIL_PROVIDER", "sandbox")
+    monkeypatch.setenv("PHOTOGRAPHER_SIGNUP_LOCAL_PROOF_ENABLED", "true")
+    admin_id, secret = create_admin(email="website@example.test")
+    with SessionLocal() as db:
+        db.add(PhotographerSignup(
+            photographer_name="Fotógrafa Web", email="website@example.test", state="active",
+            otp_expires_at=now(), reserved_admin_id=admin_id,
+            activated_tenant_id=FIXTURE_TENANT_ID, activated_at=now(),
+        ))
+        db.commit()
+    root = "/auth/photographer-signup/recovery/email-link"
+    unknown = client.post(root, json={"email": "unknown@example.test"})
+    known = client.post(root, json={"email": "website@example.test"})
+    assert known.status_code == unknown.status_code == 202
+    assert known.json() == unknown.json()
+    with SessionLocal() as db:
+        deliveries = list(db.scalars(select(EmailDelivery).where(EmailDelivery.kind == "password_recovery")))
+        assert len(deliveries) == 1
+        token = raw_token_from_delivery(deliveries[0])
+    reset = "/auth/admin/recovery/reset"
+    assert client.post(reset, json={"token": token, "new_password": 'test-password-for-unit-tests-new'}).status_code == 401
+    assert client.post(reset, json={"token": token, "new_password": 'test-password-for-unit-tests-new', "second_factor_code": "000000"}).status_code == 401
+    valid = pyotp.TOTP(secret).now()
+    with SessionLocal() as db:
+        db.get(Tenant, FIXTURE_TENANT_ID).status = "suspended"
+        db.commit()
+    assert client.post(reset, json={"token": token, "new_password": 'test-password-for-unit-tests-new', "second_factor_code": valid}).status_code == 401
+    with SessionLocal() as db:
+        db.get(Tenant, FIXTURE_TENANT_ID).status = "active"
+        db.commit()
+    response = client.post(reset, json={"token": token, "new_password": 'test-password-for-unit-tests-new', "second_factor_code": valid})
+    assert response.status_code == 200
+    assert "markina_session" not in client.cookies
+    assert client.post(reset, json={"token": token, "new_password": "Outra-frase-forte-2028", "second_factor_code": valid}).status_code == 400
+    with SessionLocal() as db:
+        admin = db.get(AdminUser, admin_id)
+        assert password_hasher.verify(admin.password_hash, 'test-password-for-unit-tests-new')
+        assert admin.totp_last_used_step is not None
+    login_admin(client, email="website@example.test", password='test-password-for-unit-tests-new')
+    recovery_code = create_recovery_codes(1)[0]
+    with SessionLocal() as db:
+        db.add(AdminTotpRecoveryCode(
+            admin_user_id=admin_id, code_selector=recovery_code_selector(recovery_code),
+            code_hash=hash_recovery_code(recovery_code),
+        ))
+        db.commit()
+    assert client.post(root, json={"email": "website@example.test"}).status_code == 202
+    with SessionLocal() as db:
+        next_delivery = db.scalar(select(EmailDelivery).where(EmailDelivery.kind == "password_recovery").order_by(EmailDelivery.created_at.desc(), EmailDelivery.id.desc()))
+        next_token = raw_token_from_delivery(next_delivery)
+    response = client.post(reset, json={"token": next_token, "new_password": "Outra-frase-forte-2028", "second_factor_code": recovery_code})
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        stored_code = db.scalar(select(AdminTotpRecoveryCode).where(AdminTotpRecoveryCode.admin_user_id == admin_id))
+        assert stored_code.used_at is not None and recovery_code not in str(stored_code.__dict__)
+    assert client.post(reset, json={"token": next_token, "new_password": "Terceira-frase-forte-2029", "second_factor_code": recovery_code}).status_code == 400
+    monkeypatch.setenv("EMAIL_PROVIDER", "unavailable-synthetic")
+    unavailable = client.post(root, json={"email": "website@example.test"})
+    unknown = client.post(root, json={"email": "unknown@example.test"})
+    assert unavailable.status_code == unknown.status_code == 202
+    assert unavailable.json() == unknown.json()
+    with SessionLocal() as db:
+        assert len(list(db.scalars(select(EmailDelivery).where(EmailDelivery.kind == "password_recovery")))) == 2
+    for _ in range(3):
+        assert client.post(root, json={"email": "unknown@example.test"}).status_code == 202
+    assert client.post(root, json={"email": "unknown@example.test"}).status_code == 429
 
 
 def test_public_recovery_resend_is_limited_and_invalid_codes_never_queue_email(
@@ -670,6 +783,7 @@ def test_public_recovery_stays_neutral_when_real_whatsapp_key_is_missing(
     client: TestClient, monkeypatch
 ) -> None:
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "homolog")
     monkeypatch.setenv("AUTH_PII_FINGERPRINT_SALT", "synthetic-homolog-salt")
     monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://homolog.example.test")
     monkeypatch.setenv("EMAIL_PROVIDER", "smtp")
@@ -719,7 +833,7 @@ def test_settings_challenge_cannot_be_reused_by_rotated_session(
     headers = {"Origin": "https://testserver"}
     created = client.post(
         "/admin/security/password/challenge",
-        json={"current_password": "Atual-forte-2026"},
+        json={"current_password": 'test-password-for-unit-tests-old'},
         headers=headers,
     )
     assert created.status_code == 202
@@ -730,14 +844,14 @@ def test_settings_challenge_cannot_be_reused_by_rotated_session(
         json={
             "challenge_id": created.json()["challenge_id"],
             "code": "123456",
-            "new_password": "Nova-frase-forte-2027",
+            "new_password": 'test-password-for-unit-tests-new',
         },
         headers=headers,
     )
     assert rejected.status_code == 401
     with SessionLocal() as db:
         admin = db.scalar(select(AdminUser))
-        assert password_hasher.verify(admin.password_hash, "Atual-forte-2026")
+        assert password_hasher.verify(admin.password_hash, 'test-password-for-unit-tests-old')
 
 
 def test_account_settings_change_password_and_email_with_session_bound_otp(
@@ -754,6 +868,7 @@ def test_account_settings_change_password_and_email_with_session_bound_otp(
 
     summary = client.get("/admin/security/summary")
     assert summary.status_code == 200
+    assert summary.headers["cache-control"] == "private, no-store"
     assert summary.json()["email_masked"] != "admin@markina.test"
     assert "admin@markina.test" not in str(summary.json())
     diagnostic = client.get("/admin/email/channel")
@@ -763,13 +878,13 @@ def test_account_settings_change_password_and_email_with_session_bound_otp(
 
     cross_site = client.post(
         "/admin/security/password/challenge",
-        json={"current_password": "Atual-forte-2026"},
+        json={"current_password": 'test-password-for-unit-tests-old'},
         headers={"Origin": "https://attacker.example"},
     )
     assert cross_site.status_code == 403
     challenge_response = client.post(
         "/admin/security/password/challenge",
-        json={"current_password": "Atual-forte-2026"},
+        json={"current_password": 'test-password-for-unit-tests-old'},
         headers=headers,
     )
     assert challenge_response.status_code == 202
@@ -779,18 +894,19 @@ def test_account_settings_change_password_and_email_with_session_bound_otp(
         json={
             "challenge_id": challenge_response.json()["challenge_id"],
             "code": "123456",
-            "new_password": "Nova-frase-forte-2027",
+            "new_password": 'test-password-for-unit-tests-new',
         },
         headers=headers,
     )
     assert changed.status_code == 200
     assert client.get("/admin/security/summary").status_code == 403
 
-    login_admin(client, password="Nova-frase-forte-2027")
+
+    login_admin(client, password='test-password-for-unit-tests-new')
     email_challenge = client.post(
         "/admin/security/email/challenge",
         json={
-            "current_password": "Nova-frase-forte-2027",
+            "current_password": 'test-password-for-unit-tests-new',
             "new_email": "novo@markina.test",
         },
         headers=headers,
@@ -824,8 +940,202 @@ def test_account_settings_change_password_and_email_with_session_bound_otp(
         notice_payload = decrypt_sensitive_payload(notice.encrypted_payload, context=f"email-delivery:{notice.id}:{notice.idempotency_key}")
         assert "Pick-your-Pic" in notice_payload["text_body"]
     assert client.get("/admin/security/summary").status_code == 403
+    # Simula passagem de janela TOTP sem atrasar o teste de jornada completa.
+    with SessionLocal() as db:
+        admin = db.scalar(select(AdminUser))
+        admin.totp_last_used_step = pyotp.TOTP(admin.totp_secret).timecode(now()) - 2
+        db.commit()
     login_admin(
         client,
         email="novo@markina.test",
-        password="Nova-frase-forte-2027",
+        password='test-password-for-unit-tests-new',
     )
+
+def test_totp_recovery_codes_are_hash_only_single_use_and_regenerable(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://testserver")
+    admin_id, secret = create_admin()
+    login_admin(client)
+    with SessionLocal() as db:
+        admin = db.get(AdminUser, admin_id)
+        next_step = admin.totp_last_used_step + 1
+    future_code = pyotp.TOTP(secret).at(next_step * 30)
+
+    issued = client.post(
+        "/admin/security/totp/recovery-codes",
+        json={"current_password": 'test-password-for-unit-tests-old', "second_factor_code": future_code},
+        headers={"Origin": "https://testserver"},
+    )
+    assert issued.status_code == 200
+    assert issued.headers["cache-control"] == "no-store, private"
+    codes = issued.json()["codes"]
+    assert len(codes) == 10 and len(set(codes)) == 10
+    summary = client.get("/admin/security/summary")
+    assert summary.status_code == 200
+    assert summary.headers["cache-control"] == "private, no-store"
+    assert summary.json()["recovery_codes_available"] == 10
+    assert "codes" not in summary.json()
+    assert not any(code in summary.text for code in codes)
+
+    with SessionLocal() as db:
+        stored = list(db.scalars(select(AdminTotpRecoveryCode).where(
+            AdminTotpRecoveryCode.admin_user_id == admin_id
+        )))
+        assert len(stored) == 10
+        assert all(item.code_hash.startswith("$argon2id$") for item in stored)
+        assert all(item.code_selector in {code[:4] for code in codes} for item in stored)
+        assert all(item.code_hash != code for item in stored for code in codes)
+        assert not any(code in repr(stored) for code in codes)
+        issuance_audit = list(db.scalars(select(AuditEvent).where(
+            AuditEvent.event == "admin_totp_recovery.issued"
+        )))
+        assert issuance_audit and all(
+            code not in repr((item.event, item.subject))
+            for item in issuance_audit for code in codes
+        )
+
+    password = client.post(
+        "/auth/admin/password", json={"email": "admin@markina.test", "password": 'test-password-for-unit-tests-old'}
+    )
+    recovery_login = client.post(
+        "/auth/admin/totp",
+        json={"challenge_id": password.json()["challenge_id"], "code": codes[0]},
+    )
+    assert recovery_login.status_code == 200
+
+    repeated_challenge = client.post(
+        "/auth/admin/password",
+        json={"email": "admin@markina.test", "password": 'test-password-for-unit-tests-old'},
+    )
+    repeated_login = client.post(
+        "/auth/admin/totp",
+        json={"challenge_id": repeated_challenge.json()["challenge_id"], "code": codes[0]},
+    )
+    assert repeated_login.status_code == 401
+
+    from datetime import datetime as real_datetime
+
+    class NextStepDatetime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime.now(tz) + timedelta(seconds=30)
+
+    monkeypatch.setattr("app.totp_verification.datetime", NextStepDatetime)
+    with SessionLocal() as db:
+        admin = db.get(AdminUser, admin_id)
+        next_step = admin.totp_last_used_step + 1
+    next_totp = pyotp.TOTP(secret).at(next_step * 30)
+
+    def fail_to_generate_codes():
+        raise RuntimeError("synthetic recovery generation failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("app.main.create_recovery_codes", fail_to_generate_codes)
+        with pytest.raises(RuntimeError, match="synthetic recovery generation failure"):
+            client.post(
+                "/admin/security/totp/recovery-codes",
+                json={"current_password": 'test-password-for-unit-tests-old', "second_factor_code": next_totp},
+                headers={"Origin": "https://testserver"},
+            )
+    with SessionLocal() as db:
+        prior_batch = list(db.scalars(select(AdminTotpRecoveryCode).where(
+            AdminTotpRecoveryCode.admin_user_id == admin_id
+        )))
+        assert len(prior_batch) == 10
+        assert sum(row.used_at is not None for row in prior_batch) == 1
+        assert all(row.revoked_at is None for row in prior_batch)
+
+    regenerated = client.post(
+        "/admin/security/totp/recovery-codes",
+        json={"current_password": 'test-password-for-unit-tests-old', "second_factor_code": next_totp},
+        headers={"Origin": "https://testserver"},
+    )
+    assert regenerated.status_code == 200
+    with SessionLocal() as db:
+        rows = list(db.scalars(select(AdminTotpRecoveryCode).where(
+            AdminTotpRecoveryCode.admin_user_id == admin_id
+        )))
+        assert sum(row.revoked_at is None and row.used_at is None for row in rows) == 10
+        assert sum(row.used_at is not None for row in rows) == 1
+
+
+def test_whatsapp_provision_route_requires_active_signup(client: TestClient) -> None:
+    from app.auth import WhatsAppTenantCredential
+
+    create_admin(email="not-yet-active@example.test")
+    login_admin(client, email="not-yet-active@example.test")
+
+    response = client.post(
+        "/admin/whatsapp/channel/provision",
+        json={"expected_phone_e164": "+5511987654321"},
+    )
+
+    assert response.status_code == 403
+    with SessionLocal() as db:
+        assert db.scalar(select(WhatsAppTenantCredential)) is None
+
+
+def test_whatsapp_provision_route_reuses_tenant_instance_without_real_network(
+    client: TestClient, monkeypatch,
+) -> None:
+    import base64
+    import json
+
+    from app.auth import WhatsAppTenantCredential
+    from app.messaging import EvolutionWhatsAppProvider
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INTEGRATION_SECRET_ENV", "development")
+    monkeypatch.setenv("INTEGRATION_SECRET_ACTIVE_KEY_ID", "synthetic-test")
+    monkeypatch.setenv("INTEGRATION_SECRET_KEYS", json.dumps({
+        "synthetic-test": base64.b64encode(b"x" * 32).decode(),
+    }))
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "development")
+    monkeypatch.setenv("WHATSAPP_API_URL", "https://synthetic-evolution.invalid")
+    monkeypatch.setenv("WHATSAPP_API_KEY", "synthetic-only-key")
+    monkeypatch.setenv(
+        "WHATSAPP_WEBHOOK_URL",
+        "https://synthetic-app.invalid/internal/whatsapp/webhook",
+    )
+    admin_id, _secret = create_admin(email="active-whatsapp@example.test")
+    login_admin(client, email="active-whatsapp@example.test")
+    with SessionLocal() as db:
+        db.add(PhotographerSignup(
+            photographer_name="Fotógrafa Sintética",
+            email="active-whatsapp@example.test",
+            state="active",
+            otp_expires_at=now(),
+            reserved_admin_id=admin_id,
+            activated_tenant_id=FIXTURE_TENANT_ID,
+            activated_at=now(),
+        ))
+        db.commit()
+
+    instances: list[str] = []
+
+    def synthetic_ensure_instance(provider: EvolutionWhatsAppProvider) -> None:
+        instances.append(provider.instance)
+
+    def forbidden_network(*_args, **_kwargs):
+        pytest.fail("O teste não pode fazer requisição de rede ao provedor.")
+
+    monkeypatch.setattr(EvolutionWhatsAppProvider, "ensure_instance", synthetic_ensure_instance)
+    monkeypatch.setattr(EvolutionWhatsAppProvider, "_request_json", forbidden_network)
+    payload = {"expected_phone_e164": "+5511987654321"}
+
+    first = client.post("/admin/whatsapp/channel/provision", json=payload)
+    second = client.post("/admin/whatsapp/channel/provision", json=payload)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["provider"] == second.json()["provider"] == "evolution"
+    assert first.json()["status"] == second.json()["status"] == "pending_pairing"
+    assert first.headers["cache-control"] == "private, no-store"
+    assert "+5511987654321" not in first.text
+    assert "synthetic-only-key" not in first.text
+    assert len(instances) == 2 and instances[0] == instances[1]
+    with SessionLocal() as db:
+        credentials = list(db.scalars(select(WhatsAppTenantCredential)))
+        assert len(credentials) == 1
+        assert credentials[0].tenant_id == FIXTURE_TENANT_ID

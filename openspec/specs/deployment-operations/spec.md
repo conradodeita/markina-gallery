@@ -103,7 +103,7 @@ O sistema SHALL ter um procedimento de homologação para a autenticação que e
 
 ### Requirement: Limpezas controladas e delimitadas dos dados de teste de homologação
 
-O sistema SHALL fornecer uma operação explícita, inventariada e restrita à homologação para remover galerias, pastas, fotos, clientes, seleções, compras, pedidos, entregas, interações e histórico operacional relacionado, além da mídia e das filas exclusivas desses dados. A operação SHALL preservar conta e sessões administrativas, fatores 2FA, login e instância Evolution, segredos, todas as configurações globais e recursos de outros projetos. Nesta execução autorizada, ela SHALL NOT criar novo backup, executar em produção ou apagar backups preexistentes.
+Uma limpeza explícita e inventariada SHALL operar somente em homologação e remover apenas dados de teste: galerias, pastas, fotos, clientes, seleções, compras, pedidos, entregas, interações, histórico operacional, mídia e filas exclusivos. SHALL preservar conta/sessões administrativas, 2FA, login/Evolution, segredos, configuração global e outros projetos. MUST NOT criar backup novo, executar em produção ou apagar backups existentes.
 
 #### Scenario: Inventário anterior
 
@@ -137,7 +137,7 @@ O sistema SHALL fornecer uma operação explícita, inventariada e restrita à h
 
 ### Requirement: Entrega compreensível e verificável por deploy
 
-O operador SHALL apresentar antes de cada deploy o escopo concreto, inventário atualizado, portas/subdomínio, impacto previsto, validações e reversão, aguardando autorização humana explícita. Após a execução, SHALL registrar em português simples o que foi efetivamente entregue, o que o proprietário pode testar, as verificações realizadas e o que ficou pendente, identificando ambiente, data, versão da aplicação e revisão do banco. Um deploy MUST ser declarado validado somente com evidência dos critérios de aceite daquela etapa.
+Antes de cada deploy, o operador SHALL apresentar escopo, inventário, portas/subdomínio, impacto, validações e rollback e aguardar autorização humana explícita. Depois, SHALL registrar em português simples entrega, testes do proprietário, verificações, pendências, ambiente, data, versão e revisão do banco. Deploy MUST ser declarado validado somente com evidência dos critérios de aceite.
 
 #### Scenario: Liberação bem-sucedida da fundação
 - **WHEN** o deploy autorizado da fundação passa pelos testes de aceite
@@ -161,9 +161,7 @@ O operador SHALL comparar a versão/schema do destino com o histórico de migrat
 
 ### Requirement: Interrupção restrita dos escritores antes da migration
 
-O deploy autorizado SHALL construir as imagens antes da janela, interromper somente API e workers ativos do projeto `markina-gallery` e verificar a interrupção antes de executar Alembic. Jobs duráveis SHALL permanecer no banco para retomada com a versão compatível. Serviços, volumes e configuração da Evolution e dos projetos vizinhos MUST permanecer preservados. Falha de interrupção MUST impedir a migration; mudança de schema MUST impedir retorno automático ao binário anterior incompatível.
-
-A origem pública já configurada corretamente SHALL ser conferida sem reescrever o arquivo de ambiente. Configuração divergente ou ausente SHALL exigir autorização humana específica antes de sua alteração.
+O deploy autorizado SHALL construir imagens antes da janela e interromper somente API/workers ativos do projeto `markina-gallery`, verificando a parada antes do Alembic. Jobs duráveis permanecem para retomada compatível; serviços, volumes, Evolution e projetos vizinhos MUST ser preservados. Falha de parada MUST impedir a migration, e schema alterado MUST impedir retorno automático a binário incompatível.
 
 #### Scenario: Escritores interrompidos
 - **WHEN** as imagens estão prontas e os escritores exclusivos são interrompidos e conferidos
@@ -172,6 +170,15 @@ A origem pública já configurada corretamente SHALL ser conferida sem reescreve
 #### Scenario: Escritor ainda ativo
 - **WHEN** algum escritor continua em execução ou sua parada falha
 - **THEN** Alembic não é executado e a falha é registrada para recuperação segura
+
+### Requirement: Conferência da origem pública sem escrita de ambiente
+
+A origem pública SHALL ser conferida sem reescrever o arquivo de ambiente. Divergência ou ausência SHALL exigir autorização humana específica antes da alteração.
+
+#### Scenario: Origem existente ou divergente
+
+- **WHEN** a origem pública está configurada, ausente ou diverge do valor esperado
+- **THEN** o sistema confere sem editar o ambiente e aguarda autorização específica antes de alterar valor divergente ou ausente
 
 ### Requirement: Migração de domínio isolada da Markina Gallery
 O operador SHALL publicar o subdomínio solicitado com DNS e HTTPS próprios, mantendo o hostname anterior disponível durante a validação. A configuração SHALL limitar-se à Markina Gallery, preservar o domínio raiz sem destino de aplicação e, após revisão do proprietário, retirar somente o hostname antigo da Markina do proxy compartilhado e da lista de origens aceitas.

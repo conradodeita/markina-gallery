@@ -1,3 +1,23 @@
+## ADDED Requirements
+
+### Requirement: Resumo e responsáveis da galeria-mãe
+
+O sistema SHALL apresentar um resumo administrativo da galeria-mãe com capa protegida, contagens, link não listado e responsáveis vinculados. A lista de clientes SHALL ser ordenada alfabeticamente e permitir busca por nome completo ou número de WhatsApp antes de criar um novo cadastro.
+
+#### Scenario: Vínculo de cliente existente
+
+- **WHEN** o fotógrafo busca uma cliente existente e a vincula na etapa Clientes da galeria atual
+- **THEN** o sistema cria ou reutiliza somente a galeria privada derivada daquela cliente para a mesma origem e o resumo passa a apresentar o vínculo
+
+#### Scenario: Busca sem resultado
+
+- **WHEN** o fotógrafo pesquisa nome ou WhatsApp que não existe
+- **THEN** a interface informa o estado vazio e oferece o cadastro de uma nova cliente no contexto da galeria atual
+
+#### Scenario: Resumo após vínculo
+
+- **WHEN** o fotógrafo retorna ao resumo depois de vincular uma ou mais clientes
+- **THEN** a interface mostra os responsáveis ordenados alfabeticamente, o link não listado e a capa disponível sem revelar fotos fora da autorização administrativa
 ## MODIFIED Requirements
 
 > **Supersession:** resumo, capa, pastas e navegação administrativa abaixo permanecem como base entregue. A exclusão somente de galeria vazia, a derivação imediata ao vínculo e a experiência exclusivamente privada foram supersedidas por `improve-gallery-and-client-data-lifecycle` e SHALL NOT orientar nova implementação.
@@ -50,22 +70,3 @@ O sistema SHALL fornecer ao fotógrafo autenticado telas para criar e operar cli
 
 - **WHEN** o fotógrafo abre uma galeria do evento que ainda não possui pasta, foto nem responsável vinculado
 - **THEN** a interface apresenta o comando explícito “Excluir galeria vazia” e o backend permite a exclusão somente nesse estado
-
-### Requirement: Resumo e responsáveis da galeria-mãe
-
-O sistema SHALL apresentar um resumo administrativo da galeria-mãe com capa protegida, contagens, link não listado e responsáveis vinculados. A lista de clientes SHALL ser ordenada alfabeticamente e permitir busca por nome completo ou número de WhatsApp antes de criar um novo cadastro.
-
-#### Scenario: Vínculo de cliente existente
-
-- **WHEN** o fotógrafo busca uma cliente existente e a vincula na etapa Clientes da galeria atual
-- **THEN** o sistema cria ou reutiliza somente a galeria privada derivada daquela cliente para a mesma origem e o resumo passa a apresentar o vínculo
-
-#### Scenario: Busca sem resultado
-
-- **WHEN** o fotógrafo pesquisa nome ou WhatsApp que não existe
-- **THEN** a interface informa o estado vazio e oferece o cadastro de uma nova cliente no contexto da galeria atual
-
-#### Scenario: Resumo após vínculo
-
-- **WHEN** o fotógrafo retorna ao resumo depois de vincular uma ou mais clientes
-- **THEN** a interface mostra os responsáveis ordenados alfabeticamente, o link não listado e a capa disponível sem revelar fotos fora da autorização administrativa

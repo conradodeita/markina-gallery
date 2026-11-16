@@ -1,0 +1,31 @@
+# Design
+
+## Contexto
+
+`AdminUser.totp_secret` é atualmente uma coluna textual com segredo em claro. `/auth/admin/totp` lê o valor e chama `pyotp.TOTP(...).verify(..., valid_window=1)`. O schema Alembic atual é `20261026_0090`. `add-secure-admin-account-recovery` entrega redefinição de senha, mas explicitamente não recupera nem redefine TOTP. `integration_secrets.py` oferece precedente de AES-GCM/keyring externo; a chave de TOTP terá namespace e keyring próprios para limitar o impacto de acesso/rotação.
+
+## Decisões
+
+1. Usar AES-256-GCM, nonce aleatório de 96 bits, envelope com versão e `key_id`, e AAD canônica contendo propósito `admin-totp`, versão, `APP_ENV` e UUID do administrador. Isso impede trocar ciphertext entre contas ou ambientes. Segredos e erros criptográficos nunca entram em logs/respostas.
+2. Ler as chaves de `ADMIN_TOTP_SECRET_ENV`, `ADMIN_TOTP_ACTIVE_KEY_ID` e `ADMIN_TOTP_KEYS` exclusivamente do secret store/ambiente do servidor. JSON duplicado, chave inválida, ambiente divergente ou chave ativa ausente falham fechados. O keyring aceita chaves antigas e ativa para rotação; nenhuma chave é gravada no banco.
+3. Mapear o atributo Python `AdminUser.totp_secret` para um valor transitório legado `totp_secret` e um novo envelope `totp_secret_envelope`. A leitura usa a coluna legada como fonte durante `ADMIN_TOTP_LEGACY_DUAL_WRITE=true`, para refletir eventual escrita por binário antigo; com a flag desligada, usa o envelope e só recorre ao legado se não houver envelope válido, marcando a linha para cifragem. Novas escritas sempre produzem envelope. Na janela explicitamente configurada, também espelham o mesmo valor em `totp_secret`; fora dela, a coluna legada é zerada. Configuração ausente significa dual-write desligado; valores inválidos falham fechados. A migration contract exige a flag desligada.
+4. `0091` é uma expansão aditiva: aumenta compatibilidade sem renomear/substituir `totp_secret`, acrescenta `totp_secret_envelope` e `totp_last_used_step`, e faz backfill autenticado dos segredos existentes preservando os valores legados. Dados inválidos ou keyring ausente abortam a transação. Após `0092`, uma `0093` contract exige dual-write desligado, bloqueia novas escritas concorrentes na tabela de admins, valida todos os envelopes/contextos e reconcilia divergência válida a partir do plaintext legado, que é a fonte durante a convivência; só então define `totp_secret` como NULL. O bloqueio de escrita é curto e permite leituras; rollout deve drenar escritores antigos antes desta etapa. O downgrade de `0093` valida e decifra envelopes cujas colunas legadas estão vazias, preserva qualquer plaintext já presente e restaura o restante numa transação; não remove envelopes. Testar vazio, legado, valor repetido, falha parcial, downgrade e continuidade TOTP em PostgreSQL descartável.
+5. A sequência externa é: aplicar somente a expansão `0091` com runtimes antigos ainda tolerantes às colunas extras; implantar versão compatível em API e worker com dual-write explicitamente ligado; confirmar todos os leitores/escritores e drenar binários antigos; desligar dual-write em todos os consumidores novos; executar `0093` contract; validar login e jobs; manter schema/envelopes para rollback. Depois de `0093`, rollback de aplicação exige primeiro parar a versão nova e reverter `0093` para restaurar plaintext, e só então voltar a binário antigo. Nunca presumir tráfego, versão homogênea, backup restaurável ou zero downtime: inventário de roteamento/serviços, smoke e autorização do proprietário continuam gates, e nenhuma migration é automática em produção.
+6. Rotação mantém chave antiga disponível até recriptografar e validar cada registro. Comando dry-run/apply usa transação, contagens e UUIDs sem imprimir segredos; só depois de verificação pode remover a chave antiga do ambiente. Perda do keyring não é recuperável pelo banco; backup/restauração das chaves externas faz parte do procedimento de recuperação.
+7. A verificação TOTP calcula os passos aceitos na janela vigente e grava `totp_last_used_step` sob lock/condição atômica. Um passo aceito anteriormente não pode autenticar outro desafio; falhas seguem rate limit, tentativa, auditoria e resposta neutra existentes.
+8. Códigos de recuperação são aleatórios de 144 bits, mostrados uma única vez após reautenticação recente e armazenados individualmente como seletor público curto mais hash Argon2id do restante secreto. A busca indexada evita verificar todos os hashes por tentativa sem reduzir a entropia do fator. Consumo é atômico, de uso único e limitado por rate limit. Regenerar invalida o lote anterior somente após senha e TOTP atual válido; um código de recuperação não pode autorizar regeneração. Respostas, logs, exportações e auditoria nunca incluem códigos. Códigos não substituem MFA; são um segundo fator alternativo de uso único.
+9. A recuperação de acesso do proprietário depende de manter código de recuperação offline e cópia controlada do keyring fora do banco. Perda simultânea dos fatores e da chave externa exige intervenção humana assistida e não deve ter bypass por e-mail, endereço, parâmetro, tabela ou API.
+
+## Não objetivos
+
+- Não redefinir TOTP, desativar MFA ou criar usuários administrativos durante a migração.
+- Não usar chaves de integração/biometria, chave derivada de `.env` versionado ou chave guardada no mesmo banco.
+- Não acessar nem modificar configuração real, segredo, conta de produção ou sistema de backup neste change.
+- Não publicar, migrar ou alterar produção/homologação.
+
+## Riscos e gates
+
+- O runtime atual de API e worker está em commits diferentes de `main`. Uma implantação só pode ser planejada depois de provar compatibilidade de ambos os caminhos TOTP e definir sequência de release reversível; esta change local não declara paridade.
+- A transição deve preservar autenticação corrente: migração testa ciphertext, MFA TOTP legado, downgrade e continuidade com o mesmo segredo sintético.
+- Argon2id de vários códigos por login pode ampliar latência; limitar número de códigos e tentativas, medir custo com o hash já usado pelo projeto e fazer verificação focada.
+- Uma migration de contrato pode exigir execução coordenada. Isso permanece bloqueio operacional até inventário, backup restaurável e autorização humana específica.

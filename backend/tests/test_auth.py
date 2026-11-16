@@ -4,7 +4,7 @@ from uuid import UUID
 import pyotp
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.auth import (
     AdminUser,
@@ -20,6 +20,7 @@ from app.auth import (
     ParentGallery,
     ParentGalleryRegistration,
     SessionLocal,
+    Tenant,
     WhatsAppDelivery,
     cleanup_expired_client_otp_pii,
     engine,
@@ -31,7 +32,8 @@ from app.auth import (
 from app.gallery_access import issue_gallery_capability
 from app.main import app
 from app.seed_admin import seed_admin
-from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
+from app.totp_crypto import TotpSecretCipher
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin, fixture_unmetered_owner
 
 
 @pytest.fixture(autouse=True)
@@ -412,7 +414,8 @@ def test_disabled_gallery_link_cannot_create_client_after_otp(client):
         assert db.scalar(select(ParentGalleryRegistration)) is None
 
 
-def test_admin_requires_totp_and_client_cannot_enter_admin(client):
+def test_admin_requires_totp_and_client_cannot_enter_admin(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_TOTP_LEGACY_DUAL_WRITE", "true")
     secret = pyotp.random_base32()
     with SessionLocal() as db:
         db.add(
@@ -424,17 +427,44 @@ def test_admin_requires_totp_and_client_cannot_enter_admin(client):
             ))
         )
         db.commit()
+    # Um consumidor legado pode gravar somente a coluna antiga durante a expansão.
+    updated_secret = pyotp.random_base32()
+    with SessionLocal() as db:
+        db.execute(text(
+            "UPDATE admin_user SET totp_secret = :secret WHERE email = :email"
+        ), {"secret": updated_secret, "email": "foto@markina.test"})
+        db.commit()
     password = client.post(
         "/auth/admin/password", json={"email": "foto@markina.test", "password": "senha-segura"}
     )
     assert password.status_code == 202
     assert client.get("/admin").status_code == 403
+    code = pyotp.TOTP(updated_secret).now()
     response = client.post(
         "/auth/admin/totp",
-        json={"challenge_id": password.json()["challenge_id"], "code": pyotp.TOTP(secret).now()},
+        json={"challenge_id": password.json()["challenge_id"], "code": code},
     )
     assert response.json() == {"destination": "/admin"}
     assert client.get("/admin").status_code == 200
+    with SessionLocal() as db:
+        admin_id = db.scalar(
+            select(AdminUser.id).where(AdminUser.email == "foto@markina.test")
+        )
+        values = db.execute(text(
+            "SELECT totp_secret,totp_secret_envelope FROM admin_user WHERE email=:email"
+        ), {"email": "foto@markina.test"}).one()
+        assert values.totp_secret == updated_secret
+        assert TotpSecretCipher.from_environment().decrypt(
+            values.totp_secret_envelope, admin_id=admin_id
+        ) == updated_secret
+    repeated_password = client.post(
+        "/auth/admin/password", json={"email": "foto@markina.test", "password": "senha-segura"}
+    )
+    repeated = client.post(
+        "/auth/admin/totp",
+        json={"challenge_id": repeated_password.json()["challenge_id"], "code": code},
+    )
+    assert repeated.status_code == 401
 
 
 def test_invalid_factors_have_neutral_response_and_audit(client):
@@ -478,6 +508,36 @@ def test_invalid_totp_is_neutral_and_audited(client):
     assert response.json()["detail"] == "Não foi possível concluir a autenticação."
     with SessionLocal() as db:
         assert db.scalar(select(AuditEvent).where(AuditEvent.event == "admin_totp.failed"))
+
+
+def test_totp_key_unavailable_is_neutral_and_does_not_create_session(client, monkeypatch):
+    with SessionLocal() as db:
+        db.add(fixture_admin(AdminUser(
+            email="foto@markina.test",
+            password_hash=password_hasher.hash("senha-segura"),
+            email_verified=True,
+            totp_secret=pyotp.random_base32(),
+        )))
+        db.commit()
+
+    challenge = client.post(
+        "/auth/admin/password", json={"email": "foto@markina.test", "password": "senha-segura"}
+    ).json()["challenge_id"]
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "development")
+    monkeypatch.setenv("ADMIN_TOTP_ACTIVE_KEY_ID", "synthetic-unavailable")
+    monkeypatch.setenv("ADMIN_TOTP_KEYS", "{}")
+
+    response = client.post(
+        "/auth/admin/totp", json={"challenge_id": challenge, "code": "000000"}
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Não foi possível concluir a autenticação."}
+    assert "markina_session" not in client.cookies
+    with SessionLocal() as db:
+        assert db.scalar(select(AuthSession)) is None
+        assert db.scalar(select(AuditEvent).where(AuditEvent.event == "admin_totp.key_unavailable"))
 
 
 def test_authenticated_identity_returns_only_admin_email(client):
@@ -554,6 +614,40 @@ def test_authenticated_identity_returns_client_verified_phone(client):
 
 def test_authenticated_identity_requires_session(client):
     assert client.get("/auth/identity").status_code == 401
+
+
+def test_platform_owner_destination_and_identity_survive_tenant_closure(client):
+    secret = pyotp.random_base32()
+    with SessionLocal() as db:
+        admin = fixture_admin(AdminUser(
+            email="owner-closure@example.test",
+            password_hash=password_hasher.hash("SyntheticOwnerPassword!2026"),
+            email_verified=True,
+            totp_secret=secret,
+        ))
+        fixture_unmetered_owner(db, admin)
+        db.commit()
+
+    challenge = client.post(
+        "/auth/admin/password",
+        json={"email": "owner-closure@example.test", "password": "SyntheticOwnerPassword!2026"},
+    )
+    assert challenge.status_code == 202
+    login = client.post(
+        "/auth/admin/totp",
+        json={"challenge_id": challenge.json()["challenge_id"], "code": pyotp.TOTP(secret).now()},
+    )
+    assert login.status_code == 200
+
+    with SessionLocal() as db:
+        db.get(Tenant, FIXTURE_TENANT_ID).lifecycle = "closed"
+        db.commit()
+
+    assert client.get("/auth/destination").json() == {"destination": "/admin"}
+    assert client.get("/auth/identity").json() == {
+        "role": "admin",
+        "identity": "owner-closure@example.test",
+    }
 
 
 def test_otp_resend_expiration_and_rate_limit(client):
@@ -705,6 +799,7 @@ def test_periodic_otp_cleanup_is_idempotent_and_preserves_usable_challenge(
 
 def test_production_cookie_is_secure_and_session_is_rotated(monkeypatch, client):
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "production")
     secret = pyotp.random_base32()
     with SessionLocal() as db:
         db.add(

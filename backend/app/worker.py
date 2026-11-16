@@ -1,5 +1,6 @@
 """Worker isolado para mídia privada e entregas transacionais."""
 
+import logging
 import os
 import signal
 import threading
@@ -31,6 +32,7 @@ from app.auth import (
     GalleryMembershipNotificationOutbox,
     GalleryReopeningNotificationOutbox,
     GalleryReopeningRequest,
+    MediaArchiveOperation,
     MediaDerivative,
     MediaJob,
     NotificationEvent,
@@ -39,9 +41,12 @@ from app.auth import (
     PaymentGroup,
     PaymentNotificationOutbox,
     PhotoAsset,
+    PhotographerSignup,
     SaleOrder,
     SessionLocal,
     Tenant,
+    TenantClosureIdentityVerification,
+    TenantClosureRequest,
     WhatsAppDelivery,
     WhatsAppDeliveryAttempt,
     cleanup_expired_client_otp_pii,
@@ -92,6 +97,94 @@ from app.whatsapp_delivery import (
     decrypt_otp,
     otp_encryption_key,
 )
+
+_MEDIA_ARCHIVE_LOG = logging.getLogger("app.media_archive_worker")
+_MEDIA_ARCHIVE_RUNTIME_STORAGE = None
+_last_media_archive_discovery = 0.0
+_MEDIA_ARCHIVE_DISCOVERY_INTERVAL_SECONDS = 60
+
+
+def configure_media_archive_storage(storage) -> None:
+    """Injeta explicitamente o adapter de arquivo frio no processo do worker."""
+    required = ("upload_object", "read_object", "download_object", "delete_object")
+    if storage is None or any(not callable(getattr(storage, method, None)) for method in required):
+        raise TypeError("O adapter de arquivo frio não implementa o contrato exigido.")
+    global _MEDIA_ARCHIVE_RUNTIME_STORAGE
+    _MEDIA_ARCHIVE_RUNTIME_STORAGE = storage
+
+
+def _media_archive_worker_enabled() -> bool:
+    return os.getenv("MEDIA_ARCHIVE_WORKER_ENABLED", "false").strip().lower() == "true"
+
+
+def process_next_media_archive_operation(
+    *, storage=None, enabled: bool | None = None, capacity_provider=None,
+) -> bool:
+    """Descobre e executa um job somente com gate e adapter explícitos.
+
+    O runtime não seleciona providers nem lê credenciais. A descoberta também
+    fica fechada quando o adapter ou a configuração privada de staging faltam.
+    """
+    global _last_media_archive_discovery
+    gate_open = _media_archive_worker_enabled() if enabled is None else enabled is True
+    adapter = storage if storage is not None else _MEDIA_ARCHIVE_RUNTIME_STORAGE
+    if not gate_open or adapter is None:
+        return False
+
+    from app.media_archive_staging import MediaArchiveStagingError, configured_staging_root
+
+    try:
+        staging_root = configured_staging_root()
+    except MediaArchiveStagingError as exc:
+        _MEDIA_ARCHIVE_LOG.warning(
+            "Media archive worker não iniciado; staging inválido (%s).", exc.code,
+        )
+        return False
+
+    from app.media_archive_scheduler import (
+        enqueue_due_archive_window_notices,
+        enqueue_eligible_archive_operations,
+    )
+
+    monotonic_now = time.monotonic()
+    if monotonic_now - _last_media_archive_discovery >= _MEDIA_ARCHIVE_DISCOVERY_INTERVAL_SECONDS:
+        with SessionLocal() as db:
+            enqueue_due_archive_window_notices(db)
+            enqueue_eligible_archive_operations(db)
+        _last_media_archive_discovery = time.monotonic()
+
+    from app.media_archive_executor import (
+        execute_archive_operation,
+        execute_delete_operation,
+        execute_restore_operation,
+    )
+    from app.media_archive_worker import claim_next_operation
+
+    with SessionLocal() as db:
+        claim = claim_next_operation(db)
+    if claim is None:
+        return False
+
+    with SessionLocal() as db:
+        operation_type = db.scalar(select(MediaArchiveOperation.operation_type).where(
+            MediaArchiveOperation.id == claim.operation_id,
+            MediaArchiveOperation.tenant_id == claim.tenant_id,
+        ))
+        if operation_type == "archive":
+            execute_archive_operation(db, claim, storage=adapter)
+        elif operation_type == "delete_remote":
+            execute_delete_operation(db, claim, storage=adapter)
+        elif operation_type == "restore":
+            execute_restore_operation(
+                db,
+                claim,
+                storage=adapter,
+                staging_root=staging_root,
+                capacity_provider=capacity_provider,
+            )
+        else:
+            raise RuntimeError("A fila de arquivo frio contém operação não suportada.")
+    return True
 
 
 def sanitized_delivery_error(error: Exception) -> str:
@@ -285,7 +378,7 @@ def process_next_media_job() -> bool:
         # Só jobs do lifecycle novo: retentativa limitada e recuperação de crash.
         recoverable = list(db.scalars(select(MediaJob).join(PhotoAnalysis,
             PhotoAnalysis.photo_asset_id == MediaJob.photo_asset_id).join(Tenant, Tenant.id == MediaJob.tenant_id).where(
-                Tenant.status == "active", PhotoAnalysis.tenant_id == MediaJob.tenant_id,
+                Tenant.status == "active", Tenant.lifecycle != "closed", PhotoAnalysis.tenant_id == MediaJob.tenant_id,
                 MediaJob.kind == "generate_derivatives",
                 or_((MediaJob.status == "processing") & (MediaJob.updated_at < now() - timedelta(minutes=10)),
                     (MediaJob.status == "failed") & (MediaJob.updated_at < now() - timedelta(seconds=30))),
@@ -297,7 +390,7 @@ def process_next_media_job() -> bool:
         db.flush()
         job = db.scalar(
             select(MediaJob).join(Tenant, Tenant.id == MediaJob.tenant_id)
-            .where(Tenant.status == "active")
+            .where(Tenant.status == "active", Tenant.lifecycle != "closed")
             .where(MediaJob.kind == "generate_derivatives", MediaJob.status == "queued")
             .where(~select(PhotoAnalysis.photo_asset_id).where(
                 PhotoAnalysis.tenant_id == MediaJob.tenant_id,
@@ -385,6 +478,27 @@ def process_next_gallery_lifecycle_operation(
     return True
 
 
+_last_photo_credit_reconciliation = 0.0
+
+
+def process_next_photo_credit_reconciliation() -> bool:
+    """Reconcile uma reserva antiga sem competir com um upload ainda ativo."""
+    global _last_photo_credit_reconciliation
+    instant = time.monotonic()
+    if instant - _last_photo_credit_reconciliation < 30:
+        return False
+    _last_photo_credit_reconciliation = instant
+    from app.photographer_credits import reconcile_next_stale_photo_credit_operation
+
+    with SessionLocal() as db:
+        worked = reconcile_next_stale_photo_credit_operation(db)
+        if worked:
+            db.commit()
+        else:
+            db.rollback()
+        return worked
+
+
 def process_next_whatsapp_delivery(*, kind: str | None = None, adapter=None) -> bool:
     with SessionLocal() as db:
         try:
@@ -398,9 +512,9 @@ def process_next_whatsapp_delivery(*, kind: str | None = None, adapter=None) -> 
         recovered_stale = False
         for stale in db.scalars(
             select(WhatsAppDelivery).join(Tenant, Tenant.id == WhatsAppDelivery.tenant_id).where(
-                Tenant.status == "active", WhatsAppDelivery.status == "processing",
+                Tenant.status == "active", Tenant.lifecycle != "closed", WhatsAppDelivery.status == "processing",
                 WhatsAppDelivery.updated_at < stale_before,
-            )
+            ).with_for_update(of=(Tenant, WhatsAppDelivery), skip_locked=True)
         ):
             stale.status = "unknown"
             stale.last_error = "Processamento interrompido; reconciliação necessária."
@@ -422,14 +536,14 @@ def process_next_whatsapp_delivery(*, kind: str | None = None, adapter=None) -> 
         delivery = db.scalar(
             select(WhatsAppDelivery)
             .join(Tenant, Tenant.id == WhatsAppDelivery.tenant_id)
-            .where(Tenant.status == "active", *filters)
+            .where(Tenant.status == "active", Tenant.lifecycle != "closed", *filters)
             .order_by(
                 case((WhatsAppDelivery.kind == "otp", 0), else_=1),
                 WhatsAppDelivery.expires_at.asc(),
                 WhatsAppDelivery.created_at,
             )
             .limit(1)
-            .with_for_update(of=WhatsAppDelivery, skip_locked=True)
+            .with_for_update(of=(Tenant, WhatsAppDelivery), skip_locked=True)
         )
         if not delivery:
             return recovered_stale
@@ -548,11 +662,49 @@ def validate_email_origin(db: Session, delivery: EmailDelivery, *, payload=None)
             expected = pii_fingerprint(admin.email.strip().casefold())
         else:
             expected = token.target_fingerprint
+    elif delivery.source_type == "photographer_access_recovery" and delivery.kind == "email_verification":
+        from app.photographer_access_recovery import validate_recovery_email
+        expected = validate_recovery_email(db, delivery)
     elif delivery.source_type == "admin_user" and delivery.kind == "security_notice":
         if not db.get(AdminUser, source, populate_existing=True):
             raise EmailConfigurationError("Origem de e-mail indisponível.")
         # Destino anterior: o produtor o prova e conserva no envelope autenticado.
         expected = delivery.recipient_fingerprint
+    elif (
+        delivery.source_type == "photographer_signup"
+        and delivery.kind == "email_verification"
+    ):
+        signup = db.get(PhotographerSignup, source, populate_existing=True)
+        if (
+            not signup
+            or signup.state != "email_pending"
+            or expired(signup.otp_expires_at)
+            or delivery.idempotency_key
+            != f"email:photographer-signup:{signup.id}:{signup.public_request_id}"
+        ):
+            raise EmailConfigurationError("Origem de e-mail indisponível.")
+        expected = pii_fingerprint(signup.email.strip().casefold())
+    elif (
+        delivery.source_type == "tenant_closure_identity"
+        and delivery.kind == "email_verification"
+    ):
+        challenge = db.get(TenantClosureIdentityVerification, source, populate_existing=True)
+        closure = db.get(TenantClosureRequest, challenge.closure_request_id, populate_existing=True) if challenge else None
+        tenant = db.get(Tenant, challenge.tenant_id, populate_existing=True) if challenge else None
+        if (
+            not challenge
+            or challenge.state != "email_pending"
+            or expired(challenge.expires_at)
+            or challenge.email_fingerprint is None
+            or delivery.idempotency_key != f"email:tenant-closure-identity:{challenge.id}"
+            or not closure
+            or closure.tenant_id != challenge.tenant_id
+            or closure.state != "closed"
+            or not tenant
+            or tenant.lifecycle != "closed"
+        ):
+            raise EmailConfigurationError("Origem de e-mail indisponível.")
+        expected = challenge.email_fingerprint
     if not expected or expected != delivery.recipient_fingerprint:
         raise EmailConfigurationError("Origem de e-mail indisponível.")
     if payload is not None and pii_fingerprint(str(payload.get("recipient", "")).strip().casefold()) != expected:
@@ -699,14 +851,14 @@ def materialize_next_payment_notification() -> bool:
     with SessionLocal() as db:
         item = db.scalar(
             select(PaymentNotificationOutbox).join(Tenant, Tenant.id == PaymentNotificationOutbox.tenant_id)
-            .where(Tenant.status == "active", PaymentNotificationOutbox.status == "queued",
+            .where(Tenant.status == "active", Tenant.lifecycle != "closed", PaymentNotificationOutbox.status == "queued",
                    ~select(NotificationEvent.id).where(
                        NotificationEvent.tenant_id == PaymentNotificationOutbox.tenant_id,
                        NotificationEvent.event_key == PaymentNotificationOutbox.idempotency_key
                    ).exists())
             .order_by(PaymentNotificationOutbox.created_at)
             .limit(1)
-            .with_for_update(of=PaymentNotificationOutbox, skip_locked=True)
+            .with_for_update(of=(Tenant, PaymentNotificationOutbox), skip_locked=True)
         )
         if not item:
             return False
@@ -788,13 +940,14 @@ def process_next_gallery_reopening_notification(*, adapter=None) -> bool:
     with SessionLocal() as db:
         item = db.scalar(select(GalleryReopeningNotificationOutbox).join(Tenant,
             Tenant.id == GalleryReopeningNotificationOutbox.tenant_id).where(
-            Tenant.status == "active", GalleryReopeningNotificationOutbox.status == "queued").order_by(
+            Tenant.status == "active", Tenant.lifecycle != "closed", GalleryReopeningNotificationOutbox.status == "queued").order_by(
             GalleryReopeningNotificationOutbox.created_at).limit(1).with_for_update(
-            of=GalleryReopeningNotificationOutbox, skip_locked=True))
+            of=(Tenant, GalleryReopeningNotificationOutbox), skip_locked=True))
         if not item:
             return False
         item.status, item.attempts, item.updated_at = "processing", item.attempts + 1, now()
-        db.commit()
+        # Mantém o lock do tenant até registrar o resultado do envio. Assim,
+        # a finalização não pode aprovar o encerramento no meio do envio.
         try:
             origin = reopening_origin(db, item)
             provider = provider_for(db, tenant_id=item.tenant_id, adapter=adapter)
@@ -823,13 +976,13 @@ def reconcile_next_unknown_delivery() -> bool:
     with SessionLocal() as db:
         delivery = db.scalar(
             select(WhatsAppDelivery).join(Tenant, Tenant.id == WhatsAppDelivery.tenant_id)
-            .where(Tenant.status == "active",
+            .where(Tenant.status == "active", Tenant.lifecycle != "closed",
                 WhatsAppDelivery.status == "unknown",
                 WhatsAppDelivery.external_message_id.is_not(None),
             )
             .order_by(WhatsAppDelivery.updated_at)
             .limit(1)
-            .with_for_update(of=WhatsAppDelivery, skip_locked=True)
+            .with_for_update(of=(Tenant, WhatsAppDelivery), skip_locked=True)
         )
         if not delivery or not delivery.external_message_id:
             return False
@@ -853,13 +1006,42 @@ def reconcile_next_unknown_delivery() -> bool:
         return True
 
 
+_last_closure_cursor = None
+
+
+def process_next_tenant_closure() -> bool:
+    """Reavalia uma solicitação, rotacionando também entre contas bloqueadas."""
+    from app.auth import TenantClosureRequest
+    from app.tenant_closure import finalize_closure
+
+    global _last_closure_cursor
+    with domain_session(SessionLocal) as db:
+        query = select(TenantClosureRequest.tenant_id, TenantClosureRequest.id).join(
+            Tenant, Tenant.id == TenantClosureRequest.tenant_id,
+        ).where(TenantClosureRequest.state == "closing", Tenant.lifecycle == "closing")
+        candidate = db.execute(query.where(TenantClosureRequest.id > _last_closure_cursor)
+                               .order_by(TenantClosureRequest.id).limit(1)).first() if _last_closure_cursor else None
+        if candidate is None:
+            candidate = db.execute(query.order_by(TenantClosureRequest.id).limit(1)).first()
+        if candidate is None:
+            _last_closure_cursor = None
+            return False
+        _last_closure_cursor = candidate.id
+        result = finalize_closure(db, candidate.tenant_id)
+        db.commit()
+        return result["ready"]
+
+
 @observe_work("general")
 def run_cycle() -> bool:
+    from app.mercadopago_credit_purchases import process_next_mercadopago_credit_purchase
     from app.mercadopago_webhook import (
         process_next_mercadopago_event,
         reconcile_next_mercadopago_payment,
     )
+    from app.photographer_signup import process_signup_expiry
 
+    signup_expired = process_signup_expiry(session_factory=SessionLocal)
     # Avisos prontos não aguardam o esvaziamento de uma fila grande de mídia.
     with domain_session(SessionLocal) as batch_db:
         process_ready_batches(batch_db)
@@ -868,9 +1050,14 @@ def run_cycle() -> bool:
     process_next_notification("push")
     process_next_notification("whatsapp")
     event_worked = process_next_mercadopago_event()
-    payment_worked = reconcile_next_mercadopago_payment() or event_worked
+    photo_payment_worked = reconcile_next_mercadopago_payment()
+    credit_purchase_worked = process_next_mercadopago_credit_purchase()
+    payment_worked = photo_payment_worked or credit_purchase_worked or event_worked
+    closure_worked = process_next_tenant_closure()
     return (
-        process_next_gallery_lifecycle_operation()
+        process_next_photo_credit_reconciliation()
+        or process_next_gallery_lifecycle_operation()
+        or process_next_media_archive_operation()
         or process_next_media_job()
         or process_next_whatsapp_delivery()
         or process_next_email_delivery()
@@ -881,6 +1068,8 @@ def run_cycle() -> bool:
         or process_otp_privacy_cleanup()
         or process_admin_security_cleanup()
         or payment_worked
+        or closure_worked
+        or signup_expired
     )
 
 
@@ -934,6 +1123,8 @@ def process_asset_file_cleanup() -> bool:
         if not job:
             return False
         try:
+            from app.tenancy import bind_privacy_retention
+            bind_privacy_retention(db, job.tenant_id)
             return process_file_cleanup(db, job)
         except HTTPException as exc:
             if exc.status_code != 403:
@@ -973,6 +1164,8 @@ def process_otp_privacy_cleanup() -> bool:
         removed = 0
         for tenant_id in owners:
             try:
+                from app.tenancy import bind_privacy_retention
+                bind_privacy_retention(db, tenant_id)
                 removed += cleanup_expired_client_otp_pii(db, tenant_id=tenant_id)
             except HTTPException as exc:
                 db.rollback()
@@ -993,11 +1186,15 @@ def process_admin_security_cleanup() -> bool:
     _last_admin_security_cleanup = instant
     with domain_session(SessionLocal) as db:
         removed = cleanup_admin_security_material(db)
+        from app.tenant_closure_identity import cleanup_expired_identity_challenges
+        removed += cleanup_expired_identity_challenges(db)
     with SessionLocal() as db:
         owners = list(db.scalars(select(Tenant.id).where(Tenant.status == "active")))
     for tenant_id in owners:
         try:
             with domain_session(SessionLocal) as db:
+                from app.tenancy import bind_privacy_retention
+                bind_privacy_retention(db, tenant_id)
                 removed += cleanup_admin_security_material(db, tenant_id=tenant_id)
         except TenantContextError:
             continue

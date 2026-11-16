@@ -422,7 +422,7 @@ if MARKINA_DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT" MARKINA_EXPECTED_REPOSITORY="owne
     compose() {
       [[ "$*" == "build migrate" ]] && return 0
       [[ "$*" == "run --rm --no-deps migrate alembic heads" ]] && { printf "20261017_0083 (head)\\n"; return 0; }
-      [[ "$*" == "run --rm --no-deps migrate" ]] && return 42
+      [[ "$*" == "run --rm --no-deps migrate alembic upgrade 20261017_0083" ]] && return 42
       return 0
     }
     docker() { return 0; }

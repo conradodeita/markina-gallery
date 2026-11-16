@@ -38,7 +38,7 @@ O sistema SHALL tratar o link de uma Galeria pública como localizador opaco que
 
 ### Requirement: Derivação privada sob demanda e criação administrativa
 
-O sistema SHALL manter no máximo uma galeria privada operacional para cada par de Galeria pública e cliente. A galeria privada SHALL ser criada atomicamente quando a cliente autenticada seleciona sua primeira foto autorizada ou quando o administrador a cria para uma cliente com ao menos uma foto disponível. O sistema SHALL distinguir referência disponível na privada de seleção para compra e SHALL registrar a origem `client`, `admin` ou origem futura explicitamente autorizada. O acesso SHALL pertencer exclusivamente à identidade de cliente vinculada ao telefone verificado.
+O sistema SHALL manter no máximo uma galeria privada operacional por par de Galeria pública e cliente. SHALL criá-la atomicamente na primeira seleção autorizada ou por criação administrativa com foto disponível. Referência disponível SHALL ser distinta de seleção comercial e registrar origem explicitamente autorizada. O acesso SHALL pertencer à identidade de cliente vinculada ao telefone verificado.
 
 #### Scenario: Primeira seleção da cliente
 

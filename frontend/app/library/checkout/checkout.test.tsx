@@ -161,6 +161,47 @@ describe("Checkout Transparente Orders", () => {
     expect(screen.getByRole("button", { name: "Cancelar tentativa e editar seleção" })).toBeTruthy();
   });
 
+  it("ignora um polling antigo que retorna depois de cancelar a tentativa", async () => {
+    const pending: MercadoPagoPayment = { ...prepared, state: "pending", can_cancel: true };
+    const cancelled: MercadoPagoPayment = { ...pending, state: "abandoned", active: false, can_cancel: false };
+    let resolvePoll: (response: Response) => void = () => undefined;
+    const stalePoll = new Promise<Response>((resolve) => { resolvePoll = resolve; });
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/library/cart") return new Response(JSON.stringify(cart), { status: 200 });
+      if (url.endsWith("/active")) return new Response(JSON.stringify({ payments: [pending] }), { status: 200 });
+      if (url.endsWith("/cancel")) return new Response(JSON.stringify(cancelled), { status: 200 });
+      if (url.endsWith(`/${pending.id}`) && !init?.method) return stalePoll;
+      return new Response(JSON.stringify(pending), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const timer = vi.spyOn(window, "setInterval");
+
+    try {
+      render(<CheckoutPage />);
+      expect(await screen.findByRole("heading", { name: "Aguardando pagamento" })).toBeTruthy();
+      await waitFor(() => expect(timer.mock.calls.some(([, delay]) => delay === 10_000)).toBe(true));
+      const pollCall = timer.mock.calls.find(([, delay]) => delay === 10_000);
+      expect(pollCall).toBeTruthy();
+      const poll = pollCall?.[0] as TimerHandler;
+      expect(typeof poll).toBe("function");
+      act(() => { (poll as () => void)(); });
+      await waitFor(() => expect(fetch.mock.calls.some(([url, init]) =>
+        String(url).endsWith(`/${pending.id}`) && !init?.method)).toBe(true));
+
+      await userEvent.click(screen.getByRole("button", { name: "Cancelar tentativa e editar seleção" }));
+      expect(await screen.findByText("Checkout encerrado. Sua seleção disponível está no carrinho.")).toBeTruthy();
+      await act(async () => {
+        resolvePoll(new Response(JSON.stringify(pending), { status: 200 }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Cancelar tentativa e editar seleção" })).toBeNull();
+    } finally {
+      timer.mockRestore();
+    }
+  });
+
   it("mantém edição bloqueada e explica enquanto a tentativa está em processamento", async () => {
     mockFetch(undefined, { ...prepared, state: "processing", can_cancel: false });
     render(<CheckoutPage />);

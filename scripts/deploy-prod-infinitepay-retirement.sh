@@ -119,6 +119,28 @@ resolved_hashes() {
     || fail "não foi possível calcular hash Compose sem exibir configuração"
 }
 
+require_facial_processing_enabled() {
+  local config service id
+  config="$(compose config --format json 2>/dev/null)" || fail "não foi possível validar a flag facial no Compose"
+  printf '%s\n' "$config" | python3 -c 'import json,sys
+try:
+    services=json.load(sys.stdin)["services"]
+    valid=all(isinstance(services[name].get("environment",{}),dict)
+              and services[name]["environment"].get("FACIAL_PROCESSING_ENABLED")=="true"
+              for name in ("api","worker","face-search-worker"))
+except (AttributeError,KeyError,TypeError,ValueError):
+    valid=False
+sys.exit(0 if valid else 1)' \
+    || fail "FACIAL_PROCESSING_ENABLED deve permanecer true na API e nos workers no alvo"
+  for service in api face-search-worker; do
+    id="$(compose ps -q "$service")"
+    [[ -n "$id" && "$(wc -l <<<"$id" | tr -d ' ')" == 1 ]] || fail "runtime facial ativo de $service ausente"
+    docker inspect --format '{{json .Config.Env}}' "$id" \
+      | python3 -c 'import json,sys; values=json.load(sys.stdin); sys.exit(0 if "FACIAL_PROCESSING_ENABLED=true" in values else 1)' \
+      || fail "runtime ativo de $service não tem FACIAL_PROCESSING_ENABLED=true"
+  done
+}
+
 compose_binding_metadata() {
   # `config` resolves env_file contents by default and removes their source
   # paths. Read only the interpolation value for this path, then keep the raw
@@ -355,6 +377,7 @@ inventory() {
   [[ "$checkout" == "$ACTIVE_SHA" ]] || fail "checkout não corresponde à versão ativa"
   schema="$(database_revision)"
   [[ "$schema" == "20261021_0086" ]] || fail "schema diverge da revisão anterior aprovada"
+  require_facial_processing_enabled
   hashes="$(resolved_hashes)"
   api_hash="$(awk '$1 == "api" {sub(/^sha256:/,"",$2); print $2}' <<<"$hashes")"
   web_hash="$(awk '$1 == "web" {sub(/^sha256:/,"",$2); print $2}' <<<"$hashes")"
@@ -549,6 +572,7 @@ release() {
   git switch --detach "$TARGET_SHA" >/dev/null || fail "não selecionou SHA aprovado"
   ACTIVE_SHA="$TARGET_SHA"
   compose config --quiet || fail "Compose de destino inválido"
+  require_facial_processing_enabled
   compose build api web worker || fail "build API/web/worker falhou"
   [[ "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$TARGET_SHA" ]] \
     || fail "main mudou durante build; nenhum serviço foi parado"

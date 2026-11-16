@@ -1,0 +1,11 @@
+# Validação
+
+## 12/11/2026 — respostas administrativas não armazenáveis em cache
+
+- `backend/.venv/Scripts/python.exe -m pytest -q tests/test_admin_security.py::test_account_settings_change_password_and_email_with_session_bound_otp tests/test_admin_security.py::test_totp_recovery_codes_are_hash_only_single_use_and_regenerable tests/test_derived_galleries.py::test_admin_validation_summary_is_authorized_and_has_aggregate_storage tests/test_tenant_producers.py::test_validation_summary_aggregates_only_current_tenant tests/test_tenant_producers.py::test_validation_summary_projects_recent_open_selections_per_tenant tests/test_tenant_lifecycle.py::test_resumo_mede_so_arquivos_proprios_sem_cache_global` — **6 aprovados** em 121,86 s. As respostas mantêm o payload existente e retornam `Cache-Control: private, no-store`; os testes de atividade recente mantêm o isolamento por tenant.
+- Em `frontend`, `npm test -- --run app/admin/settings/security-panel.test.tsx app/admin/page.test.tsx` — **15 aprovados** em 5,94 s.
+- Ruff nos quatro arquivos backend afetados — **aprovado**.
+- `git diff --check` — **aprovado**, com apenas avisos de conversão de fim de linha LF/CRLF em arquivos do worktree.
+- Gitleaks 8.24.3, com redaction 100%, nos arquivos backend e OpenSpec relacionados — **nenhuma detecção**. A varredura integral foi limitada pelo lock ativo de `frontend/.next/dev/lock`; os arquivos desta mudança foram verificados individualmente.
+- `openspec validate protect-admin-summaries-from-cache --strict` — **válida**. A validação estrita global encontrou **178 aprovadas e 9 falhas** em outras changes (`add-restricted-folder-preview-cards`, `clarify-facial-consent-and-mobile-dialog`, `evaluate-embeddinggemma-face-search`, `fix-secure-gallery-invites-and-cart-previews`, `folder-processing-settings`, `integrate-private-facial-filter`, `productionize-facial-search`, `simplify-gallery-access-modes` e `simplify-mobile-gallery-face-search`); a change deste ajuste não aparece entre as falhas.
+- Avisos dos testes backend: depreciações preexistentes de eventos FastAPI e ciclo de chaves estrangeiras em `drop_all` no SQLite sintético. Nenhum acesso externo, dado real, migration ou produção foi usado.

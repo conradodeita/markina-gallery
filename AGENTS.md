@@ -7,6 +7,7 @@
 - Preserve mudanças locais existentes e não reverta, descarte ou reformate trabalho não relacionado.
 - Nunca execute `git reset --hard`, `git checkout -- .`, `git clean`, nem comando equivalente que descarte trabalho existente.
 - Nunca faça force push. Commits devem conter somente alterações relacionadas à task/change atual; nunca inclua arquivos preexistentes ou não relacionados.
+- Autorização permanente expressa pelo proprietário em 14/11/2026: neste repositório Pick-your-Pic (`conradodeita/markina-gallery`), Codex está autorizado a criar somente commits limitados à task/change e fazer pushes à origem em branches de trabalho sem pedir nova confirmação por push; a autorização persiste até revogação explícita. O primeiro push da branch atual continua condicionado ao fechamento dos gates pré-push aplicáveis e à revisão do escopo/segredos. Se um gate pós-push, inclusive CI, falhar, investigar, corrigir, validar a correção, criar commit estritamente relacionado e fazer novo push até os gates passarem, antes de PR/merge. Nunca fazer force push. Esta autorização não permite merge, deploy, migration, escrita em produção ou commit de arquivos preexistentes/alheios.
 
 ## Fluxo OpenSpec obrigatório
 

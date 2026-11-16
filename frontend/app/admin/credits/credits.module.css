@@ -1,0 +1,535 @@
+.page {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.metrics :global(.mk-card) {
+  display: grid;
+  gap: 7px;
+}
+
+.metrics :global(.mk-card) strong {
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+}
+
+.metrics :global(.mk-card) span,
+.metrics :global(.mk-card) small {
+  color: var(--muted);
+}
+
+.card {
+  min-width: 0;
+}
+
+.catalog {
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 100% 0, color-mix(in srgb, var(--accent) 9%, transparent), transparent 38%),
+    var(--mk-surface, #fff);
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sectionHeading h2 {
+  margin: 4px 0 8px;
+}
+
+.sectionHeading p:not(.eyebrow) {
+  max-width: 720px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.entries,
+.packageList {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entries li,
+.package {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+
+.entries li:first-child,
+.package:first-child {
+  margin-top: 12px;
+}
+
+.entries li > div,
+.package > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.entries span,
+.entries small,
+.package p,
+.package dt {
+  color: var(--muted);
+  font-size: 0.87rem;
+}
+
+.entries small {
+  overflow-wrap: anywhere;
+}
+
+.entries b {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.package {
+  align-items: center;
+}
+
+.package h3,
+.package p {
+  margin: 0;
+}
+
+.package h3 {
+  margin-top: 5px;
+}
+
+.package dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 8px 0 0;
+}
+
+.package dl div {
+  display: grid;
+  gap: 2px;
+}
+
+.package dt,
+.package dd {
+  margin: 0;
+}
+
+.package dd {
+  font-weight: 700;
+}
+
+.catalogGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.catalogPackage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 20px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
+  border-radius: 18px;
+  background: linear-gradient(155deg, color-mix(in srgb, var(--accent) 7%, var(--mk-surface, #fff)), var(--mk-surface, #fff) 55%);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--ink) 8%, transparent);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.catalogPackage::after {
+  position: absolute;
+  top: -42px;
+  right: -38px;
+  width: 128px;
+  height: 128px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 50%;
+  content: "";
+  pointer-events: none;
+}
+
+.catalogPackage:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: 0 18px 36px color-mix(in srgb, var(--ink) 13%, transparent);
+}
+
+.catalogPackage:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.catalogPackage[data-selected="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.catalogPackage:has(.catalogAction:disabled) {
+  opacity: 0.7;
+  transform: none;
+}
+
+/* Estende o único botão nativo ao card, sem controles interativos aninhados. */
+.catalogPackage .catalogAction {
+  position: static;
+  transform: none;
+}
+
+.catalogAction::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  cursor: pointer;
+}
+
+.catalogAction:disabled::before {
+  cursor: not-allowed;
+}
+
+.catalogPackageTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.catalogKicker,
+.catalogProvider {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.catalogProvider {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.catalogPackage h3 {
+  margin: 0;
+  font-size: 1.22rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.catalogDescription {
+  min-height: 2.8em;
+  margin: -7px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.catalogQuantity {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.catalogQuantity strong {
+  color: var(--accent);
+  font-size: clamp(2rem, 5vw, 2.8rem);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.catalogQuantity span {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.catalogPrice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.catalogPrice span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.catalogPrice strong {
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.purchaseCheckout {
+  display: grid;
+  gap: 18px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 100% 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 36%),
+    var(--mk-surface, #fff);
+}
+
+.purchaseCheckout h2 {
+  margin: 4px 0 8px;
+}
+
+.purchaseMethods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.purchaseMethods legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.purchaseMethods label {
+  display: flex;
+  flex: 1 1 240px;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  cursor: pointer;
+  background: var(--mk-surface, #fff);
+}
+
+.purchaseMethods label[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--mk-surface, #fff));
+}
+
+.purchaseMethods input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.purchasePixForm,
+.purchaseResult {
+  display: grid;
+  gap: 14px;
+}
+
+.purchasePixForm label,
+.purchaseResult label {
+  display: grid;
+  gap: 6px;
+  font-weight: 650;
+}
+
+.purchasePixForm input,
+.purchaseResult textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--mk-surface, #fff);
+  color: var(--ink);
+  font: inherit;
+}
+
+.purchaseResult img {
+  width: min(100%, 240px);
+  height: auto;
+  justify-self: center;
+}
+
+.purchaseCheckout :global(#mp-card-payment input),
+.purchaseCheckout :global(#mp-card-payment select),
+.purchaseCheckout :global(#mp-card-payment textarea) {
+  color: #1f2937;
+  background-color: #fff;
+}
+
+.purchaseCheckout :global(#mp-card-payment input::placeholder),
+.purchaseCheckout :global(#mp-card-payment textarea::placeholder) {
+  color: #64748b;
+  opacity: 1;
+}
+
+.purchaseActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.purchaseError {
+  margin: 0;
+  padding: 12px 14px;
+  border-inline-start: 4px solid var(--danger, #a93636);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger, #a93636) 7%, var(--mk-surface, #fff));
+}
+
+.testNotice {
+  margin: 0;
+  padding: 11px 13px;
+  border-radius: 9px;
+  color: #6a4a08;
+  background: #fff4ce;
+  font-weight: 700;
+}
+
+.catalogAction {
+  width: 100%;
+  margin-top: auto;
+  justify-content: center;
+}
+
+.catalogNote {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.packageForm {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.packageForm h3 {
+  margin: 0;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.formGrid label {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.formGrid input:not([type="checkbox"]),
+.formGrid textarea {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--mk-surface, #fff);
+  color: var(--ink);
+  font: inherit;
+}
+
+.formGrid textarea {
+  resize: vertical;
+}
+
+.formGrid input:focus-visible,
+.formGrid textarea:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.descriptionField {
+  grid-column: 1 / -1;
+}
+
+.activeField {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  justify-content: start;
+  min-height: 42px;
+}
+
+.activeField input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.formMessage {
+  margin: 0;
+  color: var(--muted);
+}
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .package {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .catalogPackage {
+    padding: 17px;
+  }
+
+  .descriptionField {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .catalogPackage {
+    transition: none;
+  }
+
+  .catalogPackage:hover {
+    transform: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .metrics {
+    grid-template-columns: 1fr;
+  }
+}
+.purchasePayerAddress { display:grid; gap:12px; min-width:0; margin:14px 0; padding:14px; border:1px solid var(--mk-border); border-radius:12px; }
+.purchasePayerAddress legend { padding:0 5px; font-weight:750; }
+.purchasePayerAddress p { margin:0; color:var(--mk-ink-muted); font-size:.86rem; line-height:1.45; }
+.purchaseAddressGrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
+.purchaseAddressGrid label { display:grid; min-width:0; gap:6px; font-size:.86rem; font-weight:650; }
+.purchaseAddressGrid input,.purchaseAddressGrid select { width:100%; min-width:0; min-height:40px; padding:8px 10px; border:1px solid var(--mk-border); border-radius:8px; background:var(--mk-surface); color:var(--mk-ink); font:inherit; }
+.purchaseAddressWide { grid-column:1/-1; }
+.purchasePayerAddress :is(input,select):focus-visible { outline:3px solid var(--mk-focus); outline-offset:2px; }
+@media (max-width:480px) { .purchaseAddressGrid { grid-template-columns:1fr; }.purchaseAddressWide { grid-column:auto; } }

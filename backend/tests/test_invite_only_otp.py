@@ -70,17 +70,45 @@ def test_invite_only_mesmo_telefone_nao_empresta_vinculo_entre_contas(client_db,
     responses = [main.client_challenge(main.ClientLinkChallengeInput(
         full_name='Cliente sintética', phone=PHONE, access_token=token,
     ), request(), client_db) for token, _ in links]
+    same_gallery_unlinked = main.client_challenge(main.ClientLinkChallengeInput(
+        full_name='Pessoa sem vínculo', phone='+5511999990099',
+        access_token=links[0][0],
+    ), request(), client_db)
     assert responses[0]['message'] == responses[1]['message']
     assert responses[0].keys() == responses[1].keys()
+    assert responses[0]['show_private_gallery_notice'] is True
+    assert responses[1]['show_private_gallery_notice'] is True
+    assert same_gallery_unlinked['message'] == responses[0]['message']
+    assert same_gallery_unlinked.keys() == responses[0].keys()
+    assert same_gallery_unlinked['show_private_gallery_notice'] is True
     rows = [client_db.get(AuthChallenge, UUID(result['challenge_id'])) for result in responses]
+    unlinked_row = client_db.get(AuthChallenge, UUID(same_gallery_unlinked['challenge_id']))
     assert len(deliveries(client_db, rows[0])) == 1
     assert deliveries(client_db, rows[0])[0].tenant_id == graph[0]['tenant'].id
     assert deliveries(client_db, rows[1]) == []
+    assert deliveries(client_db, unlinked_row) == []
     assert resend(client_db, rows[1], links[1][0])['message'].startswith('Se os dados')
     assert deliveries(client_db, rows[1]) == []
     assert client_db.scalar(select(func.count()).select_from(AuthSession)) == 0
     assert client_db.scalar(select(func.count()).select_from(ParentGalleryRegistration)) == 1
     assert client_db.scalar(select(func.count()).select_from(Client)) == 2
+
+
+def test_orientacao_privada_e_suprimida_no_reauth_sem_vinculo(client_db, graph):
+    record = graph[0]
+    record['parent'].access_mode = 'invite_only'
+    register(client_db, record)
+    response = main.client_challenge(main.ClientLinkChallengeInput(
+        full_name='Pessoa sem vínculo', phone='+5511999990099',
+        parent_gallery_id=record['parent'].id,
+        return_to=f"/public-galleries/{record['parent'].id}",
+    ), request(), client_db)
+
+    assert response['show_private_gallery_notice'] is True
+    assert response['message'].startswith('Se os dados puderem receber acesso')
+    assert client_db.scalar(select(func.count()).select_from(AuthChallenge)) == 0
+    assert client_db.scalar(select(func.count()).select_from(WhatsAppDelivery)) == 0
+    assert client_db.scalar(select(func.count()).select_from(AuthSession)) == 0
 
 
 def test_vinculo_posterior_exige_reenvio_e_permite_otp(client_db, graph, links):

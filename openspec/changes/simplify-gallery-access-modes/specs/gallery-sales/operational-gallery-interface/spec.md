@@ -4,7 +4,7 @@
 
 ### Requirement: Dois modos de entrada com público de pastas independente
 
-A interface administrativa SHALL oferecer somente `Padrão` e `Somente convite individual` para criação e alteração explícita do modo de entrada, com `Somente convite individual` como valor inicial de novas galerias. A API SHALL recusar a criação ou escolha explícita de `collective_protected`. A explicação SHALL distinguir entrada por link/OTP de entrada previamente autorizada e informar que ambos os modos mostram pastas comuns e exclusivas atribuídas. A seção SHALL NOT sugerir que o modo ativa ou desativa processamento facial.
+A UI administrativa SHALL oferecer somente `Padrão` e `Somente convite individual`, este como padrão de novas galerias; a API SHALL recusar criar/escolher `collective_protected`. A explicação distingue link/OTP de vínculo prévio, informa o público de pastas e não associa o modo ao processamento facial.
 
 #### Scenario: Fotógrafo cria uma galeria
 
@@ -28,7 +28,7 @@ A interface administrativa SHALL oferecer somente `Padrão` e `Somente convite i
 
 ### Requirement: Pagamento obrigatório configurável na etapa comercial
 
-O editor SHALL oferecer `Pagamento obrigatório?` na etapa 2, inicialmente marcado, preservando cobrança nas galerias existentes. Com cobrança obrigatória, frontend e backend SHALL exigir valor unitário fixo maior que zero ou valores positivos nas faixas aplicáveis da precificação progressiva. Sem cobrança obrigatória, o sistema SHALL preservar a configuração administrativa de preços e permitir seleção sem depender de PIX ou precificação. Preço zero legado SHALL NOT converter a galeria implicitamente para seleção sem cobrança; novas finalizações pagas incompatíveis SHALL exigir revisão da configuração, preservando pedidos congelados.
+Etapa 2 SHALL oferecer pagamento obrigatório marcado por padrão e preservar a cobrança existente. Cobrança exige preços fixos/faixas positivos; sem cobrança, seleção independe de PIX ou preço e a configuração fica preservada. Preço zero legado não muda o modo; finalização paga incompatível exige revisão sem alterar pedidos congelados.
 
 #### Scenario: Fotógrafo configura cobrança com preço zero
 
@@ -47,7 +47,7 @@ O editor SHALL oferecer `Pagamento obrigatório?` na etapa 2, inicialmente marca
 
 ### Requirement: Finalização individual sem cobrança
 
-A cliente SHALL poder usar `Finalizar seleção` para congelar suas fotos autorizadas no modo sem cobrança, dentro do prazo e mediante revisão atual, com resposta explícita de sucesso ou erro. A operação SHALL ser autenticada, idempotente e disponível sem PIX. O histórico em Compras e a ficha do fotógrafo SHALL identificar `Seleção finalizada`, sem pagamento pendente, pagamento confirmado, indicação de gratuidade ou registro de receita. O sistema SHALL preservar snapshot de fotos e modo de cobrança e permitir exportação TXT/CSV e entrega posterior pelo fluxo de link existente. A entrega e suas notificações SHALL aceitar seleção sem cobrança finalizada ou pedido com pagamento confirmado, mantendo todos os controles de identidade e acesso. A finalização SHALL NOT emitir notificações de pagamento informado ou confirmado. Rascunhos pagos ainda editáveis daquela seleção SHALL ser descartados sem afetar pedidos comunicados/congelados. A política explícita existente de retenção de mídia histórica SHALL aplicar seu prazo a partir da finalização para seleções sem cobrança, preservando o tratamento de pedidos pagos.
+Cliente autenticada SHALL poder finalizar seleção autorizada na revisão e prazo vigentes, sem PIX; a operação é idempotente e congela fotos e modo. Compras/ficha mostram `Seleção finalizada`, sem pagamento ou receita. Permite TXT/CSV e entrega com notificações autorizadas; não emite aviso de pagamento. Rascunhos pagos editáveis são descartados sem afetar pedidos comunicados. Retenção sem cobrança começa na finalização, sem alterar pedidos pagos.
 
 #### Scenario: Cliente finaliza fotos negociadas externamente
 
@@ -73,6 +73,11 @@ A cliente SHALL poder usar `Finalizar seleção` para congelar suas fotos autori
 
 - **WHEN** um pedido de cobrança obrigatória aguarda confirmação financeira
 - **THEN** a nova regra de entrega não libera seu link nem o trata como seleção sem cobrança
+
+#### Scenario: Seleção sem cobrança descarta somente rascunhos pagos editáveis
+
+- **WHEN** a cliente finaliza uma seleção sem cobrança enquanto há rascunho pago editável e pedido pago já comunicado ou congelado
+- **THEN** a conclusão não envia aviso de pagamento informado/confirmado, descarta apenas o rascunho editável e preserva o pedido comunicado/congelado e o snapshot sem cobrança
 
 ### Requirement: Carrinho com modos de cobrança separados
 

@@ -23,9 +23,19 @@ O sistema SHALL manter pedidos, pagamentos, itens, quantidades, valores, identid
 - **WHEN** o fotógrafo consulta vendas de uma galeria operacional já removida
 - **THEN** o sistema apresenta o registro histórico identificado como galeria removida e não depende de relações operacionais inexistentes
 
+#### Scenario: Pedido confirmado sem comunicação legada
+
+- **WHEN** o fotógrafo consulta um pedido histórico confirmado sem registro associado de comunicação de pagamento
+- **THEN** o sistema SHALL apresentar o pagamento como confirmado e SHALL NOT afirmar que a cliente deixou de comunicá-lo
+
+#### Scenario: Seleção finalizada sem cobrança no painel financeiro
+
+- **WHEN** o fotógrafo consulta uma seleção finalizada cuja galeria não exige pagamento
+- **THEN** o sistema SHALL identificá-la como seleção finalizada sem cobrança e SHALL NOT classificá-la como aguardando pagamento ou como receita confirmada
+
 ### Requirement: Evidência visual e entrega histórica
 
-O sistema SHALL preservar, para cada item comprado, metadados imutáveis, uma prévia histórica mínima protegida e a entrega final ou sua referência segura, em armazenamento separado da mídia operacional da galeria. O sistema SHALL NOT reter fotos não compradas nem copiar todos os originais sob a justificativa de histórico comercial. A retenção SHALL ser configurável e documentada sem inventar nesta change prazo legal, e a PII SHALL ser removida ou anonimizada quando permitido sem apagar registros contábeis ou de auditoria que precisem permanecer.
+Para cada item comprado, o sistema SHALL preservar metadados imutáveis, prévia histórica mínima protegida e entrega final ou referência segura, separados da mídia operacional. O sistema SHALL NOT reter fotos não compradas nem copiar todos os originais. A retenção SHALL ser configurável e documentada sem prazo legal inventado; a PII SHALL ser minimizada quando permitido sem apagar registros contábeis ou de auditoria necessários.
 
 #### Scenario: Item comprado permanece identificável
 
@@ -54,7 +64,7 @@ O sistema SHALL preservar, para cada item comprado, metadados imutáveis, uma pr
 
 ### Requirement: Política comercial para remoção operacional
 
-O sistema SHALL decidir remoção de seleção, referência, vínculo ou galeria pelo estado comercial. Carrinho sem pedido persistido SHALL poder ser descartado. Pedido pendente sem comunicação de pagamento SHALL ser cancelado com auditoria antes da remoção. Pedido com pagamento comunicado ou `pending_review` SHALL bloquear a remoção afetada até decisão administrativa. Pedido confirmado SHALL permitir remoção operacional somente depois de materializados e verificados snapshots, prévia histórica mínima e entrega ou referência final.
+O sistema SHALL decidir remoção operacional pelo estado comercial. Carrinho sem pedido persistido SHALL poder ser descartado; pedido pendente sem pagamento comunicado SHALL ser cancelado com auditoria. Pagamento comunicado ou `pending_review` SHALL bloquear a remoção até decisão administrativa. Pedido confirmado SHALL permitir remoção apenas após verificar snapshots, prévia histórica mínima e entrega ou referência final.
 
 #### Scenario: Carrinho ainda não virou pedido
 

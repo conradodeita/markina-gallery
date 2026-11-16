@@ -4,7 +4,11 @@
 
 ### Requirement: Recuperação uniforme de sessão e timeout
 
-As superfícies protegidas de fotógrafo e cliente SHALL confirmar a sessão antes de montar conteúdo privado e ao retomar navegação/foco, periodicamente e após recusa de API. `/auth/destination` SHALL responder 401 para sessão ausente, expirada ou revogada e 403 para contexto não autorizado, sem dados pessoais ou enumeração; as demais rotas MUST preservar seu contrato existente. Perda confirmada SHALL desmontar conteúdo/cache facial privado e encaminhar à entrada com aviso e papel corretos. Destino de retorno MUST ser pathname interna permitida, sem query/token; retorno administrativo depende do destino confirmado pelo backend após senha/TOTP. Cliente sem link válido SHALL reabrir o link do fotógrafo para novo OTP, sem recuperar conta por UUID ou telefone. Falha de rede/408/5xx ou timeout da leitura SHALL permitir tentativa explícita sem logout, looping ou replay de mutação/OTP. Autorização 403 com sessão válida SHALL permanecer acesso negado, não expiração.
+As superfícies protegidas SHALL validar a sessão e preservar o papel/contexto autorizado em montagens, retomadas e recusas.
+
+#### Scenario: Contrato completo de sessão e timeout
+- **WHEN** uma superfície protegida verifica, perde ou retoma uma sessão e o usuário segue um destino de retorno
+- **THEN** As superfícies protegidas de fotógrafo e cliente SHALL confirmar a sessão antes de montar conteúdo privado e ao retomar navegação/foco, periodicamente e após recusa de API. `/auth/destination` SHALL responder 401 para sessão ausente, expirada ou revogada e 403 para contexto não autorizado, sem dados pessoais ou enumeração; as demais rotas MUST preservar seu contrato existente. Perda confirmada SHALL desmontar conteúdo/cache facial privado e encaminhar à entrada com aviso e papel corretos. Destino de retorno MUST ser pathname interna permitida, sem query/token; retorno administrativo depende do destino confirmado pelo backend após senha/TOTP. Cliente sem link válido SHALL reabrir o link do fotógrafo para novo OTP, sem recuperar conta por UUID ou telefone. Falha de rede/408/5xx ou timeout da leitura SHALL permitir tentativa explícita sem logout, looping ou replay de mutação/OTP. Autorização 403 com sessão válida SHALL permanecer acesso negado, não expiração.
 
 #### Scenario: Sessão expirada na área do fotógrafo
 - **WHEN** a verificação confirma sessão expirada enquanto uma rota administrativa está aberta

@@ -3,25 +3,47 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MarkinaButton } from "../../ui-kit";
+import { mediaArchiveStatusLabel, type MediaArchiveStatus } from "../../media-archive-status";
 import styles from "./payments.module.css";
 
 export type OrderPhoto = {
   id: string; photo_id: string; name: string; unit_price_cents: number;
   thumbnail_url?: string | null; preview_url?: string | null;
+  comment_preview?: string | null; favorited?: boolean;
+  media_state?: MediaArchiveStatus;
 };
 export type OrderFolder = { id: string | null; name: string; items: OrderPhoto[] };
 const money = (cents: number) => (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const apiUrl = (url: string) => url.startsWith("/api/") ? url : `/api${url}`;
 
+function interactionDescription(photo: OrderPhoto) {
+  return photo.favorited ? "Favoritada pela cliente" : "";
+}
+
+function PhotoInteractionOverlay({ photo, compact = false }: { photo: OrderPhoto; compact?: boolean }) {
+  if (!photo.favorited) return null;
+  return <div
+    className={`${styles.interactionOverlay} ${compact ? styles.interactionOverlayCompact : styles.interactionOverlayExpanded}`}
+    role={compact ? undefined : "note"}
+    aria-label={compact ? undefined : "Favoritada pela cliente"}
+    aria-hidden={compact ? true : undefined}
+  >
+    <span className={styles.favoriteBadge} aria-hidden="true">♥</span>
+  </div>;
+}
+
 function Thumbnail({ photo, onOpen }: { photo: OrderPhoto; onOpen: () => void }) {
   const [state, setState] = useState("loading");
-  if (!photo.thumbnail_url || !photo.preview_url) return <span className={styles.thumbnail}>Sem prévia</span>;
-  return <button type="button" className={styles.thumbnail} aria-label={`Ampliar ${photo.name}`} onClick={onOpen}>
+  if (!photo.thumbnail_url || !photo.preview_url) return <span className={styles.thumbnail}>{photo.media_state && photo.media_state !== "available" ? mediaArchiveStatusLabel(photo.media_state) : "Sem prévia"}</span>;
+  const description = interactionDescription(photo);
+  return <button type="button" className={styles.thumbnail}
+    aria-label={`Ampliar ${photo.name}${description ? `. ${description}` : ""}`} onClick={onOpen}>
     {/* Endpoint autenticado; nenhum otimizador externo ou arquivo original. */}
     {/* eslint-disable-next-line @next/next/no-img-element */}
     <img src={apiUrl(photo.thumbnail_url)} alt="" width={64} height={64} loading="lazy" decoding="async"
       hidden={state === "failed"} className={state === "loading" ? styles.loadingImage : undefined}
       onLoad={() => setState("ready")} onError={() => setState("failed")} />
+    {state === "ready" ? <PhotoInteractionOverlay photo={photo} compact /> : null}
     {state !== "ready" ? <span>{state === "failed" ? "Prévia indisponível" : "Carregando…"}</span> : null}
   </button>;
 }
@@ -35,6 +57,7 @@ function EnlargedPhoto({ photo }: { photo?: OrderPhoto }) {
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={apiUrl(photo.preview_url)} alt={photo.name} hidden={state !== "ready"}
         onLoad={() => setState("ready")} onError={() => setState("failed")} />
+      {state === "ready" ? <PhotoInteractionOverlay photo={photo} /> : null}
     </>}
   </div>;
 }
@@ -93,7 +116,9 @@ export function OrderPhotos({ folders }: { folders: OrderFolder[] }) {
     {folders.map((folder) => <section key={folder.id ?? folder.name}><h5>{folder.name}</h5>
       <ul className={styles.photoList}>{folder.items.map((photo) => <li key={photo.id}>
         <Thumbnail photo={photo} onOpen={() => setSelected(photos.findIndex((item) => item.id === photo.id))} />
-        <div><strong>{photo.name}</strong><span>{money(photo.unit_price_cents)}</span></div>
+        <div><strong>{photo.name}</strong><span>{money(photo.unit_price_cents)}</span>
+          {photo.comment_preview ? <small className={styles.photoComment}>Comentário: {photo.comment_preview}</small> : null}
+          {photo.media_state && photo.media_state !== "available" ? <small>{mediaArchiveStatusLabel(photo.media_state)}</small> : null}</div>
       </li>)}</ul>
     </section>)}
     {selected !== null ? <OrderLightbox photos={photos} initial={selected} onClose={close} /> : null}

@@ -17,6 +17,48 @@ from tests.test_preview_adjustment import BrightEngine
 pytest_plugins = ["tests.test_preview_adjustment"]
 
 
+def test_delete_empty_folder_cleans_processing_settings_without_cross_tenant_effect(api_client):
+    from sqlalchemy import text
+
+    from app.auth import Tenant
+
+    client, factory, photo_id = api_client
+    with factory() as db:
+        parent_id = db.get(PhotoAsset, photo_id).parent_gallery_id
+        own = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
+                          name="Vazia", purpose="content", position=99)
+        other_tenant = Tenant()
+        db.add_all([own, other_tenant])
+        db.flush()
+        other_gallery = ParentGallery(tenant_id=other_tenant.id, name="Outro tenant")
+        db.add(other_gallery)
+        db.flush()
+        other = PhotoFolder(tenant_id=other_tenant.id, parent_gallery_id=other_gallery.id,
+                            name="Preservada", purpose="content")
+        db.add(other)
+        db.flush()
+        db.add_all([FolderProcessingSettings(tenant_id=own.tenant_id, folder_id=own.id),
+                    FolderProcessingSettings(tenant_id=other.tenant_id, folder_id=other.id)])
+        # Reproduce the migrated PostgreSQL restrictive ownership FK independently
+        # of SQLite's handling of the additional single-column cascading FK.
+        db.execute(text("""CREATE TRIGGER restrict_folder_processing_delete
+            BEFORE DELETE ON photo_folder
+            WHEN EXISTS (SELECT 1 FROM folder_processing_settings
+                         WHERE folder_id=OLD.id AND tenant_id=OLD.tenant_id)
+            BEGIN SELECT RAISE(ABORT, 'processing settings still reference folder'); END"""))
+        db.commit()
+        own_id, other_id = own.id, other.id
+    client.cookies.set("markina_session", "adjustment-admin")
+    assert client.delete(f"/admin/photo-folders/{other_id}").status_code == 404
+    response = client.delete(f"/admin/photo-folders/{own_id}")
+    assert response.status_code == 204, response.text
+    with factory() as db:
+        assert db.get(PhotoFolder, own_id) is None
+        assert db.get(FolderProcessingSettings, own_id) is None
+        assert db.get(PhotoFolder, other_id) is not None
+        assert db.get(FolderProcessingSettings, other_id) is not None
+
+
 def test_public_autosave_requeues_only_its_folder_and_monitor_counts_real_work(api_client, monkeypatch):
     from sqlalchemy import select
 
@@ -188,7 +230,9 @@ def test_public_folder_creation_uses_independent_defaults_without_gallery_inheri
         configure_gallery(db, gallery_id, False, 63, 4, tenant_id=FIXTURE_TENANT_ID)
         db.commit()
     client.cookies.set("markina_session", "adjustment-admin")
-    created = client.post(f"/admin/parent-galleries/{gallery_id}/folders", json={"name": "Snapshot"})
+    created = client.post(f"/admin/parent-galleries/{gallery_id}/folders", json={
+        "name": "Snapshot", "access_duration_days": 30,
+    })
     assert created.status_code == 201, created.text
     folder_id = created.json()["id"]
     folder_uuid = UUID(folder_id)
@@ -226,7 +270,7 @@ def test_private_folder_creation_persists_independent_ready_defaults(api_client)
     client.cookies.set("markina_session", "adjustment-admin")
     created = client.post(
         f"/admin/parent-galleries/{gallery_id}/clients/{client_id}/folders",
-        json={"name": "Acervo independente"},
+        json={"name": "Acervo independente", "access_duration_days": 30},
     )
     assert created.status_code == 201, created.text
     with factory() as db:
@@ -235,6 +279,50 @@ def test_private_folder_creation_persists_independent_ready_defaults(api_client)
         assert (row.preview_mode, row.facial_mode, row.preview_strength, row.preview_exposure_tenths) == (
             "custom", "on", 75, 0,
         )
+
+
+def test_folder_deadline_is_required_and_legacy_clock_starts_when_saved(api_client):
+    from datetime import datetime, timedelta
+
+    from app.auth import now
+
+    client, factory, photo_id = api_client
+    with factory() as db:
+        photo = db.get(PhotoAsset, photo_id)
+        folder = db.get(PhotoFolder, photo.folder_id)
+        gallery_id = photo.parent_gallery_id
+        folder.status = "released"
+        folder.released_at = now() - timedelta(days=365)
+        folder.access_duration_days = None
+        folder.access_expires_at = None
+        legacy_folder_id = folder.id
+        db.commit()
+
+    client.cookies.set("markina_session", "adjustment-admin")
+    missing_deadline = client.post(
+        f"/admin/parent-galleries/{gallery_id}/folders", json={"name": "Sem prazo"},
+    )
+    assert missing_deadline.status_code == 422
+    assert client.patch(
+        f"/admin/photo-folders/{legacy_folder_id}/deadline",
+        json={"access_duration_days": 0},
+    ).status_code == 422
+
+    configured = client.patch(
+        f"/admin/photo-folders/{legacy_folder_id}/deadline",
+        json={"access_duration_days": 7},
+    )
+    assert configured.status_code == 200, configured.text
+    body = configured.json()
+    assert body["access_duration_days"] == 7
+    assert body["released_at"] is not None
+    expected_expiry = now() + timedelta(days=7)
+    actual_expiry = datetime.fromisoformat(body["access_expires_at"])
+    assert abs((actual_expiry - expected_expiry).total_seconds()) < 5
+    assert client.patch(
+        f"/admin/photo-folders/{legacy_folder_id}/deadline",
+        json={"access_duration_days": 10},
+    ).status_code == 409
 
 
 def test_private_folder_settings_are_fixed_auto_and_requeue_completed_face_photos(prepared):

@@ -16,6 +16,7 @@ from app.auth import (
     ParentGallery,
     PhotoAsset,
     PhotoFolder,
+    Tenant,
 )
 from app.facial.config import FacialSettings
 from app.facial.indexing import (
@@ -412,6 +413,34 @@ def test_startup_reconciliation_backfills_only_new_or_divergent_galleries(
     assert db.scalar(
         select(func.count()).select_from(FacialJob).where(FacialJob.kind == "index")
     ) == 2
+
+
+def test_startup_reconciliation_skips_tenant_with_pending_closure(
+    tmp_path: Path,
+) -> None:
+    db = _session()
+    photo, _derivative, _path = _eligible_photo(
+        db, tmp_path, include_policy=False
+    )
+    tenant = db.get(Tenant, FIXTURE_TENANT_ID)
+    assert tenant is not None
+    tenant.lifecycle = "closing"
+    db.commit()
+
+    result = reconcile_automatic_gallery_policies(
+        db,
+        derivatives_root=tmp_path,
+        settings=_settings(tmp_path),
+    )
+    db.commit()
+
+    assert result.galleries_scanned == 0
+    assert db.scalar(
+        select(func.count()).select_from(GalleryFacialPolicy).where(
+            GalleryFacialPolicy.parent_gallery_id == photo.parent_gallery_id,
+        )
+    ) == 0
+    assert db.scalar(select(func.count()).select_from(FacialJob)) == 0
 
 
 def test_media_remains_available_when_facial_configuration_is_invalid(

@@ -7,7 +7,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AdminUser, AuditEvent, Base, FacialJob, ParentGallery
+from app.auth import (
+    AdminUser,
+    AuditEvent,
+    Base,
+    FacialJob,
+    GalleryFacialPolicy,
+    ParentGallery,
+    Tenant,
+)
 from app.facial.config import FacialSettings
 from app.facial.policy import (
     FacialPolicyDraft,
@@ -145,6 +153,25 @@ def test_automatic_policy_is_created_once_without_admin_actor(tmp_path: Path) ->
         .select_from(AuditEvent)
         .where(AuditEvent.event == "facial.policy_activated_automatically")
     ) == 1
+
+
+def test_policy_preparation_is_rejected_during_pending_closure() -> None:
+    db, parent, admin = _fixture()
+    tenant = db.get(Tenant, FIXTURE_TENANT_ID)
+    assert tenant is not None
+    tenant.lifecycle = "closing"
+    db.commit()
+
+    with pytest.raises(FacialPolicyError, match="encerramento"):
+        prepare_policy(
+            db,
+            parent_gallery_id=parent.id,
+            actor_admin_id=admin.id,
+            draft=_draft(),
+        )
+    db.rollback()
+
+    assert db.scalar(select(func.count()).select_from(GalleryFacialPolicy)) == 0
 
 
 def test_suspend_and_active_version_change_enqueue_idempotent_purge() -> None:

@@ -13,10 +13,12 @@ from app.auth import (
     AuthSession,
     Base,
     Client,
+    CommercialHistoryMedia,
     DerivedGallery,
     FolderClientGrant,
     GalleryClientState,
     GlobalPixSettings,
+    MediaArchiveCycle,
     MediaDerivative,
     NotificationEvent,
     ParentGallery,
@@ -135,6 +137,109 @@ def setup_cart():
         )
         db.commit()
         return owner.id, other.id, gallery_ids
+
+
+@pytest.mark.parametrize("flow", ["unified-legacy", "unified-canonical", "legacy"])
+@pytest.mark.parametrize("include_unsaved_selection", [False, True])
+def test_checkout_after_grace_only_resumes_items_of_its_own_order(
+    monkeypatch, flow, include_unsaved_selection,
+):
+    from app.checkout import create_pending_checkout, freeze_pending_checkout
+
+    owner_id, _, gallery_ids = setup_cart()
+    with SessionLocal() as db:
+        owner = db.get(Client, owner_id)
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        selections = list(db.scalars(select(PhotoSelection).where(
+            PhotoSelection.client_id == owner_id,
+            PhotoSelection.derived_gallery_id == gallery.id,
+        ).order_by(PhotoSelection.photo_asset_id)))
+        unsaved_photo_id = selections[1].photo_asset_id
+        db.delete(selections[1])
+        for selection in db.scalars(select(PhotoSelection).where(
+            PhotoSelection.derived_gallery_id == gallery_ids[1],
+        )):
+            db.delete(selection)
+        expiry = now() + timedelta(days=1)
+        folders = list(db.scalars(select(PhotoFolder).where(
+            PhotoFolder.derived_gallery_id == gallery.id,
+        )))
+        for folder in folders:
+            folder.access_expires_at = expiry
+        canonical = flow == "unified-canonical"
+        if canonical:
+            db.add(ParentGalleryRegistration(
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.parent_gallery_id,
+                client_id=owner_id, status="active",
+            ))
+            db.add(GalleryClientState(
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=gallery.parent_gallery_id,
+                client_id=owner_id,
+            ))
+            db.flush()
+            selections[0].parent_gallery_id = gallery.parent_gallery_id
+            selections[0].derived_gallery_id = None
+            db.flush()
+            for photo in db.scalars(select(PhotoAsset).where(
+                PhotoAsset.derived_gallery_id == gallery.id,
+            )):
+                photo.derived_gallery_id = None
+            db.flush()
+            for folder in folders:
+                folder.derived_gallery_id = None
+                folder.audience_scope = "all"
+        db.commit()
+        if flow == "legacy":
+            order = create_pending_checkout(
+                db, gallery=gallery, client=owner, checkout_key="own-items-only",
+            )
+            group = None
+        else:
+            group = prepare_group(db, owner)
+            order = db.scalar(select(SaleOrder).where(SaleOrder.client_id == owner_id))
+        db.commit()
+        original_item_ids = set(db.scalars(select(SaleOrderItem.photo_asset_id_snapshot).where(
+            SaleOrderItem.sale_order_id == order.id,
+        )))
+        assert len(original_item_ids) == 1
+        if include_unsaved_selection:
+            # Selecionada ainda no prazo, mas sem atualizar o pedido salvo.
+            db.add(PhotoSelection(
+                tenant_id=FIXTURE_TENANT_ID, client_id=owner_id,
+                parent_gallery_id=gallery.parent_gallery_id if canonical else None,
+                derived_gallery_id=None if canonical else gallery.id,
+                photo_asset_id=unsaved_photo_id,
+            ))
+            db.commit()
+        monkeypatch.setattr("app.folder_access.now", lambda: expiry + timedelta(days=31))
+        cart_group = cart_payload(db, owner)["groups"][0]
+        assert bool(cart_group["error"]) is include_unsaved_selection
+        if include_unsaved_selection:
+            with pytest.raises(CheckoutError, match="vencidas ou indisponíveis"):
+                if flow == "legacy":
+                    create_pending_checkout(
+                        db, gallery=gallery, client=owner, checkout_key="own-items-only",
+                    )
+                else:
+                    prepare_group(db, owner)
+            with pytest.raises(CheckoutError, match="vencidas ou indisponíveis"):
+                if flow == "legacy":
+                    freeze_pending_checkout(db, gallery=gallery, client=owner, order=order)
+                else:
+                    report_group(db, owner, group.id, group.revision, "unsaved-item")
+            assert set(db.scalars(select(SaleOrderItem.photo_asset_id_snapshot).where(
+                SaleOrderItem.sale_order_id == order.id,
+            ))) == original_item_ids
+            assert db.scalar(select(func.count(PhotoSelection.id))) == 2
+            assert order.frozen_at is None
+        elif flow == "legacy":
+            assert create_pending_checkout(
+                db, gallery=gallery, client=owner, checkout_key="own-items-only",
+            ).id == order.id
+            assert freeze_pending_checkout(db, gallery=gallery, client=owner, order=order).frozen_at
+        else:
+            assert prepare_group(db, owner).id == group.id
+            assert report_group(db, owner, group.id, group.revision, "own-items-only")
 
 
 def test_admin_access_contract_preserves_legacy_on_unrelated_patch():
@@ -310,6 +415,32 @@ def test_canonical_external_selection_api_admin_export_and_history():
     assert response.status_code == 200, response.text
     order_id = response.json()["order_id"]
     assert browser.post(f"/library/cart/{parent_id}/finalize", json=payload).json()["order_id"] == order_id
+    financial = admin_browser.get("/admin/payment-communications")
+    assert financial.status_code == 200, financial.text
+    financial_payload = financial.json()
+    finalized_row = next(
+        order for group_row in financial_payload["groups"] for order in group_row["orders"]
+        if order["id"] == order_id
+    )
+    assert finalized_row["financial_status"] == "selection_finalized"
+    assert financial_payload["summary"]["financial_statuses"].get("awaiting_payment", 0) == 0
+    assert financial_payload["summary"]["confirmed_orders"] == 0
+    assert financial_payload["summary"]["confirmed_cents"] == 0
+    finalized_only = admin_browser.get(
+        "/admin/payment-communications", params={"financial_status": "selection_finalized"}
+    )
+    assert finalized_only.status_code == 200
+    assert any(
+        order["id"] == order_id
+        for group_row in finalized_only.json()["groups"] for order in group_row["orders"]
+    )
+    awaiting_only = admin_browser.get(
+        "/admin/payment-communications", params={"financial_status": "awaiting_payment"}
+    )
+    assert all(
+        order["id"] != order_id
+        for group_row in awaiting_only.json()["groups"] for order in group_row["orders"]
+    )
     history = browser.get("/library/purchases").json()["orders"]
     order = next(row for row in history if row["id"] == order_id)
     assert order["commercial_state"] == "selection_finalized" and order["total_cents"] is None
@@ -411,8 +542,34 @@ def test_global_cart_projects_folders_prices_and_identity():
         db.get(DerivedGallery, gallery_ids[0]).selection_expires_at = now() - timedelta(days=1)
         db.flush()
         payload = cart_payload(db, db.get(Client, owner_id))
-        assert payload["quantity"] == 3 and payload["total_cents"] is None
-        assert not payload["can_prepare"]
+        assert payload["quantity"] == 3 and payload["total_cents"] == 2100
+        assert payload["can_prepare"]
+
+
+def test_global_cart_contains_only_selected_photos_and_recalculates_backend_price():
+    owner_id, _, gallery_ids = setup_cart()
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        selections = list(db.scalars(
+            select(PhotoSelection).where(
+                PhotoSelection.tenant_id == FIXTURE_TENANT_ID,
+                PhotoSelection.client_id == owner_id,
+                PhotoSelection.derived_gallery_id == gallery.id,
+            ).order_by(PhotoSelection.photo_asset_id)
+        ))
+        assert len(selections) == 2
+        unselected_photo_id = selections[0].photo_asset_id
+        db.delete(selections[0])
+        db.flush()
+
+        payload = cart_payload(db, db.get(Client, owner_id))
+
+        group = next(row for row in payload["groups"] if row["gallery_id"] == str(gallery.id))
+        assert payload["quantity"] == 2
+        assert payload["total_cents"] == 1400
+        assert group["quantity"] == 1
+        assert len(group["items"]) == 1
+        assert group["items"][0]["id"] != str(unselected_photo_id)
 
 
 def test_canonical_selection_joins_legacy_cart_without_new_derived_gallery():
@@ -657,14 +814,110 @@ def test_confirmed_canonical_preview_survives_folder_revocation(tmp_path, monkey
     assert browser.get(f"/library/purchases/items/{item_id}/preview").status_code == 403
 
 
-def test_prepare_report_preserves_selection_and_is_idempotent():
+def test_archived_selection_and_purchase_history_keep_references_but_hide_media():
+    owner_id, _, gallery_ids = setup_cart()
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        photo = db.scalar(select(PhotoAsset).where(PhotoAsset.derived_gallery_id == gallery.id))
+        folder = db.get(PhotoFolder, photo.folder_id)
+        cycle = MediaArchiveCycle(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=folder.parent_gallery_id,
+            folder_id=folder.id,
+            cycle_number=1,
+            state="archived",
+        )
+        order = SaleOrder(
+            tenant_id=FIXTURE_TENANT_ID,
+            derived_gallery_id=gallery.id,
+            client_id=owner_id,
+            payment_status="confirmed",
+            total_cents=700,
+            confirmed_at=now(),
+        )
+        db.add_all([cycle, order])
+        db.flush()
+        item = SaleOrderItem(
+            tenant_id=FIXTURE_TENANT_ID,
+            sale_order_id=order.id,
+            photo_asset_id=photo.id,
+            photo_asset_id_snapshot=photo.id,
+            filename_snapshot=photo.filename,
+            folder_id_snapshot=folder.id,
+            folder_name_snapshot=folder.name,
+            unit_price_cents=700,
+        )
+        db.add(item)
+        db.flush()
+        db.add(CommercialHistoryMedia(
+            tenant_id=FIXTURE_TENANT_ID,
+            sale_order_item_id=item.id,
+            preview_storage_key="synthetic/history-preview.jpg",
+            delivery_storage_key="synthetic/history-delivery.jpg",
+            status="ready",
+        ))
+        photo_id, item_id = photo.id, item.id
+        db.commit()
+
+    browser = TestClient(app)
+    browser.cookies.set("markina_session", "cart-test")
+    cart = browser.get("/library/cart").json()
+    cart_item = next(
+        item for group in cart["groups"] for item in group["items"]
+        if item["id"] == str(photo_id)
+    )
+    assert cart_item["media_status"] == "archived"
+    assert cart_item["preview_url"] is None
+    assert browser.get(f"/gallery/{gallery_ids[0]}/folders").json()["folders"][0]["media_state"] == "archived"
+
+    history = browser.get("/library/purchases").json()["orders"]
+    archived_item = next(item for order_payload in history for item in order_payload["items"] if item["item_id"] == str(item_id))
+    assert archived_item["name"].endswith(".jpg")
+    assert archived_item["media_state"] == "archived"
+    assert archived_item["preview_url"] is None
+    assert archived_item["delivery_url"] is None
+    assert browser.get(f"/library/history/items/{item_id}/preview").status_code == 404
+    assert browser.get(f"/library/history/items/{item_id}/delivery").status_code == 404
+
+    with SessionLocal() as db:
+        db.get(MediaArchiveCycle, cycle.id).state = "local"
+        db.commit()
+    restored_history = browser.get("/library/purchases").json()["orders"]
+    restored_item = next(item for order_payload in restored_history for item in order_payload["items"] if item["item_id"] == str(item_id))
+    assert restored_item["media_state"] == "available"
+    assert restored_item["preview_url"] == f"/library/history/items/{item_id}/preview"
+    assert restored_item["delivery_url"] == f"/library/history/items/{item_id}/delivery"
+
+
+def test_prepare_report_preserves_selection_and_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app import unified_checkout as checkout_module
+
+    locked_clients = []
+    original_lock_folders = checkout_module.lock_selected_content_folders
+
+    def track_folder_locks(db, *, tenant_id, client_id):
+        locked_clients.append((tenant_id, client_id))
+        return original_lock_folders(
+            db, tenant_id=tenant_id, client_id=client_id,
+        )
+
+    monkeypatch.setattr(
+        checkout_module, "lock_selected_content_folders", track_folder_locks,
+    )
     owner_id, _, _ = setup_cart()
     browser = TestClient(app)
     browser.cookies.set("markina_session", "cart-test")
     first = browser.post("/library/cart/prepare")
     assert first.status_code == 200, first.text
+    assert locked_clients == [(FIXTURE_TENANT_ID, owner_id)]
     payment = first.json()["payment"]
     assert browser.post("/library/cart/prepare").json()["payment"]["id"] == payment["id"]
+    assert locked_clients == [
+        (FIXTURE_TENANT_ID, owner_id),
+        (FIXTURE_TENANT_ID, owner_id),
+    ]
     assert browser.get("/library/cart").json()["quantity"] == 3
     result = browser.post(
         f"/library/payments/{payment['id']}/report",
@@ -844,7 +1097,7 @@ def test_admin_scope_history_decisions_and_correction(monkeypatch):
         assert db.scalar(select(func.count(NotificationEvent.id))) == 4
 
 
-def test_legacy_endpoints_cannot_change_group_and_expired_selection_can_be_removed():
+def test_legacy_endpoints_cannot_change_group_and_expired_folder_selection_can_be_removed():
     _, _, gallery_ids = setup_cart()
     browser = TestClient(app)
     browser.cookies.set("markina_session", "cart-test")
@@ -863,7 +1116,9 @@ def test_legacy_endpoints_cannot_change_group_and_expired_selection_can_be_remov
         == 409
     )
     with SessionLocal() as db:
-        db.get(DerivedGallery, gallery_ids[0]).selection_expires_at = now() - timedelta(days=1)
+        gallery = db.get(DerivedGallery, gallery_ids[0])
+        folder = db.scalar(select(PhotoFolder).where(PhotoFolder.derived_gallery_id == gallery.id))
+        folder.access_expires_at = now() - timedelta(days=31)
         db.commit()
     removed = browser.delete(f"/library/cart/{gallery_ids[0]}")
     assert removed.status_code == 200, removed.text
@@ -1190,7 +1445,10 @@ def test_new_login_history_legacy_and_new_cart_remain_independent():
                 tenant_id=FIXTURE_TENANT_ID, client_id=owner_id, derived_gallery_id=gallery.id, photo_asset_id=photo.id
             )
         )
-        db.get(DerivedGallery, gallery_ids[1]).selection_expires_at = now() - timedelta(days=1)
+        archived_folder = db.scalar(select(PhotoFolder).where(
+            PhotoFolder.derived_gallery_id == gallery_ids[1]
+        ))
+        archived_folder.access_expires_at = now() - timedelta(days=31)
         db.commit()
     assert browser.post(f"/library/payments/{payment['id']}/report", json=report).status_code == 200
     assert browser.get("/library/cart").json()["quantity"] == 1

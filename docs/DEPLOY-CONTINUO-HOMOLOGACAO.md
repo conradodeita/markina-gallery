@@ -35,6 +35,6 @@ cd /opt/markina-gallery
 bash scripts/resume-homolog.sh --public-base-url https://markina.pickyourpic.com.br
 ```
 
-O script verifica que está no diretório da Markina, que PostgreSQL e Redis exclusivos estão saudáveis, e que a revisão Alembic do banco é o único head presente no checkout. Só então inicia os contêineres da aplicação que já existem usando `docker compose up -d --no-deps --no-recreate`; isso evita seguir a dependência `migrate` antiga. Espera healthchecks de todos os serviços selecionados e HTTP 200 em `/healthz` e `/api/health`, local e publicamente.
+O script verifica que está no diretório da Markina, que PostgreSQL e Redis exclusivos estão saudáveis, e que a revisão Alembic do banco é o único head presente no checkout. Só então inicia os contêineres da aplicação que já existem usando `docker compose up -d --no-deps --no-recreate`; o Compose candidato também não possui dependência implícita de `migrate`. Espera healthchecks de todos os serviços selecionados e HTTP 200 em `/healthz` e `/api/health`, local e publicamente.
 
 Se preflight, revisão ou healthcheck falhar, não use `docker compose start`, não rode Alembic e não tente limpar/remover o contêiner `migrate`. Preserve o estado para diagnóstico e siga o fluxo de deploy/recuperação aprovado. O script não inclui PostgreSQL, Redis, Evolution, Proxy Manager nem serviços vizinhos na lista de start.

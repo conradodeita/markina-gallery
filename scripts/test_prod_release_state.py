@@ -89,7 +89,9 @@ elif kind=="docker":
         if fmt=="{{.Image}}": print(c["image"])
         elif fmt=="{{.Config.Image}}": print("markina-gallery-"+service)
         elif "Config.Env" in fmt:
-            print(s["api_version"] if "{{range" in fmt else json.dumps(["APP_VERSION="+s["api_version"]]))
+            print(s["api_version"] if "{{range" in fmt else json.dumps([
+                "APP_VERSION="+s["api_version"],
+                "FACIAL_PROCESSING_ENABLED="+s.get("facial_runtime", "true")]))
         elif "NetworkSettings.Ports" in fmt: print('{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"8080"}]}')
         elif "|" in fmt: print("|".join([c["id"],c["image"],c["started"],"running",c["health"],c["hash"]]))
         elif "State.Health" in fmt: print(c["health"])
@@ -105,7 +107,9 @@ elif kind=="docker":
             if "--hash" in cmd:
                 if cmd[-1]=="web": print("web "+s["web_hash"])
                 else: print("api "+s["services"]["api"]["hash"]+"\nweb "+s["web_hash"])
-            elif "json" in cmd: print("{}")
+            elif "json" in cmd:
+                facial = s.get("target_facial_config", "true") if compose_version == s["main"] else "true"
+                print(json.dumps({"services":{"api":{"environment":{"FACIAL_PROCESSING_ENABLED":facial}}}}))
         elif cmd[0]=="ps":
             service=cmd[-1]
             if service in s["services"]: print(s["services"][service]["id"])
@@ -469,6 +473,17 @@ flock() {{ return 0; }}
         self.reload()
         self.assertEqual(self.model["api_version"], SHA_OLD)
         self.fingerprint(flow="app-services")
+
+    def test_app_inventory_rejects_disabled_facial_runtime(self):
+        self.mutate(facial_runtime="false")
+        self.mode("inventory", flow="app-services", ok=False)
+        self.assertNotRegex(self.log(), r'compose .* (build|up)')
+
+    def test_app_target_with_facial_flag_false_fails_before_build_or_recreate(self):
+        fingerprint = self.fingerprint(flow="app-services")
+        self.mutate(target_facial_config="false")
+        self.mode("release", flow="app-services", approval=fingerprint, ok=False)
+        self.assertNotRegex(self.log(), r'compose .* (build|up)')
 
     def test_web_then_app_release_and_rollback_preserve_independent_versions(self):
         self.release()

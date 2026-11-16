@@ -79,7 +79,7 @@ def test_overview_is_admin_only_and_limited_to_requested_origin():
             {"id": str(shared), "name": "Bruna Compartilhada"},
         ],
         "folders": [{"id": str(folder), "name": "Retratos privados", "status": "released",
-                     "position": 0, "photo_count": 1}],
+                     "position": 0, "photo_count": 1, "media_state": "available"}],
     }]}
     # A consulta da outra origem não inclui os nomes/pastas desta origem.
     other_response = browser.get(f"/admin/parent-galleries/{other}/private-folders")

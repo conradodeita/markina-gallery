@@ -162,6 +162,9 @@ verify_repository() {
   ACTIVE_SHA="$CHECKOUT_SHA"
   api_id="$(compose ps -q api)"
   [[ -n "$api_id" && "$(wc -l <<<"$api_id" | tr -d ' ')" == 1 ]] || fail "API ativa ausente ou duplicada"
+  docker inspect --format '{{json .Config.Env}}' "$api_id" \
+    | python3 -c 'import json,sys; values=json.load(sys.stdin); sys.exit(0 if "FACIAL_PROCESSING_ENABLED=true" in values else 1)' \
+    || fail "runtime ativo da API não tem FACIAL_PROCESSING_ENABLED=true"
   api_version="$(docker inspect --format '{{json .Config.Env}}' "$api_id" \
     | python3 -c 'import json,sys; values=json.load(sys.stdin); print(next((v.split("=",1)[1] for v in values if v.startswith("APP_VERSION=")), ""))')"
   [[ "$api_version" =~ ^[0-9a-f]{40}$ ]] || fail "APP_VERSION inválido"
@@ -215,9 +218,23 @@ verify_repository() {
   verify_database_revision "$DATABASE_REVISION"
 }
 
+require_facial_processing_enabled_in_config() {
+  local config
+  config="$(compose config --format json 2>/dev/null)" || fail "não foi possível validar a flag facial no Compose"
+  printf '%s\n' "$config" | python3 -c 'import json,sys
+try:
+    environment=json.load(sys.stdin)["services"]["api"].get("environment",{})
+    valid=isinstance(environment,dict) and environment.get("FACIAL_PROCESSING_ENABLED")=="true"
+except (AttributeError,KeyError,TypeError,ValueError):
+    valid=False
+sys.exit(0 if valid else 1)' \
+    || fail "FACIAL_PROCESSING_ENABLED deve permanecer true na API após o deploy"
+}
+
 runtime_snapshot() {
   local hashes config_hash service id project actual_service workdir files hash health image expected
   compose config --quiet 2>/dev/null || fail "configuração Compose inválida"
+  require_facial_processing_enabled_in_config
   hashes="$(resolved_hashes)"
   config_hash="$(printf '%s\n' "$hashes" | LC_ALL=C sort | sha256sum | awk '{print $1}')"
   for service in "${SERVICES[@]}"; do
@@ -344,6 +361,7 @@ release() {
   api_before="$COMPOSE_APP_VERSION"
   COMPOSE_APP_VERSION="$TARGET_SHA"
   compose config --quiet || fail "Compose alvo inválido"
+  require_facial_processing_enabled_in_config
   target_hashes="$(resolved_hashes)" || fail "hashes Compose alvo indisponíveis"
   for service in "${SERVICES[@]}"; do
     awk -v service="$service" '$1 == service {sub(/^sha256:/,"",$2); print $2}' <<<"$target_hashes" > "$STATE_DIR/app-$service-target-hash"
@@ -442,6 +460,8 @@ rollback() {
   done
   git switch --detach "$ROLLBACK_SHA" >/dev/null
   COMPOSE_APP_VERSION="$restore_api_version"
+  compose config --quiet || fail "Compose de rollback inválido"
+  require_facial_processing_enabled_in_config
   compose up -d --no-build --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"
   runtime_snapshot
   for service in "${SERVICES[@]}"; do

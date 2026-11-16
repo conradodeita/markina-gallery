@@ -32,6 +32,7 @@ def graph(monkeypatch, tmp_path):
     scoped = engine.execution_options(schema_translate_map={None: schema})
     auth.Base.metadata.create_all(scoped)
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "homolog")
     media = {name: tmp_path / name for name in reset.MEDIA_ROOTS}
     for name, root in media.items():
         root.mkdir()
@@ -53,6 +54,11 @@ def graph(monkeypatch, tmp_path):
             db.flush()
             db.add(auth.TenantAdmin(tenant_id=tenant.id, admin_user_id=admin.id, active=True))
             db.flush()
+            db.add(auth.TenantCreditWallet(tenant_id=tenant.id, mode="unmetered" if i == 0 else "finite"))
+            db.add(auth.AdminTotpRecoveryCode(
+                admin_user_id=admin.id, code_selector=f"{i:04d}",
+                code_hash=f"synthetic-recovery-hash-{i}",
+            ))
             db.add_all([
                 auth.AuthSession(tenant_id=tenant.id, role="admin", subject_id=admin.id,
                                  admin_subject_id=admin.id, token_hash=f"synthetic-session-{i}",
@@ -136,6 +142,11 @@ def graph(monkeypatch, tmp_path):
             auth.AuditEvent(tenant_id=tenants[1].id, event="admin_security.synthetic", subject="synthetic-other-audit"),
             monitor.MonitorSample(minute=auth.now().replace(second=0, microsecond=0), payload={"synthetic": True}),
         ])
+        db.flush()
+        db.add(auth.PhotographerCreditPackage(
+            name="Pacote sintético", credit_quantity=10, price_cents=5000, currency_code="BRL",
+            active=True, created_by_admin_id=owner.id, updated_by_admin_id=owner.id,
+        ))
         db.commit()
         yield db, admins, tenants, media, brand, key
     with engine.begin() as connection:
@@ -145,6 +156,62 @@ def graph(monkeypatch, tmp_path):
 
 def count(db, model):
     return db.scalar(select(func.count()).select_from(model))
+
+
+@pytest.mark.parametrize("kind", ["closure", "profile", "coordinator"])
+def test_reset_preserves_saas_records_before_touching_database_or_media(graph, monkeypatch, kind):
+    db, admins, tenants, media, _brand, _key = graph
+    if kind == "closure":
+        row = auth.TenantClosureRequest(
+            tenant_id=tenants[1].id, requested_by=admins[1].id, request_id=uuid4(),
+            terms_version="synthetic", terms_sha256="a" * 64, balance_snapshot=0,
+        )
+    elif kind == "profile":
+        row = auth.PhotographerBusinessProfile(
+            tenant_id=tenants[1].id, admin_user_id=admins[1].id, full_name="Perfil sintético",
+            cpf_envelope="synthetic-ciphertext", cpf_fingerprint="f" * 64,
+        )
+    else:
+        row = auth.MediaArchiveCoordinator(id=1)
+    db.add(row)
+    db.commit()
+    monkeypatch.setattr(reset, "roots", lambda: pytest.fail("Não tocar mídia com registros SaaS"))
+    for operation in (lambda: reset.inventory(db, OWNER_EMAIL),
+                      lambda: reset.execute(db, OWNER_EMAIL, reset.CONFIRMATION)):
+        with pytest.raises(reset.ResetPolicyError, match="preserve os registros SaaS"):
+            operation()
+        db.rollback()
+        assert count(db, type(row)) == 1
+        assert count(db, auth.AdminUser) == count(db, auth.Client) == 5
+        assert all((root / "test-acervo.jpg").exists() for root in media.values())
+
+
+def test_reset_rechecks_new_saas_history_after_initial_inventory(graph, monkeypatch):
+    db, admins, tenants, media, _brand, _key = graph
+    original = reset.owner_context
+    calls = 0
+
+    def checked(session, email):
+        nonlocal calls
+        result = original(session, email)
+        calls += 1
+        if calls == 1:
+            with Session(db.get_bind()) as writer:
+                writer.add(auth.TenantClosureRequest(
+                    tenant_id=tenants[1].id, requested_by=admins[1].id, request_id=uuid4(),
+                    terms_version="synthetic", terms_sha256="a" * 64, balance_snapshot=0,
+                ))
+                writer.commit()
+        return result
+
+    monkeypatch.setattr(reset, "owner_context", checked)
+    monkeypatch.setattr(reset, "roots", lambda: pytest.fail("Não tocar mídia após histórico concorrente"))
+    with pytest.raises(reset.ResetPolicyError, match="preserve os registros SaaS"):
+        reset.execute(db, OWNER_EMAIL, reset.CONFIRMATION)
+    db.rollback()
+    assert count(db, auth.TenantClosureRequest) == 1
+    assert count(db, auth.Client) == count(db, auth.AdminUser) == 5
+    assert all((root / "test-acervo.jpg").exists() for root in media.values())
 
 
 def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(graph):
@@ -158,6 +225,9 @@ def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(grap
     assert report["delete"]["provider_payment"] == report["delete"]["provider_payment_attempt"] == 5
     assert report["delete"]["mercadopago_payment"] == 5
     assert report["delete"]["mercadopago_account"] == report["delete"]["payment_preferences"] == 4
+    assert report["delete"]["tenant_credit_wallet"] == 4
+    assert report["preserved"]["photographer_credit_package"] == 1
+    assert report["delete"]["admin_totp_recovery_code"] == 4
     assert report["owner_branding_files"] == 1
     assert OWNER_EMAIL not in str(report)
     result = reset.execute(db, OWNER_EMAIL, reset.CONFIRMATION)
@@ -168,6 +238,11 @@ def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(grap
     assert count(db, auth.ProviderPayment) == count(db, auth.ProviderPaymentAttempt) == 0
     assert count(db, auth.MercadoPagoPayment) == count(db, auth.MercadoPagoWebhook) == 0
     assert count(db, auth.MercadoPagoAccount) == count(db, auth.PaymentPreferences) == 1
+    assert count(db, auth.TenantCreditWallet) == 1
+    assert db.scalar(select(auth.TenantCreditWallet.mode)) == "unmetered"
+    assert count(db, auth.PhotographerCreditPackage) == 1
+    assert count(db, auth.AdminTotpRecoveryCode) == 1
+    assert db.scalar(select(auth.AdminTotpRecoveryCode.code_hash)) == "synthetic-recovery-hash-0"
     account = db.scalar(select(auth.MercadoPagoAccount))
     assert account.access_token_envelope == {"synthetic_encrypted_token": "0"}
     assert account.webhook_secret_envelope == {"synthetic_encrypted_webhook": "0"}
@@ -295,5 +370,66 @@ def test_reset_preserva_evidencia_orders_em_qualquer_tenant(graph, kind, tenant_
         db.rollback()
         assert count(db, auth.Client) == count(db, auth.MercadoPagoPayment) == 5
         assert count(db, auth.MercadoPagoAccount) == count(db, auth.PaymentPreferences) == 5
+        assert all((root / "test-acervo.jpg").exists() for root in media.values())
+        assert (brand / key).read_bytes() == b"official-owner-logo-synthetic"
+
+
+def test_reset_recusa_compra_de_creditos_preparada_sem_apagar_evidencias(graph):
+    db, admins, tenants, media, brand, key = graph
+    owner, buyer = admins[0], admins[1]
+    owner_tenant, buyer_tenant = tenants[0], tenants[1]
+    account = db.scalar(select(auth.MercadoPagoAccount).where(
+        auth.MercadoPagoAccount.tenant_id == owner_tenant.id))
+    package = auth.PhotographerCreditPackage(
+        name="Pacote sintético", credit_quantity=10, price_cents=5000, currency_code="BRL",
+        active=True, created_by_admin_id=owner.id, updated_by_admin_id=owner.id,
+    )
+    db.add(package)
+    db.flush()
+    purchase = auth.MercadoPagoCreditPurchase(
+        tenant_id=buyer_tenant.id, buyer_admin_id=buyer.id, owner_admin_id=owner.id,
+        receiver_tenant_id=owner_tenant.id, receiver_account_id=account.id,
+        package_id=package.id, package_name=package.name, credit_quantity=package.credit_quantity,
+        total_cents=package.price_cents, currency_code="BRL", idempotency_key=str(uuid4()),
+        external_reference=str(uuid4()), state="prepared", active=True,
+    )
+    db.add(purchase)
+    db.flush()
+    event = auth.MercadoPagoCreditPurchaseEvent(
+        tenant_id=buyer_tenant.id, purchase_id=purchase.id,
+        event_type="prepared", event_key="prepared:synthetic-owner-reset",
+        details={"source": "synthetic-test"},
+    )
+    db.add(event)
+    db.commit()
+
+    for operation in (lambda: reset.inventory(db, OWNER_EMAIL),
+                      lambda: reset.execute(db, OWNER_EMAIL, reset.CONFIRMATION)):
+        with pytest.raises(reset.ResetPolicyError, match="evidências financeiras Mercado Pago"):
+            operation()
+        db.rollback()
+        assert count(db, auth.MercadoPagoCreditPurchase) == 1
+        assert count(db, auth.MercadoPagoCreditPurchaseEvent) == 1
+        assert count(db, auth.Client) == 5
+        assert all((root / "test-acervo.jpg").exists() for root in media.values())
+        assert (brand / key).read_bytes() == b"official-owner-logo-synthetic"
+
+
+def test_reset_recusa_ledger_de_creditos_sem_apagar_evidencias(graph):
+    db, admins, tenants, media, brand, key = graph
+    db.add(auth.PhotographerCreditEntry(
+        tenant_id=tenants[1].id, entry_type="owner_grant", delta=20,
+        idempotency_key="synthetic-owner-reset-grant", global_owner_admin_id=admins[0].id,
+        description="Concessão sintética",
+    ))
+    db.commit()
+
+    for operation in (lambda: reset.inventory(db, OWNER_EMAIL),
+                      lambda: reset.execute(db, OWNER_EMAIL, reset.CONFIRMATION)):
+        with pytest.raises(reset.ResetPolicyError, match="evidências financeiras Mercado Pago"):
+            operation()
+        db.rollback()
+        assert count(db, auth.PhotographerCreditEntry) == 1
+        assert count(db, auth.Client) == 5
         assert all((root / "test-acervo.jpg").exists() for root in media.values())
         assert (brand / key).read_bytes() == b"official-owner-logo-synthetic"

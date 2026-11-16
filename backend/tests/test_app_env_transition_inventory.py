@@ -27,17 +27,26 @@ EXPECTED_REFERENCE_LINE_COUNTS = {
     "backend/app/facial/config.py": 6,
     "backend/app/facial/reference_store.py": 1,
     "backend/app/gallery_access.py": 2,
+    "backend/app/google_drive_oauth.py": 4,
+    "backend/app/google_drive_storage.py": 1,
     "backend/app/homolog_cleanup.py": 3,
     "backend/app/integration_secrets.py": 4,
+    "backend/app/mercadopago_credit_purchases.py": 1,
     "backend/app/main.py": 3,
     "backend/app/mercadopago_settings.py": 1,
     "backend/app/messaging.py": 3,
+    "backend/app/photographer_onboarding.py": 4,
+    "backend/app/photographer_signup.py": 2,
+    "backend/app/platform_backup/archive.py": 1,
+    "backend/app/private_fields.py": 2,
     "backend/app/push_subscriptions.py": 2,
     "backend/app/system_monitor/report.py": 1,
     "backend/app/tenant_hosts.py": 1,
-    "backend/app/whatsapp_binding.py": 5,
+    "backend/app/totp_crypto.py": 1,
+    "backend/app/whatsapp_binding.py": 8,
     "backend/app/whatsapp_channel.py": 1,
     "backend/app/whatsapp_delivery.py": 1,
+    "backend/app/whatsapp_tenant_credentials.py": 1,
 }
 
 EXPECTED_COMPOSE_SERVICES = {
@@ -45,6 +54,8 @@ EXPECTED_COMPOSE_SERVICES = {
     "face-index-worker",
     "face-maintenance-worker",
     "face-search-worker",
+    "migrate",
+    "seed-admin",
     "worker",
 }
 

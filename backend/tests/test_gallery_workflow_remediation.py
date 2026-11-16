@@ -1,3 +1,4 @@
+import os
 from io import BytesIO
 from uuid import UUID, uuid4
 
@@ -21,12 +22,18 @@ from app.auth import (
     PhotoFolder,
     PhotoSelection,
     SessionLocal,
+    Tenant,
     engine,
     password_hasher,
 )
 from app.main import app
 from app.media import generate_derivatives
-from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
+from tests.tenant_fixtures import (
+    FIXTURE_TENANT_ID,
+    fixture_admin,
+    fixture_unmetered_owner,
+    fresh_totp_code,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -57,17 +64,25 @@ def authenticate_admin(client: TestClient) -> None:
             totp_secret=pyotp.random_base32(),
         ))
         db.add(admin)
+        db.flush()
+        fixture_unmetered_owner(db, admin)
         db.commit()
-        secret = admin.totp_secret
     challenge = client.post(
         "/auth/admin/password",
         json={"email": "workflow@markina.test", "password": "senha-segura"},
     ).json()["challenge_id"]
     response = client.post(
         "/auth/admin/totp",
-        json={"challenge_id": challenge, "code": pyotp.TOTP(secret).now()},
+        json={"challenge_id": challenge, "code": fresh_totp_code(admin)},
     )
     assert response.status_code == 200
+    cookie_name = os.getenv("SESSION_COOKIE_NAME", "markina_session")
+    # O TestClient usa HTTP e não envia o cookie Secure emitido pelo fluxo de login.
+    session_cookie = next(
+        (cookie for cookie in client.cookies.jar if cookie.name == cookie_name), None
+    )
+    assert session_cookie is not None
+    session_cookie.secure = False
 
 
 def ready_photo(
@@ -168,6 +183,21 @@ def test_cover_assets_are_excluded_from_content_contracts(client: TestClient) ->
     assert available["photos"][0]["height"] == 800
     assert available["photos"][0]["publication_state"] == "published"
     assert "storage_key" not in folders.text + str(available)
+
+
+def test_parent_gallery_creation_is_blocked_during_tenant_closure(client: TestClient) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        tenant = db.get(Tenant, FIXTURE_TENANT_ID)
+        assert tenant is not None
+        tenant.lifecycle = "closing"
+        db.commit()
+
+    response = client.post("/admin/parent-galleries", json={"name": "Bloqueada no encerramento"})
+
+    assert response.status_code == 409
+    with SessionLocal() as db:
+        assert list(db.scalars(select(ParentGallery))) == []
 
 
 def test_publish_promotes_only_ready_unavailable_photos_without_private_links(

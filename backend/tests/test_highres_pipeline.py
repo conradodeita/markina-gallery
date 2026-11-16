@@ -10,7 +10,15 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from test_facial_engine import _face, _gallery, _settings, _vector
 
-from app.auth import Base, FacialJob, PhotoAnalysis, PhotoFaceEmbedding, now
+from app.auth import (
+    Base,
+    FacialJob,
+    PhotoAnalysis,
+    PhotoCreditOperation,
+    PhotoFaceEmbedding,
+    PhotographerCreditEntry,
+    now,
+)
 from app.facial.crypto import FacialCipher
 from app.facial.detection import (
     Detection,
@@ -30,7 +38,7 @@ from app.facial.lifecycle import (
     media_can_proceed,
 )
 from app.media import generate_derivatives, safe_source_path
-from tests.tenant_fixtures import FIXTURE_TENANT_ID
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_unmetered_owner
 
 
 @pytest.fixture
@@ -55,6 +63,8 @@ def scene(tmp_path, monkeypatch):
     admin = fixture_admin(AdminUser(email="highres@example.invalid", password_hash="synthetic",
         email_verified=True, totp_secret="synthetic"))
     db.add(admin)
+    db.flush()
+    fixture_unmetered_owner(db, admin)
     db.commit()
     factory = sessionmaker(bind=db.bind, expire_on_commit=False)
     monkeypatch.setattr(auth, "SessionLocal", factory)
@@ -243,6 +253,7 @@ def test_admin_metrics_do_not_expose_arbitrary_payloads(scene, monkeypatch):
 def test_upload_handler_recovers_committed_reservation_without_duplicate_jobs(scene, monkeypatch):
     import asyncio
 
+    from fastapi import HTTPException
     from starlette.requests import Request
 
     from app.auth import MediaJob
@@ -280,8 +291,9 @@ def test_upload_handler_recovers_committed_reservation_without_duplicate_jobs(sc
             receive,
         )
 
-    with pytest.raises(OSError):
+    with pytest.raises(HTTPException) as interrupted:
         asyncio.run(import_photo_source(photo.id, request(), db))
+    assert interrupted.value.status_code == 503
     db.rollback()
     assert db.get(PhotoAnalysis, photo.id).state == "receiving"
     assert not safe_source_path(photo).exists()
@@ -292,6 +304,8 @@ def test_upload_handler_recovers_committed_reservation_without_duplicate_jobs(sc
     assert db.get(PhotoAnalysis, photo.id).state == "pending"
     assert len(list(db.scalars(select(FacialJob)))) == 1
     assert len(list(db.scalars(select(MediaJob)))) == 1
+    assert db.scalar(select(PhotoCreditOperation.id)) is None
+    assert db.scalar(select(PhotographerCreditEntry.id)) is None
 
 
 def test_orphan_cleanup_only_removes_expired_owned_fragments(scene):

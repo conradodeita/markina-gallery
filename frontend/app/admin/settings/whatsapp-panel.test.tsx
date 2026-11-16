@@ -14,6 +14,14 @@ const channel = {
   deliveries: { queued: 2, delivered: 5 },
 };
 
+const unprovisionedChannel = {
+  ...channel,
+  provider: "unavailable",
+  expected_phone: null,
+  status: "error",
+  last_error: "Configuração ou conexão do canal indisponível.",
+};
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -33,6 +41,8 @@ describe("configuração administrativa do WhatsApp", () => {
     const { unmount } = render(<WhatsAppPanel />);
 
     expect((await screen.findAllByText(label)).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Evolution API")).toBeNull();
+    expect(screen.getByText("Canal")).toBeTruthy();
     if (status !== "ready") expect(screen.queryByText("Conexão e identidade confirmadas.")).toBeNull();
     unmount();
   });
@@ -49,7 +59,7 @@ describe("configuração administrativa do WhatsApp", () => {
 
     const pairingButton = await screen.findByRole("button", { name: "Parear aparelho" });
     expect((pairingButton as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("Número próprio de homologação"), { target: { value: "+5511999999999" } });
+    fireEvent.change(screen.getByLabelText("Seu número de WhatsApp"), { target: { value: "+5511999999999" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar número" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -59,6 +69,70 @@ describe("configuração administrativa do WhatsApp", () => {
     expect(await screen.findByText("+55••••••••99")).toBeTruthy();
     expect((pairingButton as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByText("+5511999999999")).toBeNull();
+  });
+
+  it("provisiona a instância própria antes de habilitar o pareamento", async () => {
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path.endsWith("/provision") && options?.method === "POST") {
+        return Promise.resolve(new Response(JSON.stringify({
+          ...channel,
+          status: "pending_pairing",
+          expected_phone: "+55••••••••99",
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(unprovisionedChannel), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<WhatsAppPanel />);
+
+    const pairingButton = await screen.findByRole("button", { name: "Parear aparelho" });
+    expect((pairingButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Seu número de WhatsApp"), { target: { value: "+5511999999999" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preparar WhatsApp" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/whatsapp/channel/provision",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ expected_phone_e164: "+5511999999999" }),
+      }),
+    ));
+    expect(await screen.findByText("WhatsApp preparado. Agora você pode parear seu aparelho.")).toBeTruthy();
+    expect((pairingButton as HTMLButtonElement).disabled).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/admin/whatsapp/channel",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+  });
+
+  it.each([
+    ["erro HTTP", 503, null],
+    ["resposta sem instância", 200, unprovisionedChannel],
+  ])("preserva o número e mantém o canal bloqueado após %s", async (_case, status, body) => {
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => {
+      if (path.endsWith("/provision") && options?.method === "POST") {
+        return Promise.resolve(new Response(body === null ? null : JSON.stringify(body), { status }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(unprovisionedChannel), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<WhatsAppPanel />);
+
+    const pairingButton = await screen.findByRole("button", { name: "Parear aparelho" });
+    const input = screen.getByLabelText("Seu número de WhatsApp") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "+5511999999999" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preparar WhatsApp" }));
+
+    expect(await screen.findByText(
+      "Não foi possível preparar o WhatsApp. O canal continua bloqueado; tente novamente mais tarde.",
+    )).toBeTruthy();
+    expect(input.value).toBe("+5511999999999");
+    expect((pairingButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByText("Verificação indisponível").length).toBeGreaterThan(0);
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/admin/whatsapp/channel",
+      expect.objectContaining({ method: "PATCH" }),
+    );
   });
 
   it("mantém QR e código somente na memória visível e os expira", async () => {

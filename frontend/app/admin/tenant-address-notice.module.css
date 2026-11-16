@@ -1,0 +1,44 @@
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 24px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--mk-surface);
+  box-shadow: 0 8px 20px #162c1a0a;
+}
+
+.notice p {
+  flex: 1 1 360px;
+  min-width: 0;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.notice a {
+  flex: 0 0 auto;
+}
+
+.notice :focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+@media (max-width: 600px) {
+  .notice {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  .notice p {
+    flex: 0 1 auto;
+  }
+
+  .notice a {
+    width: 100%;
+  }
+}

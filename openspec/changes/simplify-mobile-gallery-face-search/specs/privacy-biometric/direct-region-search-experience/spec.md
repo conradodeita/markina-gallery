@@ -6,7 +6,7 @@ Definir busca direta por rosto já indexado, feedback e retorno aos resultados, 
 
 ### Requirement: Toque em rosto inicia consulta sem diálogo de consentimento
 
-Ao tocar deliberadamente em uma região facial disponível na galeria autorizada, a cliente SHALL iniciar consulta por essa região sem popup de consentimento, escolha de faixa etária ou checkboxes. A interface SHALL informar imediatamente `Aguarde, procurando fotos…`, evitar admissões duplicadas por toques repetidos e usar percentual somente quando houver progresso real. A operação SHALL comparar apenas o índice autorizado da mesma galeria, sem novo upload, recorte persistido, detector nas prévias, seleção comercial ou concessão de acesso.
+Toque deliberado em rosto disponível SHALL iniciar consulta ao índice autorizado da mesma galeria, sem diálogo, declaração de idade ou checkbox. A UI mostra espera imediata, evita duplicidade e usa percentual só com progresso real. Não há upload, recorte persistido, detecção em prévias, mudança comercial ou concessão de acesso.
 
 #### Scenario: Região válida escolhida
 - **WHEN** a cliente autenticada e vinculada toca em um rosto disponível
@@ -30,7 +30,7 @@ Ao tocar deliberadamente em uma região facial disponível na galeria autorizada
 
 ### Requirement: Origem da consulta e auditoria correspondem à ação real
 
-O sistema SHALL distinguir consulta iniciada por região indexada de referência enviada com consentimento explícito. Consulta direta SHALL registrar origem, cliente, galeria, região opaca e versão da política aplicável, sem gerar recibo de consentimento, presumir representação legal ou classificar a pessoa como adulta. Autenticação, vínculo, rollout vigente, disponibilidade da região, compatibilidade do índice, capacidade, rate limit, revogação e retenção SHALL ser repetidos na admissão e execução. A política operacional aprovada SHALL cobrir essa finalidade antes da ativação real; autorização de desenvolvimento SHALL NOT habilitar produção.
+O sistema SHALL distinguir consulta por região do upload consentido e registrar origem, cliente, galeria, região opaca e versão de política, sem recibo ou presunção de idade/representação. Admissão e execução revalidam autenticação, vínculo, rollout, região, índice, capacidade, rate limit, revogação e retenção. Política aprovada precede ativação real; autorização de desenvolvimento não habilita produção.
 
 #### Scenario: Consulta direta auditada
 - **WHEN** o sistema aceita uma busca por região
@@ -62,7 +62,7 @@ Ao concluir com possibilidades a consulta por toque iniciada na página atual, o
 
 ### Requirement: Um único checkbox específico para upload infantil
 
-O envio de foto SHALL manter escolha explícita entre `Pessoa adulta` e `Criança ou adolescente`, origens biblioteca/câmera, aviso de finalidade, limites e retenção. Para menor, SHALL apresentar apenas um checkbox de aceite, inicialmente desmarcado, reunindo declaração de pai/mãe/responsável legal e autorização específica do tratamento temporário para busca naquela galeria. O aviso associado SHALL explicar foto e dados biométricos, sem incluir publicidade ou treinamento. A opção adulta SHALL preservar o consentimento atual. Trocar o tipo de pessoa SHALL limpar o aceite anterior.
+Upload SHALL manter escolha adulto/menor, biblioteca/câmera e aviso de finalidade, limites e retenção. Para menor, SHALL mostrar um checkbox desmarcado com autodeclaração do responsável e consentimento específico, sem publicidade/treinamento. Consentimento adulto permanece; trocar o tipo limpa o aceite.
 
 #### Scenario: Responsável consente uma única vez
 - **WHEN** o upload infantil está disponível e a cliente escolhe menor e uma referência válida
@@ -74,7 +74,7 @@ O envio de foto SHALL manter escolha explícita entre `Pessoa adulta` e `Crianç
 
 ### Requirement: Busca infantil autorizada pelo consentimento do responsável
 
-Para novas consultas infantis por upload, o servidor SHALL considerar suficiente a declaração de responsável e o consentimento específico reunidos no checkbox único, sem exigir registro prévio de representação, documento comprobatório ou aprovação administrativa individual. A opção infantil SHALL estar disponível sempre que o serviço de busca por upload estiver tecnicamente disponível para a cliente autenticada e vinculada à galeria. O servidor SHALL validar aceite explícito e versão vigente, registrar cliente, galeria, finalidade, versão e instante UTC e permitir revogação/exclusão sem depender de uma entidade de representação. O sistema SHALL NOT fabricar representação comprovada a partir da autodeclaração. Os demais limites técnicos e de acesso SHALL permanecer iguais aos da busca adulta.
+O servidor SHALL aceitar o checkbox versionado de autodeclaração/consentimento infantil, sem cadastro, documento ou aprovação administrativa. A opção fica disponível para cliente autenticada e vinculada quando o serviço está ativo. Servidor valida e registra cliente, galeria, finalidade, versão e UTC; permite revogar/excluir sem tratar declaração como representação comprovada. Limites técnicos e de acesso igualam os da busca adulta.
 
 #### Scenario: Responsável sem cadastro prévio consente
 - **WHEN** a cliente autenticada e vinculada não possui registro de representação e envia uma referência infantil válida com aceite específico vigente

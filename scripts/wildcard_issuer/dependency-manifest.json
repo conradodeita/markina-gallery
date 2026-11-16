@@ -1,0 +1,303 @@
+{
+  "observed_at": "2026-11-08",
+  "purpose": "local-only candidate; not a production approval",
+  "runtime": {
+    "image": "docker.io/library/python@sha256:5545cc064ff154ca41f886e5e2223ce85f28445d00eb83cd517ce3dd4ba688df",
+    "source_tag_observed": "3.10.19-slim-bookworm",
+    "platform": "linux/arm64",
+    "python": "3.10.19",
+    "license": "Python-2.0; Debian packages retain individual licenses"
+  },
+  "loader_target": {
+    "systemd": "249",
+    "proof": "QEMU TCG local r8, guest Ubuntu 22.04 ARM64, systemd 249.11-0ubuntu3.23: recibo aprovado com três invocações LoadCredential através de reboot; emissor UID 997 sem acesso à chave fonte, token ausente em argv/ambiente/journal/artefatos e INI temporário removido. Sem rede pública; não é validação no Oracle."
+  },
+  "resolver_environment": {
+    "implementation_name": "cpython",
+    "implementation_version": "3.10.19",
+    "os_name": "posix",
+    "platform_machine": "aarch64",
+    "platform_python_implementation": "CPython",
+    "platform_release": "6.6.87.2-microsoft-standard-WSL2",
+    "platform_system": "Linux",
+    "platform_version": "#1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025",
+    "python_full_version": "3.10.19",
+    "python_version": "3.10",
+    "sys_platform": "linux"
+  },
+  "packages": [
+    {
+      "license": "Apache-2.0",
+      "name": "acme",
+      "requires_python": ">=3.10",
+      "sha256": "a646011d6c7c843d89c91a901a2bf450752621f6431f19851bec1222c94446bd",
+      "url": "https://files.pythonhosted.org/packages/89/9d/16b9c80e6fff6d7f33d937a188ebdd6318177a34c6ac6b9e7ae470bbceda/acme-5.9.0-py3-none-any.whl",
+      "version": "5.9.0",
+      "metadata_source": "https://pypi.org/pypi/acme/5.9.0/json"
+    },
+    {
+      "license": "MIT",
+      "name": "annotated-types",
+      "requires_python": ">=3.10",
+      "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0",
+      "url": "https://files.pythonhosted.org/packages/99/91/8acff4f5e50511b911bbccb72b8628a49c68ce14148cd9f6431094859a90/annotated_types-0.8.0-py3-none-any.whl",
+      "version": "0.8.0",
+      "metadata_source": "https://pypi.org/pypi/annotated-types/0.8.0/json"
+    },
+    {
+      "license": "MIT",
+      "name": "anyio",
+      "requires_python": ">=3.10",
+      "sha256": "c66ae634e0b8228396b801741beb3294326d4b6102f7bba4041c0dfb58c29026",
+      "url": "https://files.pythonhosted.org/packages/a9/16/7757fb84c819accc7d7e9af5291b261e4abb8627ee040f99e7d35ef2457a/anyio-4.16.0-py3-none-any.whl",
+      "version": "4.16.0",
+      "metadata_source": "https://pypi.org/pypi/anyio/4.16.0/json"
+    },
+    {
+      "license": "Apache-2.0",
+      "name": "certbot",
+      "requires_python": ">=3.10",
+      "sha256": "81ea876500ba60022a98a3e92fe4230088c7792b9d375357bb23c58741d2b0da",
+      "url": "https://files.pythonhosted.org/packages/50/41/a951ebc2559dee911cd61722e869764eb69ff251857592c041c1cff29ad0/certbot-5.6.0-py3-none-any.whl",
+      "version": "5.6.0",
+      "metadata_source": "https://pypi.org/pypi/certbot/5.6.0/json"
+    },
+    {
+      "license": "Apache-2.0",
+      "name": "certbot-dns-cloudflare",
+      "requires_python": ">=3.10",
+      "sha256": "6b8a586286a8c30e29471c4d737987c4fd5b3f41dd416c7954451e5572b2b5ab",
+      "url": "https://files.pythonhosted.org/packages/8e/69/7bd2861ea99b1193da2ac80f69d17e409b217dea6a9dbfb66317f8f794b4/certbot_dns_cloudflare-5.6.0-py3-none-any.whl",
+      "version": "5.6.0",
+      "metadata_source": "https://pypi.org/pypi/certbot-dns-cloudflare/5.6.0/json"
+    },
+    {
+      "license": "MPL-2.0",
+      "name": "certifi",
+      "requires_python": ">=3.7",
+      "sha256": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1",
+      "url": "https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl",
+      "version": "2026.10.23",
+      "metadata_source": "https://pypi.org/pypi/certifi/2026.10.23/json"
+    },
+    {
+      "license": "MIT-0",
+      "name": "cffi",
+      "requires_python": ">=3.10",
+      "sha256": "5a59cc1c4442bc3d5c703bf720b51138d0bfc173618807c9ee2490a7541dd3d9",
+      "url": "https://files.pythonhosted.org/packages/a3/b9/0f2e58b2cefa33255bff36935d42b13180fe559bba82596540eb404bde7d/cffi-2.1.1-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "version": "2.1.1",
+      "metadata_source": "https://pypi.org/pypi/cffi/2.1.1/json"
+    },
+    {
+      "license": "MIT",
+      "name": "charset-normalizer",
+      "requires_python": ">=3.7",
+      "sha256": "9373ad13ef0d2c0fb761e04e55bfdee5a08b52cef2c882c8fbe9935b1517152e",
+      "url": "https://files.pythonhosted.org/packages/52/fc/e518013affcc43c9f919c3ba41bffe9b4ee4aceb0a6462a6243efcca5f2d/charset_normalizer-3.5.2-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "version": "3.5.2",
+      "metadata_source": "https://pypi.org/pypi/charset-normalizer/3.5.2/json"
+    },
+    {
+      "license": "Apache-2.0",
+      "name": "cloudflare",
+      "requires_python": ">=3.9",
+      "sha256": "a5441bf00050e35fcf589123ecbfb740c22b54207d3ee27b0b1857fc7427e525",
+      "url": "https://files.pythonhosted.org/packages/9e/99/79f0a4b4c578aba2900101ac7dafc1e14a4c9c27d851e0e0eaeba04510fa/cloudflare-5.10.0-py3-none-any.whl",
+      "version": "5.10.0",
+      "metadata_source": "https://pypi.org/pypi/cloudflare/5.10.0/json"
+    },
+    {
+      "license": "MIT",
+      "name": "ConfigArgParse",
+      "requires_python": ">=3.6",
+      "sha256": "e4ecc54d821ca97c43e6152403f40e158aff79d809c3447746fa92b136dc1e31",
+      "url": "https://files.pythonhosted.org/packages/bd/de/f7fe2171f2b650ef7dd455c4c7f6dbaf53cc942430a2e0ff6b2450e728b5/configargparse-1.9.0-py3-none-any.whl",
+      "version": "1.9.0",
+      "metadata_source": "https://pypi.org/pypi/ConfigArgParse/1.9.0/json"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "configobj",
+      "requires_python": ">=3.7",
+      "sha256": "1ba10c5b6ee16229c79a05047aeda2b55eb4e80d7c7d8ecf17ec1ca600c79882",
+      "url": "https://files.pythonhosted.org/packages/a6/c4/0679472c60052c27efa612b4cd3ddd2a23e885dcdc73461781d2c802d39e/configobj-5.0.9-py2.py3-none-any.whl",
+      "version": "5.0.9",
+      "metadata_source": "https://pypi.org/pypi/configobj/5.0.9/json"
+    },
+    {
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "name": "cryptography",
+      "requires_python": ">=3.9, !=3.9.0, !=3.9.1",
+      "sha256": "2a8183b489dc1f7f80f135780fadc1108f14b31b8a40411c7a5b17425f65f28b",
+      "url": "https://files.pythonhosted.org/packages/d8/36/83bb81f6e569bc38e1e4a7bc80f29b46bb9601920bc455fc8e888f5d5742/cryptography-50.0.0-cp39-abi3-manylinux_2_34_aarch64.whl",
+      "version": "50.0.0",
+      "metadata_source": "https://pypi.org/pypi/cryptography/50.0.0/json"
+    },
+    {
+      "license": "Apache License, Version 2.0",
+      "name": "distro",
+      "requires_python": ">=3.6",
+      "sha256": "7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2",
+      "url": "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl",
+      "version": "1.9.0",
+      "metadata_source": "https://pypi.org/pypi/distro/1.9.0/json"
+    },
+    {
+      "license": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "name": "exceptiongroup",
+      "requires_python": ">=3.7",
+      "sha256": "a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598",
+      "url": "https://files.pythonhosted.org/packages/8a/0e/97c33bf5009bdbac74fd2beace167cab3f978feb69cc36f1ef79360d6c4e/exceptiongroup-1.3.1-py3-none-any.whl",
+      "version": "1.3.1",
+      "metadata_source": "https://pypi.org/pypi/exceptiongroup/1.3.1/json"
+    },
+    {
+      "license": "MIT",
+      "name": "h11",
+      "requires_python": ">=3.8",
+      "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+      "url": "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl",
+      "version": "0.16.0",
+      "metadata_source": "https://pypi.org/pypi/h11/0.16.0/json"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "httpcore",
+      "requires_python": ">=3.8",
+      "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55",
+      "url": "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl",
+      "version": "1.0.9",
+      "metadata_source": "https://pypi.org/pypi/httpcore/1.0.9/json"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "httpx",
+      "requires_python": ">=3.8",
+      "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad",
+      "url": "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl",
+      "version": "0.28.1",
+      "metadata_source": "https://pypi.org/pypi/httpx/0.28.1/json"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "idna",
+      "requires_python": ">=3.9",
+      "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+      "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+      "version": "3.20",
+      "metadata_source": "https://pypi.org/pypi/idna/3.20/json"
+    },
+    {
+      "license": "Apache-2.0",
+      "name": "josepy",
+      "requires_python": ">=3.9.2",
+      "sha256": "63e9dd116d4078778c25ca88f880cc5d95f1cab0099bebe3a34c2e299f65d10b",
+      "url": "https://files.pythonhosted.org/packages/f8/b2/b5caed897fbb1cc286c62c01feca977e08d99a17230ff3055b9a98eccf1d/josepy-2.2.0-py3-none-any.whl",
+      "version": "2.2.0",
+      "metadata_source": "https://pypi.org/pypi/josepy/2.2.0/json"
+    },
+    {
+      "license": "Apache License 2.0",
+      "name": "parsedatetime",
+      "requires_python": null,
+      "sha256": "cb96edd7016872f58479e35879294258c71437195760746faffedb692aef000b",
+      "url": "https://files.pythonhosted.org/packages/9d/a4/3dd804926a42537bf69fb3ebb9fd72a50ba84f807d95df5ae016606c976c/parsedatetime-2.6-py3-none-any.whl",
+      "version": "2.6",
+      "metadata_source": "https://pypi.org/pypi/parsedatetime/2.6/json"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "pycparser",
+      "requires_python": ">=3.10",
+      "sha256": "51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80",
+      "url": "https://files.pythonhosted.org/packages/90/11/0e6f11117525ff0eec40ebac3d313376f102df93ca44ad9e893ee85e4f89/pycparser-3.11-py3-none-any.whl",
+      "version": "3.11",
+      "metadata_source": "https://pypi.org/pypi/pycparser/3.11/json"
+    },
+    {
+      "license": "MIT",
+      "name": "pydantic",
+      "requires_python": ">=3.10",
+      "sha256": "3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8",
+      "url": "https://files.pythonhosted.org/packages/72/b8/b864503789ef5c58597d2a7b4adbee62c26440ab1e682581fc6838df8947/pydantic-2.14.3-py3-none-any.whl",
+      "version": "2.14.3",
+      "metadata_source": "https://pypi.org/pypi/pydantic/2.14.3/json"
+    },
+    {
+      "license": "MIT",
+      "name": "pydantic_core",
+      "requires_python": ">=3.10",
+      "sha256": "c4c5a1770ecfe8bdb6c6f09f8d81ea4de04f7efb012fac1efa4ad315dccc1fd1",
+      "url": "https://files.pythonhosted.org/packages/f2/d6/1a14b5da27def1db17274c215d4ab62c380b600689c4e54c4dc02c1b0cba/pydantic_core-2.50.4-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "version": "2.50.4",
+      "metadata_source": "https://pypi.org/pypi/pydantic_core/2.50.4/json"
+    },
+    {
+      "license": "Apache License, Version 2.0",
+      "name": "pyOpenSSL",
+      "requires_python": ">=3.9",
+      "sha256": "f0eb0cb2d581d3ad2b9c489468485e7f2ab6727d08401bcf9d824c3caddf3c1c",
+      "url": "https://files.pythonhosted.org/packages/51/ad/2cf6d3fa2fae5c79e1ed9960c0d42badd0f94d81dd12b50604cdc839e648/pyopenssl-26.4.0-py3-none-any.whl",
+      "version": "26.4.0",
+      "metadata_source": "https://pypi.org/pypi/pyOpenSSL/26.4.0/json"
+    },
+    {
+      "license": "MIT",
+      "name": "pyRFC3339",
+      "requires_python": ">=3.9",
+      "sha256": "560f3f972e339f579513fe1396974352fd575ef27caff160a38b312252fcddf3",
+      "url": "https://files.pythonhosted.org/packages/34/90/0200184d2124484f918054751ef997ed6409cb05b7e8dcbf5a22da4c4748/pyrfc3339-2.1.0-py3-none-any.whl",
+      "version": "2.1.0",
+      "metadata_source": "https://pypi.org/pypi/pyRFC3339/2.1.0/json"
+    },
+    {
+      "license": "Apache-2.0",
+      "name": "requests",
+      "requires_python": ">=3.10",
+      "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+      "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+      "version": "2.34.2",
+      "metadata_source": "https://pypi.org/pypi/requests/2.34.2/json"
+    },
+    {
+      "license": "MIT OR Apache-2.0",
+      "name": "sniffio",
+      "requires_python": ">=3.7",
+      "sha256": "2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2",
+      "url": "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl",
+      "version": "1.3.1",
+      "metadata_source": "https://pypi.org/pypi/sniffio/1.3.1/json"
+    },
+    {
+      "license": "MIT",
+      "name": "typing-inspection",
+      "requires_python": ">=3.10",
+      "sha256": "bc210535442b39e1bf2805e0c7a17dfd6a4ace760c84c7f7d16245d23a6b1c39",
+      "url": "https://files.pythonhosted.org/packages/de/0c/ea2544850a7c135e15033a5c7a8e7211136184b7ae63e2239d557c2b3019/typing_inspection-0.4.5-py3-none-any.whl",
+      "version": "0.4.5",
+      "metadata_source": "https://pypi.org/pypi/typing-inspection/0.4.5/json"
+    },
+    {
+      "license": "PSF-2.0",
+      "name": "typing_extensions",
+      "requires_python": ">=3.9",
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+      "version": "4.16.0",
+      "metadata_source": "https://pypi.org/pypi/typing_extensions/4.16.0/json"
+    },
+    {
+      "license": "MIT",
+      "name": "urllib3",
+      "requires_python": ">=3.10",
+      "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+      "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+      "version": "2.8.0",
+      "metadata_source": "https://pypi.org/pypi/urllib3/2.8.0/json"
+    }
+  ],
+  "selection_reason": "cryptography 48.0.0 rejected after OSV/GHSA review; cryptography 50.0.0 fixed in isolated candidate after OSV query on 2026-11-08 returned no IDs for the 30 locked packages; no shared app/NPM library update"
+}

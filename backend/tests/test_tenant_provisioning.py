@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import provision_photographer as offline
 from app import seed_admin
-from app.auth import AdminUser, Base, GlobalPixSettings, Tenant, TenantAdmin
+from app.auth import AdminUser, Base, GlobalPixSettings, Tenant, TenantAdmin, TenantCreditWallet
 from app.tenancy import TenantContextError
 from tests.test_tenant_client_isolation import client_db as _client_db
 
@@ -49,11 +49,19 @@ def test_criacao_idempotente_preserva_credenciais_e_configuracao(client_db):
                                     status="active", copy_paste="synthetic-pix-of-a"))
     client_db.commit()
     destination = uuid4()
+    provisioned_totp = pyotp.random_base32()
     created = offline.provision_photographer(client_db, destination, "second@example.test",
                                              create_tenant=True, apply=True, password=PASSWORD,
-                                             totp_secret=pyotp.random_base32())
+                                             totp_secret=provisioned_totp)
     client_db.commit()
     assert created.create_tenant and created.create_admin
+    persisted_totp = client_db.execute(
+        select(AdminUser.__table__.c.totp_secret, AdminUser.__table__.c.totp_secret_envelope)
+        .where(AdminUser.__table__.c.email == "second@example.test")
+    ).one()
+    assert persisted_totp.totp_secret is None
+    assert persisted_totp.totp_secret_envelope.startswith("totp:v1:")
+    assert provisioned_totp not in persisted_totp.totp_secret_envelope
     second = offline.existing_admin_by_email(client_db, "second@example.test")
     fingerprint = (second.id, second.password_hash, second.totp_secret)
     repeated = offline.provision_photographer(client_db, destination, "second@example.test",
@@ -63,9 +71,12 @@ def test_criacao_idempotente_preserva_credenciais_e_configuracao(client_db):
     assert not repeated.create_tenant and not repeated.create_admin and not repeated.create_membership
     assert (second.id, second.password_hash, second.totp_secret) == fingerprint
     assert count(client_db, Tenant) == count(client_db, AdminUser) == count(client_db, TenantAdmin) == 2
+    assert client_db.scalar(select(TenantCreditWallet.mode).where(
+        TenantCreditWallet.tenant_id == destination
+    )) == "finite"
     assert admin.password_hash == "unchanged-synthetic-hash" and admin.totp_secret == "unchanged-synthetic-totp"
     for name, table in Base.metadata.tables.items():
-        if "tenant_id" in table.c and name != "tenant_admin":
+        if "tenant_id" in table.c and name not in {"tenant_admin", "tenant_credit_wallet"}:
             assert client_db.scalar(select(func.count()).select_from(table).where(table.c.tenant_id == destination)) == 0, name
     assert client_db.scalar(select(GlobalPixSettings.copy_paste).where(GlobalPixSettings.tenant_id == owner.id)) == "synthetic-pix-of-a"
 
@@ -159,6 +170,13 @@ def test_cli_dry_run_sanitizado_e_confirmacao_obrigatoria(client_db, monkeypatch
     output = capsys.readouterr()
     assert json.loads(output.out)["applied"] is True
     assert EMAIL not in output.out and PASSWORD not in output.out and totp not in output.out
+    persisted_totp = client_db.execute(
+        select(AdminUser.__table__.c.totp_secret, AdminUser.__table__.c.totp_secret_envelope)
+        .where(AdminUser.__table__.c.email == EMAIL)
+    ).one()
+    assert persisted_totp.totp_secret is None
+    assert persisted_totp.totp_secret_envelope.startswith("totp:v1:")
+    assert totp not in persisted_totp.totp_secret_envelope
     assert count(client_db, Tenant) == count(client_db, AdminUser) == count(client_db, TenantAdmin) == 1
 
 

@@ -277,11 +277,13 @@ def test_job_idempotency_fallback_and_byte_preservation(prepared):
         assert path.is_file()
 
 
-@pytest.mark.parametrize("mutation", ["disable", "exposure", "source", "protection", "delete", "gallery"])
+@pytest.mark.parametrize("mutation", [
+    "disable", "exposure", "source", "protection", "delete", "gallery", "archiving", "archived",
+])
 def test_inflight_result_cannot_override_changed_state(prepared, mutation):
     from sqlalchemy import select
 
-    from app.auth import BrandingSettings, MediaDerivative, MediaJob, now
+    from app.auth import BrandingSettings, MediaArchiveCycle, MediaDerivative, MediaJob, now
     from app.folder_processing import configure_folder
     from app.preview_adjustment.service import adjusted_path, process_one
 
@@ -305,6 +307,12 @@ def test_inflight_result_cannot_override_changed_state(prepared, mutation):
                 elif mutation == "gallery":
                     photo = db.get(PhotoAsset, photo_id)
                     db.get(ParentGallery, photo.parent_gallery_id).lifecycle_status = "deleting"
+                elif mutation in {"archiving", "archived"}:
+                    photo = db.get(PhotoAsset, photo_id)
+                    db.add(MediaArchiveCycle(
+                        tenant_id=photo.tenant_id, parent_gallery_id=photo.parent_gallery_id,
+                        folder_id=photo.folder_id, state=mutation,
+                    ))
                 else:
                     db.execute(delete(MediaDerivative))
                     db.execute(delete(MediaJob))
@@ -315,6 +323,12 @@ def test_inflight_result_cannot_override_changed_state(prepared, mutation):
     assert process_one(factory, ChangedEngine())
     with factory() as db:
         assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is None
+        if mutation in {"archiving", "archived"}:
+            assert db.scalar(select(MediaArchiveCycle.state)) == mutation
+            adjustment = db.get(PreviewAdjustment, photo_id)
+            assert adjustment.status == "cancelled"
+            assert adjustment.claim_token is None
+            assert adjustment.relative_path is None
 
 
 def test_failure_retry_and_expired_claim(prepared):

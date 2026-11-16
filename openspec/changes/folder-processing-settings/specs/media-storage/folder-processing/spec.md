@@ -26,7 +26,7 @@ Pastas de conteúdo SHALL iniciar herdando a configuração da galeria. O ajuste
 
 ### Requirement: Ajuste sem acumulação e publicação consistente
 
-Cada processamento SHALL partir da prévia convencional limpa preservada e aplicar proteção depois do tratamento. O resultado SHALL conter uma assinatura da configuração efetiva e somente ser publicado/entregue se fonte, proteção e configuração ainda forem vigentes. Alterações SHALL invalidar resultados afetados e impedir publicação obsoleta, sem modificar originais, histórico comercial ou índice facial. Novas fotos SHALL usar o modo efetivo; fotos existentes SHALL exigir ação explícita de processamento.
+Cada processamento SHALL partir da prévia convencional limpa e aplicar proteção após o tratamento. Resultado SHALL registrar assinatura da configuração e só ser publicado se fonte/proteção/configuração vigem. Alterações invalidam resultados obsoletos sem mudar originais, histórico comercial ou índice facial; fotos novas usam modo efetivo e existentes exigem ação explícita.
 
 #### Scenario: Reprocessamento repetido
 - **WHEN** o fotógrafo processa três vezes a mesma pasta com exposição +0,5
@@ -42,7 +42,7 @@ Cada processamento SHALL partir da prévia convencional limpa preservada e aplic
 
 ### Requirement: Controle facial local subordinado aos gates
 
-O processamento facial da pasta SHALL permitir herdar, permitir novos trabalhos ou pausar novos trabalhos. Nenhuma escolha SHALL contornar gates de ambiente, rollout, política ou consentimento existentes. Pausar SHALL impedir novas admissões, agendamentos e retentativas daquela pasta, sem apagar índices nem alterar busca autorizada sobre resultados existentes. Trabalhos já admitidos SHALL poder concluir sob o lifecycle e a retenção existentes. A autorização facial da cliente SHALL continuar limitada às pastas comuns e atribuídas.
+O controle facial da pasta SHALL oferecer herança, admissão de novos trabalhos ou pausa, sempre subordinado aos gates de ambiente, rollout, política e consentimento. Pausar bloqueia novas admissões, agendamentos e retentativas, sem apagar índice nem invalidar busca autorizada; trabalhos admitidos podem concluir sob lifecycle e retenção vigentes. A consulta da cliente continua limitada às pastas comuns e atribuídas.
 
 #### Scenario: Pasta pausada
 - **WHEN** o fotógrafo pausa uma pasta e envia novas fotos
@@ -58,9 +58,7 @@ O processamento facial da pasta SHALL permitir herdar, permitir novos trabalhos 
 
 ### Requirement: Operação delimitada e auditada
 
-O administrador SHALL consultar configuração efetiva e progresso separado por pasta, agendar ajuste paginado e solicitar retentativa facial local. Cada ação SHALL identificar e afetar somente a pasta solicitada. As operações SHALL exigir autenticação administrativa e pasta de conteúdo ativa válida, com auditoria e sem alterar público, vínculos, seleção, compra ou entrega. Ações gerais SHALL respeitar configurações locais desligadas ou personalizadas.
-
-A configuração por pasta SHALL ser classificada como dado operacional da pasta na política de limpeza explícita de homologação. O inventário SHALL contá-la sem revelar seus valores; a política SHALL continuar preservando configurações globais e recusando tabelas não classificadas. A simples classificação SHALL NOT iniciar limpeza ou reprocessamento.
+Consulta de configuração/progresso, ajuste paginado e retentativa facial SHALL exigir autenticação e pasta ativa, ser auditados e afetar só a pasta pedida, sem alterar público, vínculos, seleção, compra ou entrega. Ações gerais respeitam ajustes locais. Na limpeza explícita de homologação, configuração local é dado operacional: inventário conta sem valores, preserva configuração global e recusa tabelas não classificadas; classificá-la não inicia limpeza nem reprocessamento.
 
 #### Scenario: Processar uma entre duas pastas
 - **WHEN** o administrador solicita processamento da pasta A
@@ -76,7 +74,7 @@ A configuração por pasta SHALL ser classificada como dado operacional da pasta
 
 ### Requirement: Painel de pasta acessível e consistente
 
-A etapa Imagens e o Acervo SHALL usar o mesmo painel recolhível por pasta, com identificação de herança/personalização/desligamento, valores efetivos, progresso real e ações locais. A UI SHALL oferecer sucesso/erro explícitos, labels/foco/teclado acessíveis e layout móvel sem overflow. Consultas SHALL iniciar somente na abertura e polling SHALL parar ao fechar/desmontar ou quando não houver trabalhos pendentes. Pasta compartilhada SHALL informar que configurações se aplicam a todas as clientes atribuídas. O padrão/resumo geral SHALL permanecer identificado como da galeria.
+Imagens e Acervo SHALL compartilhar um painel recolhível por pasta que mostre herança/personalização/desligamento, valores efetivos, progresso real e ações locais. Estados de sucesso/erro e controles SHALL ser acessíveis e sem overflow móvel. Consultas iniciam ao abrir; polling para ao fechar, desmontar ou ficar sem trabalhos. O painel informa o escopo compartilhado, e o padrão/resumo é identificado como configuração da galeria.
 
 #### Scenario: Abrir pasta restrita compartilhada
 - **WHEN** o fotógrafo abre o processamento de uma pasta no Acervo

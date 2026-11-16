@@ -16,8 +16,8 @@
 .mk-metric--success::before { background:var(--mk-success); }
 .mk-metric--warning::before { background:var(--mk-warning); }
 .mk-metric--danger::before { background:var(--mk-danger); }
-.mk-button--primary,.admin-frame .mk-button--primary,.admin-frame .mk-button--primary:disabled,.admin-frame button.primary,.library-card-actions .mk-button--primary { background:var(--mk-action); color:var(--mk-action-ink); border-color:var(--mk-action); }
-.mk-button--primary:hover,.admin-frame .mk-button--primary:hover,.admin-frame button.primary:hover { background:var(--mk-action-hover); }
+.mk-button--primary,.admin-frame .mk-button--primary,.admin-frame button.primary,.library-card-actions .mk-button--primary { background:var(--mk-action); color:var(--mk-action-ink); border-color:var(--mk-action); }
+.mk-button--primary:hover:not(:disabled),.admin-frame .mk-button--primary:hover:not(:disabled),.admin-frame button.primary:hover:not(:disabled) { background:var(--mk-action-hover); }
 .mk-button--secondary,.admin-frame .mk-button--secondary,.admin-frame button.secondary { background:var(--mk-secondary); color:var(--mk-ink); border-color:var(--mk-border); }
 .mk-button--secondary:hover,.admin-frame .mk-button--secondary:hover,.admin-frame button.secondary:hover { background:var(--mk-secondary-hover); }
 .admin-frame .gallery-stepper { border-color:var(--mk-border); background:var(--mk-surface-subtle); }

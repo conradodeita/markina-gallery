@@ -8,7 +8,7 @@ Definir como o fotógrafo recebe uma referência segura para diagnosticar falhas
 
 ### Requirement: Falha inesperada de exclusão inclui referência sanitizada
 
-Quando uma tentativa autenticada de excluir uma cliente falhar por erro inesperado, o sistema SHALL retornar uma mensagem genérica e um identificador de diagnóstico aleatório, estável entre cabeçalho e corpo da mesma resposta. A interface SHALL exibir esse identificador de forma acessível junto ao status HTTP. O identificador SHALL NOT codificar UUID da cliente, telefone, conteúdo da requisição, horário, segredo ou valor comercial. Bloqueios comerciais e erros conhecidos SHALL conservar seus contratos acionáveis atuais.
+Falha inesperada ao excluir cliente SHALL retornar mensagem genérica e identificador diagnóstico aleatório, igual no cabeçalho e corpo. A interface SHALL exibir o identificador de forma acessível com o status HTTP. Ele SHALL NOT codificar UUID, telefone, requisição, horário, segredo ou valor comercial. Bloqueios comerciais e erros conhecidos SHALL manter seus contratos acionáveis.
 
 #### Scenario: Falha inesperada anterior ao commit
 
@@ -32,7 +32,7 @@ Quando uma tentativa autenticada de excluir uma cliente falhar por erro inespera
 
 ### Requirement: Correlação técnica não registra dados pessoais
 
-O backend SHALL correlacionar a resposta de falha com um registro estruturado restrito a identificador aleatório, operação, status/categoria sanitizada e estado transacional conhecido. Logs e resposta SHALL NOT conter nome, telefone, UUID da cliente, corpo da requisição, chave idempotente, código OTP, credenciais, SQL, parâmetros ou texto bruto de exceção. Somente sessões administrativas autorizadas SHALL receber respostas detalhadas de inventário; a referência de diagnóstico, isoladamente, SHALL NOT conceder acesso a dados ou a outra rota.
+O backend SHALL correlacionar a falha com registro restrito a identificador aleatório, operação, status/categoria sanitizada e estado transacional. Logs e resposta SHALL NOT conter nome, telefone, UUID, corpo da requisição, chave idempotente, OTP, credenciais, SQL, parâmetros ou exceção bruta. Somente sessão administrativa autorizada SHALL receber inventário detalhado; a referência isolada SHALL NOT conceder acesso a dados ou rotas.
 
 #### Scenario: Busca por referência no log
 

@@ -8,7 +8,7 @@ Definir o ciclo de vida seguro, observável e reversível do reconhecimento faci
 
 ### Requirement: Ativação de produção por ambiente e rollout autorizado
 
-O sistema SHALL manter `FACIAL_PROCESSING_ENABLED` como kill switch técnico independente por ambiente. Homologação MAY permanecer habilitada para validação funcional após o encerramento e a limpeza do benchmark, mas produção MUST iniciar desligada e somente SHALL ser habilitada após evidência registrada de segurança, privacidade, base legal, calibração, capacidade, recuperação e aprovação humana. O rollout SHALL limitar inicialmente contas ou galerias explicitamente permitidas e SHALL permitir expansão e reversão sem migration destrutiva.
+`FACIAL_PROCESSING_ENABLED` SHALL ser kill switch independente por ambiente. Produção nova/não autorizada fica desligada até evidências de segurança, privacidade, base legal, calibração, capacidade e recuperação e aprovação humana; deploy autorizado preserva estado ativo. Rollout começa em contas/galerias permitidas e admite expansão/reversão sem migration destrutiva. Homologação MAY seguir habilitada após limpeza do benchmark.
 
 #### Scenario: Deploy ainda não aprovado para produção
 
@@ -41,12 +41,12 @@ Quando a capacidade estiver habilitada para uma galeria, o sistema SHALL indexar
 
 ### Requirement: Busca facial autenticada e individual da cliente
 
-A cliente SHALL poder enviar uma referência somente após autenticação, vínculo vigente com a Galeria pública, aviso e consentimento versionados. No celular, a interface SHALL oferecer escolhas explícitas para usar uma foto JPEG existente ou abrir a câmera e SHALL NOT forçar captura ao escolher o arquivo existente. O diálogo SHALL usar controles coesos e responsivos, sem expor o campo nativo de arquivo como ação principal. Em desktop, o diálogo SHALL preservar largura legível, hierarquia visual e ações acessíveis sem ultrapassar o viewport. O sistema SHALL aceitar JPEGs de até 30 MiB no navegador, proxy e API, SHALL informar o limite antes do envio e SHALL apresentar mensagem específica quando ele for excedido, preservando as validações de tipo, pixels e descompressão. O detector SHALL limitar a resolução de sua cópia de trabalho sem modificar o arquivo original nem reduzir o limite funcional de 30 MiB. A consulta SHALL continuar em job durável se a cliente fechar a página, SHALL ser recuperável no retorno e SHALL mostrar progresso real. Uma interrupção abrupta SHALL ser retomada por lease e SHALL terminar com resultado sanitizado após o máximo de tentativas, sem manter a interface indefinidamente em `validating_reference`. Ao concluir, `Melhores resultados encontrados` e `Outros resultados encontrados` SHALL aparecer antes do acervo integral, sem expor score, vetor ou identidade inferida.
+Upload SHALL exigir autenticação, vínculo e consentimento versionado. Interface SHALL oferecer controles responsivos e opções distintas de JPEG/câmera no celular. Browser, proxy e API SHALL aceitar JPEGs até 30 MiB e validar tipo, pixels e descompressão; detecção usa cópia proporcional limitada. Jobs duráveis mantêm progresso e retomam após fechamento/lease, com estado sanitizado terminal. Resultados antecedem o acervo sem score, vetor ou identidade inferida.
 
 #### Scenario: Cliente escolhe a origem da referência no celular
 
 - **WHEN** a cliente abre o diálogo de busca facial em um smartphone
-- **THEN** ela pode escolher uma foto JPEG da galeria do aparelho ou usar a câmera por ações distintas, com alvo de toque legível, sem pré-visualizar nem persistir a referência no navegador
+- **THEN** ela pode escolher JPEG existente ou câmera em ações distintas, com alvo legível; campo nativo não é a ação principal e a referência não é pré-visualizada nem persistida no navegador
 
 #### Scenario: Cliente usa a busca facial no desktop
 
@@ -56,7 +56,7 @@ A cliente SHALL poder enviar uma referência somente após autenticação, vínc
 #### Scenario: Cliente seleciona uma referência grande
 
 - **WHEN** a cliente escolhe uma JPEG de até 30 MiB
-- **THEN** navegador, proxy e API aceitam o envio sob o mesmo contrato funcional
+- **THEN** browser, proxy e API aceitam até 30 MiB, informam esse limite antes do envio e preservam validações de tipo, pixels e descompressão
 - **WHEN** o arquivo excede 30 MiB
 - **THEN** a interface impede a transferência e informa especificamente o limite de 30 MB
 
@@ -83,25 +83,30 @@ A cliente SHALL poder enviar uma referência somente após autenticação, vínc
 #### Scenario: Referência tecnicamente inadequada
 
 - **WHEN** a referência contém zero rostos utilizáveis, múltiplos rostos ou qualidade insuficiente
-- **THEN** a cliente recebe orientação específica e sanitizada para enviar outra foto, sem criação de seleção, galeria privada ou pedido
+- **THEN** a cliente recebe orientação sanitizada para reenviar; não se cria seleção, galeria privada ou pedido
+
+#### Scenario: Resultados não revelam dados biométricos
+
+- **WHEN** uma busca autorizada termina com candidatas
+- **THEN** a UI mostra grupos `Melhores resultados encontrados` e `Outros resultados encontrados` antes do acervo completo, sem score, vetor, identidade inferida ou dado facial técnico
 
 ### Requirement: Representação e consentimento no fluxo infantil da cliente
 
-O gate de referência infantil SHALL existir somente no fluxo da cliente e MUST permanecer separado da indexação administrativa. Antes de aceitar referência de menor em produção, o sistema SHALL exigir mecanismo não biométrico de comprovação de representação legal, texto específico versionado, registro de consentimento e procedimento de revogação; uma simples variável de ambiente SHALL NOT substituir esses controles.
+O gate de referência infantil SHALL existir somente no fluxo da cliente, separado da indexação administrativa. O servidor SHALL exigir checkbox único, desmarcado por padrão, com autodeclaração de responsável e consentimento específico versionado, registrar o aceite e permitir revogação. Não SHALL exigir cadastro ou documento de representação; variável de ambiente não substitui consentimento.
 
-#### Scenario: Responsável não comprovado
+#### Scenario: Responsável sem cadastro prévio consente
 
-- **WHEN** uma cliente declara que a referência pertence a menor sem representação legal vigente comprovada
-- **THEN** o upload facial é recusado de forma genérica e a seleção manual permanece disponível
+- **WHEN** uma cliente autenticada e vinculada envia referência infantil válida sem registro prévio de representação e marca o checkbox vigente
+- **THEN** a consulta é admitida sem documento ou aprovação administrativa, usando os controles técnicos e de retenção da busca adulta
 
-#### Scenario: Responsável comprovado e consentimento vigente
+#### Scenario: Consentimento infantil ausente
 
-- **WHEN** a representação legal, o vínculo da galeria e o consentimento específico são válidos
-- **THEN** a consulta infantil segue o mesmo pipeline técnico isolado, retenção mínima e autorização repetida aplicados à consulta adulta
+- **WHEN** uma cliente envia referência infantil sem aceite explícito e vigente
+- **THEN** o servidor recusa o upload antes do processamento e mantém a seleção manual disponível
 
 ### Requirement: Minimização, retenção, revogação e direitos
 
-O sistema SHALL cifrar embeddings e referências, separar chaves por ambiente, excluir a referência em estado terminal ou no máximo em 15 minutos, expirar candidatas no máximo em 24 horas e eliminar índices quando a foto, a galeria, o escopo permitido ou a finalidade deixarem de existir. Auditoria, logs, métricas e notificações SHALL NOT conter imagem, embedding, score, landmarks, caixa facial, nome inferido ou telefone em claro. O procedimento de direitos SHALL localizar, comprovar e eliminar os derivados aplicáveis sem apagar histórico comercial que possua justificativa independente.
+Referências e embeddings SHALL ser cifrados com chaves separadas por ambiente; referências expiram no terminal/até 15 minutos e resultados em até 24 horas. Índices são removidos quando foto, galeria, escopo ou finalidade acabam. Logs, métricas e avisos excluem mídia e dados biométricos/identificadores; direitos eliminam derivados sem apagar histórico comercial justificável.
 
 #### Scenario: Revogação de uma galeria
 
@@ -112,6 +117,16 @@ O sistema SHALL cifrar embeddings e referências, separar chaves por ambiente, e
 
 - **WHEN** a consulta conclui, falha, é cancelada ou excede o prazo máximo
 - **THEN** o arquivo e seu localizador cifrado são eliminados de forma idempotente sem remover seleções ou pedidos legítimos
+
+#### Scenario: Prazo de resultados e registros operacionais
+
+- **WHEN** uma referência termina, um resultado expira ou o sistema grava log, métrica ou notificação
+- **THEN** referências desaparecem até 15 minutos, candidatas em até 24 horas e nenhum registro inclui imagem, embedding, score, landmarks, caixa facial, nome inferido ou telefone em claro
+
+#### Scenario: Exercício de direitos sobre dados faciais
+
+- **WHEN** uma pessoa exerce direito aplicável sobre derivados faciais
+- **THEN** o procedimento localiza, comprova e exclui os derivados do escopo sem remover histórico comercial com fundamento independente
 
 ### Requirement: Capacidade, backpressure e isolamento
 

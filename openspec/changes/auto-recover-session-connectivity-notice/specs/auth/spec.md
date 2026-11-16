@@ -6,7 +6,7 @@ A recuperação automática abaixo substitui a dependência de tentativa explíc
 
 ### Requirement: Recuperação automática de conectividade em áreas autenticadas
 
-O frontend SHALL acompanhar falhas transitórias de API nas áreas autenticadas de fotógrafo e cliente e iniciar automaticamente a reconexão/revalidação da sessão, sem exigir que o usuário clique em “Reconectar” ou “Verificar conexão novamente”. O aviso global de indisponibilidade SHALL aparecer somente enquanto a própria verificação de sessão não puder confirmar conectividade; falha isolada de uma operação SHALL permanecer no fluxo dessa operação. As verificações automáticas SHALL ser limitadas, sem sobreposição e pausadas enquanto a página estiver oculta. Quando a sessão voltar a ser confirmada para o mesmo contexto, o aviso temporário SHALL ser removido automaticamente. A checagem de conectividade MUST NOT repetir requisições comerciais, OTP, uploads ou outras operações que possam produzir efeitos duplicados.
+Nas áreas autenticadas de fotógrafo e cliente, o frontend SHALL confirmar automaticamente a sessão após falha transitória, com verificações limitadas, sem sobreposição e pausadas quando a página estiver oculta. O aviso de conexão SHALL refletir apenas falha da verificação de sessão; a checagem MUST NOT repetir operações com efeitos.
 
 #### Scenario: Sessão recuperada sem intervenção
 
@@ -41,4 +41,4 @@ O frontend SHALL acompanhar falhas transitórias de API nas áreas autenticadas 
 #### Scenario: Falha ambígua em operação com efeito
 
 - **WHEN** uma requisição de envio, compra ou upload falha e seu resultado pode ser desconhecido
-- **THEN** a verificação automática confirma apenas conectividade/sessão, não repete a operação e mantém a semântica existente de reconciliação ou consulta do resultado
+- **THEN** a verificação automática confirma apenas conectividade/sessão, não repete a operação e mantém a semântica existente de reconciliação ou consulta do resultado; se houver aviso, ele identifica o resultado incerto e não o confunde com indisponibilidade da sessão

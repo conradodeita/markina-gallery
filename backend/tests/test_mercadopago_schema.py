@@ -38,9 +38,9 @@ def test_upgrade_preserva_registros_e_acrescenta_contratos():
             "payment_status TEXT, total_cents INTEGER)")
         connection.exec_driver_sql(
             "CREATE TABLE admin_security_challenge (id CHAR(32) PRIMARY KEY, tenant_id CHAR(32), "
-            "purpose TEXT, CONSTRAINT ck_admin_security_purpose CHECK "
+            "purpose TEXT,\nCONSTRAINT ck_admin_security_purpose CHECK "
             "(purpose IN ('change_pix_otp', 'change_email_otp', 'change_password_otp', "
-            "'password_recovery_otp')), CONSTRAINT ck_admin_challenge_pix_context CHECK "
+            "'password_recovery_otp')),\nCONSTRAINT ck_admin_challenge_pix_context CHECK "
             "(purpose != 'change_pix_otp' OR tenant_id IS NOT NULL))")
         connection.exec_driver_sql(
             "INSERT INTO provider_payment VALUES ('legacy', 'confirmed', 2100)")

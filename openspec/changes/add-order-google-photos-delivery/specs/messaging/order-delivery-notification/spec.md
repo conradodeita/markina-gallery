@@ -18,7 +18,7 @@ A central Notificações SHALL incluir o evento "Fotos disponíveis", destinado 
 
 ### Requirement: Enviar disponibiliza e agenda atomicamente
 
-O sistema SHALL persistir o álbum e registrar o evento durável de entrega na mesma transação ao clicar em Enviar, somente para pedido com pagamento confirmado. Digitação, carregamento da página, remoção do link e migração SHALL NOT emitir o aviso. Uma nova URL enviada SHALL gerar nova revisão; repetição da mesma operação ou envio do link já vigente SHALL NOT duplicar eventos. Remover e depois disponibilizar novamente SHALL gerar uma nova revisão de entrega. Avisar novamente sobre o link vigente SHALL exigir a ação separada Reenviar aviso.
+Ao clicar em `Enviar`, o sistema SHALL persistir o álbum e evento durável na mesma transação, somente para pedido confirmado. Digitação, carregamento, remoção e migration SHALL NOT notificar. Nova URL SHALL gerar revisão; replay ou reenvio da URL vigente SHALL NOT duplicar. Remoção seguida de nova disponibilização SHALL criar revisão nova. Avisar novamente SHALL exigir ação separada `Reenviar aviso`.
 
 #### Scenario: Primeiro envio
 - **WHEN** o fotógrafo envia pela primeira vez um link válido para pedido com pagamento confirmado
@@ -34,7 +34,7 @@ O sistema SHALL persistir o álbum e registrar o evento durável de entrega na m
 
 ### Requirement: Destino privado e aviso atual
 
-O aviso SHALL orientar a cliente a acessar Compras; o push SHALL abrir o pedido nessa superfície autenticada. O link externo do Google Photos SHALL permanecer no pedido, sem inclusão automática no texto das mensagens ou em tela bloqueada. Antes de enviar/retentar, o sistema SHALL revalidar propriedade do pedido, pagamento confirmado, existência do link e revisão vigente, cancelando avisos obsoletos. Remover/substituir o link ou corrigir o pagamento SHALL invalidar os avisos pendentes anteriores de forma permanente; nova confirmação financeira SHALL NOT reativá-los. Expiração da seleção ou remoção do acervo SHALL NOT invalidar a entrega comercial preservada de pedido confirmado.
+O aviso SHALL direcionar a cliente a Compras, e push SHALL abrir o pedido autenticado; o URL externo SHALL permanecer no pedido, nunca em mensagem ou tela bloqueada. Antes de envio/retentativa, o sistema SHALL revalidar proprietário, pagamento, link e revisão. Remoção/substituição do link ou correção financeira SHALL cancelar permanentemente avisos antigos; nova confirmação SHALL NOT reativá-los. Expiração/remoção do acervo SHALL NOT invalidar entrega de pedido confirmado.
 
 #### Scenario: Acesso pela notificação
 - **WHEN** a cliente toca no push de fotos disponíveis
@@ -54,7 +54,7 @@ O aviso SHALL orientar a cliente a acessar Compras; o push SHALL abrir o pedido 
 
 ### Requirement: Reenvio deliberado do aviso de entrega
 
-O sistema SHALL oferecer ao fotógrafo Reenviar aviso para pedido confirmado com link vigente, com confirmação explícita e deduplicação da mesma operação. A ação SHALL preservar o link, os itens e o pagamento, usando a configuração atual do evento Fotos disponíveis. Cada ação confirmada distinta SHALL criar um novo aviso; duplo clique, repetição de requisição e retentativa de rede da mesma ação SHALL NOT duplicá-lo. A ação SHALL NOT servir para enviar silenciosamente um rascunho de URL diferente do link salvo.
+O fotógrafo SHALL confirmar `Reenviar aviso` para pedido pago com link vigente. A ação SHALL preservar link/itens/pagamento e usar a configuração atual. Cada ação confirmada distinta SHALL criar aviso novo; clique duplo, replay e retentativa da mesma ação SHALL NOT duplicar. O sistema MUST NOT enviar rascunho de URL diferente do link salvo.
 
 #### Scenario: Fotos adicionadas ao mesmo álbum
 - **WHEN** o fotógrafo acrescenta fotos no Google Photos e confirma Reenviar aviso no pedido

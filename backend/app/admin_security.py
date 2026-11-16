@@ -20,6 +20,7 @@ from app.acervo_context import require_active_owner
 from app.auth import (
     AdminActionToken,
     AdminSecurityChallenge,
+    AdminTotpEnrollment,
     EmailDelivery,
     expired,
     now,
@@ -140,6 +141,9 @@ def consume_admin_action_token(
 
 def invalidate_admin_security_material(db: Session, admin_id: UUID) -> None:
     instant = now()
+    for enrollment in db.scalars(select(AdminTotpEnrollment).where(AdminTotpEnrollment.admin_user_id == admin_id)):
+        enrollment.secret_envelope = None
+        enrollment.used_at = instant
     for challenge in db.scalars(
         select(AdminSecurityChallenge).where(
             AdminSecurityChallenge.admin_id == admin_id,
@@ -163,8 +167,14 @@ def cleanup_admin_security_material(db: Session, *, tenant_id: UUID | None = Non
 
     if tenant_id is not None:
         require_active_owner(db, tenant_id)
-    changed = 0
+    from app.photographer_access_recovery import cleanup_expired_recoveries
+    changed = cleanup_expired_recoveries(db, tenant_id=tenant_id)
     instant = now()
+    if tenant_id is not None:
+        for enrollment in db.scalars(select(AdminTotpEnrollment).where(AdminTotpEnrollment.tenant_id == tenant_id)):
+            if (enrollment.used_at or expired(enrollment.expires_at)) and enrollment.secret_envelope:
+                enrollment.secret_envelope = None
+                changed += 1
     challenges = select(AdminSecurityChallenge).where(
         AdminSecurityChallenge.tenant_id == tenant_id if tenant_id is not None
         else AdminSecurityChallenge.tenant_id.is_(None))

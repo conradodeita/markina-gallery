@@ -5,7 +5,7 @@ import json
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.acervo_context import client_tenant_id, owned_record, require_active_owner
@@ -30,6 +30,12 @@ from app.checkout import (
     _synchronize_order,
     lock_client_commerce,
     selected_photos,
+)
+from app.folder_access import (
+    folder_effective_expiry,
+    folder_media_state,
+    folder_selected_media_preview_allowed,
+    lock_selected_content_folders,
 )
 from app.global_pix import checkout_pix
 from app.notification_events import record_payment_event
@@ -80,6 +86,23 @@ def communications_for_orders(db, orders):
 def _materials(db, client):
     tenant_id = client_tenant_id(db, client.id)
     result = []
+
+    def existing_order(gallery):
+        query = select(SaleOrder).where(
+            SaleOrder.tenant_id == tenant_id,
+            SaleOrder.client_id == client.id,
+            SaleOrder.payment_status == "pending",
+            SaleOrder.frozen_at.is_(None),
+            SaleOrder.assets_removed_at.is_(None),
+            SaleOrder.checkout_key.is_not(None),
+        )
+        query = query.where(
+            SaleOrder.parent_gallery_id == gallery.parent_gallery_id
+            if isinstance(gallery, GalleryClientState)
+            else SaleOrder.derived_gallery_id == gallery.id
+        )
+        return db.scalar(query.order_by(SaleOrder.created_at.desc()).limit(1))
+
     selected_ids = set(
         db.scalars(
             select(PhotoSelection.derived_gallery_id).where(PhotoSelection.tenant_id == tenant_id).where(PhotoSelection.client_id == client.id)
@@ -97,9 +120,13 @@ def _materials(db, client):
         error = None
         material = None
         try:
-            material = _checkout_material(db, gallery=gallery, client=client, resolve_pix=False)
-            if gallery.selection_expires_at and expired(gallery.selection_expires_at):
-                error = "O prazo desta galeria expirou. Remova a seleção ou solicite reabertura."
+            material = _checkout_material(
+                db,
+                gallery=gallery,
+                client=client,
+                resolve_pix=False,
+                existing_order=existing_order(gallery),
+            )
         except CheckoutError as exc:
             error = str(exc)
         result.append((gallery, parent, material, error))
@@ -121,9 +148,13 @@ def _materials(db, client):
         try:
             if state.status != "active":
                 raise CheckoutError("O acesso a esta galeria está indisponível.")
-            material = _checkout_material(db, gallery=state, client=client, resolve_pix=False)
-            if state.selection_expires_at and expired(state.selection_expires_at):
-                error = "O prazo desta galeria expirou. Remova a seleção ou solicite reabertura."
+            material = _checkout_material(
+                db,
+                gallery=state,
+                client=client,
+                resolve_pix=False,
+                existing_order=existing_order(state),
+            )
         except CheckoutError as exc:
             error = str(exc)
         result.append((state, parent, material, error))
@@ -148,14 +179,27 @@ def cart_payload(db: Session, client: Client):
     for gallery, parent, material, error in _materials(db, client):
         items = []
         canonical = isinstance(gallery, GalleryClientState)
-        quantity = db.scalar(
-            select(func.count(PhotoSelection.id)).where(PhotoSelection.tenant_id == tenant_id).where(
-                PhotoSelection.client_id == client.id,
-                (PhotoSelection.parent_gallery_id == gallery.parent_gallery_id)
-                if canonical else (PhotoSelection.derived_gallery_id == gallery.id),
+        selection_rows = list(
+            db.scalars(
+                select(PhotoSelection).where(
+                    PhotoSelection.tenant_id == tenant_id,
+                    PhotoSelection.client_id == client.id,
+                    (PhotoSelection.parent_gallery_id == gallery.parent_gallery_id)
+                    if canonical else (PhotoSelection.derived_gallery_id == gallery.id),
+                )
             )
         )
-        photos = material[1] if material else selected_photos(db, gallery=gallery, client=client)[1]
+        quantity = len(selection_rows)
+        selection_created_at_by_photo = {
+            selection.photo_asset_id: selection.created_at for selection in selection_rows
+        }
+        photos = material[1] if material else selected_photos(
+            db,
+            gallery=gallery,
+            client=client,
+            include_expired=True,
+            include_unavailable=True,
+        )[1]
         folders = (
             material[5]
             if material
@@ -173,6 +217,28 @@ def cart_payload(db: Session, client: Client):
             key=lambda row: (folders[row.folder_id].position, str(row.folder_id), row.filename),
         ):
             folder = folders.get(photo.folder_id)
+            expiry = (
+                folder_effective_expiry(db, folder, client_id=client.id)
+                if folder else None
+            )
+            media_state = folder_media_state(db, folder) if folder else "unavailable"
+            preview_available = bool(
+                photo.available
+                and folder
+                and folder_selected_media_preview_allowed(
+                    media_state=media_state,
+                    expiry=expiry,
+                    selected_at=selection_created_at_by_photo.get(photo.id),
+                    at=now(),
+                )
+            )
+            media_status = (
+                media_state if media_state not in {"available", "archiving"}
+                else "archiving" if media_state == "archiving"
+                else "unavailable" if not photo.available
+                else "expired" if expiry is not None and expired(expiry)
+                else "available"
+            )
             items.append(
                 {
                     "id": str(photo.id),
@@ -181,7 +247,8 @@ def cart_payload(db: Session, client: Client):
                     "preview_url": (
                         f"/public-galleries/{parent.id}/photos/{photo.id}/preview"
                         if canonical else f"/gallery/{gallery.id}/photos/{photo.id}/preview"
-                    ),
+                    ) if preview_available else None,
+                    "media_status": media_status,
                 }
             )
         legacy = db.scalar(
@@ -209,9 +276,7 @@ def cart_payload(db: Session, client: Client):
                     f"/public-galleries/{parent.id}" if canonical else f"/gallery/{gallery.id}"
                 ),
                 "quantity": quantity,
-                "selection_expires_at": gallery.selection_expires_at.isoformat()
-                if gallery.selection_expires_at
-                else None,
+                "selection_expires_at": None,
                 "items": items,
                 "error": error,
                 "total_cents": material[3].quote.total_cents if material and parent.payment_required else None,
@@ -248,9 +313,14 @@ def _fingerprint(materials):
             "total": material[3].quote.total_cents,
             "message": parent.sales_message,
             "payment_required": parent.payment_required,
-            "expires": gallery.selection_expires_at.isoformat()
-            if gallery.selection_expires_at
-            else None,
+            "folder_deadlines": sorted(
+                (
+                    str(folder_id),
+                    folder.access_expires_at.isoformat()
+                    if folder.access_expires_at else None,
+                )
+                for folder_id, folder in material[5].items()
+            ),
         }
         for gallery, parent, material, _ in materials
     ]
@@ -308,6 +378,12 @@ def prepare_group(db: Session, client: Client):
     lock_payment_account(db, tenant_id)
     db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client.id).with_for_update())
     materials = _valid_materials(db, client)
+    try:
+        lock_selected_content_folders(
+            db, tenant_id=tenant_id, client_id=client.id,
+        )
+    except ValueError as exc:
+        raise CheckoutError(str(exc)) from exc
     revision = _fingerprint(materials)
     group = db.scalar(
         select(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id)
@@ -470,6 +546,7 @@ def lock_payment_scope(db, communication_id, expected_group_id=None, *, tenant_i
 
 def report_group(db: Session, client: Client, group_id: UUID, revision: str, key: str):
     tenant_id = client_tenant_id(db, client.id)
+    lock_payment_account(db, tenant_id)
     db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client.id).with_for_update())
     group = db.scalar(
         select(PaymentGroup).where(PaymentGroup.tenant_id == tenant_id)
@@ -485,6 +562,10 @@ def report_group(db: Session, client: Client, group_id: UUID, revision: str, key
         if revision != group.revision:
             raise CheckoutError("A revisão informada não corresponde à compra.")
         return existing
+    try:
+        lock_selected_content_folders(db, tenant_id=tenant_id, client_id=client.id)
+    except ValueError as exc:
+        raise CheckoutError(str(exc)) from exc
     materials = _valid_materials(db, client)
     if group.state != "draft" or revision != group.revision or revision != _fingerprint(materials):
         raise CheckoutError(
@@ -546,6 +627,7 @@ def report_group(db: Session, client: Client, group_id: UUID, revision: str, key
 def finalize_selection(db: Session, client: Client, gallery_id: UUID, revision: str, key: str):
     """Congela somente um grupo externo; não cria comunicação ou PIX."""
     tenant_id = client_tenant_id(db, client.id)
+    lock_payment_account(db, tenant_id)
     db.scalar(select(Client.id).where(Client.tenant_id == tenant_id).where(Client.id == client.id).with_for_update())
     db.scalar(select(ParentGallery).where(ParentGallery.tenant_id == tenant_id).where(or_(
         ParentGallery.id == gallery_id,
@@ -561,6 +643,10 @@ def finalize_selection(db: Session, client: Client, gallery_id: UUID, revision: 
         if (existing.parent_gallery_id or existing.derived_gallery_id) != gallery_id:
             raise CheckoutError("A chave já foi usada para outra seleção.")
         return existing
+    try:
+        lock_selected_content_folders(db, tenant_id=tenant_id, client_id=client.id)
+    except ValueError as exc:
+        raise CheckoutError(str(exc)) from exc
     entry = next((item for item in _materials(db, client)
                   if (item[0].parent_gallery_id if isinstance(item[0], GalleryClientState)
                       else item[0].id) == gallery_id), None)

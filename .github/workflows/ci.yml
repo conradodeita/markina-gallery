@@ -246,21 +246,28 @@ jobs:
             backend/benchmark-requirements.txt
       - name: Instalar dependências
         run: pip install -r backend/requirements.txt -r backend/face-requirements.txt -r backend/benchmark-requirements.txt
-      - name: Provisionar banco PostgreSQL isolado para transição APP_ENV
+      - name: Provisionar bancos PostgreSQL isolados para transição APP_ENV e concorrência TOTP
         run: |
           python - <<'PY'
           import os
           from sqlalchemy import create_engine, text
+          from sqlalchemy.engine import make_url
 
-          engine = create_engine(
-              os.environ["PHOTOGRAPHER_TEST_DATABASE_URL"],
-              isolation_level="AUTOCOMMIT",
-          )
+          photographer_url = make_url(os.environ["PHOTOGRAPHER_TEST_DATABASE_URL"])
+          engine = create_engine(photographer_url, isolation_level="AUTOCOMMIT")
           try:
               with engine.connect() as connection:
                   connection.execute(text("CREATE DATABASE app_env_transition_test"))
+                  connection.execute(text("CREATE DATABASE totp_migration_test"))
           finally:
               engine.dispose()
+
+          totp_url = photographer_url.set(database="totp_migration_test")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as github_env:
+              github_env.write(
+                  "ADMIN_TOTP_POSTGRES_TEST_DATABASE_URL="
+                  f"{totp_url.render_as_string(hide_password=False)}\n"
+              )
           PY
       - name: Suíte completa distribuída por módulos
         run: >-

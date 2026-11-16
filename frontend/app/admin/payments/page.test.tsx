@@ -1,9 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AdminPaymentsPage from "./page";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.history.replaceState(null, "", "/admin/payments");
+});
 
 const communication = {
   id: "communication-1",
@@ -51,7 +54,6 @@ function dashboard(name = "Ana", nextCursor: string | null = null) {
         total_cents: 1200,
         financial_status: "reported",
         created_at: "2026-08-29T10:00:00Z",
-        selection_expires_at: null,
         communications: [communication],
         communication,
         delivery_statuses: ["failed"],
@@ -81,6 +83,127 @@ const emptyDashboard = {
 };
 
 describe("controle operacional de pagamentos", () => {
+  it("abre uma seleção pelo link do painel sem impor filtro financeiro e move o foco até o carrinho", async () => {
+    window.history.replaceState(null, "", "/admin/payments?client_id=client-cart&parent_gallery_id=gallery-public-1#open-selection-gallery-cart-client-cart");
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : dashboard(),
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+
+    const cart = await screen.findByRole("heading", { name: "Bia" });
+    const target = cart.closest("article");
+    expect(target?.id).toBe("open-selection-gallery-cart-client-cart");
+    await waitFor(() => expect(document.activeElement).toBe(target));
+    expect((screen.getByLabelText("Cliente / telefone") as HTMLInputElement).value).toBe("Bia");
+    const request = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/payment-communications?"));
+    expect(request).toBeTruthy();
+    const parameters = new URL(request!, "http://localhost").searchParams;
+    expect(parameters.get("client_id")).toBe("client-cart");
+    expect(parameters.get("parent_gallery_id")).toBe("gallery-public-1");
+    expect(parameters.has("financial_status")).toBe(false);
+  });
+
+  it("foca o cartão financeiro do cliente se a seleção do link já não existir", async () => {
+    window.history.replaceState(null, "", "/admin/payments?client_id=client-Ana&parent_gallery_id=gallery-public-1#open-selection-removed-client-Ana");
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : dashboard(),
+    ), { status: 200 }))));
+    render(<AdminPaymentsPage />);
+
+    const client = await screen.findByRole("heading", { name: "Ana" });
+    const target = client.closest(".payment-client-card");
+    expect(target?.id).toBe("payment-client-client-Ana");
+    await waitFor(() => expect(document.activeElement).toBe(target));
+  });
+
+  it("mantém o filtro limitado e mostra o estado vazio se não restarem seleção ou pedidos", async () => {
+    window.history.replaceState(null, "", "/admin/payments?client_id=client-gone&parent_gallery_id=gallery-gone#open-selection-removed-client-gone");
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : emptyDashboard,
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+
+    expect(await screen.findByText("Nenhum pagamento neste filtro")).toBeTruthy();
+    const request = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/payment-communications?"));
+    const parameters = new URL(request!, "http://localhost").searchParams;
+    expect(parameters.get("client_id")).toBe("client-gone");
+    expect(parameters.get("parent_gallery_id")).toBe("gallery-gone");
+    expect(parameters.has("financial_status")).toBe(false);
+  });
+
+  it("mantém o filtro prioritário na navegação normal sem parâmetros de cliente", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : dashboard(),
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+    await screen.findByRole("heading", { name: "Ana" });
+    const request = fetchMock.mock.calls.map(([path]) => String(path)).find((path) => path.startsWith("/api/admin/payment-communications?"));
+    expect(new URL(request!, "http://localhost").searchParams.get("financial_status")).toBe("priority");
+  });
+
+  it.each([
+    ["reopened", false, "Tentativa encerrada por reabertura"],
+    ["exception", true, "Conferência após reabertura"],
+  ] as const)("identifica tentativa reaberta (%s) e não oferece entrega", async (financialStatus, requiresReconciliation, label) => {
+    const data = dashboard();
+    const order = Object.assign(data.groups[0].orders[0], {
+      financial_status: financialStatus,
+      payment_method: "credit_card",
+      provider_payment_state: "exception",
+      provider_payment_id: "legacy-payment-1",
+      provider_cart_recovery: { reopened_at: "2026-10-21T17:00:00Z", requires_reconciliation: requiresReconciliation },
+      payment_status: "cancelled",
+      communications: [],
+      communication: null,
+      delivery: { album_url: null, version: 0, can_send: true, can_resend: false },
+    });
+    data.groups[0].financial_status = financialStatus;
+    data.groups[0].orders = [order];
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : data,
+    ), { status: 200 }))));
+    render(<AdminPaymentsPage />);
+
+    const filter = await screen.findByLabelText("Situação financeira") as HTMLSelectElement;
+    expect(Array.from(filter.options).some((option) => option.textContent === "Tentativa encerrada por reabertura")).toBe(true);
+    const gallery = await screen.findByRole("heading", { name: "Formatura privada" });
+    fireEvent.click(screen.getByText("Ver pedido e entrega"));
+    const orderCard = gallery.closest(".payment-order");
+    expect(orderCard?.textContent).toContain(label);
+    expect(orderCard?.textContent).toContain("somente para conferência");
+    expect(screen.queryByLabelText("Link externo do álbum")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Enviar" })).toBeNull();
+  });
+
+  it("mostra seleção sem cobrança como finalizada, fora de aguardando pagamento", async () => {
+    const data = dashboard();
+    Object.assign(data.summary, { clients: 1, orders: 1, total_cents: 0, selected_carts: 0, selected_cents: 0,
+      selected_pricing_unavailable: 0, reported_orders: 0, reported_cents: 0, confirmed_orders: 0,
+      confirmed_cents: 0, financial_statuses: { selection_finalized: 1 } });
+    Object.assign(data.facets, { financial_statuses: { selection_finalized: 1 } });
+    data.groups[0].financial_status = "selection_finalized";
+    data.groups[0].totals = { orders: 1, total_cents: 0, reported_orders: 0, reported_cents: 0, confirmed_orders: 0, confirmed_cents: 0 };
+    data.groups[0].orders = [Object.assign(data.groups[0].orders[0], { financial_status: "selection_finalized",
+      payment_status: "not_required", total_cents: 0, communications: [], communication: null,
+      delivery: { album_url: "https://photos.app.goo.gl/selection", version: 1, can_send: true, can_resend: true } })];
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [] } : data,
+    ), { status: 200 }))));
+    render(<AdminPaymentsPage />);
+
+    const gallery = await screen.findByRole("heading", { name: "Formatura privada" });
+    const orderCard = gallery.closest(".payment-order");
+    expect(orderCard?.textContent).toContain("Seleção finalizada sem cobrança");
+    expect(orderCard?.textContent).not.toContain("R$ 0,00");
+    expect(orderCard?.textContent).not.toContain("A cliente ainda não comunicou o pagamento.");
+    fireEvent.click(screen.getByText("Ver pedido e entrega"));
+    expect(await screen.findByText("Seleção finalizada sem cobrança.")).toBeTruthy();
+    expect(screen.getByText("Fotos disponíveis")).toBeTruthy();
+  });
+
   it("mostra o código da compra agrupada junto ao código preservado do pedido", async () => {
     const data = dashboard();
     Object.assign(data.groups[0].orders[0].communication, { payment_group: {
@@ -114,6 +237,8 @@ describe("controle operacional de pagamentos", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminPaymentsPage />);
     fireEvent.click(await screen.findByText("Ver pedido e entrega"));
+    expect(await screen.findByText("Pagamento confirmado no histórico.")).toBeTruthy();
+    expect(screen.queryByText("A cliente ainda não comunicou o pagamento.")).toBeNull();
     fireEvent.change(screen.getByLabelText("Link externo do álbum"), { target: { value: album } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
     expect(await screen.findByText("Fotos disponíveis em Compras. Aviso agendado.")).toBeTruthy();
@@ -181,8 +306,15 @@ describe("controle operacional de pagamentos", () => {
     render(<AdminPaymentsPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Confirmar pagamento" }));
-    const download = await screen.findByRole("link", { name: "Baixar fotos compradas" });
+    const download = await screen.findByRole("link", { name: "Baixar fotos compradas" }) as HTMLAnchorElement;
     expect(download.getAttribute("href")).toBe("/api/admin/parent-galleries/gallery-public-1/clients/client-Ana/selection/export.html");
+    const previousAccent = document.documentElement.style.getPropertyValue("--mk-brand");
+    document.documentElement.style.setProperty("--mk-brand", "#123456");
+    download.addEventListener("click", (event) => event.preventDefault(), { once: true });
+    fireEvent.click(download);
+    expect(new URL(download.href).searchParams.get("highlight")).toBe("#123456");
+    if (previousAccent) document.documentElement.style.setProperty("--mk-brand", previousAccent);
+    else document.documentElement.style.removeProperty("--mk-brand");
 
     fireEvent.click(await screen.findByRole("button", { name: "Corrigir confirmação" }));
     await waitFor(() => expect(screen.queryByRole("link", { name: "Baixar fotos compradas" })).toBeNull());
@@ -233,8 +365,10 @@ describe("controle operacional de pagamentos", () => {
 
     const financialFilter = screen.getByLabelText("Situação financeira") as HTMLSelectElement;
     const undelivered = financialFilter.querySelector('option[value="confirmed_undelivered"]') as HTMLOptionElement;
-    expect(undelivered.textContent).toBe("Pagamento confirmado - fotos não entregue");
+    expect(undelivered.textContent).toBe("Pagamento confirmado - fotos não entregues");
     expect(undelivered.style.color).toBe("var(--payment-status-confirmed-undelivered)");
+    expect(financialFilter.querySelector('option[value="overdue"]')).toBeNull();
+    expect(financialFilter.querySelector('option[value="expired"]')?.textContent).toBe("Pagamento expirado");
     expect(screen.queryByLabelText("Entrega de mensagem")).toBeNull();
 
     const reportedCard = screen.getByRole("heading", { name: "Ana" }).closest(".payment-client-card");
@@ -263,7 +397,7 @@ describe("controle operacional de pagamentos", () => {
     const correctedDashboard = dashboard();
     const confirmed = { ...communication, status: "confirmed", can_decide: false, can_correct: true, corrections: [] };
     correctedDashboard.groups[0].orders[0] = { ...correctedDashboard.groups[0].orders[0], financial_status: "confirmed", communication: confirmed, communications: [confirmed], folders: [] };
-    const reopening = { id: "reopening-1", gallery_id: "gallery-private-1", gallery_name: "Formatura privada", status: "pending", created_at: "2026-09-09T10:00:00Z", approved_until: null, notification: { id: "reopening-notice-1", status: "failed", attempts: 1, can_retry: true } };
+    const reopening = { id: "reopening-1", gallery_id: "gallery-private-1", gallery_name: "Formatura privada", folder_id: "folder-1", folder_name: "Retratos", folder_access_scope: "client", requested_by_client_name: "Ana", status: "pending", created_at: "2026-09-09T10:00:00Z", approved_until: null, notification: { id: "reopening-notice-1", status: "failed", attempts: 1, can_retry: true } };
     const fetchMock = vi.fn((path: string, options?: RequestInit) => {
       if (path === "/api/admin/gallery-reopening-requests") return Promise.resolve(new Response(JSON.stringify({ requests: [reopening] }), { status: 200 }));
       if (options?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ status: "pending_review" }), { status: 200 }));
@@ -271,9 +405,10 @@ describe("controle operacional de pagamentos", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("confirm", vi.fn(() => true));
-    vi.stubGlobal("prompt", vi.fn(() => "2026-09-15"));
+    vi.stubGlobal("prompt", vi.fn(() => "14"));
     render(<AdminPaymentsPage />);
     expect(await screen.findByRole("heading", { name: "Ana" })).toBeTruthy();
+    expect(screen.getByText("Pasta privada · o novo prazo valerá somente para a cliente solicitante.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Corrigir confirmação" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/payment-communications/communication-1/correction",
@@ -282,8 +417,53 @@ describe("controle operacional de pagamentos", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Definir novo prazo" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/gallery-reopening-requests/reopening-1/decision",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ decision: "approved", selection_expires_at: "2026-09-15T23:59:59.000Z" }) }),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ decision: "approved", access_duration_days: 14 }) }),
     ));
+  });
+
+  it("informa que uma reabertura pública alcança todas as clientes autorizadas", async () => {
+    const reopening = { id: "reopening-public", gallery_id: "gallery-public-1", gallery_name: "Formatura", folder_id: "folder-public", folder_name: "Turma", folder_access_scope: "all", requested_by_client_name: "Ana", status: "pending", created_at: "2026-09-09T10:00:00Z", approved_until: null, notification: { id: null, status: "sent", attempts: 1, can_retry: false } };
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [reopening] } : dashboard(),
+    ), { status: 200 }))));
+    render(<AdminPaymentsPage />);
+
+    expect(await screen.findByText("Pasta pública · o novo prazo valerá para todas as clientes autorizadas.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Definir novo prazo" })).toBeTruthy();
+  });
+
+  it("não oferece aprovação para uma solicitação antiga sem pasta e mantém a recusa", async () => {
+    const reopening = { id: "reopening-legacy", gallery_id: "gallery-old", gallery_name: "Galeria antiga", folder_id: null, folder_name: null, folder_access_scope: "all", requested_by_client_name: "Ana", status: "pending", created_at: "2026-09-09T10:00:00Z", approved_until: null, notification: { id: "notice-legacy", status: "failed", attempts: 1, can_retry: true } };
+    const fetchMock = vi.fn((path: string, options?: RequestInit) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [reopening] } : options?.method === "POST" ? { status: "refused" } : dashboard(),
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminPaymentsPage />);
+
+    const legacyNote = await screen.findByText("Esta solicitação antiga não identifica uma pasta. Para definir um novo prazo, peça à cliente uma nova solicitação pela pasta desejada.");
+    const card = legacyNote.closest("article");
+    expect(card).toBeTruthy();
+    expect(within(card!).queryByRole("button", { name: "Definir novo prazo" })).toBeNull();
+    expect(within(card!).getByRole("button", { name: "Recusar" })).toBeTruthy();
+    expect(within(card!).getByRole("button", { name: "Tentar aviso novamente" })).toBeTruthy();
+
+    fireEvent.click(within(card!).getByRole("button", { name: "Recusar" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/gallery-reopening-requests/reopening-legacy/decision",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ decision: "refused" }) }),
+    ));
+  });
+
+  it("não presume alcance público se uma pasta vier sem escopo reconhecido", async () => {
+    const reopening = { id: "reopening-unknown", gallery_id: "gallery-old", gallery_name: "Galeria", folder_id: "folder-1", folder_name: "Pasta", folder_access_scope: null, requested_by_client_name: "Ana", status: "pending", created_at: "2026-09-09T10:00:00Z", approved_until: null, notification: { id: null, status: "sent", attempts: 1, can_retry: false } };
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/admin/gallery-reopening-requests" ? { requests: [reopening] } : dashboard(),
+    ), { status: 200 }))));
+    render(<AdminPaymentsPage />);
+
+    expect(await screen.findByText("Não foi possível identificar o alcance desta solicitação. Atualize os dados antes de definir um novo prazo.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Definir novo prazo" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Recusar" })).toBeTruthy();
   });
 });
 

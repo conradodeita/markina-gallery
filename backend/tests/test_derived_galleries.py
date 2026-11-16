@@ -1,5 +1,7 @@
 import base64
+import os
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from io import BytesIO
 from time import perf_counter
 from uuid import UUID, uuid4
@@ -26,7 +28,10 @@ from app.auth import (
     DerivedGalleryPhoto,
     FolderClientGrant,
     GalleryClientState,
+    GalleryReopeningRequest,
     GlobalPixSettings,
+    MediaArchiveCycle,
+    MediaArchiveObject,
     MediaDerivative,
     MediaJob,
     ParentGallery,
@@ -34,6 +39,8 @@ from app.auth import (
     PaymentCommunication,
     PaymentNotificationOutbox,
     PhotoAsset,
+    PhotoComment,
+    PhotoFavorite,
     PhotoFolder,
     PhotoSelection,
     PhotoView,
@@ -49,19 +56,65 @@ from app.auth import (
 from app.canonical_selection import select_canonical_photo, unselect_canonical_photo
 from app.checkout import create_pending_checkout
 from app.client_commerce import client_carts_by_gallery_payload
+from app.folder_access import (
+    folder_archive_eligible_at,
+    folder_browsing_clause,
+    folder_effective_expiries_by_id,
+    folder_effective_expiry,
+    folder_media_access_by_id,
+    folder_selected_media_preview_allowed,
+    folder_selection_checkout_allowed,
+)
 from app.gallery_access import issue_gallery_capability
 from app.global_pix import normalize_configuration
 from app.main import _purchased_photos_content_disposition, app
 from app.media import generate_derivatives
 from app.private_derivation import derive_admin_gallery, ensure_private_photo_reference
-from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
+from tests.tenant_fixtures import (
+    FIXTURE_TENANT_ID,
+    fixture_admin,
+    fixture_unmetered_owner,
+    fresh_totp_code,
+)
 
 VALID_PIX_A = "0002015204000053039865802BR5907MARKINA6009SAO PAULO6304BE17"
 VALID_PIX_B = "0002015204000053039865802BR5908OUTRAFOT6009SAO PAULO6304FC65"
 
 
+def enable_sqlite_foreign_keys_on_checkout(dbapi_connection, _connection_record, _connection_proxy):
+    # Legacy SQLite fixtures may toggle FK enforcement to rebuild cyclic schemas.
+    # Reapply it for every pooled checkout, including TestClient worker threads.
+    if engine.dialect.name == "sqlite":
+        if dbapi_connection.in_transaction:
+            dbapi_connection.rollback()
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA foreign_keys")
+            if cursor.fetchone()[0] != 1:
+                raise RuntimeError("SQLite foreign-key enforcement was not enabled on checkout.")
+        finally:
+            cursor.close()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def sqlite_foreign_keys_for_gallery_module():
+    if engine.dialect.name != "sqlite":
+        yield
+        return
+    event.listen(engine, "checkout", enable_sqlite_foreign_keys_on_checkout)
+    try:
+        yield
+    finally:
+        event.remove(engine, "checkout", enable_sqlite_foreign_keys_on_checkout)
+
+
 @pytest.fixture(autouse=True)
 def clean_database():
+    # Other SQLite suites can disable FK enforcement on thread-local pooled
+    # connections while rebuilding a schema. Start every case with fresh
+    # connections so app requests cannot inherit that connection state.
+    engine.dispose()
     with engine.connect() as connection:
         if engine.dialect.name == "sqlite":
             connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
@@ -70,6 +123,13 @@ def clean_database():
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
         connection.commit()
     Base.metadata.create_all(engine)
+    if engine.dialect.name == "sqlite":
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+            foreign_keys = connection.exec_driver_sql(
+                "PRAGMA foreign_key_list('photo_asset')"
+            ).fetchall()
+            assert any(row[2] == "photo_folder" for row in foreign_keys)
     yield
 
 
@@ -90,6 +150,7 @@ def set_test_global_pix(copy_paste=VALID_PIX_A, instructions=None):
                               totp_secret=pyotp.random_base32()))
             db.add(admin)
             db.flush()
+        fixture_unmetered_owner(db, admin)
         settings = db.scalar(select(GlobalPixSettings))
         if not settings:
             settings = GlobalPixSettings(tenant_id=FIXTURE_TENANT_ID, admin_user_id=admin.id, version=1)
@@ -110,14 +171,23 @@ def authenticate_admin(client: TestClient) -> None:
                 totp_secret=pyotp.random_base32(),
             ))
             db.add(admin)
-            db.commit()
-        secret = admin.totp_secret
+            db.flush()
+        fixture_unmetered_owner(db, admin)
+        db.commit()
     challenge = client.post(
         "/auth/admin/password", json={"email": "foto@markina.test", "password": "senha-segura"}
     ).json()["challenge_id"]
-    assert client.post(
-        "/auth/admin/totp", json={"challenge_id": challenge, "code": pyotp.TOTP(secret).now()}
-    ).status_code == 200
+    authenticated = client.post(
+        "/auth/admin/totp", json={"challenge_id": challenge, "code": fresh_totp_code(admin)}
+    )
+    assert authenticated.status_code == 200
+    cookie_name = os.getenv("SESSION_COOKIE_NAME", "markina_session")
+    # O TestClient usa HTTP e não envia o cookie Secure emitido pelo fluxo de login.
+    session_cookie = next(
+        (cookie for cookie in client.cookies.jar if cookie.name == cookie_name), None
+    )
+    assert session_cookie is not None
+    session_cookie.secure = False
 
 
 def authenticate_client(client: TestClient, phone: str) -> None:
@@ -629,7 +699,8 @@ def create_folder_photo(
 ) -> tuple[UUID, UUID]:
     folder_id = UUID(
         client.post(
-            f"/admin/parent-galleries/{parent_id}/folders", json={"name": folder_name}
+            f"/admin/parent-galleries/{parent_id}/folders",
+            json={"name": folder_name, "access_duration_days": 7},
         ).json()["id"]
     )
     photo_id = UUID(
@@ -692,9 +763,12 @@ def create_gallery_for_client(client: TestClient, person: Client, *, expires=Fal
         db.commit()
     if expires:
         with SessionLocal() as db:
-            db.get(DerivedGallery, gallery_id).selection_expires_at = now() - timedelta(
-                minutes=1
-            )
+            gallery = db.get(DerivedGallery, gallery_id)
+            photo = db.get(PhotoAsset, photo_id)
+            folder = db.get(PhotoFolder, photo.folder_id)
+            folder.access_expires_at = now() - timedelta(minutes=1)
+            # O campo legado não reabre nem fecha as pastas.
+            gallery.selection_expires_at = now() + timedelta(days=30)
             db.commit()
     client.cookies.clear()
     return gallery_id, photo_id
@@ -795,6 +869,39 @@ def test_gallery_overview_finds_client_with_canonical_registration(client: TestC
         assert other_id not in {row["id"] for row in result.json()["parent_galleries"]}
 
 
+def test_parent_gallery_overview_freezes_from_folder_deadline_not_legacy_gallery_deadline(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    client_id = UUID(client.post(
+        "/admin/clients",
+        json={"full_name": "Cliente com pasta expirada", "phone_e164": "+5511999999962"},
+    ).json()["id"])
+    parent_id = UUID(client.post(
+        "/admin/parent-galleries", json={"name": "Evento com prazo por pasta"},
+    ).json()["id"])
+    folder_id, photo_id = create_folder_photo(
+        client, parent_id, filename="selecionada.jpg",
+        storage_key="evento/pasta-expirada.jpg", ready=True,
+    )
+    assert client.post(
+        f"/admin/photo-folders/{folder_id}/release", json={"gallery_ids": []},
+    ).status_code == 200
+    gallery_id = create_empty_private_gallery(
+        client, parent_id=parent_id, client_id=client_id, name="Galeria expirada",
+    )
+    attach_legacy_admin_reference(gallery_id, photo_id)
+    with SessionLocal() as db:
+        db.get(PhotoFolder, folder_id).access_expires_at = now() - timedelta(minutes=1)
+        db.get(DerivedGallery, gallery_id).selection_expires_at = now() + timedelta(days=14)
+        db.commit()
+
+    response = client.get("/admin/parent-galleries/overview")
+    assert response.status_code == 200
+    row = next(item for item in response.json()["parent_galleries"] if item["id"] == str(parent_id))
+    assert row["frozen_gallery_count"] == 1
+
+
 def test_client_selection_uses_canonical_gallery_without_derivation(client: TestClient):
     with SessionLocal() as db:
         person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511888888888")
@@ -852,17 +959,28 @@ def test_client_selection_uses_canonical_gallery_without_derivation(client: Test
             PhotoSelection.client_id == client_id,
             PhotoSelection.photo_asset_id == photo_id,
         )) is not None
-        state.selection_expires_at = now() - timedelta(minutes=1)
+        folder = db.get(PhotoFolder, folder_id)
+        folder.access_expires_at = now() - timedelta(minutes=1)
+        # Prazo legado da jornada não pode manter a pasta aberta.
+        state.selection_expires_at = now() + timedelta(days=30)
         db.commit()
     requested = client.post(
         f"/public-galleries/{parent_id}/reopening-requests",
-        json={"idempotency_key": "canonical-reopening-1"},
+        json={"folder_id": str(folder_id), "idempotency_key": "canonical-reopening-1"},
     )
     assert requested.status_code == 201, requested.text
     assert requested.json()["status"] == "pending"
+    status_response = client.get(
+        f"/public-galleries/{parent_id}/reopening-requests", params={"folder_id": str(folder_id)}
+    )
+    assert status_response.status_code == 200
+    assert status_response.json()["request"]["id"] == requested.json()["id"]
+    assert client.get(
+        f"/public-galleries/{parent_id}/reopening-requests", params={"folder_id": str(uuid4())}
+    ).status_code == 404
     assert client.post(
         f"/public-galleries/{parent_id}/reopening-requests",
-        json={"idempotency_key": "canonical-reopening-1"},
+        json={"folder_id": str(folder_id), "idempotency_key": "canonical-reopening-1"},
     ).json()["id"] == requested.json()["id"]
     client.cookies.clear()
     authenticate_admin(client)
@@ -872,14 +990,16 @@ def test_client_selection_uses_canonical_gallery_without_derivation(client: Test
         f"/admin/gallery-reopening-requests/{requested.json()['id']}/decision",
         json={
             "decision": "approved",
-            "selection_expires_at": (now() + timedelta(days=1)).isoformat(),
+            "access_duration_days": 1,
         },
     )
     assert approved.status_code == 200, approved.text
     assert approved.json()["status"] == "approved"
+    assert approved.json()["folder_id"] == str(folder_id)
+    assert approved.json()["approved_duration_days"] == 1
     restricted = client.post(
         f"/admin/parent-galleries/{parent_id}/clients/{client_id}/folders",
-        json={"name": "Acervo da cliente"},
+        json={"name": "Acervo da cliente", "access_duration_days": 7},
     )
     assert restricted.status_code == 201, restricted.text
     restricted_id = restricted.json()["id"]
@@ -923,7 +1043,70 @@ def test_client_selection_uses_canonical_gallery_without_derivation(client: Test
     authenticate_client(client, "+5511888888877")
     visible = client.get(f"/public-galleries/{parent_id}/photos")
     assert visible.status_code == 200
+    assert photo_id in {UUID(photo["id"]) for photo in visible.json()["photos"]}
     assert restricted_photo_id not in {UUID(photo["id"]) for photo in visible.json()["photos"]}
+
+
+def test_client_library_exposes_authoritative_public_folder_deadline_without_cart(
+    client: TestClient,
+):
+    phone = "+5511777777008"
+    with SessionLocal() as db:
+        person = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Cliente sem carrinho",
+            phone_e164=phone,
+        )
+        db.add(person)
+        db.commit()
+        person_id = person.id
+
+    authenticate_admin(client)
+    parent_id = UUID(
+        client.post("/admin/parent-galleries", json={"name": "Prazo na biblioteca"}).json()["id"]
+    )
+    folder_id, _photo_id = create_folder_photo(
+        client,
+        parent_id,
+        folder_name="Fotos",
+        filename="prazo.jpg",
+        storage_key="library-deadline/prazo.jpg",
+        ready=True,
+    )
+    released = client.post(
+        f"/admin/photo-folders/{folder_id}/release", json={"gallery_ids": []}
+    )
+    assert released.status_code == 200, released.text
+
+    with SessionLocal() as db:
+        deadline = now() + timedelta(days=3, hours=4)
+        folder = db.get(PhotoFolder, folder_id)
+        folder.audience_scope = "all"
+        folder.access_expires_at = deadline
+        db.add(
+            ParentGalleryRegistration(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent_id,
+                client_id=person_id,
+                status="active",
+            )
+        )
+        db.commit()
+
+    client.cookies.clear()
+    authenticate_client(client, phone)
+    response = client.get("/library")
+    assert response.status_code == 200, response.text
+
+    journey = response.json()["journeys"][0]
+    assert journey["selection"]["quantity"] == 0
+    assert journey["selection_deadlines"] == [
+        {
+            "folder_id": str(folder_id),
+            "folder_name": "Fotos",
+            "expires_at": deadline.isoformat(),
+        }
+    ]
 
 
 def test_client_library_is_limited_to_own_derived_gallery(client: TestClient):
@@ -986,7 +1169,8 @@ def test_admin_operational_catalog_creates_and_lists_only_authorized_data(client
         {"id": str(photo_id), "name": "operacional.jpg"}
     ]
     assert client.get(f"/admin/photo-assets/{photo_id}/media-status").json() == {
-        "status": "not_imported"
+        "status": "not_imported",
+        "media_state": "available",
     }
 
 
@@ -1147,6 +1331,7 @@ def test_admin_validation_summary_is_authorized_and_has_aggregate_storage(
     )
     response = client.get("/admin/validation-summary")
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
     assert response.json()["counts"]["clients"] == 1
     assert response.json()["recent_galleries"] == [{
         "id": str(parent_id), "name": "Galeria resumo", "active": True,
@@ -1336,7 +1521,8 @@ def test_folder_and_photo_ownership_rejects_invalid_context(client: TestClient) 
     authenticate_admin(client)
     missing = UUID("00000000-0000-0000-0000-000000000099")
     assert client.post(
-        f"/admin/parent-galleries/{missing}/folders", json={"name": "Sem galeria"}
+        f"/admin/parent-galleries/{missing}/folders",
+        json={"name": "Sem galeria", "access_duration_days": 7},
     ).status_code == 404
     first_parent = UUID(
         client.post("/admin/parent-galleries", json={"name": "Primeira"}).json()["id"]
@@ -1346,6 +1532,17 @@ def test_folder_and_photo_ownership_rejects_invalid_context(client: TestClient) 
     )
     folder_id, _ = create_folder_photo(client, first_parent)
     with SessionLocal() as db:
+        assert any(
+            constraint.referred_table.name == "photo_folder"
+            for constraint in PhotoAsset.__table__.foreign_key_constraints
+        )
+        if engine.dialect.name == "sqlite":
+            connection = db.connection()
+            assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+            foreign_keys = connection.exec_driver_sql(
+                "PRAGMA foreign_key_list('photo_asset')"
+            ).fetchall()
+            assert any(row[2] == "photo_folder" for row in foreign_keys)
         db.add(
             PhotoAsset(
                 tenant_id=FIXTURE_TENANT_ID,
@@ -1459,13 +1656,188 @@ def test_expired_selection_and_foreign_client_interactions_are_denied(client: Te
         db.commit()
     gallery_id, photo_id = create_gallery_for_client(client, owner, expires=True)
     authenticate_client(client, owner.phone_e164)
-    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 403
+    assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/selection").status_code == 404
     client.cookies.clear()
     authenticate_client(client, outsider.phone_e164)
     assert client.post(f"/gallery/{gallery_id}/photos/{photo_id}/favorite").status_code == 403
 
 
-def test_expired_gallery_rejects_checkout_of_existing_selection(client: TestClient):
+def test_expired_cart_keeps_selected_preview_but_blocks_folder_browsing(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with SessionLocal() as db:
+        owner = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Cliente com carrinho expirado",
+            phone_e164="+5511555555578",
+        )
+        db.add(owner)
+        db.commit()
+    gallery_id, photo_id = create_gallery_for_client(client, owner)
+    expiry = now() - timedelta(minutes=1)
+    with SessionLocal() as db:
+        parent_id = db.get(DerivedGallery, gallery_id).parent_gallery_id
+        photo = db.get(PhotoAsset, photo_id)
+        folder = db.get(PhotoFolder, photo.folder_id)
+        folder.access_expires_at = expiry
+        unselected = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent_id,
+            folder_id=folder.id,
+            filename="IMG_0002.jpg",
+            storage_key=f"events/{uuid4()}/IMG_0002.jpg",
+        )
+        db.add(unselected)
+        db.flush()
+        ensure_private_photo_reference(
+            db, gallery_id=gallery_id, photo_id=unselected.id,
+            origin="admin", tenant_id=FIXTURE_TENANT_ID,
+        )
+        unselected_id = unselected.id
+        db.add(PhotoSelection(
+            tenant_id=FIXTURE_TENANT_ID,
+            derived_gallery_id=gallery_id,
+            photo_asset_id=photo_id,
+            client_id=owner.id,
+            created_at=expiry - timedelta(days=1),
+        ))
+        db.commit()
+
+    authenticate_client(client, owner.phone_e164)
+    import app.main as main_module
+    preview_file = tmp_path / "selected-preview.jpg"
+    preview_file.write_bytes(b"synthetic-preview")
+    monkeypatch.setattr(main_module, "presentation_path", lambda _db, _derivative: preview_file)
+    journey = next(
+        item for item in client.get("/library").json()["journeys"]
+        if item["id"] == str(parent_id)
+    )
+    assert journey["selection"]["quantity"] == 1
+    item = journey["selection"]["items"][0]
+    assert item["id"] == str(photo_id)
+    assert item["media_state"] == "available"
+    assert item["preview_url"] == f"/gallery/{gallery_id}/photos/{photo_id}/preview"
+    assert client.get(f"/gallery/{gallery_id}/photos").json()["photos"] == []
+    assert client.get(f"/gallery/{gallery_id}/review").json()["photos"] == []
+    preview = client.get(item["preview_url"])
+    assert preview.status_code == 200, preview.text
+    assert preview.content == b"synthetic-preview"
+    assert client.get(
+        f"/gallery/{gallery_id}/photos/{unselected_id}/preview"
+    ).status_code == 404
+    removed = client.delete(
+        f"/public-galleries/{parent_id}/photos/{photo_id}/selection"
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["cart"]["quantity"] == 0
+    with SessionLocal() as db:
+        assert db.scalar(select(PhotoSelection.id).where(
+            PhotoSelection.derived_gallery_id == gallery_id,
+            PhotoSelection.photo_asset_id == photo_id,
+        )) is None
+
+
+def test_expired_canonical_cart_keeps_only_selected_preview(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phone = "+5511555555579"
+    with SessionLocal() as db:
+        owner = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Cliente pública com carrinho",
+            phone_e164=phone,
+        )
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria pública vencida")
+        db.add_all([owner, parent])
+        db.flush()
+        db.add(ParentGalleryRegistration(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=owner.id,
+            status="active",
+        ))
+        db.commit()
+        parent_id, client_id = parent.id, owner.id
+
+    authenticate_admin(client)
+    folder_id, photo_id = create_folder_photo(client, parent_id, ready=True)
+    assert client.post(f"/admin/photo-folders/{folder_id}/release", json={"gallery_ids": []}).status_code == 200
+    authenticate_client(client, phone)
+    selected = client.post(f"/public-galleries/{parent_id}/photos/{photo_id}/selection")
+    assert selected.status_code == 201, selected.text
+    assert selected.json()["selection_expires_at"] is None
+    expiry = now() - timedelta(minutes=1)
+    with SessionLocal() as db:
+        db.get(PhotoFolder, folder_id).access_expires_at = expiry
+        selection = db.scalar(select(PhotoSelection).where(
+            PhotoSelection.parent_gallery_id == parent_id,
+            PhotoSelection.client_id == client_id,
+            PhotoSelection.photo_asset_id == photo_id,
+        ))
+        assert selection is not None
+        selection.created_at = expiry - timedelta(days=1)
+        unselected = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent_id,
+            folder_id=folder_id,
+            filename="IMG_0002.jpg",
+            storage_key=f"events/{uuid4()}/IMG_0002.jpg",
+        )
+        db.add(unselected)
+        db.flush()
+        unselected_id = unselected.id
+        db.commit()
+
+    cart = client.get("/library/cart")
+    import app.main as main_module
+    preview_file = tmp_path / "canonical-selected-preview.jpg"
+    preview_file.write_bytes(b"synthetic-preview")
+    monkeypatch.setattr(main_module, "presentation_path", lambda _db, _derivative: preview_file)
+    assert cart.status_code == 200, cart.text
+    group = next(group for group in cart.json()["groups"] if group["gallery_id"] == str(parent_id))
+    assert group["items"][0]["preview_url"] == (
+        f"/public-galleries/{parent_id}/photos/{photo_id}/preview"
+    )
+    assert client.get(f"/public-galleries/{parent_id}/photos").json()["photos"] == []
+    preview = client.get(group["items"][0]["preview_url"])
+    assert preview.status_code == 200, preview.text
+    assert preview.content == b"synthetic-preview"
+    assert client.get(
+        f"/public-galleries/{parent_id}/photos/{unselected_id}/preview"
+    ).status_code == 404
+    assert client.post(
+        f"/public-galleries/{parent_id}/photos/{unselected_id}/selection"
+    ).status_code != 201
+    with SessionLocal() as db:
+        assert db.scalar(select(PhotoSelection.id).where(
+            PhotoSelection.parent_gallery_id == parent_id,
+            PhotoSelection.client_id == client_id,
+            PhotoSelection.photo_asset_id == unselected_id,
+        )) is None
+        db.add(MediaArchiveCycle(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent_id,
+            folder_id=folder_id,
+            cycle_number=1,
+            state="archived",
+        ))
+        db.get(PhotoAsset, photo_id).available = False
+        db.commit()
+    assert client.get(group["items"][0]["preview_url"]).status_code == 404
+    removed = client.delete(
+        f"/public-galleries/{parent_id}/photos/{photo_id}/selection"
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["cart"]["quantity"] == 0
+    with SessionLocal() as db:
+        assert db.scalar(select(PhotoSelection.id).where(
+            PhotoSelection.parent_gallery_id == parent_id,
+            PhotoSelection.client_id == client_id,
+            PhotoSelection.photo_asset_id == photo_id,
+        )) is None
+
+
+def test_expired_folder_rejects_checkout_of_selection_after_grace(client: TestClient):
     with SessionLocal() as db:
         owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Expirada", phone_e164="+5511555555566")
         db.add(owner)
@@ -1473,17 +1845,30 @@ def test_expired_gallery_rejects_checkout_of_existing_selection(client: TestClie
     gallery_id, photo_id = create_gallery_for_client(client, owner, expires=True)
     with SessionLocal() as db:
         parent_id = db.get(DerivedGallery, gallery_id).parent_gallery_id
+        photo = db.get(PhotoAsset, photo_id)
+        expiry = now() - timedelta(days=31)
+        db.get(PhotoFolder, photo.folder_id).access_expires_at = expiry
         db.add_all([
-            PhotoSelection(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, photo_asset_id=photo_id, client_id=owner.id),
+            PhotoSelection(tenant_id=FIXTURE_TENANT_ID, derived_gallery_id=gallery_id, photo_asset_id=photo_id,
+                           client_id=owner.id, created_at=expiry - timedelta(days=1)),
             PriceRule(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id, minimum_quantity=1, maximum_quantity=None, unit_price_cents=500),
         ])
         db.commit()
     authenticate_client(client, owner.phone_e164)
+    journey = next(
+        item for item in client.get("/library").json()["journeys"]
+        if item["id"] == str(parent_id)
+    )
+    assert journey["selection"]["items"][0]["preview_url"] is None
+    assert client.get(f"/gallery/{gallery_id}/photos/{photo_id}/preview").status_code == 404
+    assert client.get(f"/gallery/{gallery_id}/photos").json()["photos"] == []
     response = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "expired-checkout-key-0001"})
-    assert response.status_code == 403
+    assert response.status_code == 409
 
 
-def test_expired_gallery_rejects_freezing_an_open_draft(client: TestClient):
+def test_expired_folder_keeps_open_order_payment_path_after_grace(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+):
     with SessionLocal() as db:
         owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente Prazo", phone_e164="+5511555555567")
         db.add(owner)
@@ -1491,12 +1876,16 @@ def test_expired_gallery_rejects_freezing_an_open_draft(client: TestClient):
     gallery_id, photo_id = create_gallery_for_client(client, owner)
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, gallery_id)
+        photo = db.get(PhotoAsset, photo_id)
+        expiry = now() - timedelta(days=1)
+        db.get(PhotoFolder, photo.folder_id).access_expires_at = expiry
         db.add_all(
             [
                 PhotoSelection(tenant_id=FIXTURE_TENANT_ID,
                     derived_gallery_id=gallery_id,
                     photo_asset_id=photo_id,
                     client_id=owner.id,
+                    created_at=expiry - timedelta(days=1),
                 ),
                 PriceRule(tenant_id=FIXTURE_TENANT_ID,
                     parent_gallery_id=gallery.parent_gallery_id,
@@ -1510,27 +1899,48 @@ def test_expired_gallery_rejects_freezing_an_open_draft(client: TestClient):
     authenticate_client(client, owner.phone_e164)
     checkout = client.post(
         f"/gallery/{gallery_id}/checkout",
-        json={"idempotency_key": "draft-before-expiration-0001"},
+        json={"idempotency_key": "draft-during-expiration-grace-0001"},
     )
     assert checkout.status_code == 201
-    with SessionLocal() as db:
-        gallery = db.get(DerivedGallery, gallery_id)
-        gallery.selection_expires_at = now() - timedelta(minutes=1)
-        db.commit()
+
+    import app.checkout as checkout_module
+    import app.folder_access as folder_access_module
+    import app.main as main_module
+    preview_file = tmp_path / "pending-order-preview.jpg"
+    preview_file.write_bytes(b"synthetic-preview")
+    monkeypatch.setattr(main_module, "presentation_path", lambda _db, _derivative: preview_file)
+
+    after_grace = expiry + timedelta(days=31)
+    monkeypatch.setattr(checkout_module, "now", lambda: after_grace)
+    monkeypatch.setattr(folder_access_module, "now", lambda: after_grace)
+    monkeypatch.setattr(main_module, "now", lambda: after_grace)
+    pending = client.get(f"/gallery/{gallery_id}/orders/{checkout.json()['id']}")
+    assert pending.status_code == 200
+    assert pending.json()["items"][0]["media_state"] == "available"
+    assert pending.json()["items"][0]["preview_url"] is None
+    assert client.get(f"/gallery/{gallery_id}/photos/{photo_id}/preview").status_code == 404
     reported = client.post(
         f"/gallery/{gallery_id}/orders/{checkout.json()['id']}/payment-communications",
-        json={"idempotency_key": "report-after-expiration-0001"},
+        json={"idempotency_key": "report-existing-order-after-grace-0001"},
     )
-    assert reported.status_code == 403
+    assert reported.status_code == 201
     with SessionLocal() as db:
         order = db.get(SaleOrder, UUID(checkout.json()["id"]))
-        assert order.frozen_at is None
+        assert order.frozen_at is not None
         assert db.scalar(
             select(PhotoSelection.id).where(
                 PhotoSelection.derived_gallery_id == gallery_id,
                 PhotoSelection.client_id == owner.id,
             )
-        )
+        ) is None
+    pending_after_report = client.get(f"/gallery/{gallery_id}/orders/{checkout.json()['id']}")
+    assert pending_after_report.status_code == 200
+    assert pending_after_report.json()["items"][0]["preview_url"] == (
+        f"/gallery/{gallery_id}/photos/{photo_id}/preview"
+    )
+    preview = client.get(pending_after_report.json()["items"][0]["preview_url"])
+    assert preview.status_code == 200, preview.text
+    assert preview.content == b"synthetic-preview"
 
 
 def test_private_photo_state_is_new_viewed_then_purchased(client: TestClient):
@@ -1781,7 +2191,7 @@ def test_purchased_photos_filename_safely_supports_unicode_and_special_character
     assert disposition.endswith(".html")
 
 
-def test_admin_gallery_list_and_renewal_are_backend_driven(client: TestClient):
+def test_admin_gallery_deadline_write_paths_are_rejected(client: TestClient):
     with SessionLocal() as db:
         person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente", phone_e164="+5511333333333")
         db.add(person)
@@ -1799,9 +2209,36 @@ def test_admin_gallery_list_and_renewal_are_backend_driven(client: TestClient):
     assert detail.json()["client"] == detail.json()["responsible"]
     assert detail.json()["client"]["name"] == "Cliente"
     assert detail.json()["link"] is None
-    renewed = client.post(f"/admin/derived-galleries/{gallery_id}/renew", json={"selection_expires_at": (now() + timedelta(days=2)).isoformat()})
-    assert renewed.status_code == 200
-    assert client.get("/admin/derived-galleries?tab=active").json()["total"] == 1
+    with SessionLocal() as db:
+        previous_legacy_expiry = db.get(DerivedGallery, gallery_id).selection_expires_at
+        legacy_request = GalleryReopeningRequest(
+            tenant_id=FIXTURE_TENANT_ID,
+            derived_gallery_id=gallery_id,
+            requested_by_client_id=person.id,
+            idempotency_key="legacy-reopening-no-folder-0001",
+        )
+        db.add(legacy_request)
+        db.commit()
+        legacy_request_id = legacy_request.id
+    old_reopening = client.post(
+        f"/admin/gallery-reopening-requests/{legacy_request_id}/decision",
+        json={"decision": "approved", "access_duration_days": 7},
+    )
+    assert old_reopening.status_code == 409
+    assert "não identifica uma pasta" in old_reopening.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(DerivedGallery, gallery_id).selection_expires_at == previous_legacy_expiry
+        assert db.get(GalleryReopeningRequest, legacy_request_id).status == "pending"
+    renewal = client.post(
+        f"/admin/derived-galleries/{gallery_id}/renew",
+        json={"selection_expires_at": (now() + timedelta(days=2)).isoformat()},
+    )
+    assert renewal.status_code == 410
+    assert "individualmente por pasta" in renewal.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(DerivedGallery, gallery_id).selection_expires_at == previous_legacy_expiry
+    assert client.get("/admin/derived-galleries?tab=frozen").json()["total"] == 1
+    assert client.get("/admin/derived-galleries?tab=active").json()["total"] == 0
 
 
 
@@ -1825,11 +2262,18 @@ def test_admin_manages_preparing_folders_without_storage_urls(client: TestClient
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Festa escolar"}).json()["id"])
 
     created = client.post(
-        f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Entrega inicial"}
+        f"/admin/parent-galleries/{parent_id}/folders",
+        json={"name": "Entrega inicial", "access_duration_days": 7},
     )
     assert created.status_code == 201
     folder_id = UUID(created.json()["id"])
-    assert created.json() == {"id": str(folder_id), "status": "preparing", "position": 0}
+    assert created.json() == {
+        "id": str(folder_id),
+        "status": "preparing",
+        "position": 0,
+        "access_duration_days": 7,
+        "access_expires_at": None,
+    }
 
     listing = client.get(f"/admin/parent-galleries/{parent_id}/folders")
     assert listing.status_code == 200
@@ -1841,6 +2285,8 @@ def test_admin_manages_preparing_folders_without_storage_urls(client: TestClient
                 "name": "Entrega inicial",
                 "audience_scope": "all",
                 "status": "preparing",
+                "access_duration_days": 7,
+                "access_expires_at": None,
                     "position": 0,
                     "photo_count": 0,
                     "publication_counts": {
@@ -1851,6 +2297,8 @@ def test_admin_manages_preparing_folders_without_storage_urls(client: TestClient
                     },
                     "preview_url": None,
                     "released_at": None,
+                    "media_state": "available",
+                    "can_renew_deadline": False,
             }
         ],
     }
@@ -1863,8 +2311,145 @@ def test_admin_manages_preparing_folders_without_storage_urls(client: TestClient
     with SessionLocal() as db:
         db.get(PhotoFolder, folder_id).status = "released"  # type: ignore[union-attr]
         db.commit()
-    locked = client.patch(f"/admin/photo-folders/{folder_id}", json={"name": "Não pode"})
-    assert locked.status_code == 409
+    renamed_released = client.patch(f"/admin/photo-folders/{folder_id}", json={"name": "  Lote corrigido  "})
+    assert renamed_released.status_code == 200
+    assert renamed_released.json() == {"id": str(folder_id), "name": "Lote corrigido"}
+
+
+def test_rename_released_common_restricted_and_legacy_folders_preserves_audience_and_commerce(
+    client: TestClient,
+) -> None:
+    authenticate_admin(client)
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento renomeável")
+        person = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Cliente com pasta restrita",
+            phone_e164="+5511999999123",
+        )
+        db.add_all([parent, person])
+        db.flush()
+        db.add(GalleryClientState(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=person.id,
+        ))
+        public = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+            name="Pasta comum", audience_scope="all", status="released", position=0,
+        )
+        restricted = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+            name="Pasta restrita", audience_scope="selected", status="released", position=1,
+        )
+        legacy_gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+            client_id=person.id, name="Galeria privada legada",
+        )
+        db.add_all([public, restricted, legacy_gallery])
+        db.flush()
+        legacy_folder = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+            derived_gallery_id=legacy_gallery.id, name="Pasta exclusiva", status="released",
+        )
+        db.add(legacy_folder)
+        db.flush()
+        public_photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, folder_id=public.id,
+            filename="publica.jpg", storage_key="rename/publica.jpg",
+        )
+        restricted_photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, folder_id=restricted.id,
+            filename="restrita.jpg", storage_key="rename/restrita.jpg",
+        )
+        legacy_photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+            derived_gallery_id=legacy_gallery.id, folder_id=legacy_folder.id,
+            filename="exclusiva.jpg", storage_key="rename/exclusiva.jpg",
+        )
+        db.add_all([public_photo, restricted_photo, legacy_photo])
+        db.flush()
+        grant = FolderClientGrant(
+            tenant_id=FIXTURE_TENANT_ID, folder_id=restricted.id,
+            parent_gallery_id=parent.id, client_id=person.id,
+        )
+        selection = PhotoSelection(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id,
+            photo_asset_id=public_photo.id, client_id=person.id,
+        )
+        order = SaleOrder(
+            tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, client_id=person.id,
+            payment_status="confirmed", total_cents=700, confirmed_at=now(),
+        )
+        db.add_all([grant, selection, order])
+        db.flush()
+        order_item = SaleOrderItem(
+            tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, photo_asset_id=public_photo.id,
+            filename_snapshot=public_photo.filename, folder_id_snapshot=public.id,
+            folder_name_snapshot=public.name, unit_price_cents=700,
+        )
+        db.add(order_item)
+        db.commit()
+        parent_id = parent.id
+        public_id, restricted_id = public.id, restricted.id
+        legacy_folder_id = legacy_folder.id
+        expected_photo_ids = {public_photo.id, restricted_photo.id, legacy_photo.id}
+        expected_grant_id = grant.id
+        expected_selection_id = selection.id
+        expected_order_id, expected_item_id = order.id, order_item.id
+
+    with SessionLocal() as db:
+        before_commerce = (
+            db.scalar(select(func.count()).select_from(PhotoSelection)),
+            db.scalar(select(func.coalesce(func.sum(SaleOrder.total_cents), 0))),
+        )
+
+    renamed_public = client.patch(
+        f"/admin/photo-folders/{public_id}", json={"name": "  Retratos comuns  "}
+    )
+    renamed_restricted = client.patch(
+        f"/admin/photo-folders/{restricted_id}", json={"name": " Retratos da Ana "}
+    )
+    renamed_legacy = client.patch(
+        f"/admin/photo-folders/{legacy_folder_id}", json={"name": " Retratos exclusivos "}
+    )
+    assert renamed_public.status_code == 200
+    assert renamed_public.json() == {"id": str(public_id), "name": "Retratos comuns"}
+    assert renamed_restricted.status_code == 200
+    assert renamed_restricted.json() == {"id": str(restricted_id), "name": "Retratos da Ana"}
+    assert renamed_legacy.status_code == 200
+    assert renamed_legacy.json() == {"id": str(legacy_folder_id), "name": "Retratos exclusivos"}
+    assert client.patch(f"/admin/photo-folders/{public_id}", json={"name": "   "}).status_code == 422
+    assert client.patch(f"/admin/photo-folders/{public_id}", json={"name": "x" * 201}).status_code == 422
+
+    with SessionLocal() as db:
+        public_after = db.get(PhotoFolder, public_id)
+        restricted_after = db.get(PhotoFolder, restricted_id)
+        legacy_after = db.get(PhotoFolder, legacy_folder_id)
+        assert public_after is not None and public_after.name == "Retratos comuns"
+        assert restricted_after is not None and restricted_after.name == "Retratos da Ana"
+        assert legacy_after is not None and legacy_after.name == "Retratos exclusivos"
+        assert (public_after.status, public_after.audience_scope) == ("released", "all")
+        assert (restricted_after.status, restricted_after.audience_scope) == ("released", "selected")
+        assert (legacy_after.status, legacy_after.derived_gallery_id is not None) == ("released", True)
+        assert set(db.scalars(select(PhotoAsset.id).where(
+            PhotoAsset.folder_id.in_((public_id, restricted_id, legacy_folder_id))
+        ))) == expected_photo_ids
+        assert db.scalar(select(FolderClientGrant.id).where(
+            FolderClientGrant.folder_id == restricted_id,
+        )) == expected_grant_id
+        assert db.scalar(select(PhotoSelection.id)) == expected_selection_id
+        preserved_order = db.get(SaleOrder, expected_order_id)
+        preserved_item = db.get(SaleOrderItem, expected_item_id)
+        assert preserved_order is not None and preserved_order.total_cents == 700
+        assert preserved_item is not None
+        assert (preserved_item.folder_id_snapshot, preserved_item.folder_name_snapshot) == (
+            public_id, "Pasta comum",
+        )
+        after_commerce = (
+            db.scalar(select(func.count()).select_from(PhotoSelection)),
+            db.scalar(select(func.coalesce(func.sum(SaleOrder.total_cents), 0))),
+        )
+        assert after_commerce == before_commerce
+        assert db.get(ParentGallery, parent_id) is not None
 
 
 def test_blocked_parent_gallery_rejects_new_folder_and_photo(client: TestClient) -> None:
@@ -1872,7 +2457,8 @@ def test_blocked_parent_gallery_rejects_new_folder_and_photo(client: TestClient)
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento bloqueado"}).json()["id"])
     client.patch(f"/admin/parent-galleries/{parent_id}/settings", json={"active": False})
     rejected_folder = client.post(
-        f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Nova rodada"}
+        f"/admin/parent-galleries/{parent_id}/folders",
+        json={"name": "Nova rodada", "access_duration_days": 7},
     )
     assert rejected_folder.status_code == 409
     assert rejected_folder.json()["detail"] == "A galeria está bloqueada para novas pastas."
@@ -1888,6 +2474,13 @@ def test_blocked_parent_gallery_rejects_new_folder_and_photo(client: TestClient)
     )
     assert rejected_photo.status_code == 409
     assert rejected_photo.json()["detail"] == "A galeria está bloqueada para novas fotos."
+    with SessionLocal() as db:
+        parent = db.get(ParentGallery, parent_id)
+        assert parent is not None
+        parent.lifecycle_status = "deleting"
+        db.commit()
+    rename_rejected = client.patch(f"/admin/photo-folders/{folder_id}", json={"name": "Bloqueada"})
+    assert rename_rejected.status_code == 409
 
 
 def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
@@ -1895,14 +2488,22 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
 ) -> None:
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
     authenticate_admin(client)
-    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Formatura"}).json()["id"])
+    parent_response = client.post("/admin/parent-galleries", json={"name": "Formatura"})
+    assert parent_response.status_code == 201, parent_response.text
+    parent_id = UUID(parent_response.json()["id"])
     folder_id = UUID(
-        client.post(f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Lote 1"}).json()["id"]
+        client.post(
+            f"/admin/parent-galleries/{parent_id}/folders",
+            json={"name": "Lote 1", "access_duration_days": 7},
+        ).json()["id"]
     )
+    image = BytesIO()
+    Image.new("RGB", (16, 16), color=(10, 20, 30)).save(image, format="JPEG")
+    fingerprint = sha256(image.getvalue()).hexdigest()
     photo_id = UUID(
         register_legacy_photo(client,
             f"/admin/photo-folders/{folder_id}/photos",
-            json={"filename": "IMG_001.jpg", "storage_key": "formatura/lote-1/IMG_001.jpg"},
+            json={"filename": "IMG_001.jpg", "storage_key": f"formatura/lote-1/{fingerprint}.jpg"},
         ).json()["id"]
     )
     rejected = client.put(
@@ -1917,8 +2518,6 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
     assert rejected_raw.status_code == 415
     assert rejected_raw.json()["detail"] == "Envie uma imagem JPEG."
 
-    image = BytesIO()
-    Image.new("RGB", (16, 16), color=(10, 20, 30)).save(image, format="JPEG")
     uploaded = client.put(
         f"/admin/photo-assets/{photo_id}/source",
         content=image.getvalue(),
@@ -1930,6 +2529,7 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
         {
             "id": str(photo_id),
             "name": "IMG_001.jpg",
+            "content_fingerprint": fingerprint,
             "preview_url": None,
             "status": "queued",
             "publication_state": "processing",
@@ -1958,6 +2558,8 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
 
 
 def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client: TestClient) -> None:
+    from datetime import timedelta
+
     owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Dona da galeria", phone_e164="+5511999998888")
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento público")
@@ -1967,7 +2569,12 @@ def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client:
             tenant_id=FIXTURE_TENANT_ID,
             parent_gallery_id=parent.id, client_id=owner.id, name="Fotos da família"
         )
-        folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada 1")
+        folder = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            name="Rodada 1",
+            access_duration_days=7,
+        )
         db.add_all([private_gallery, folder])
         db.flush()
         photo = PhotoAsset(
@@ -1987,11 +2594,21 @@ def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client:
     mark_photo_ready(photo_id)
     first = client.post(f"/admin/photo-folders/{folder_id}/publish", json={})
     assert first.status_code == 200
+    assert first.json()["status"] == "released"
     assert first.json()["published_count"] == 1
+    with SessionLocal() as db:
+        released_folder = db.get(PhotoFolder, folder_id)
+        first_released_at = released_folder.released_at
+        first_access_expires_at = released_folder.access_expires_at
+        assert first_released_at is not None
+        assert first_access_expires_at - first_released_at == timedelta(days=7)
     second = client.post(f"/admin/photo-folders/{folder_id}/publish", json={})
     assert second.status_code == 200
     assert second.json()["published_count"] == 0
     with SessionLocal() as db:
+        released_folder = db.get(PhotoFolder, folder_id)
+        assert released_folder.released_at == first_released_at
+        assert released_folder.access_expires_at == first_access_expires_at
         assert db.scalar(
             select(DerivedGalleryPhoto).where(
                 DerivedGalleryPhoto.derived_gallery_id == gallery_id
@@ -2023,10 +2640,24 @@ def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client:
     assert visible.json()["photos"] == [
         {"id": str(photo_id), "name": "FILHO_001.jpg", "preview_url": f"/gallery/{gallery_id}/photos/{photo_id}/preview", "width": 1200, "height": 800}
     ]
-    assert client.get(f"/gallery/{gallery_id}/folders").json() == {
-        "total": 1,
-        "folders": [{"id": str(folder_id), "name": "Rodada 1", "position": 0, "photo_count": 1}],
-    }
+    private_folders = client.get(f"/gallery/{gallery_id}/folders").json()
+    assert private_folders["total"] == 1
+    folder_payload = private_folders["folders"][0]
+    assert folder_payload["id"] == str(folder_id)
+    assert folder_payload["name"] == "Rodada 1"
+    assert folder_payload["photo_count"] == 1
+    assert folder_payload["audience_scope"] == "all"
+    assert folder_payload["access_duration_days"] == 7
+    assert folder_payload["access_expires_at"] is not None
+    assert folder_payload["access_open"] is True
+    assert folder_payload["media_state"] == "available"
+    assert folder_payload["can_request_reopening"] is False
+    assert folder_payload["reopening_request"] is None
+    expected_deadlines = [{
+        "folder_id": str(folder_id),
+        "folder_name": "Rodada 1",
+        "expires_at": folder_payload["access_expires_at"],
+    }]
     expected_private = [{
         "id": str(gallery_id),
         "name": "Fotos da família",
@@ -2043,10 +2674,12 @@ def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client:
                 "browse_url": f"/public-galleries/{parent_id}",
         },
         "folders": [{"id": str(folder_id), "name": "Rodada 1"}],
+        "selection_deadlines": expected_deadlines,
     }]
     library = client.get("/library").json()
     assert [item["id"] for item in library["public_galleries"]] == [str(parent_id)]
     assert library["public_galleries"][0]["browse_url"] == f"/public-galleries/{parent_id}"
+    assert library["public_galleries"][0]["selection_deadlines"] == expected_deadlines
     assert library["private_galleries"] == expected_private
     assert library["galleries"] == expected_private
     assert len(library["journeys"]) == 1
@@ -2055,6 +2688,7 @@ def test_folder_publish_is_idempotent_and_private_assignment_is_explicit(client:
     assert journey["primary_surface"] == "public"
     assert journey["browse_url"] == f"/public-galleries/{parent_id}"
     assert journey["private_gallery"]["id"] == str(gallery_id)
+    assert journey["selection_deadlines"] == expected_deadlines
     assert journey["selection"]["quantity"] == 0
     assert journey["has_prepared_photos"] is True
     assert journey["actions"] == {
@@ -2071,10 +2705,16 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
     authenticate_admin(client)
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento de teste"}).json()["id"])
     first_folder_id = UUID(
-        client.post(f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Rodada 1"}).json()["id"]
+        client.post(
+            f"/admin/parent-galleries/{parent_id}/folders",
+            json={"name": "Rodada 1", "access_duration_days": 7},
+        ).json()["id"]
     )
     second_folder_id = UUID(
-        client.post(f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Rodada 2"}).json()["id"]
+        client.post(
+            f"/admin/parent-galleries/{parent_id}/folders",
+            json={"name": "Rodada 2", "access_duration_days": 7},
+        ).json()["id"]
     )
     client_id = UUID(
         client.post(
@@ -2109,7 +2749,10 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
     )
     attach_legacy_admin_reference(derived_gallery_id, photo_id)
     folders = client.get(f"/admin/parent-galleries/{parent_id}/folders").json()["folders"]
-    assert {key: value for key, value in folders[0].items() if key != "released_at"} == {
+    assert {
+        key: value for key, value in folders[0].items()
+        if key not in {"released_at", "access_duration_days", "access_expires_at"}
+    } == {
         "id": str(first_folder_id),
         "name": "Rodada 1",
         "audience_scope": "all",
@@ -2117,6 +2760,8 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
         "position": 0,
         "photo_count": 1,
         "preview_url": f"/admin/photo-assets/{photo_id}/watermarked-preview",
+        "media_state": "available",
+        "can_renew_deadline": False,
         "publication_counts": {
             "published": 1,
             "ready_to_publish": 0,
@@ -2125,16 +2770,22 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
         },
     }
     assert folders[0]["released_at"] is not None
+    assert folders[0]["access_duration_days"] == 7
+    assert folders[0]["access_expires_at"] is not None
     assert folders[1:] == [
         {
             "id": str(second_folder_id),
             "name": "Rodada 2",
             "audience_scope": "all",
             "status": "preparing",
+            "access_duration_days": 7,
+            "access_expires_at": None,
             "position": 1,
             "photo_count": 1,
             "preview_url": None,
+            "media_state": "available",
             "released_at": None,
+            "can_renew_deadline": False,
             "publication_counts": {
                 "published": 0,
                 "ready_to_publish": 0,
@@ -2160,9 +2811,11 @@ def test_synthetic_gallery_flow_keeps_the_second_folder_administrative(client: T
                 "height": 800,
             }
     ]
-    assert client.get(f"/gallery/{derived_gallery_id}/folders").json()["folders"] == [
-        {"id": str(first_folder_id), "name": "Rodada 1", "position": 0, "photo_count": 1}
-    ]
+    private_folder_rows = client.get(f"/gallery/{derived_gallery_id}/folders").json()["folders"]
+    assert len(private_folder_rows) == 1
+    assert private_folder_rows[0]["id"] == str(first_folder_id)
+    assert private_folder_rows[0]["name"] == "Rodada 1"
+    assert private_folder_rows[0]["photo_count"] == 1
     review = client.get(f"/gallery/{derived_gallery_id}/review")
     assert review.status_code == 200
     assert review.json()["gallery"]["cover_preview_url"] == f"/gallery/{derived_gallery_id}/cover-preview"
@@ -2290,7 +2943,10 @@ def test_admin_deletes_private_gallery_without_deleting_public_photo(client: Tes
     authenticate_admin(client)
     owner_id = UUID(client.post("/admin/clients", json={"full_name": "Responsável", "phone_e164": "+5511999996666"}).json()["id"])
     parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento seguro"}).json()["id"])
-    empty_folder_id = UUID(client.post(f"/admin/parent-galleries/{parent_id}/folders", json={"name": "Vazia"}).json()["id"])
+    empty_folder_id = UUID(client.post(
+        f"/admin/parent-galleries/{parent_id}/folders",
+        json={"name": "Vazia", "access_duration_days": 7},
+    ).json()["id"])
     assert client.delete(f"/admin/photo-folders/{empty_folder_id}").status_code == 204
 
     folder_id, photo_id = create_folder_photo(
@@ -2350,6 +3006,7 @@ def test_operational_folder_photos_support_cover_and_safe_deletion(client: TestC
     assert listing.json()["photos"][0] == {
         "id": str(photo_id),
         "name": "FOTO_001.jpg",
+        "content_fingerprint": None,
         "preview_url": f"/admin/photo-assets/{photo_id}/watermarked-preview",
         "status": "completed",
         "error": None,
@@ -2370,6 +3027,392 @@ def test_operational_folder_photos_support_cover_and_safe_deletion(client: TestC
     assert not source.exists()
     assert not preview.exists()
     assert client.get(f"/admin/parent-galleries/{parent_id}/summary").json()["cover_preview_url"] is None
+
+
+def test_archived_folder_hides_administrative_photo_links_and_blocks_direct_previews(client: TestClient) -> None:
+    authenticate_admin(client)
+    parent_id = UUID(client.post("/admin/parent-galleries", json={"name": "Evento arquivado"}).json()["id"])
+    folder_id, photo_id = create_folder_photo(
+        client, parent_id, filename="ARQUIVADA.jpg", storage_key="evento/arquivada.jpg", ready=True
+    )
+    client_id = UUID(client.post(
+        "/admin/clients", json={"full_name": "Cliente arquivada", "phone_e164": "+5511999999988"}
+    ).json()["id"])
+    gallery_id = create_empty_private_gallery(
+        client, parent_id=parent_id, client_id=client_id, name="Privada arquivada",
+    )
+    private_folder_response = client.post(
+        f"/admin/derived-galleries/{gallery_id}/folders",
+        json={"name": "Pasta privada arquivada", "access_duration_days": 7},
+    )
+    assert private_folder_response.status_code == 201
+    private_folder_id = UUID(private_folder_response.json()["id"])
+    assert private_folder_response.json()["access_duration_days"] == 7
+    assert private_folder_response.json()["access_expires_at"] is None
+    private_photo_id = UUID(register_legacy_photo(
+        client,
+        f"/admin/photo-folders/{private_folder_id}/photos",
+        json={
+            "filename": "PRIVADA_ARQUIVADA.jpg",
+            "storage_key": f"private/{gallery_id}/PRIVADA_ARQUIVADA.jpg",
+        },
+    ).json()["id"])
+    assert client.put(
+        f"/admin/parent-galleries/{parent_id}/clients/{client_id}"
+    ).status_code == 200
+    attach_legacy_admin_reference(gallery_id, photo_id)
+    with SessionLocal() as db:
+        folder = db.get(PhotoFolder, folder_id)
+        folder.status = "released"
+        private_folder = db.get(PhotoFolder, private_folder_id)
+        private_folder.status = "released"
+        private_folder.released_at = now()
+        private_folder.access_expires_at = now() + timedelta(days=7)
+        private_photo = db.get(PhotoAsset, private_photo_id)
+        private_photo.available = True
+        photo = db.get(PhotoAsset, photo_id)
+        db.get(ParentGallery, parent_id).cover_photo_id = photo_id
+        db.add_all([
+            MediaDerivative(
+                tenant_id=FIXTURE_TENANT_ID,
+                photo_asset_id=photo_id,
+                variant="admin_preview",
+                relative_path=f"{photo_id}/admin_preview.jpg",
+                status="ready",
+                width=120,
+                height=80,
+            ),
+            MediaArchiveCycle(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=photo.parent_gallery_id,
+                folder_id=folder_id,
+                cycle_number=1,
+                state="archived",
+            ),
+            MediaDerivative(
+                tenant_id=FIXTURE_TENANT_ID,
+                photo_asset_id=private_photo_id,
+                variant="admin_preview",
+                relative_path=f"{private_photo_id}/admin_preview.jpg",
+                status="ready",
+                width=120,
+                height=80,
+            ),
+            MediaArchiveCycle(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=photo.parent_gallery_id,
+                folder_id=private_folder_id,
+                cycle_number=1,
+                state="archived",
+            ),
+        ])
+        order = SaleOrder(
+            tenant_id=FIXTURE_TENANT_ID,
+            derived_gallery_id=gallery_id,
+            client_id=client_id,
+            payment_status="confirmed",
+            total_cents=700,
+            confirmed_at=now(),
+        )
+        db.add(order)
+        db.flush()
+        pending_order = SaleOrder(
+            tenant_id=FIXTURE_TENANT_ID,
+            derived_gallery_id=gallery_id,
+            client_id=client_id,
+            payment_status="pending",
+            total_cents=700,
+        )
+        db.add(pending_order)
+        db.flush()
+        pending_order_id = pending_order.id
+        archive_cycle = db.scalar(select(MediaArchiveCycle).where(
+            MediaArchiveCycle.tenant_id == FIXTURE_TENANT_ID,
+            MediaArchiveCycle.folder_id == folder_id,
+        ))
+        db.add(MediaArchiveObject(
+            tenant_id=FIXTURE_TENANT_ID,
+            cycle_id=archive_cycle.id,
+            source_ref=f"cover:{photo_id}:admin_preview",
+            object_type="cover_thumbnail",
+            mime_type="image/jpeg",
+            size_bytes=1,
+            sha256="a" * 64,
+            remote_object_id="cold-cover-thumbnail",
+        ))
+        db.add(SaleOrderItem(
+            tenant_id=FIXTURE_TENANT_ID,
+            sale_order_id=order.id,
+            photo_asset_id=photo_id,
+            photo_asset_id_snapshot=photo_id,
+            folder_id_snapshot=folder_id,
+            filename_snapshot="ARQUIVADA.jpg",
+            folder_name_snapshot="Rodada 1",
+            unit_price_cents=700,
+        ))
+        db.add(PhotoSelection(
+            tenant_id=FIXTURE_TENANT_ID,
+            derived_gallery_id=gallery_id,
+            photo_asset_id=photo_id,
+            client_id=client_id,
+        ))
+        db.add(SaleOrderItem(
+            tenant_id=FIXTURE_TENANT_ID,
+            sale_order_id=pending_order_id,
+            photo_asset_id=photo_id,
+            photo_asset_id_snapshot=photo_id,
+            folder_id_snapshot=folder_id,
+            filename_snapshot="ARQUIVADA.jpg",
+            folder_name_snapshot="Rodada 1",
+            unit_price_cents=700,
+        ))
+        finalized_order = SaleOrder(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent_id,
+            parent_gallery_id_snapshot=parent_id,
+            parent_gallery_name_snapshot="Evento arquivado",
+            derived_gallery_name_snapshot="",
+            client_id=client_id,
+            payment_status="not_required",
+            payment_required_snapshot=False,
+            frozen_at=now(),
+            total_cents=0,
+        )
+        db.add(GalleryClientState(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent_id,
+            client_id=client_id,
+        ))
+        db.flush()
+        db.add(finalized_order)
+        db.flush()
+        finalized_order_item = SaleOrderItem(
+            tenant_id=FIXTURE_TENANT_ID,
+            sale_order_id=finalized_order.id,
+            photo_asset_id=photo_id,
+            photo_asset_id_snapshot=photo_id,
+            folder_id_snapshot=folder_id,
+            filename_snapshot="ARQUIVADA.jpg",
+            folder_name_snapshot="Rodada 1",
+            unit_price_cents=0,
+        )
+        db.add(finalized_order_item)
+        db.flush()
+        finalized_order_item_id = finalized_order_item.id
+        db.commit()
+
+    folders = client.get(f"/admin/parent-galleries/{parent_id}/folders").json()["folders"]
+    archived_folder = next(item for item in folders if item["id"] == str(folder_id))
+    assert archived_folder["media_state"] == "archived"
+    assert archived_folder["preview_url"] is None
+    archived_upload = client.put(
+        f"/admin/photo-assets/{photo_id}/source",
+        content=b"invalid bytes must not be parsed for an archived folder",
+        headers={"content-type": "image/jpeg"},
+    )
+    assert archived_upload.status_code == 409
+    assert archived_upload.json()["detail"] == "A pasta está em uma etapa de arquivo ou recuperação."
+
+    photos = client.get(f"/admin/photo-folders/{folder_id}/photos").json()
+    assert photos["folder"]["media_state"] == "archived"
+    assert photos["photos"][0]["preview_url"] is None
+    assert photos["photos"][0]["can_delete"] is False
+    assert client.get(f"/admin/photo-assets/{photo_id}/media-status").json()["media_state"] == "archived"
+    with SessionLocal() as db:
+        archived_item = db.scalar(select(SaleOrderItem).where(
+            SaleOrderItem.sale_order_id == pending_order_id,
+            SaleOrderItem.photo_asset_id == photo_id,
+        ))
+        archived_item_id = archived_item.id
+    assert client.get(
+        f"/admin/orders/{pending_order_id}/items/{archived_item_id}/preview", params={"size": "preview"}
+    ).status_code == 404
+    assert client.get(f"/admin/photo-assets/{photo_id}/watermarked-preview").status_code == 404
+    assert client.get(f"/admin/photo-assets/{photo_id}/preview").status_code == 404
+    assert client.get(f"/admin/parent-galleries/{parent_id}/details").json()["settings"]["cover_preview_url"] is None
+    assert client.get(f"/admin/parent-galleries/{parent_id}/available-photos").json()["photos"] == []
+    private_folder = next(
+        item for item in client.get(f"/admin/derived-galleries/{gallery_id}/folders").json()["folders"]
+        if item["id"] == str(private_folder_id)
+    )
+    assert private_folder["released_at"] is not None
+    assert private_folder["access_duration_days"] == 7
+    assert private_folder["access_expires_at"] is not None
+    archived_gallery_rows = client.get("/admin/derived-galleries?tab=frozen").json()["galleries"]
+    archived_gallery_row = next(item for item in archived_gallery_rows if item["id"] == str(gallery_id))
+    assert archived_gallery_row["selection_expires_at"] is None
+    assert archived_gallery_row["cover_preview_url"] is None
+    archived_gallery_detail = client.get(f"/admin/derived-galleries/{gallery_id}").json()
+    assert archived_gallery_detail["selection_expires_at"] is None
+    assert archived_gallery_detail["cover_preview_url"] is None
+    private_photos = client.get(f"/admin/derived-galleries/{gallery_id}/photos").json()["photos"]
+    archived_private_photo = next(item for item in private_photos if item["id"] == str(photo_id))
+    assert archived_private_photo["media_state"] == "archived"
+    assert archived_private_photo["preview_url"] is None
+    archived_private_folder_photo = next(
+        item for item in private_photos if item["id"] == str(private_photo_id)
+    )
+    assert archived_private_folder_photo["media_state"] == "archived"
+    assert archived_private_folder_photo["preview_url"] is None
+    selection = client.get(f"/admin/derived-galleries/{gallery_id}/selection").json()["photos"]
+    archived_selection = next(item for item in selection if item["id"] == str(photo_id))
+    assert archived_selection["media_state"] == "archived"
+    assert archived_selection["preview_url"] is None
+    exported_selection = client.get(f"/admin/derived-galleries/{gallery_id}/selection/export.html")
+    assert exported_selection.status_code == 200
+    assert "ARQUIVADA.jpg" in exported_selection.text
+    assert "Prévia indisponível" in exported_selection.text
+    assert '<img src="data:image/jpeg;base64,' not in exported_selection.text
+    admin_history = client.get("/admin/purchases").json()["orders"]
+    archived_order_item = next(
+        item for entry in admin_history for item in entry["items"] if item["photo_id"] == str(photo_id)
+    )
+    assert archived_order_item["media_state"] == "archived"
+    assert archived_order_item["preview_url"] is None
+    assert archived_order_item["operational_media_available"] is False
+    parent_client = next(
+        item for item in client.get(f"/admin/parent-galleries/{parent_id}/clients").json()["clients"]
+        if item["client_id"] == str(client_id)
+    )
+    finalized_item = parent_client["finalized_orders"][0]["items"][0]
+    assert finalized_item["media_state"] == "archived"
+    assert finalized_item["preview_url"] is None
+    client.cookies.clear()
+    authenticate_client(client, "+5511999999988")
+    library_journey = next(
+        item for item in client.get("/library").json()["journeys"]
+        if item["id"] == str(parent_id)
+    )
+    assert library_journey["cover_preview_url"] is None
+    archived_cart_item = library_journey["selection"]["items"][0]
+    assert archived_cart_item["media_state"] == "archived"
+    assert archived_cart_item["preview_url"] is None
+    assert client.get(
+        f"/library/purchases/items/{finalized_order_item_id}/preview"
+    ).status_code == 404
+    client_orders = client.get(f"/gallery/{gallery_id}/payment-communications").json()["orders"]
+    archived_client_order_item = client_orders[0]["items"][0]
+    assert archived_client_order_item["media_state"] == "archived"
+    assert archived_client_order_item["preview_url"] is None
+    pending_order = client.get(f"/gallery/{gallery_id}/orders/{pending_order_id}").json()
+    assert pending_order["items"][0]["media_state"] == "archived"
+    assert pending_order["items"][0]["preview_url"] is None
+
+    client.cookies.clear()
+    authenticate_admin(client)
+    for cycle_state in ("archived", "archiving", "restoring", "reconciliation_required"):
+        with SessionLocal() as db:
+            cycle = db.scalar(select(MediaArchiveCycle).where(
+                MediaArchiveCycle.tenant_id == FIXTURE_TENANT_ID,
+                MediaArchiveCycle.folder_id == folder_id,
+            ))
+            assert cycle is not None
+            cycle.state = cycle_state
+            db.commit()
+
+        folder_delete = client.delete(f"/admin/photo-folders/{folder_id}")
+        assert folder_delete.status_code == 409
+        assert folder_delete.json()["detail"] == "A pasta está em uma etapa de arquivo ou recuperação."
+        photo_delete = client.delete(f"/admin/photo-folders/{folder_id}/photos/{photo_id}")
+        assert photo_delete.status_code == 409
+        assert photo_delete.json()["detail"] == "A pasta está em uma etapa de arquivo ou recuperação."
+        upload = client.post(
+            f"/admin/photo-folders/{folder_id}/photos",
+            json={
+                "filename": f"BLOQUEADA_{cycle_state}.jpg",
+                "storage_key": f"cold/{folder_id}/{cycle_state}.jpg",
+            },
+        )
+        assert upload.status_code == 409
+        assert upload.json()["detail"] == "A pasta está em uma etapa de arquivo ou recuperação."
+        publish = client.post(f"/admin/photo-folders/{folder_id}/publish", json={})
+        assert publish.status_code == 409
+        assert publish.json()["detail"] == "A pasta está em uma etapa de arquivo ou recuperação."
+        with SessionLocal() as db:
+            assert db.get(PhotoFolder, folder_id) is not None
+            assert db.get(PhotoAsset, photo_id) is not None
+            assert db.scalar(select(func.count()).select_from(PhotoAsset).where(
+                PhotoAsset.tenant_id == FIXTURE_TENANT_ID,
+                PhotoAsset.folder_id == folder_id,
+            )) == 1
+            cycle = db.scalar(select(MediaArchiveCycle).where(
+                MediaArchiveCycle.tenant_id == FIXTURE_TENANT_ID,
+                MediaArchiveCycle.folder_id == folder_id,
+            ))
+            assert cycle is not None and cycle.state == cycle_state
+            assert db.scalar(select(func.count()).select_from(MediaArchiveObject).where(
+                MediaArchiveObject.tenant_id == FIXTURE_TENANT_ID,
+                MediaArchiveObject.cycle_id == cycle.id,
+            )) == 1
+
+
+def test_private_gallery_keeps_only_cover_thumbnail_while_another_folder_is_active(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derivative_root = tmp_path / "derivatives"
+    monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivative_root))
+    authenticate_admin(client)
+    client_id = UUID(client.post(
+        "/admin/clients",
+        json={"full_name": "Cliente da capa", "phone_e164": "+5511999999961"},
+    ).json()["id"])
+    parent_id = UUID(client.post(
+        "/admin/parent-galleries", json={"name": "Evento com capa arquivada"},
+    ).json()["id"])
+    cover_folder_id, cover_photo_id = create_folder_photo(
+        client, parent_id, folder_name="Pasta vencida", filename="capa.jpg",
+        storage_key="evento/capa-arquivada.jpg", ready=True,
+    )
+    active_folder_id, _active_photo_id = create_folder_photo(
+        client, parent_id, folder_name="Pasta ativa", filename="ativa.jpg",
+        storage_key="evento/pasta-ativa.jpg", ready=True,
+    )
+    for folder_id in (cover_folder_id, active_folder_id):
+        assert client.post(
+            f"/admin/photo-folders/{folder_id}/release", json={"gallery_ids": []},
+        ).status_code == 200
+
+    gallery_id = create_empty_private_gallery(
+        client, parent_id=parent_id, client_id=client_id, name="Galeria privada",
+    )
+    attach_legacy_admin_reference(gallery_id, cover_photo_id)
+    admin_preview = derivative_root / f"{cover_photo_id}/admin_preview.jpg"
+    admin_preview.parent.mkdir(parents=True, exist_ok=True)
+    admin_preview.write_bytes(b"miniatura-da-capa")
+    with SessionLocal() as db:
+        parent = db.get(ParentGallery, parent_id)
+        parent.cover_photo_id = cover_photo_id
+        db.get(PhotoFolder, cover_folder_id).access_expires_at = now() - timedelta(minutes=1)
+        db.add(MediaDerivative(
+            tenant_id=FIXTURE_TENANT_ID,
+            photo_asset_id=cover_photo_id,
+            variant="admin_preview",
+            relative_path=f"{cover_photo_id}/admin_preview.jpg",
+            status="ready",
+            width=320,
+            height=240,
+        ))
+        db.add(MediaArchiveCycle(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent_id,
+            folder_id=cover_folder_id,
+            cycle_number=1,
+            state="archived",
+        ))
+        db.commit()
+
+    client.cookies.clear()
+    authenticate_client(client, "+5511999999961")
+    review = client.get(f"/gallery/{gallery_id}/review")
+    assert review.status_code == 200
+    assert review.json()["gallery"]["cover_preview_url"] == f"/gallery/{gallery_id}/cover-preview"
+    assert cover_photo_id not in {UUID(photo["id"]) for photo in review.json()["photos"]}
+    cover = client.get(f"/gallery/{gallery_id}/cover-preview")
+    assert cover.status_code == 200
+    assert cover.content == b"miniatura-da-capa"
+    assert client.get(
+        f"/gallery/{gallery_id}/photos/{cover_photo_id}/preview",
+    ).status_code in {403, 404}
 
 
 def test_photo_deletion_rejects_other_folder_and_preserves_confirmed_purchase(client: TestClient) -> None:
@@ -2499,7 +3542,7 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
         "Revisão",
         "Aguardando",
         "Pago",
-        "Expirado",
+        "Prazo legado",
         "Cancelado",
         "Sem pedido",
         "Pago sem galeria",
@@ -2533,7 +3576,7 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
                 client_id=client_ids[label],
                 name=f"Privada {label}",
                 selection_expires_at=(
-                    now() - timedelta(days=1) if label == "Expirado" else None
+                    now() - timedelta(days=1) if label == "Prazo legado" else None
                 ),
             )
             for label in labels
@@ -2582,6 +3625,7 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
         db.commit()
         db.delete(galleries["Pago sem galeria"])
         db.commit()
+        expired_gallery_id = galleries["Prazo legado"].id
 
     statement_count = 0
     context_statement_count = 0
@@ -2604,14 +3648,20 @@ def test_parent_gallery_clients_aggregates_commercial_precedence_in_constant_que
     assert clients_by_name["Revisão"]["commercial_status"] == "pending_review"
     assert clients_by_name["Aguardando"]["commercial_status"] == "awaiting_payment"
     assert clients_by_name["Pago"]["commercial_status"] == "paid"
-    assert clients_by_name["Expirado"]["commercial_status"] == "overdue"
-    assert clients_by_name["Expirado"]["gallery_status"] == "expired"
+    assert clients_by_name["Prazo legado"]["commercial_status"] == "no_order"
+    assert clients_by_name["Prazo legado"]["gallery_status"] == "no_selection"
+    assert clients_by_name["Prazo legado"]["selection_expires_at"] is None
     assert clients_by_name["Cancelado"]["commercial_status"] == "cancelled"
     assert clients_by_name["Cancelado"]["membership_status"] == "blocked"
     assert clients_by_name["Cancelado"]["gallery_status"] == "blocked"
     assert clients_by_name["Sem pedido"]["commercial_status"] == "no_order"
     assert clients_by_name["Pago sem galeria"]["commercial_status"] == "paid"
     assert clients_by_name["Pago sem galeria"]["derived_gallery_id"] is None
+    expired_selection = client.get(
+        f"/admin/derived-galleries/{expired_gallery_id}/selection"
+    )
+    assert expired_selection.status_code == 200
+    assert expired_selection.json()["gallery"]["selection_expires_at"] is None
     # Os agregados canônicos e de atividade usam consultas em lote, sem depender da quantidade de clientes.
     assert statement_count <= 23  # Inclui projeção de atividade e revalidações constantes do proprietário.
     assert context_statement_count <= 12
@@ -2746,7 +3796,23 @@ def test_complete_administrative_gallery_flow_is_contextual_and_idempotent(clien
     assert queued.json()["inventory"]["remove"]["photos"] == 1
 
 
-def test_pending_checkout_keeps_cart_editable_until_payment_is_reported(client: TestClient):
+def test_pending_checkout_keeps_cart_editable_until_payment_is_reported(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+):
+    from app import checkout as checkout_module
+
+    locked_clients = []
+    original_lock_folders = checkout_module.lock_selected_content_folders
+
+    def track_folder_locks(db, *, tenant_id, client_id):
+        locked_clients.append((tenant_id, client_id))
+        return original_lock_folders(
+            db, tenant_id=tenant_id, client_id=client_id,
+        )
+
+    monkeypatch.setattr(
+        checkout_module, "lock_selected_content_folders", track_folder_locks,
+    )
     set_test_global_pix(instructions="Confirme com o fotógrafo.")
     with SessionLocal() as db:
         owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente PIX", phone_e164="+5511555554321")
@@ -2772,6 +3838,10 @@ def test_pending_checkout_keeps_cart_editable_until_payment_is_reported(client: 
         assert order.frozen_at is None
         assert db.scalar(select(PhotoSelection).where(PhotoSelection.derived_gallery_id == gallery_id))
         assert db.scalar(select(SaleOrderItem).where(SaleOrderItem.sale_order_id == order.id)).unit_price_cents == 700
+        assert locked_clients == [
+            (FIXTURE_TENANT_ID, owner.id),
+            (FIXTURE_TENANT_ID, owner.id),
+        ]
 
 
 def test_checkout_reuses_and_resynchronizes_the_open_draft(client: TestClient):
@@ -3009,7 +4079,7 @@ def test_client_reports_own_pending_payment_idempotently(client: TestClient, mon
     library_before_checkout = client.get("/library").json()
     assert library_before_checkout["journeys"][0]["selection"]["quantity"] == 1
     assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": [], "removed_movements": []}
-    order = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": "communication-order-key-0001"}).json()
+    order = client.post(f"/gallery/{gallery_id}/checkout", json={"idempotency_key": 'unit-test-idempotency-key-unique-001'}).json()
     library_before_communication = client.get("/library").json()
     assert library_before_communication["journeys"][0]["selection"]["quantity"] == 1
     assert client.get("/library/purchases").json() == {"orders": [], "payment_groups": [], "removed_movements": []}
@@ -3073,6 +4143,7 @@ def test_client_reports_own_pending_payment_idempotently(client: TestClient, mon
             "photo_id": str(photo_id),
             "name": "IMG_0001.jpg",
             "unit_price_cents": 500,
+            "media_state": "available",
             "preview_url": f"/gallery/{gallery_id}/photos/{photo_id}/preview",
         }
     ]
@@ -3594,7 +4665,7 @@ def test_admin_pricing_requires_contiguous_tiers_and_returns_jump_warning(client
     ).status_code == 409
 
 
-def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_terms(
+def test_private_gallery_uses_parent_sales_configuration_without_legacy_deadline_inheritance(
     client: TestClient,
 ):
     with SessionLocal() as db:
@@ -3608,6 +4679,21 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
             "/admin/parent-galleries", json={"name": "Galeria pública herdada"}
         ).json()["id"]
     )
+    settings = client.get(f"/admin/parent-galleries/{parent_id}/settings")
+    assert settings.status_code == 200
+    assert "selection_duration_days" not in settings.json()
+    sales_settings = client.get(f"/admin/parent-galleries/{parent_id}/sales")
+    assert sales_settings.status_code == 200
+    assert "selection_duration_days" not in sales_settings.json()
+    assert "selection_deadline" not in sales_settings.json()["capabilities"]
+    assert client.patch(
+        f"/admin/parent-galleries/{parent_id}/settings",
+        json={"selection_duration_days": 14},
+    ).status_code == 422
+    assert client.put(
+        f"/admin/parent-galleries/{parent_id}/sales",
+        json={"selection_duration_days": 14},
+    ).status_code == 422
     folder_id, photo_id = create_folder_photo(
         client, parent_id, storage_key="inheritance/photo.jpg", ready=True
     )
@@ -3626,23 +4712,19 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
                 }
             ],
             "sales_message": "Mensagem A",
-            "selection_duration_days": 14,
             "favorites_enabled": True,
             "comments_enabled": True,
         },
     )
     assert initial.status_code == 200
-    created_at = now()
     gallery_id = create_empty_private_gallery(
         client, parent_id=parent_id, client_id=owner_id, name="Privada herdada",
     )
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, gallery_id)
-        first_expiry = gallery.selection_expires_at
-        if first_expiry.tzinfo is None:
-            first_expiry = first_expiry.replace(tzinfo=UTC)
-        assert created_at + timedelta(days=13) < first_expiry
-        assert first_expiry < created_at + timedelta(days=15)
+        assert gallery.selection_expires_at is None
+        folder_deadline = db.get(PhotoFolder, folder_id).access_expires_at
+        assert folder_deadline is not None
 
     rejected_override = client.patch(
         f"/admin/derived-galleries/{gallery_id}",
@@ -3653,10 +4735,7 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
     client.cookies.clear()
     authenticate_client(client, "+5511555554367")
     review = client.get(f"/gallery/{gallery_id}/review").json()["gallery"]
-    review_expiry = datetime.fromisoformat(review["selection_expires_at"])
-    if review_expiry.tzinfo is None:
-        review_expiry = review_expiry.replace(tzinfo=UTC)
-    assert review_expiry == first_expiry
+    assert review["selection_expires_at"] is None
     assert review["selection_open"] is True
     assert review["message"] == "Mensagem A"
     assert review["favorites_enabled"] is True
@@ -3682,25 +4761,19 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
                 }
             ],
             "sales_message": "Mensagem B",
-            "selection_duration_days": 30,
             "favorites_enabled": False,
             "comments_enabled": False,
         },
     )
     assert changed_before_checkout.status_code == 200
     with SessionLocal() as db:
-        persisted_expiry = db.get(DerivedGallery, gallery_id).selection_expires_at
-        if persisted_expiry.tzinfo is None:
-            persisted_expiry = persisted_expiry.replace(tzinfo=UTC)
-        assert persisted_expiry == first_expiry
+        assert db.get(DerivedGallery, gallery_id).selection_expires_at is None
+        assert db.get(PhotoFolder, folder_id).access_expires_at == folder_deadline
 
     client.cookies.clear()
     authenticate_client(client, "+5511555554367")
     review = client.get(f"/gallery/{gallery_id}/review").json()["gallery"]
-    review_expiry = datetime.fromisoformat(review["selection_expires_at"])
-    if review_expiry.tzinfo is None:
-        review_expiry = review_expiry.replace(tzinfo=UTC)
-    assert review_expiry == first_expiry
+    assert review["selection_expires_at"] is None
     assert review["message"] == "Mensagem B"
     assert review["favorites_enabled"] is False
     order = client.post(
@@ -3724,7 +4797,6 @@ def test_private_gallery_inherits_parent_configuration_and_checkout_freezes_term
                 }
             ],
             "sales_message": "Mensagem C",
-            "selection_duration_days": 30,
             "favorites_enabled": False,
             "comments_enabled": False,
         },
@@ -4437,7 +5509,8 @@ def test_private_media_payment_correction_and_reopening_contracts_start_missing(
     gallery_id, _ = create_gallery_for_client(client, owner)
     authenticate_admin(client)
     created_folder = client.post(
-        f"/admin/derived-galleries/{gallery_id}/folders", json={"name": "Ensaio privado"}
+        f"/admin/derived-galleries/{gallery_id}/folders",
+        json={"name": "Ensaio privado", "access_duration_days": 7},
     )
     assert created_folder.status_code == 201
     private_folder_id = UUID(created_folder.json()["id"])
@@ -4455,7 +5528,10 @@ def test_private_media_payment_correction_and_reopening_contracts_start_missing(
 
     with SessionLocal() as db:
         gallery = db.get(DerivedGallery, gallery_id)
-        gallery.selection_expires_at = now() - timedelta(minutes=1)
+        gallery.selection_expires_at = now() + timedelta(days=30)
+        folder = db.get(PhotoFolder, private_folder_id)
+        folder.status = "released"
+        folder.access_expires_at = now() - timedelta(minutes=1)
         order = SaleOrder(tenant_id=FIXTURE_TENANT_ID,
             derived_gallery_id=gallery_id,
             client_id=owner_id,
@@ -4479,7 +5555,7 @@ def test_private_media_payment_correction_and_reopening_contracts_start_missing(
 
     corrected = client.post(
         f"/admin/payment-communications/{communication_id}/correction",
-        json={"idempotency_key": "operations-correction-0001"},
+        json={"idempotency_key": 'unit-test-idempotency-key-unique-001'},
     )
     assert corrected.status_code == 200
     assert corrected.json()["status"] == "pending_review"
@@ -4488,36 +5564,98 @@ def test_private_media_payment_correction_and_reopening_contracts_start_missing(
     authenticate_client(client, owner_phone)
     requested = client.post(
         f"/gallery/{gallery_id}/reopening-requests",
-        json={"idempotency_key": "operations-reopening-0001"},
+        json={"folder_id": str(private_folder_id), "idempotency_key": "operations-reopening-0001"},
     )
     repeated = client.post(
         f"/gallery/{gallery_id}/reopening-requests",
-        json={"idempotency_key": "operations-reopening-0002"},
+        json={"folder_id": str(private_folder_id), "idempotency_key": "operations-reopening-0002"},
     )
     assert requested.status_code == repeated.status_code == 201
     assert requested.json()["id"] == repeated.json()["id"]
     reopening_id = requested.json()["id"]
+    status_response = client.get(
+        f"/gallery/{gallery_id}/reopening-requests", params={"folder_id": str(private_folder_id)}
+    )
+    assert status_response.status_code == 200
+    assert status_response.json()["request"]["id"] == reopening_id
+    assert client.get(
+        f"/gallery/{gallery_id}/reopening-requests", params={"folder_id": str(uuid4())}
+    ).status_code == 404
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_id)
+        second_folder = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=gallery.parent_gallery_id,
+            derived_gallery_id=gallery.id,
+            name="Ensaio privado adicional",
+            purpose="content",
+            status="released",
+            position=1,
+            access_duration_days=7,
+            access_expires_at=now() - timedelta(minutes=1),
+        )
+        db.add(second_folder)
+        db.flush()
+        second_request = GalleryReopeningRequest(
+            tenant_id=FIXTURE_TENANT_ID,
+            derived_gallery_id=gallery.id,
+            photo_folder_id=second_folder.id,
+            requested_by_client_id=owner_id,
+            idempotency_key="operations-reopening-list-0002",
+        )
+        db.add(second_request)
+        db.commit()
+        second_reopening_id = str(second_request.id)
     client.cookies.clear()
     authenticate_admin(client)
-    listed = client.get("/admin/gallery-reopening-requests", params={"status": "pending"})
+    related_query_counts = {"notifications": 0, "folders": 0}
+
+    def count_related_queries(_conn, _cursor, statement, *_args) -> None:
+        normalized = statement.lower()
+        if not normalized.lstrip().startswith("select"):
+            return
+        if "from gallery_reopening_notification_outbox" in normalized:
+            related_query_counts["notifications"] += 1
+        if "from photo_folder" in normalized:
+            related_query_counts["folders"] += 1
+
+    event.listen(engine, "before_cursor_execute", count_related_queries)
+    try:
+        listed = client.get("/admin/gallery-reopening-requests", params={"status": "pending"})
+    finally:
+        event.remove(engine, "before_cursor_execute", count_related_queries)
     assert listed.status_code == 200
-    assert [item["id"] for item in listed.json()["requests"]] == [reopening_id]
-    future = now() + timedelta(days=3)
+    assert {item["id"] for item in listed.json()["requests"]} == {
+        reopening_id,
+        second_reopening_id,
+    }
+    assert related_query_counts == {"notifications": 1, "folders": 1}
+    listed_request = next(
+        item for item in listed.json()["requests"] if item["id"] == reopening_id
+    )
+    assert listed_request["folder_id"] == str(private_folder_id)
+    assert listed_request["folder_name"] == "Ensaio privado"
+    assert listed_request["folder_access_scope"] == "client"
+    assert listed_request["requested_by_client_name"] == "Cliente Operações"
+    assert listed_request["approved_duration_days"] is None
     approved = client.post(
         f"/admin/gallery-reopening-requests/{reopening_id}/decision",
-        json={"decision": "approved", "selection_expires_at": future.isoformat()},
+        json={"decision": "approved", "access_duration_days": 3},
     )
     assert approved.status_code == 200
     assert approved.json()["status"] == "approved"
+    assert approved.json()["folder_id"] == str(private_folder_id)
+    assert approved.json()["approved_duration_days"] == 3
     with SessionLocal() as db:
-        persisted_deadline = db.get(DerivedGallery, gallery_id).selection_expires_at
-        assert persisted_deadline.replace(tzinfo=UTC) == future
+        persisted_reopening = db.get(GalleryReopeningRequest, UUID(reopening_id))
+        assert persisted_reopening.approved_duration_days == 3
+        assert persisted_reopening.approved_until.replace(tzinfo=UTC) > now()
 
     client.cookies.clear()
     authenticate_client(client, owner_phone)
     assert client.post(
         f"/gallery/{gallery_id}/reopening-requests",
-        json={"idempotency_key": "operations-reopening-after-approval"},
+        json={"folder_id": str(private_folder_id), "idempotency_key": "operations-reopening-after-approval"},
     ).status_code == 409
 
 
@@ -4659,7 +5797,7 @@ def test_private_upload_reuses_media_pipeline_without_entering_public_facial_sco
     private_folder_id = UUID(
         client.post(
             f"/admin/derived-galleries/{gallery_id}/folders",
-            json={"name": "Arquivos do dispositivo"},
+            json={"name": "Arquivos do dispositivo", "access_duration_days": 7},
         ).json()["id"]
     )
     private_photo_id = UUID(
@@ -4818,6 +5956,11 @@ def test_canonical_folder_audience_filters_list_preview_and_selection(
         listed = client.get(f"/public-galleries/{parent_id}/photos")
         assert listed.status_code == 200
         assert {UUID(item["id"]) for item in listed.json()["photos"]} == expected_ids
+        assert {UUID(folder["id"]) for folder in listed.json()["folders"]} == (
+            {common_folder_id, restricted_folder_id}
+            if restricted_id in expected_ids else {common_folder_id}
+        )
+        assert all(folder["photo_count"] == 1 for folder in listed.json()["folders"])
         assert {UUID(item["folder_id"]) for item in listed.json()["photos"]} == (
             {common_folder_id, restricted_folder_id}
             if restricted_id in expected_ids else {common_folder_id}
@@ -5075,7 +6218,7 @@ def test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients(
         recipients.append((recipient_id, phone))
     folder_response = client.post(
         f"/admin/parent-galleries/{parent_id}/clients/{recipients[0][0]}/folders",
-        json={"name": "Retratos exclusivos"},
+        json={"name": "Retratos exclusivos", "access_duration_days": 7},
     )
     assert folder_response.status_code == 201, folder_response.text
     folder_id = UUID(folder_response.json()["id"])
@@ -5154,7 +6297,7 @@ def test_restricted_folder_upload_uses_one_jpeg_pipeline_for_two_clients(
         ).status_code == 200
 
 
-def test_canonical_first_selection_reuses_individual_state_without_derivation(
+def test_canonical_first_selection_does_not_inherit_gallery_deadline(
     client: TestClient,
 ) -> None:
     with SessionLocal() as db:
@@ -5182,7 +6325,7 @@ def test_canonical_first_selection_reuses_individual_state_without_derivation(
         assert first.state_created is True
         assert first.selection_created is True
         assert first.quantity == 1
-        assert first.state.selection_expires_at is not None
+        assert first.state.selection_expires_at is None
     authenticate_client(client, "+5511555592030")
     assert client.get(f"/public-galleries/{parent_id}/photos").json()["photos"][0]["selected"] is True
     with SessionLocal() as db:
@@ -5207,7 +6350,92 @@ def test_canonical_first_selection_reuses_individual_state_without_derivation(
         assert db.scalar(select(GalleryClientState)) is not None
 
 
-def test_first_selection_starts_deadline_for_precreated_client_state(
+def test_canonical_selection_start_tracks_each_new_cart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with SessionLocal() as db:
+        person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente horário exato", phone_e164="+5511555592099")
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria horário exato")
+        db.add_all([person, parent])
+        db.flush()
+        db.add(ParentGalleryRegistration(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=person.id,
+            status="active",
+        ))
+        folder = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            name="Seleção",
+            audience_scope="all",
+            status="released",
+        )
+        db.add(folder)
+        db.flush()
+        first_photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="primeira.jpg",
+            storage_key="selection-start/first.jpg",
+        )
+        second_photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="segunda.jpg",
+            storage_key="selection-start/second.jpg",
+        )
+        db.add_all([first_photo, second_photo])
+        db.commit()
+        parent_id, client_id = parent.id, person.id
+        first_photo_id, second_photo_id = first_photo.id, second_photo.id
+
+    start_one = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
+    start_two = datetime(2026, 11, 5, 13, 30, tzinfo=UTC)
+    timestamps = iter([start_one, start_two])
+    monkeypatch.setattr("app.canonical_selection.now", lambda: next(timestamps))
+
+    with SessionLocal() as db:
+        first = select_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=first_photo_id
+        )
+        db.commit()
+        assert first.state.selection_started_at == start_one
+
+        second = select_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=second_photo_id
+        )
+        db.commit()
+        assert second.state.selection_started_at == start_one
+
+        removed = unselect_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=first_photo_id
+        )
+        db.commit()
+        assert removed.quantity == 1
+        state = db.scalar(select(GalleryClientState).where(
+            GalleryClientState.parent_gallery_id == parent_id,
+            GalleryClientState.client_id == client_id,
+        ))
+        assert state is not None
+        assert state.selection_started_at == start_one
+
+        emptied = unselect_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=second_photo_id
+        )
+        db.commit()
+        assert emptied.quantity == 0
+
+        restarted = select_canonical_photo(
+            db, parent_gallery_id=parent_id, client_id=client_id, photo_id=first_photo_id
+        )
+        db.commit()
+        assert restarted.state.selection_started_at == start_two
+
+
+def test_first_selection_does_not_inherit_gallery_deadline_for_precreated_client_state(
     client: TestClient,
 ) -> None:
     with SessionLocal() as db:
@@ -5240,14 +6468,13 @@ def test_first_selection_starts_deadline_for_precreated_client_state(
         )
         assert first.state_created is False
         assert first.selection_created is True
-        assert first.state.selection_expires_at is not None
-        deadline = first.state.selection_expires_at
+        assert first.state.selection_expires_at is None
         db.commit()
     with SessionLocal() as db:
         repeated = select_canonical_photo(
             db, parent_gallery_id=parent_id, client_id=client_id, photo_id=photo_id
         )
-        assert repeated.state.selection_expires_at.replace(tzinfo=None) == deadline.replace(tzinfo=None)
+        assert repeated.state.selection_expires_at is None
         assert db.scalar(select(DerivedGallery.id)) is None
 
 
@@ -5372,8 +6599,19 @@ def test_folder_deletion_requires_admin_and_rejects_cover_assets(client):
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Capa")
         db.add(parent); db.flush()
         folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Capa", purpose="cover_assets")
-        db.add(folder); db.commit(); folder_id = folder.id
+        db.add(folder); db.flush()
+        photo = PhotoAsset(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            folder_id=folder.id,
+            filename="capa.jpg",
+            storage_key="cover-assets/capa.jpg",
+        )
+        db.add(photo); db.commit(); folder_id, photo_id = folder.id, photo.id
     assert client.delete(f"/admin/photo-folders/{folder_id}").status_code == 404
+    assert client.delete(f"/admin/photo-folders/{folder_id}/photos/{photo_id}").status_code == 404
+    with SessionLocal() as db:
+        assert db.get(PhotoAsset, photo_id) is not None
     client.cookies.clear()
     assert client.delete(f"/admin/photo-folders/{folder_id}").status_code in {401, 403}
 
@@ -5501,3 +6739,399 @@ def test_admin_payment_dashboard_searches_phone_and_exact_client_without_exposin
     assert exact_payload["summary"]["orders"] == 1
     assert exact_payload["groups"][0]["client"]["name"] == "Marta Telefone"
     assert exact_payload["selections_without_order"][0]["client"]["name"] == "Marta Telefone"
+
+
+def test_payment_dashboard_limits_purchase_interactions_to_client_photo_and_snapshot_scope(
+    client: TestClient,
+):
+    reference = now()
+    with SessionLocal() as db:
+        target = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Cliente com comentário",
+            phone_e164="+5511998765001",
+        )
+        other = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Outra cliente com comentário",
+            phone_e164="+5511998765002",
+        )
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria do dashboard")
+        db.add_all([target, other, parent])
+        db.flush()
+        target_gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=target.id,
+            name="Galeria privada da cliente",
+        )
+        other_gallery = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=other.id,
+            name="Outra galeria privada",
+        )
+        db.add_all([target_gallery, other_gallery])
+        db.flush()
+        folder = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            name="Fotos compradas",
+            status="released",
+        )
+        db.add(folder)
+        db.flush()
+        photos = [
+            PhotoAsset(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                folder_id=folder.id,
+                filename=f"foto-{index}.jpg",
+                storage_key=f"payment-interactions/foto-{index}.jpg",
+            )
+            for index in (1, 2)
+        ]
+        db.add_all(photos)
+        db.flush()
+        order = SaleOrder(
+            tenant_id=FIXTURE_TENANT_ID,
+            derived_gallery_id=target_gallery.id,
+            derived_gallery_id_snapshot=target_gallery.id,
+            derived_gallery_name_snapshot=target_gallery.name,
+            parent_gallery_id_snapshot=parent.id,
+            parent_gallery_name_snapshot=parent.name,
+            client_id=target.id,
+            payment_status="pending",
+            total_cents=1400,
+            created_at=reference,
+        )
+        db.add(order)
+        db.flush()
+        order_items = [
+            SaleOrderItem(
+                tenant_id=FIXTURE_TENANT_ID,
+                sale_order_id=order.id,
+                photo_asset_id=photo.id,
+                filename_snapshot=photo.filename,
+                unit_price_cents=700,
+            )
+            for photo in photos
+        ]
+        db.add_all(order_items)
+        long_comment = "C" * 70
+        db.add_all([
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                derived_gallery_id=target_gallery.id,
+                photo_asset_id=photos[0].id,
+                client_id=target.id,
+                body="Comentário antigo",
+                created_at=reference - timedelta(seconds=1),
+            ),
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                derived_gallery_id=target_gallery.id,
+                photo_asset_id=photos[0].id,
+                client_id=target.id,
+                body=long_comment,
+                created_at=reference,
+            ),
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                derived_gallery_id=target_gallery.id,
+                photo_asset_id=photos[0].id,
+                client_id=target.id,
+                body="Comentário removido",
+                created_at=reference + timedelta(seconds=1),
+                removed_at=reference,
+            ),
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                derived_gallery_id=target_gallery.id,
+                photo_asset_id=photos[0].id,
+                client_id=other.id,
+                body="Comentário de outra cliente",
+            ),
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                photo_asset_id=photos[0].id,
+                client_id=target.id,
+                body="Comentário de outro escopo",
+            ),
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                photo_asset_id=photos[1].id,
+                client_id=target.id,
+                body="Comentário de outra foto",
+            ),
+            PhotoFavorite(
+                tenant_id=FIXTURE_TENANT_ID,
+                derived_gallery_id=target_gallery.id,
+                photo_asset_id=photos[0].id,
+                client_id=target.id,
+            ),
+            PhotoFavorite(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                photo_asset_id=photos[1].id,
+                client_id=target.id,
+            ),
+            PhotoFavorite(
+                tenant_id=FIXTURE_TENANT_ID,
+                derived_gallery_id=other_gallery.id,
+                photo_asset_id=photos[0].id,
+                client_id=target.id,
+            ),
+        ])
+        db.commit()
+        target_id = target.id
+
+    authenticate_admin(client)
+    response = client.get("/admin/payment-communications", params={"client_id": str(target_id)})
+    assert response.status_code == 200
+    items = response.json()["groups"][0]["orders"][0]["folders"][0]["items"]
+    items_by_name = {item["name"]: item for item in items}
+    annotated = items_by_name["foto-1.jpg"]
+    unrelated = items_by_name["foto-2.jpg"]
+    assert annotated["comment_preview"] == "C" * 49 + "…"
+    assert len(annotated["comment_preview"]) == 50
+    assert annotated["favorited"] is True
+    assert unrelated["comment_preview"] is None
+    assert unrelated["favorited"] is False
+
+
+def test_archived_private_folder_reopening_requires_cold_media_restore(client: TestClient):
+    with SessionLocal() as db:
+        owner = Client(
+            tenant_id=FIXTURE_TENANT_ID,
+            full_name="Cliente com mídia arquivada",
+            phone_e164="+5511555592014",
+        )
+        db.add(owner)
+        db.commit()
+        owner_phone = owner.phone_e164
+
+    gallery_id, _photo_id = create_gallery_for_client(client, owner)
+    authenticate_admin(client)
+    folder_response = client.post(
+        f"/admin/derived-galleries/{gallery_id}/folders",
+        json={"name": "Pasta fria", "access_duration_days": 7},
+    )
+    assert folder_response.status_code == 201
+    folder_id = UUID(folder_response.json()["id"])
+    with SessionLocal() as db:
+        folder = db.get(PhotoFolder, folder_id)
+        folder.status = "released"
+        folder.released_at = now() - timedelta(days=9)
+        folder.access_expires_at = now() - timedelta(days=2)
+        db.commit()
+
+    client.cookies.clear()
+    authenticate_client(client, owner_phone)
+    requested = client.post(
+        f"/gallery/{gallery_id}/reopening-requests",
+        json={"folder_id": str(folder_id), "idempotency_key": "archived-reopen-flow-0001"},
+    )
+    assert requested.status_code == 201, requested.text
+    request_id = UUID(requested.json()["id"])
+    with SessionLocal() as db:
+        db.add(MediaArchiveCycle(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=db.get(DerivedGallery, gallery_id).parent_gallery_id,
+            folder_id=folder_id,
+            cycle_number=1,
+            state="archived",
+        ))
+        db.commit()
+
+    client.cookies.clear()
+    authenticate_admin(client)
+    blocked = client.post(
+        f"/admin/gallery-reopening-requests/{request_id}/decision",
+        json={"decision": "approved", "access_duration_days": 7},
+    )
+    assert blocked.status_code == 409
+    assert "mídia já está arquivada" in blocked.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(GalleryReopeningRequest, request_id).status == "pending"
+        expiry = db.get(PhotoFolder, folder_id).access_expires_at
+        assert expiry.replace(tzinfo=UTC) < now()
+
+
+def test_private_folder_reopening_is_individual_and_archive_waits_for_latest_grant():
+    set_test_global_pix()
+    with SessionLocal() as db:
+        parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Reabertura por pasta")
+        clients = [
+            Client(tenant_id=FIXTURE_TENANT_ID, full_name=name, phone_e164=phone)
+            for name, phone in (
+                ("Cliente A", "+5511555592011"),
+                ("Cliente B", "+5511555592012"),
+                ("Cliente C", "+5511555592013"),
+            )
+        ]
+        db.add_all([parent, *clients])
+        db.flush()
+        folder_expiry = now() - timedelta(days=2)
+        folder = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            name="Seleção privada",
+            status="released",
+            audience_scope="selected",
+            access_duration_days=7,
+            access_expires_at=folder_expiry,
+        )
+        db.add(folder)
+        db.flush()
+        for client in clients:
+            db.add(GalleryClientState(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                client_id=client.id,
+                status="active",
+            ))
+        db.flush()
+
+        first_until = now() + timedelta(days=3)
+        latest_until = now() + timedelta(days=5)
+        for client, approved_until, key, duration in (
+            (clients[0], first_until, "private-folder-reopen-a", 3),
+            (clients[1], latest_until, "private-folder-reopen-b", 5),
+        ):
+            db.add(GalleryReopeningRequest(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                photo_folder_id=folder.id,
+                requested_by_client_id=client.id,
+                idempotency_key=key,
+                status="approved",
+                approved_until=approved_until,
+                approved_duration_days=duration,
+            ))
+        db.flush()
+
+        assert folder_effective_expiry(db, folder, client_id=clients[0].id) == first_until
+        assert folder_effective_expiry(db, folder, client_id=clients[1].id) == latest_until
+        assert folder_effective_expiry(db, folder, client_id=clients[2].id) == folder_expiry
+        assert folder_effective_expiries_by_id(
+            db, folder_ids={folder.id}, tenant_id=FIXTURE_TENANT_ID, client_id=clients[0].id,
+        )[folder.id] == first_until
+        assert folder_effective_expiries_by_id(
+            db, folder_ids={folder.id}, tenant_id=FIXTURE_TENANT_ID, client_id=clients[1].id,
+        )[folder.id] == latest_until
+        assert folder_effective_expiries_by_id(
+            db, folder_ids={folder.id}, tenant_id=FIXTURE_TENANT_ID, client_id=clients[2].id,
+        )[folder.id] == folder_expiry
+        assert folder_media_access_by_id(
+            db, folder_ids={folder.id}, tenant_id=FIXTURE_TENANT_ID, client_id=clients[0].id,
+        )[folder.id] == ("available", first_until)
+        assert folder_media_access_by_id(
+            db, folder_ids={folder.id}, tenant_id=FIXTURE_TENANT_ID, client_id=clients[1].id,
+        )[folder.id] == ("available", latest_until)
+        assert folder_media_access_by_id(
+            db, folder_ids={folder.id}, tenant_id=FIXTURE_TENANT_ID, client_id=clients[2].id,
+        )[folder.id] == ("available", folder_expiry)
+        assert folder_archive_eligible_at(db, folder) == latest_until + timedelta(days=30)
+        assert db.scalar(select(PhotoFolder.id).where(
+            PhotoFolder.id == folder.id,
+            folder_browsing_clause(clients[0].id),
+        )) == folder.id
+        assert db.scalar(select(PhotoFolder.id).where(
+            PhotoFolder.id == folder.id,
+            folder_browsing_clause(clients[1].id),
+        )) == folder.id
+        assert db.scalar(select(PhotoFolder.id).where(
+            PhotoFolder.id == folder.id,
+            folder_browsing_clause(clients[2].id),
+        )) is None
+
+
+def test_folder_checkout_grace_keeps_only_selections_created_before_expiry():
+    expiry = now() - timedelta(days=4)
+    folder = PhotoFolder(
+        tenant_id=FIXTURE_TENANT_ID,
+        parent_gallery_id=uuid4(),
+        name="Pasta com janela de checkout",
+        access_expires_at=expiry,
+    )
+    with SessionLocal() as db:
+        assert folder_selection_checkout_allowed(
+            db,
+            folder,
+            client_id=uuid4(),
+            selected_at=expiry - timedelta(seconds=1),
+        )
+        assert not folder_selection_checkout_allowed(
+            db,
+            folder,
+            client_id=uuid4(),
+            selected_at=expiry + timedelta(seconds=1),
+        )
+        assert not folder_selection_checkout_allowed(
+            db,
+            folder,
+            client_id=uuid4(),
+            selected_at=expiry - timedelta(days=1),
+            at=expiry + timedelta(days=30, seconds=1),
+        )
+        assert folder_selection_checkout_allowed(
+            db,
+            folder,
+            client_id=uuid4(),
+            selected_at=expiry - timedelta(days=1),
+            existing_order_created_at=expiry + timedelta(days=29),
+            at=expiry + timedelta(days=45),
+        )
+        assert not folder_selection_checkout_allowed(
+            db,
+            folder,
+            client_id=uuid4(),
+            selected_at=expiry - timedelta(days=1),
+            existing_order_created_at=expiry + timedelta(days=30, seconds=1),
+            at=expiry + timedelta(days=45),
+        )
+
+
+def test_folder_selected_preview_policy_preserves_active_and_grace_boundaries():
+    expiry = now() + timedelta(days=1)
+    assert folder_selected_media_preview_allowed(
+        media_state="available",
+        expiry=expiry,
+        selected_at=None,
+        at=expiry - timedelta(seconds=1),
+    )
+    assert folder_selected_media_preview_allowed(
+        media_state="available",
+        expiry=expiry,
+        selected_at=None,
+        at=expiry,
+    )
+    assert not folder_selected_media_preview_allowed(
+        media_state="archived",
+        expiry=expiry,
+        selected_at=expiry - timedelta(days=1),
+        at=expiry,
+    )
+    assert not folder_selected_media_preview_allowed(
+        media_state="archiving",
+        expiry=expiry,
+        selected_at=expiry - timedelta(days=1),
+        at=expiry - timedelta(seconds=1),
+    )
+
+    selected_at = expiry - timedelta(days=1)
+    assert folder_selected_media_preview_allowed(
+        media_state="available",
+        expiry=expiry,
+        selected_at=selected_at,
+        at=expiry + timedelta(days=30),
+    )
+    assert not folder_selected_media_preview_allowed(
+        media_state="available",
+        expiry=expiry,
+        selected_at=selected_at,
+        at=expiry + timedelta(days=30, seconds=1),
+    )
