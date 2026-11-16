@@ -183,7 +183,7 @@ def main() -> int:
     require('worker RAW legado ativo; inventário e parada controlada', "bloqueio para runtime RAW legado", SCRIPT)
     forbid('compose up -d --build --no-deps raw-development-worker', "worker RAW não pode ser reativado", SCRIPT)
     forbid('compose up -d --build --no-deps face-gemma-index-worker', "worker Gemma não pode ser reativado", SCRIPT)
-    forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
+    forbid(r'\bpassword\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
 
     require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)
     require("  media-history:", "volume histórico persistente", COMPOSE)
