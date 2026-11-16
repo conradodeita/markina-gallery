@@ -1,5 +1,11 @@
 # Estado da execução
 
+## Continuação pós-push — 16/11/2026
+
+O primeiro push ocorreu em `cc5ebe16`; as correções posteriores e o CI atual são acompanhados no [plano de release](../../openspec/changes/add-photographer-signup-portal/production-release-readiness.md). Os checkpoints pré-push abaixo são históricos. Backup online e restauração isolada foram comprovados; a cadeia `0090→0126` foi ensaiada na cópia restaurada, preservando os registros financeiros comparados e o fator TOTP. O banco produtivo permanece em `0090`.
+
+Por solicitação do proprietário, as configurações deixadas para o servidor agora têm [checklist pós-deploy próprio](post-deploy-configuration-checklist.md), com configuração, ensaio, implementação e decisão comercial identificados. O primeiro estágio fica restrito ao proprietário; Drive, backup recorrente e arquivo/recuperação reais precedem a abertura a outros tenants. Fidelidade continua adiada. O backup inicial global aprovado e a futura recuperação por tenant têm estados distintos e estão rastreados separadamente.
+
 ## Checkpoint local verificado — 15/11/2026
 
 O contrato PostgreSQL do aviso de lote privado também passou (1 teste, 17,78 s), preservando limite da chave, idempotência, compatibilidade legada e destinatários autorizados, sem enviar push/WhatsApp real. As provas novas e os dois ajustes dos runners são locais; as pendências de visual, baseline e revisão integral do candidato permanecem explícitas.
