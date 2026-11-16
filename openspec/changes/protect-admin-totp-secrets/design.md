@@ -16,6 +16,14 @@
 8. Códigos de recuperação são aleatórios de 144 bits, mostrados uma única vez após reautenticação recente e armazenados individualmente como seletor público curto mais hash Argon2id do restante secreto. A busca indexada evita verificar todos os hashes por tentativa sem reduzir a entropia do fator. Consumo é atômico, de uso único e limitado por rate limit. Regenerar invalida o lote anterior somente após senha e TOTP atual válido; um código de recuperação não pode autorizar regeneração. Respostas, logs, exportações e auditoria nunca incluem códigos. Códigos não substituem MFA; são um segundo fator alternativo de uso único.
 9. A recuperação de acesso do proprietário depende de manter código de recuperação offline e cópia controlada do keyring fora do banco. Perda simultânea dos fatores e da chave externa exige intervenção humana assistida e não deve ter bypass por e-mail, endereço, parâmetro, tabela ou API.
 
+## Pacote local de compatibilidade para o rollout integrado
+
+O candidato SaaS completo exige tabelas posteriores a `0093`; ele não serve como binário intermediário sobre `0091/0092`. A preparação do release deve produzir um pacote separado a partir do `auth.py` realmente inventariado na imagem anterior, com hash de origem obrigatório. Uma transformação delimitada por AST substitui somente o mapeamento TOTP de `AdminUser` e acrescenta os listeners de leitura/escrita necessários; o restante dos bytes do módulo permanece preservado. O pacote copia o cipher do candidato, sem criar outro algoritmo ou reutilizar chaves de integração/biometria.
+
+O diretório de saída deve ser novo e separado da origem. O manifesto identifica hash do módulo legado, hash do resultado/cipher e image ID de base. O Dockerfile derivado contém apenas a cópia dos dois módulos sobre uma tag de base vinculada ao image ID; a etapa de build deverá validar essa identidade antes/depois e não é executada pelo preparador. O preparador não acessa Docker, rede, keyring real, banco, `.env` nem runtime ativo.
+
+Testes devem comprovar recusa de origem divergente ou transformação ambígua, preservação dos trechos não relacionados, dual-write com atualização por escritor legado, continuidade do mesmo fator após contract e falha segura de envelope inválido. Imagens derivadas, tráfego/health, drenagem de leitores/escritores e rollback precisam de ensaio operacional próprio antes do corte; um pacote gerado não demonstra disponibilidade contínua. O worker de prévias observado com `APP_ENV=staging` precisa ser reconciliado no inventário de consumidores, sem alterar seu contexto por inferência.
+
 ## Não objetivos
 
 - Não redefinir TOTP, desativar MFA ou criar usuários administrativos durante a migração.

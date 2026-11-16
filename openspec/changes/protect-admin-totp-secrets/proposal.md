@@ -13,6 +13,7 @@
 - Persistir o último intervalo TOTP aceito e recusar replay, mantendo a janela já especificada e os limites de tentativa/auditoria existentes.
 - Emitir códigos administrativos de recuperação de uso único, guardar somente hashes resistentes a brute force e permitir regeneração mediante sessão autenticada e TOTP recente.
 - Documentar recuperação operacional de chave e de acesso, incluindo dependência do keyring para restauração de backups.
+- Preparar localmente um pacote de compatibilidade para o `auth.py` legado inventariado, verificando o hash de origem e preservando seu código não relacionado; o pacote usa o mesmo cipher validado e permite ensaiar a transição antes de trocar o runtime completo do SaaS. A preparação não publica imagem nem altera servidor, banco ou configuração.
 
 ## Capabilities
 

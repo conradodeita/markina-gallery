@@ -37,3 +37,17 @@ O rollout SHALL usar migração expand/contract. A etapa expand mantém a coluna
 
 - **WHEN** uma reversão usa binário antigo que exige plaintext
 - **THEN** operador para o binário novo e executa downgrade transacional que restaura plaintext antes de voltar o binário antigo; nenhuma reversão automática é inferida
+
+### Requirement: Preparação local de pacote intermediário verificável
+
+A preparação SHALL verificar o hash do módulo legado inventariado e produzir o pacote em diretório novo separado da origem, preservando os trechos não relacionados. O manifesto SHALL identificar módulo de origem, resultado, cipher e image ID de base. O preparador SHALL NOT executar Docker, rede, acesso a banco, leitura de keyring real ou alteração do runtime. A geração do pacote SHALL NOT ser apresentada como prova de rollout, drenagem ou disponibilidade.
+
+#### Scenario: Origem ou formato divergente
+
+- **WHEN** o hash não corresponde ao inventário ou o mapeamento TOTP não possui o formato legado esperado
+- **THEN** a preparação recusa antes de criar o diretório de saída e preserva a origem
+
+#### Scenario: Compatibilidade no ensaio isolado
+
+- **WHEN** um escritor legado atualiza o fator durante dual-write e depois o contract é executado no ensaio
+- **THEN** o pacote intermediário conserva o mesmo fator na leitura antes/depois e não expõe material secreto

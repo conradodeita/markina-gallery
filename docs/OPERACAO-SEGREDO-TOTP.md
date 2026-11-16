@@ -8,6 +8,16 @@ Este procedimento descreve a operação da implementação local. Ele **não aut
 
 ## Provisionamento
 
+### Preparação do binário intermediário — 16/11/2026
+
+O SaaS completo exige tabelas posteriores à migration contract e não pode servir de versão intermediária sobre0091/0092. `scripts/prepare_admin_totp_compatibility.py` prepara localmente a adaptação do módulo legado realmente inventariado, com hash de origem obrigatório, cipher do candidato, Dockerfile e manifesto. Ele recusa formato divergente e diretório já existente; não acessa Docker, rede, banco, keyring ou configuração do servidor.
+
+O pacote exige uma imagem-base imutável registrada no inventário. Antes de construir sua imagem derivada, o operador deve conferir que a tag técnica indicada no manifesto resolve exatamente ao image ID registrado, e repetir a conferência depois do build. A geração do pacote, o build e a leitura TOTP isolada são evidências diferentes; nenhum desses passos substitui startup HTTP completo, roteamento, drenagem, teste de filas ou rollback.
+
+O pacote da API observada foi ensaiado somente na cópia isolada já migrada a0126: carregou o fator existente sem plaintext e cifrou uma inserção sintética revertida. Imagem intermediária `sha256:61de18af03fcb978ec7f6c5ef4fd3fb81a5f75d84fb966d87ccdebd71df323c6`; nenhum serviço produtivo usa essa imagem neste checkpoint. Testes, hashes, contexto e limites estão em `openspec/changes/protect-admin-totp-secrets/validation.md`.
+
+### Keyring no ambiente protegido
+
 1. Gere uma chave AES de 32 bytes e um `key_id` estável (1–48 caracteres ASCII de letras, números, `_` ou `-`) diretamente no gerenciador de segredos aprovado para o ambiente.
 2. Configure `APP_ENV`, `ADMIN_TOTP_SECRET_ENV` (valor idêntico), `ADMIN_TOTP_ACTIVE_KEY_ID` e `ADMIN_TOTP_KEYS` como objeto JSON `{ "<key_id>": "<chave em Base64>" }` no secret store. Não coloque valores reais em `.env`, `.env.example`, logs, comandos registrados ou artefatos Git.
 3. Garanta que API, worker, `migrate` e `seed-admin` recebem as mesmas versões necessárias do keyring. Chave ausente, chave ativa ausente, Base64 inválido ou ambiente divergente causa falha fechada.
@@ -39,7 +49,7 @@ A migration `0093` é contract: exige dual-write desligado, consumidores antigos
 
 O proprietário confirmou depois que a produção atende clientes e não pode ser desligada no plano padrão. Portanto, não executar `0093` ou `alembic upgrade head` enquanto o lock, a troca de consumidores e o atendimento contínuo não forem ensaiados e demonstrados no candidato real. Se a etapa exigir bloqueio de login ou outra indisponibilidade temporária, apresentar alcance, duração estimada, janela e retorno e obter consentimento específico antes dela. Sem esse consentimento, manter o runtime atual ativo e a etapa contract pendente.
 
-Código antigo que lê diretamente `totp_secret` espera plaintext. A expansão preserva a coluna; a etapa contract não é compatível com binários antigos até executar downgrade e restaurar plaintext. O pacote de release precisa confirmar todas as instâncias/processos, drenagem de API/worker, rota de tráfego, restore e rollback; nada disso autoriza publicação. Na situação atual, nenhuma migration remota, alteração de keyring, teste autenticado ou deploy foi autorizado.
+Código antigo que lê diretamente `totp_secret` espera plaintext. A expansão preserva a coluna; a etapa contract não é compatível com binários antigos até executar downgrade e restaurar plaintext. O pacote de release precisa confirmar todas as instâncias/processos, drenagem de API/worker, rota de tráfego, restore e rollback. Este procedimento técnico não substitui a autorização vigente do proprietário nem os gates de continuidade; o pacote intermediário acima não foi implantado nos serviços produtivos.
 
 ## Evidência operacional
 
