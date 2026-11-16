@@ -11,7 +11,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import (
-    Base,
     Client,
     DerivedGallery,
     GalleryClientState,
@@ -20,6 +19,7 @@ from app.auth import (
     PhotoFolder,
     Tenant,
 )
+from tests.schema_fixtures import create_test_schema
 from tests.test_photographer_onboarding_migration import _config, _demo_helpers
 from tests.test_tenant_credit_purchase_postgres import postgres_schema as _postgres_schema
 
@@ -38,7 +38,7 @@ def test_migrated_reopening_rejects_foreign_folder_and_preserves_legacy(monkeypa
         demo.create_synthetic_owner(scoped_url)
         command.upgrade(config, "head")
     else:
-        Base.metadata.create_all(engine)
+        create_test_schema(engine)
 
     with Session(engine, expire_on_commit=False) as db:
         tenant_a, tenant_b = Tenant(), Tenant()

@@ -22,7 +22,7 @@ from tests.test_tenant_client_isolation import client_db as _client_db
 client_db = _client_db
 ORIGIN = "http://127.0.0.1:3039"
 PASSWORD = "IsolatedFlow!47Alpha"
-OWNER_TOTP = "JBSWY3DPEHPK3PXP"
+OWNER_TOTP = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 
 def wait_ready(predicate):
@@ -213,7 +213,7 @@ with sync_playwright() as p:
     page.get_by_label("E-mail", exact=True).fill("journey-owner@example.test")
     page.get_by_label("Senha", exact=True).fill(password)
     page.get_by_role("button", name="Continuar", exact=True).click()
-    page.get_by_label("Código do autenticador ou de recuperação", exact=True).fill(pyotp.TOTP("JBSWY3DPEHPK3PXP").now())
+    page.get_by_label("Código do autenticador ou de recuperação", exact=True).fill(pyotp.TOTP("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP").now())
     page.get_by_role("button", name="Entrar", exact=True).click()
     page.wait_for_url(origin + "/admin")
     page.get_by_role("link", name="Plataforma", exact=True).click()
@@ -228,7 +228,7 @@ with sync_playwright() as p:
     page.get_by_role("heading", name="Suspender conta", exact=True).wait_for()
     page.get_by_label("Senha atual", exact=True).fill(password)
     used = int(time.time()) // 30 + 1
-    page.get_by_label("Código do autenticador", exact=True).fill(pyotp.TOTP("JBSWY3DPEHPK3PXP").at(used*30))
+    page.get_by_label("Código do autenticador", exact=True).fill(pyotp.TOTP("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP").at(used*30))
     page.get_by_label("Confirmo a alteração do estado desta conta", exact=True).check()
     page.get_by_role("button", name="Confirmar suspensão", exact=True).click()
     page.get_by_role("heading", name="Reativar conta", exact=True).wait_for()
@@ -236,7 +236,7 @@ with sync_playwright() as p:
     assert accounts[1].request.get(origin + "/api/admin/credits/wallet").status == 200
     while int(time.time())//30 < used: time.sleep(.2)
     page.get_by_label("Senha atual", exact=True).fill(password)
-    page.get_by_label("Código do autenticador", exact=True).fill(pyotp.TOTP("JBSWY3DPEHPK3PXP").at((used+1)*30))
+    page.get_by_label("Código do autenticador", exact=True).fill(pyotp.TOTP("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP").at((used+1)*30))
     page.get_by_label("Confirmo a alteração do estado desta conta", exact=True).check()
     page.get_by_role("button", name="Confirmar reativação", exact=True).click()
     page.get_by_role("heading", name="Suspender conta", exact=True).wait_for()

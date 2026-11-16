@@ -40,6 +40,7 @@ from app.canonical_selection import CanonicalSelectionUnavailable, select_canoni
 from app.checkout import CheckoutError
 from app.main import app
 from app.unified_checkout import cart_payload, finalize_selection, prepare_group, report_group
+from tests.schema_fixtures import create_test_schema
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 from tests.test_derived_galleries import set_test_global_pix
 
@@ -57,7 +58,7 @@ def isolated_cart_database():
         with engine.begin() as connection:
             connection.execute(CreateSchema(schema))
         engine.update_execution_options(schema_translate_map={None: schema})
-        Base.metadata.create_all(engine)
+        create_test_schema(engine)
     else:
         with engine.connect() as connection:
             connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
@@ -375,7 +376,7 @@ def test_concurrent_external_finalization_creates_one_order():
 def test_canonical_external_selection_api_admin_export_and_history():
     owner_id, other_id, _legacy_ids = setup_cart()
     with SessionLocal() as db:
-        admin = fixture_admin(AdminUser(email="selection-admin@test.invalid", password_hash="synthetic", email_verified=True, totp_secret="JBSWY3DPEHPK3PXP"))
+        admin = fixture_admin(AdminUser(email="selection-admin@test.invalid", password_hash="synthetic", email_verified=True, totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"))
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Seleção externa", access_mode="collective_protected")
         db.add_all([admin, parent])
         db.flush()

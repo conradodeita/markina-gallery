@@ -38,12 +38,12 @@ def test_expand_preserves_legacy_value_and_contract_downgrade_restores_it():
         connection.execute(text(
             "INSERT INTO admin_user (id,totp_secret) VALUES (:id,:secret)"
         ),
-                           {"id": str(admin_id), "secret": "JBSWY3DPEHPK3PXP"})
+                           {"id": str(admin_id), "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"})
         assert encrypt_existing_totp(connection, cipher()) == 1
         row = connection.execute(text(
             "SELECT totp_secret, totp_secret_envelope FROM admin_user"
         )).one()
-        assert row.totp_secret == "JBSWY3DPEHPK3PXP"
+        assert row.totp_secret == "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
         first = row.totp_secret_envelope
         assert first.startswith("totp:v1:")
         assert cipher().decrypt(first, admin_id=admin_id) == row.totp_secret
@@ -54,7 +54,7 @@ def test_expand_preserves_legacy_value_and_contract_downgrade_restores_it():
         assert contract_legacy_totp(connection, cipher()) == 1
         assert connection.scalar(text("SELECT totp_secret FROM admin_user")) is None
         assert restore_legacy_totp(connection, cipher()) == 1
-        assert connection.scalar(text("SELECT totp_secret FROM admin_user")) == "JBSWY3DPEHPK3PXP"
+        assert connection.scalar(text("SELECT totp_secret FROM admin_user")) == "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     engine.dispose()
 
 
@@ -100,7 +100,7 @@ def test_contract_reconciles_legacy_write_and_refuses_to_run_during_dual_write(m
         ), {
             "id": str(admin_id),
             "legacy": "MFRGGZDFMZTWQ2LK",
-            "envelope": cipher().encrypt("JBSWY3DPEHPK3PXP", admin_id=admin_id),
+            "envelope": cipher().encrypt("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", admin_id=admin_id),
         })
         with pytest.raises(TotpSecretError):
             contract_legacy_totp(connection, cipher())
@@ -130,7 +130,7 @@ def test_rollback_preserves_newer_plaintext_written_by_legacy_binary():
         ), {
             "id": str(admin_id),
             "legacy": "MFRGGZDFMZTWQ2LK",
-            "envelope": cipher().encrypt("JBSWY3DPEHPK3PXP", admin_id=admin_id),
+            "envelope": cipher().encrypt("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", admin_id=admin_id),
         })
         assert restore_legacy_totp(connection, cipher()) == 0
         assert connection.scalar(text("SELECT totp_secret FROM admin_user")) == "MFRGGZDFMZTWQ2LK"
@@ -274,7 +274,7 @@ def test_postgresql_upgrade_failure_rolls_back_schema_and_all_secret_rows(monkey
         migrate("upgrade", "20261026_0090")
         engine = create_engine(migration_url)
         valid_id, malformed_id = UUID(int=1), UUID(int=2)
-        valid_secret = "JBSWY3DPEHPK3PXP"
+        valid_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
         with engine.begin() as connection:
             for admin_id, email, secret in (
                 (valid_id, "valid@example.test", valid_secret),
@@ -351,7 +351,7 @@ def test_postgresql_expand_keeps_legacy_orm_live_and_contract_is_reversible(monk
         migrate("upgrade", "20261031_0092")
         engine = create_engine(migration_url)
         admin_id = UUID(int=4101)
-        original_secret = "JBSWY3DPEHPK3PXP"
+        original_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
         legacy_updated_secret = "MFRGGZDFMZTWQ2LK"
         with engine.begin() as connection:
             connection.execute(text(

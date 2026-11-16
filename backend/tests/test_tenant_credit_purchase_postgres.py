@@ -99,7 +99,7 @@ def test_upgrade_from_production_schema_preserves_owner_and_backfills_wallets(
         connection.execute(
             text(
                 "INSERT INTO admin_user (id,email,password_hash,email_verified,totp_secret) "
-                "VALUES (:id,'owner-migration@example.test','synthetic',true,'JBSWY3DPEHPK3PXP')"
+                "VALUES (:id,'owner-migration@example.test','synthetic',true,'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP')"
             ),
             {"id": owner_id},
         )

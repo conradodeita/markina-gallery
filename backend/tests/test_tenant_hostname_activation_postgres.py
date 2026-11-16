@@ -12,20 +12,21 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import sessionmaker
 
-from app.auth import AdminUser, Base, PlatformAdminEvent, Tenant, password_hasher
+from app.auth import AdminUser, PlatformAdminEvent, Tenant, password_hasher
 from app.platform_console import HostnameActivationInput, activate_tenant_hostname
+from tests.schema_fixtures import create_test_schema
 from tests.test_photographer_credits import create_accounts
 from tests.test_tenant_credit_purchase_postgres import postgres_schema as _postgres_schema
 
 postgres_schema = _postgres_schema
 PASSWORD = "SyntheticHostnameOwner!2026"
-SECRET = "JBSWY3DPEHPK3PXP"
+SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 EVIDENCE = sha256(b"synthetic readiness report").hexdigest()
 
 
 @pytest.fixture
 def activation_context(postgres_schema):
-    Base.metadata.create_all(postgres_schema)
+    create_test_schema(postgres_schema)
     factory = sessionmaker(bind=postgres_schema, expire_on_commit=False)
     with factory.begin() as db:
         owner_tenant, target, owner, _photographer = create_accounts(db)

@@ -19,11 +19,11 @@ def cipher(environment="test", key_id="one", keys=None):
 
 def test_envelope_round_trip_is_versioned_and_bound_to_admin_and_environment():
     admin_id = uuid4()
-    encrypted = cipher().encrypt("JBSWY3DPEHPK3PXP", admin_id=admin_id)
+    encrypted = cipher().encrypt("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", admin_id=admin_id)
 
     assert encrypted.startswith("totp:v1:one:")
-    assert "JBSWY3DPEHPK3PXP" not in encrypted
-    assert cipher().decrypt(encrypted, admin_id=admin_id) == "JBSWY3DPEHPK3PXP"
+    assert "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP" not in encrypted
+    assert cipher().decrypt(encrypted, admin_id=admin_id) == "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     with pytest.raises(TotpSecretError):
         cipher().decrypt(encrypted, admin_id=uuid4())
     with pytest.raises(TotpSecretError):

@@ -13,7 +13,7 @@ def test_admin_totp_is_encrypted_in_database_and_transparent_to_authentication(m
     engine = create_engine("sqlite://")
     AdminUser.__table__.create(engine)
     admin_id = uuid4()
-    plaintext = "JBSWY3DPEHPK3PXP"
+    plaintext = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     try:
         with Session(engine) as db:
             db.add(AdminUser(id=admin_id, email="synthetic@example.test",
@@ -41,7 +41,7 @@ def test_dual_write_keeps_legacy_reader_working_and_reconciles_legacy_writes(mon
     engine = create_engine("sqlite://")
     AdminUser.__table__.create(engine)
     admin_id = uuid4()
-    original = "JBSWY3DPEHPK3PXP"
+    original = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     updated_by_legacy = "MFRGGZDFMZTWQ2LK"
     try:
         with Session(engine) as db:

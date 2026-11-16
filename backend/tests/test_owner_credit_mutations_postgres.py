@@ -12,7 +12,6 @@ from starlette.responses import Response
 
 from app import main, platform_console
 from app.auth import (
-    Base,
     PhotographerCreditEntry,
     PlatformAdminEvent,
     now,
@@ -24,6 +23,7 @@ from app.main import (
     PhotographerCreditReviewInput,
     PhotographerCreditRevocationInput,
 )
+from tests.schema_fixtures import create_test_schema
 from tests.test_photographer_credits import create_accounts
 from tests.test_tenant_credit_purchase_postgres import postgres_schema as _postgres_schema
 
@@ -32,10 +32,10 @@ postgres_schema = _postgres_schema
 
 def test_postgres_credit_replay_and_session_revocation_are_atomic(postgres_schema, monkeypatch):
     engine = postgres_schema
-    Base.metadata.create_all(engine)
+    create_test_schema(engine)
     with Session(engine, expire_on_commit=False) as db:
         owner_tenant, tenant, owner, _photographer = create_accounts(db)
-        secret = "JBSWY3DPEHPK3PXP"
+        secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
         owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
         owner.totp_secret = secret
         db.commit()
@@ -101,10 +101,10 @@ def test_postgres_credit_replay_and_session_revocation_are_atomic(postgres_schem
 
 def test_postgres_package_audit_action_and_replay(postgres_schema, monkeypatch):
     engine = postgres_schema
-    Base.metadata.create_all(engine)
+    create_test_schema(engine)
     with Session(engine, expire_on_commit=False) as db:
         owner_tenant, _tenant, owner, _photographer = create_accounts(db)
-        secret = "JBSWY3DPEHPK3PXP"
+        secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
         owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
         owner.totp_secret = secret
         db.commit()
@@ -132,13 +132,13 @@ def test_postgres_purchase_review_audit_action_and_replay(postgres_schema, monke
     from tests.test_mercadopago_credit_purchases import create_purchase_context, prepare
 
     engine = postgres_schema
-    Base.metadata.create_all(engine)
+    create_test_schema(engine)
     with Session(engine, expire_on_commit=False) as db:
         owner_tenant, buyer_tenant, owner, buyer, package, _account_id = create_purchase_context(db)
         purchase = prepare(db, buyer_tenant, buyer, package, "postgres-review-step-up")
         purchase.state = "charged_back"
         purchase.review_status = "pending"
-        secret = "JBSWY3DPEHPK3PXP"
+        secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
         owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
         owner.totp_secret = secret
         db.commit()

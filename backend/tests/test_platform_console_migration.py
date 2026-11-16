@@ -11,7 +11,8 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from app.auth import AdminUser, AuditEvent, Base, PlatformAdminEvent, Tenant, now
+from app.auth import AdminUser, AuditEvent, PlatformAdminEvent, Tenant, now
+from tests.schema_fixtures import create_test_schema
 from tests.test_tenant_credit_purchase_postgres import postgres_schema as _postgres_schema
 
 postgres_schema = _postgres_schema
@@ -28,8 +29,7 @@ def migration(connection):
 
 def test_additive_upgrade_empty_rollback_and_reupgrade_preserve_legacy_audit(postgres_schema):
     engine = postgres_schema
-    Base.metadata.create_all(engine, tables=[table for table in Base.metadata.tables.values()
-                                           if table.name != "platform_admin_event"])
+    create_test_schema(engine, exclude_tables={"platform_admin_event"})
     with Session(engine) as db:
         db.add(AuditEvent(event="synthetic.legacy", subject="no-sensitive-payload"))
         db.commit()

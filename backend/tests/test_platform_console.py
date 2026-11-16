@@ -501,7 +501,7 @@ def test_hostname_activation_rejects_cross_origin_and_audits_owner_confirmation(
     client, session, tenant_id, _ = http
     owner = client_db.get(AdminUser, session.subject_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     target = client_db.get(Tenant, tenant_id)
     target.canonical_host = "synthetic.pickyourpic.com.br"
     target.canonical_host_status = "reserved"
@@ -510,7 +510,7 @@ def test_hostname_activation_rejects_cross_origin_and_audits_owner_confirmation(
     body = {"request_id": str(uuid4()), "expected_hostname": target.canonical_host,
             "expected_status": "reserved", "evidence_sha256": sha256(b"readiness").hexdigest(),
             "confirm_readiness": True, "current_password": "SyntheticOwnerPassword!2026",
-            "totp_code": pyotp.TOTP("JBSWY3DPEHPK3PXP").now()}
+            "totp_code": pyotp.TOTP("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP").now()}
     cross_origin = client.post(path, json=body, headers={"origin": "https://attacker.invalid"})
     assert cross_origin.status_code == 403
     assert client_db.get(Tenant, tenant_id).canonical_host_status == "reserved"
@@ -519,11 +519,11 @@ def test_hostname_activation_rejects_cross_origin_and_audits_owner_confirmation(
     assert response.status_code == 200
     assert response.json()["canonical_host_status"] == "ready"
     assert "SyntheticOwnerPassword!2026" not in response.text
-    assert "JBSWY3DPEHPK3PXP" not in response.text
+    assert "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP" not in response.text
     event = client_db.scalar(select(PlatformAdminEvent).where(PlatformAdminEvent.action == "tenant.host_ready"))
     assert event.evidence_sha256 == body["evidence_sha256"]
     assert "SyntheticOwnerPassword!2026" not in str(event.__dict__)
-    assert "JBSWY3DPEHPK3PXP" not in str(event.__dict__)
+    assert "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP" not in str(event.__dict__)
 
 
 def test_hostname_activation_denies_installation_operator_even_with_console_grants(http, client_db):
@@ -556,7 +556,7 @@ def test_owner_closure_recovery_batch_requires_reauth_and_replays_idempotently(
 
     owner = client_db.get(AdminUser, session.subject_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     tenant = client_db.get(Tenant, tenant_id)
     tenant.status = "suspended"
     tenant.lifecycle = "closed"
@@ -619,7 +619,7 @@ def test_owner_closure_recovery_batch_rechecks_idempotency_after_admin_lock(
     owner_id = session.subject_id
     owner = client_db.get(AdminUser, owner_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     client_db.get(Tenant, tenant_id).lifecycle = "closed"
     closed_at = now() - timedelta(days=1)
     closure = TenantClosureRequest(
@@ -714,7 +714,7 @@ def test_owner_closure_recovery_batch_rolls_back_when_session_changes_before_com
 
     owner = client_db.get(AdminUser, session.subject_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     tenant = client_db.get(Tenant, tenant_id)
     tenant.lifecycle = "closed"
     request_id = uuid4()
@@ -773,7 +773,7 @@ def test_owner_reopens_only_after_explicit_reauthenticated_action_and_preserves_
 
     owner = client_db.get(AdminUser, session.subject_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     tenant = client_db.get(Tenant, tenant_id)
     tenant.status = "suspended"
     tenant.lifecycle = "closed"
@@ -822,7 +822,7 @@ def test_owner_reopen_rolls_back_when_session_changes_before_commit(http, client
 
     owner = client_db.get(AdminUser, session.subject_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     tenant = client_db.get(Tenant, tenant_id)
     tenant.lifecycle = "closed"
     closure = TenantClosureRequest(

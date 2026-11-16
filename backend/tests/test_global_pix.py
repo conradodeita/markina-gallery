@@ -62,7 +62,7 @@ def _admin_client(environment: str):
                 email="pix@markina.test",
                 email_verified=True,
                 password_hash=password_hasher.hash("Senha-atual-2026"),
-                totp_secret="JBSWY3DPEHPK3PXP",
+                totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
             ))
             db.add(admin)
             db.flush()

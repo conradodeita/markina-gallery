@@ -2509,7 +2509,8 @@ def test_folder_upload_accepts_only_preparing_jpeg_and_reports_file_state(
     rejected = client.put(
         f"/admin/photo-assets/{photo_id}/source", content=b"not-a-jpeg", headers={"content-type": "image/jpeg"}
     )
-    assert rejected.status_code == 422
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == "A imagem não corresponde à identidade cadastrada."
     rejected_raw = client.put(
         f"/admin/photo-assets/{photo_id}/source",
         content=b"synthetic-raw",

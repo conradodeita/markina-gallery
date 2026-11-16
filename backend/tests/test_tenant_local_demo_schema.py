@@ -51,7 +51,7 @@ def test_named_demo_revision_supports_current_models(runner, postgres_schema, mo
             signup_demo.require_current_schema(url)
         else:
             os.environ["PYP_CLOSURE_DEMO_PASSWORD"] = "SyntheticLocalDemo#83"
-            os.environ["PYP_CLOSURE_DEMO_TOTP"] = "JBSWY3DPEHPK3PXP"
+            os.environ["PYP_CLOSURE_DEMO_TOTP"] = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
             os.environ["PHOTOGRAPHER_CPF_FINGERPRINT_KEYS_JSON"] = ""
             os.environ["PHOTOGRAPHER_CPF_FINGERPRINT_ACTIVE_KEY_VERSION"] = "legacy-v0"
             demo.seed_accounts(url)

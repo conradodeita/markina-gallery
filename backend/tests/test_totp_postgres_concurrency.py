@@ -20,7 +20,6 @@ from app.auth import (
     AdminUser,
     AuthChallenge,
     AuthSession,
-    Base,
     PhotographerSignup,
     Tenant,
     TenantAdmin,
@@ -28,6 +27,7 @@ from app.auth import (
     password_hasher,
 )
 from app.totp_recovery import create_recovery_codes, hash_recovery_code, recovery_code_selector
+from tests.schema_fixtures import create_test_schema
 
 
 def test_postgresql_accepts_same_totp_step_at_most_once_concurrently(monkeypatch):
@@ -47,7 +47,7 @@ def test_postgresql_accepts_same_totp_step_at_most_once_concurrently(monkeypatch
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     scoped = engine.execution_options(schema_translate_map={None: schema})
     try:
-        Base.metadata.create_all(scoped)
+        create_test_schema(scoped)
         factory = sessionmaker(bind=scoped, expire_on_commit=False)
         tenant_id = uuid4()
         admin_id = uuid4()
@@ -119,7 +119,7 @@ def test_postgresql_consumes_same_recovery_code_at_most_once_concurrently(monkey
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     scoped = engine.execution_options(schema_translate_map={None: schema})
     try:
-        Base.metadata.create_all(scoped)
+        create_test_schema(scoped)
         factory = sessionmaker(bind=scoped, expire_on_commit=False)
         tenant_id, admin_id = uuid4(), uuid4()
         secret = pyotp.random_base32()
@@ -197,7 +197,7 @@ def test_postgresql_website_reset_link_and_totp_are_consumed_once_concurrently(m
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     scoped = engine.execution_options(schema_translate_map={None: schema})
     try:
-        Base.metadata.create_all(scoped)
+        create_test_schema(scoped)
         factory = sessionmaker(bind=scoped, expire_on_commit=False)
         tenant_id, admin_id = uuid4(), uuid4()
         secret = pyotp.random_base32()

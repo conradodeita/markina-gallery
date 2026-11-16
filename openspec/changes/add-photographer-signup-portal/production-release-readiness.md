@@ -1,5 +1,20 @@
 # Prontidão de release do cadastro SaaS em produção
 
+## Atualização pós-push — 16/11/2026
+
+- [x] Primeiro push concluído no commit `cc5ebe1652e9c6a24715977ef9b2eccdded60dd3`, após revisão final de 808 caminhos incluídos, gate visual autenticado, OpenSpec e Gitleaks. `output` permanece fora do Git. Os snapshots abaixo são históricos.
+- [x] Correções publicadas de política de credenciais no CI (`e287a991`) e compatibilidade Python 3.10 do operador facial (`6b3b0d3d`).
+- [x] CI `43960186829` aprovou qualidade backend, frontend, OpenSpec, Gitleaks e imagens amd64/arm64. O backend de testes falhou; os agregados `homolog-inventory-policy` e `gemma-runtime` refletiram essa falha, sem executar runtime Gemma.
+- [x] Falhas diagnosticadas: fixtures TOTP de 80 bits recusadas pelo PyOTP 2.12.0; expectativa antiga de HTTP 422 em upload cuja identidade divergente exige 409; testes históricos de migrations ainda vinculados a 0124/constraints posteriores; criação de schema PostgreSQL alterando regras DDL no metadata compartilhado com SQLite.
+- [x] Validação das correções TOTP/upload com PyOTP 2.12.0: **31 passed**, sem mudança de credenciais ou comportamento produtivo. Cadeia de migrations em PostgreSQL descartável: **19 passed**, sem alteração dos arquivos de migration.
+- [x] Prova sequencial PostgreSQL/SQLite: **25 passed**, incluindo FKs de escopo público/privado após DDL PostgreSQL, concorrência financeira/hostname, reabertura, auditoria e contratos de upload. Ruff de `backend/app` e `backend/tests` passou; Gitleaks do conjunto de correções sem achados.
+- [ ] Publicar somente as correções e obter CI verde no novo SHA.
+- [x] Reconsulta somente leitura de produção: schema `20261026_0090`, `APP_ENV=production`, `FACIAL_PROCESSING_ENABLED=true`, PyOTP 2.10.0; agregado da configuração TOTP existente sem chave abaixo de 112 bits nem material inválido. Valores das credenciais não foram expostos.
+- [x] Classificador do candidato retornou `release_scope=protected`. O operador genérico API/web proíbe migrations e não atende à atualização SaaS `0090→0126`; seu contrato não foi afrouxado.
+- [ ] Antes do deploy: fechar inventário/backup restaurável, compatibilidade da cadeia `0090→0126`, procedimento protegido e rollback compatível; preservar integrações Evolution, Mercado Pago e PIX, dados reais, índices e facial `true`.
+
+Evidências locais: `C:/codex-data/local-review/saas-release-review-20261115/totp-current-ci-fix.xml`, `migration-ci-fix.xml`, `metadata-order-ci-fix.xml` e logs correspondentes. Nenhuma migration, escrita de negócio, restart ou alteração de configuração de produção ocorreu nesta etapa.
+
 ## Snapshot do primeiro push e da prontidão de produção — 16/11/2026, 10:48 UTC
 
 Esta atualização reúne uma reconciliação local e uma leitura remota somente leitura. Não houve escrita de produção nem leitura de dados de clientes.

@@ -54,7 +54,7 @@ def test_0110_creates_term_versions_and_guards_append_only_history(terms_postgre
             ), {"id": tenant_id})
         connection.execute(text(
             "INSERT INTO admin_user(id,email,password_hash,email_verified,totp_secret) "
-            "VALUES (:id,'terms-migration@example.test','synthetic',true,'JBSWY3DPEHPK3PXP')"
+            "VALUES (:id,'terms-migration@example.test','synthetic',true,'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP')"
         ), {"id": admin_id})
         connection.execute(text(
             "INSERT INTO tenant_admin(id,tenant_id,admin_user_id,active,created_at) "

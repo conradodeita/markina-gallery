@@ -27,13 +27,13 @@ from tests.test_integration_secrets import secret_keyring  # noqa: F401
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261110_0124"
+CURRENT_SCHEMA = "20261113_0126"
 POST_TRANSITION_TABLES = frozenset({
     "platform_admin_event", "photographer_signup", "google_drive_connection", "google_drive_oauth_attempt",
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_incident", "system_monitor_transition",
-    "facial_embedding_experiment_setting",
+    "facial_embedding_experiment_setting", "facial_search_consent_proof",
     "admin_totp_recovery_code",
     "provider_payment", "provider_payment_attempt", "provider_payment_receipt",
     "provider_payment_correction", "raw_development_settings", "raw_development_job",
@@ -151,7 +151,11 @@ def assert_catalog(connection, baseline):
         expected_unique = {
             tuple(column.name for column in u.columns)
             for u in target.constraints
-            if isinstance(u, sa.UniqueConstraint) and u.name != "uq_tenant_canonical_host"
+            if isinstance(u, sa.UniqueConstraint) and u.name not in {
+                "uq_tenant_canonical_host",
+                # Added by 0113; it is not part of the historical 0070 catalog.
+                "uq_owner_photo_folder_id_derived_gallery_id_tenant_id",
+            }
             and all(column.name in allowed_columns for column in u.columns)
         }
         expected_unique |= {

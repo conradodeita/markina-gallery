@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app import auth, homolog_cleanup
 from app.system_monitor import models as monitor
+from tests.schema_fixtures import create_test_schema
 
 OWNER_EMAIL = "owner@example.test"
 
@@ -30,7 +31,7 @@ def graph(monkeypatch, tmp_path):
     with engine.begin() as connection:
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     scoped = engine.execution_options(schema_translate_map={None: schema})
-    auth.Base.metadata.create_all(scoped)
+    create_test_schema(scoped)
     monkeypatch.setenv("APP_ENV", "homolog")
     monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "homolog")
     media = {name: tmp_path / name for name in reset.MEDIA_ROOTS}

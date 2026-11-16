@@ -10,7 +10,8 @@ from alembic.operations import Operations
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import DBAPIError
 
-from app.auth import Base, now
+from app.auth import now
+from tests.schema_fixtures import create_test_schema
 from tests.test_tenant_credit_purchase_postgres import postgres_schema as _postgres_schema
 
 postgres_schema = _postgres_schema
@@ -37,8 +38,7 @@ def insert_event(connection, *, admin_id, tenant_id, evidence=None, previous="re
 
 def test_upgrade_preserves_old_audit_and_downgrade_refuses_new_hostname_evidence(postgres_schema):
     engine = postgres_schema
-    Base.metadata.create_all(engine, tables=[table for table in Base.metadata.tables.values()
-                                           if table.name != "platform_admin_event"])
+    create_test_schema(engine, exclude_tables={"platform_admin_event"})
     with engine.begin() as connection:
         apply_migration(connection, "20261103_0096_platform_admin_audit.py")
         apply_migration(connection, "20261104_0102_photographer_totp_assistance.py")

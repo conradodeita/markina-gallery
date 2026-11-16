@@ -162,7 +162,7 @@ def test_cada_fotografo_configura_propria_conta_e_nao_confirma_desafio_alheio(cl
         db.flush()
         first_admin = db.scalar(select(AdminUser))
         admin = AdminUser(email="second@photographer.test", email_verified=True,
-                          password_hash=first_admin.password_hash, totp_secret="JBSWY3DPEHPK3PXP")
+                          password_hash=first_admin.password_hash, totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
         admin.tenant_memberships.append(TenantAdmin(tenant_id=second.id))
         db.add(admin)
         db.flush()

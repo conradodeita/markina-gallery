@@ -49,7 +49,7 @@ def test_media_deletion_http_requires_owner_reauth_and_audits_idempotent_request
     client, tenant_id, owner_id = media_deletion_http
     owner = client_db.get(AdminUser, owner_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     client_db.commit()
     monkeypatch.setattr(main, "require_same_origin", lambda _request: None)
     rate_limit_actions = []
@@ -142,7 +142,7 @@ def test_platform_console_rechecks_idempotency_after_admin_lock(
     client, tenant_id, owner_id = media_deletion_http
     owner = client_db.get(AdminUser, owner_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     client_db.commit()
     monkeypatch.setattr(main, "require_same_origin", lambda _request: None)
 
@@ -239,7 +239,7 @@ def test_media_deletion_http_rejects_invalid_credentials_before_service(
     client, tenant_id, owner_id = media_deletion_http
     owner = client_db.get(AdminUser, owner_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     client_db.commit()
     monkeypatch.setattr(main, "require_same_origin", lambda _request: None)
     service_called = False
@@ -354,7 +354,7 @@ def test_media_deletion_retry_requires_reauth_and_audits_the_retry(
     client, tenant_id, owner_id = media_deletion_http
     owner = client_db.get(AdminUser, owner_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     client_db.get(Tenant, tenant_id).lifecycle = "closed"
     photographer_id = client_db.scalar(select(TenantAdmin.admin_user_id).where(
         TenantAdmin.tenant_id == tenant_id,

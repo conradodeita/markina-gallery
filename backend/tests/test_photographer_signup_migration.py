@@ -24,7 +24,7 @@ def test_0097_from_current_database_preserves_owner_audit_and_totp(postgres_sche
     owner_id = uuid4()
     with engine.begin() as connection:
         tenant_id = connection.scalar(text("SELECT id FROM tenant"))
-        connection.execute(text("INSERT INTO admin_user(id,email,password_hash,email_verified,totp_secret) VALUES (:id,'owner-signup-migration@example.test','synthetic',true,'JBSWY3DPEHPK3PXP')"), {"id": owner_id})
+        connection.execute(text("INSERT INTO admin_user(id,email,password_hash,email_verified,totp_secret) VALUES (:id,'owner-signup-migration@example.test','synthetic',true,'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP')"), {"id": owner_id})
         connection.execute(text("INSERT INTO tenant_admin(id,tenant_id,admin_user_id,active,created_at) VALUES (:id,:tenant,:admin,true,CURRENT_TIMESTAMP)"), {"id": uuid4(), "tenant": tenant_id, "admin": owner_id})
         connection.execute(text("INSERT INTO platform_owner(singleton,admin_user_id,authorization_reference,established_at) VALUES (1,:admin,'synthetic',CURRENT_TIMESTAMP)"), {"admin": owner_id})
     command.upgrade(config, "20261103_0096")

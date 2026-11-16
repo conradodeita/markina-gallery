@@ -21,7 +21,7 @@ from tests.test_tenant_client_isolation import client_db as _client_db
 client_db = _client_db
 
 PASSWORD = "OnlySyntheticTest!20261103"
-SECRET = "JBSWY3DPEHPK3PXP"
+SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 
 def context(db):

@@ -14,6 +14,7 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.auth import Base, Client, ProviderPayment, SaleOrder, Tenant, now
 from app.auth import engine as runtime_engine
+from tests.schema_fixtures import create_test_schema
 
 
 def migration():
@@ -139,7 +140,7 @@ def test_upgrade_postgresql_sobre_schema_completo_preserva_infinitepay():
         with runtime_engine.begin() as connection:
             connection.execute(CreateSchema(schema))
             connection.exec_driver_sql(f'SET LOCAL search_path TO "{schema}"')
-            Base.metadata.create_all(connection)
+            create_test_schema(connection)
             with Session(bind=connection) as db:
                 tenant = Tenant(id=uuid4())
                 db.add(tenant)

@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from app import media_archive_billing as billing
 from app import photographer_credits as credits
 from app.auth import (
-    Base,
     MediaArchiveCoordinator,
     MediaArchiveCycle,
     MediaArchiveOperation,
@@ -28,6 +27,7 @@ from app.auth import (
 )
 from app.credit_history import history_page
 from app.media_archive_worker import complete_restore_operation, fail_operation
+from tests.schema_fixtures import create_test_schema
 from tests.test_photographer_credits import create_accounts, create_photo
 from tests.test_tenant_client_isolation import client_db as _client_db
 from tests.test_tenant_credit_purchase_postgres import postgres_schema as _postgres_schema
@@ -158,7 +158,7 @@ def test_active_recovery_check_does_not_lock_operation_while_cycle_is_locked(cli
 
 
 def test_concurrent_recovery_requests_cannot_overreserve_the_same_wallet(postgres_schema):
-    Base.metadata.create_all(postgres_schema)
+    create_test_schema(postgres_schema)
     with Session(postgres_schema, expire_on_commit=False) as db:
         _owner_tenant, tenant, owner, photographer = create_accounts(db)
         first_cycle, _first_folder = _archived_cycle(db, tenant.id)

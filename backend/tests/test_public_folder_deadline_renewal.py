@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from app import main
 from app.auth import (
     AuditEvent,
-    Base,
     Client,
     GalleryClientState,
     GalleryReopeningRequest,
@@ -33,6 +32,7 @@ from app.folder_access import (
     folder_browsing_clause,
     folder_effective_expiry,
 )
+from tests.schema_fixtures import create_test_schema
 from tests.tenant_fixtures import FIXTURE_TENANT_ID
 
 pytest_plugins = ["tests.test_preview_adjustment"]
@@ -280,7 +280,7 @@ def renewal_postgres(monkeypatch):
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_engine(url, connect_args={"options": f"-csearch_path={schema} -clock_timeout=15s"})
     try:
-        Base.metadata.create_all(engine)
+        create_test_schema(engine)
         with Session(engine) as db:
             tenant = Tenant()
             db.add(tenant)

@@ -44,7 +44,7 @@ def assistance(client_db):
     session, tenant_id, admin_id = context(client_db)
     admin = client_db.get(AdminUser, admin_id)
     admin.password_hash = password_hasher.hash(PHOTO_PASSWORD)
-    admin.totp_secret = "JBSWY3DPEHPK3PXP"
+    admin.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     client_db.add(PhotographerSignup(photographer_name="Conta sintética", email=admin.email, state="active",
                                      otp_expires_at=now(), reserved_admin_id=admin_id, activated_tenant_id=tenant_id))
     target_session = AuthSession(id=uuid4(), token_hash=uuid4().hex, role="admin", subject_id=admin_id,

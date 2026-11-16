@@ -187,7 +187,7 @@ def test_http_reduction_reauthenticates_and_audits_idempotent_request(
     profile_id, closure_id = profile.id, closure.id
     owner = client_db.get(AdminUser, owner_id)
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
-    owner.totp_secret = "JBSWY3DPEHPK3PXP"
+    owner.totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     client_db.commit()
     monkeypatch.setattr(main, "require_same_origin", lambda *_args: None)
     actions = []

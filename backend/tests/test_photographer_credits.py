@@ -1327,7 +1327,7 @@ def test_owner_credit_grant_requires_step_up_audits_and_replays_without_totp(cli
     from app.auth import PlatformAdminEvent, password_hasher
 
     owner_tenant, tenant, owner, _photographer = create_accounts(client_db)
-    secret = "JBSWY3DPEHPK3PXP"
+    secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
     owner.totp_secret = secret
     client_db.commit()
@@ -1433,7 +1433,7 @@ def test_owner_financial_response_revalidates_session_after_loading_result(
     from app.auth import PlatformAdminEvent, password_hasher
 
     owner_tenant, tenant, owner, _photographer = create_accounts(client_db)
-    secret = "JBSWY3DPEHPK3PXP"
+    secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
     owner.totp_secret = secret
     client_db.commit()
@@ -1528,7 +1528,7 @@ def test_owner_credit_revocation_rolls_back_if_session_changes_before_commit(cli
     grant = credits.grant_credits(
         client_db, owner.id, tenant.id, 3, "session-revoke-grant", "synthetic seed",
     )
-    secret = "JBSWY3DPEHPK3PXP"
+    secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
     owner.totp_secret = secret
     client_db.commit()
@@ -1577,7 +1577,7 @@ def test_owner_credit_package_mutation_requires_step_up_and_replays_safely(clien
     from app.auth import PlatformAdminEvent, password_hasher
 
     owner_tenant, _tenant, owner, _photographer = create_accounts(client_db)
-    secret = "JBSWY3DPEHPK3PXP"
+    secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
     owner.totp_secret = secret
     client_db.commit()
@@ -1644,7 +1644,7 @@ def test_owner_credit_purchase_review_requires_step_up_and_replays(client_db, mo
     purchase = prepare(client_db, buyer_tenant, buyer, package, "owner-review-step-up")
     purchase.state = "charged_back"
     purchase.review_status = "pending"
-    secret = "JBSWY3DPEHPK3PXP"
+    secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     owner.password_hash = password_hasher.hash("SyntheticOwnerPassword!2026")
     owner.totp_secret = secret
     client_db.commit()

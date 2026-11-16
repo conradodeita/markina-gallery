@@ -12,7 +12,6 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 from app.auth import (
     AuditEvent,
     AuthSession,
-    Base,
     NotificationDelivery,
     NotificationEvent,
     NotificationSetting,
@@ -27,6 +26,7 @@ from app.auth import (
 from app.media_archive_guards import never_released_closure_folder
 from app.tenant_closure import ClosureInput, finalize_closure, request_closure
 from app.tenant_closure_obligations import evaluate_closure
+from tests.schema_fixtures import create_test_schema
 from tests.test_media_archive_scheduler import _engine_with_schema
 from tests.test_photographer_credits import create_photo
 from tests.test_tenant_closure import prepare
@@ -54,7 +54,7 @@ def isolated_closure_postgres():
         connection.execute(CreateSchema(schema))
     engine.update_execution_options(schema_translate_map={None: schema})
     try:
-        Base.metadata.create_all(engine)
+        create_test_schema(engine)
         yield
     finally:
         with engine.begin() as connection:
