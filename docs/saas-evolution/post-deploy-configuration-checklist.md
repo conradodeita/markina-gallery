@@ -8,8 +8,8 @@ O estágio inicial após o deploy fica restrito ao proprietário. As provas reai
 
 ## 1. Decisões recuperadas e proteções já comprovadas
 
-- [x] **Deploy do proprietário:** runtime9df3b735, schema0126,13 serviços saudáveis, dados/fator TOTP/índices preservados e integrações conferidas. Evidências e limites no [registro do release](production-release-2026-11-16.md).
-- [x] **Custódia TOTP:** arquivo root-only no servidor e cópia externa escolhida pelo proprietário em D:, com recuperação validada. A guarda offline física permanece sob responsabilidade do proprietário.
+- [x] **Deploy do proprietário** com runtime 9df3b735, schema 0126 e 13 serviços saudáveis, dados/fator TOTP/índices preservados e integrações conferidas. Evidências e limites no [registro do release](production-release-2026-11-16.md).
+- [x] **Custódia TOTP** em arquivo root-only no servidor e cópia externa escolhida pelo proprietário em D:, com recuperação validada. A guarda offline física permanece sob responsabilidade do proprietário.
 
 - [x] **Decisão:** configurar e testar Drive/backup/arquivo após o release restrito ao proprietário, antes de liberar outros tenants.
 - [x] **Decisão:** backup inicial global diário, retenção de 7 diários/4 semanais/3 mensais; RPO alvo de 24 h e RTO alvo de 8 h, a medir; ensaio mensal de restauração.
