@@ -16,6 +16,8 @@ from app.platform_backup.archive import BackupContext, seal_archive
 from app.platform_backup.payload import build_payload
 from app.platform_backup.postgres_sandbox import DockerPostgresSandbox, local_docker_base
 from app.platform_backup.restore import BackupRestoreError, restore_global
+from app.platform_backup.runtime_source import SourceConfig
+from app.platform_backup.runtime_source import snapshot as production_snapshot
 
 pytestmark = pytest.mark.skipif(os.getenv("PYP_BACKUP_POSTGRES_TEST") != "1",
                                 reason="PostgreSQL descartável exige opt-in local")
@@ -154,3 +156,22 @@ def test_actual_global_restore_and_failure_rollback_preserve_source_and_peer(san
         restore_global(io.BytesIO(encrypted), key=key, expected=context, artifact=artifact,
                        target=empty, at=datetime.now(UTC))
     assert sql(empty, "SELECT count(*) FROM pg_type WHERE typname='existing_enum'") == "1"
+
+
+def test_production_snapshot_uses_read_only_postgres_and_keeps_source(sandboxes, monkeypatch):
+    source, _, sql, _ = sandboxes
+    version = sql(source, "SELECT current_setting('server_version_num');")
+    system_identifier = sql(source, "SELECT system_identifier FROM pg_control_system();")
+    identity = SourceConfig(source.container_id, "synthetic", "unused", "unused", source.database,
+                            "20261105_0106", system_identifier, 1024 * 1024,
+                            {"POSTGRES_SERVER_VERSION": version})
+    monkeypatch.setattr("app.platform_backup.runtime_source._DOCKER", tuple(local_docker_base()))
+    # A infraestrutura de teste tem nomes diferentes; o adapter sintético atesta seu ID e rede none.
+    def attest(container, image, *, service):
+        assert container == source.container_id and image == "synthetic" and service == "db"
+        source._attest()
+
+    monkeypatch.setattr("app.platform_backup.runtime_source.attest_container", attest)
+    with production_snapshot(identity, "20261105_0106") as result:
+        assert result.dump.read(5) == b"PGDMP"
+    assert sql(source, "SELECT sum(amount_cents) FROM ledger;") == "29880"

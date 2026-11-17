@@ -13,7 +13,7 @@ O estágio inicial após o deploy fica restrito ao proprietário. As provas reai
 
 - [x] **Decisão:** configurar e testar Drive/backup/arquivo após o release restrito ao proprietário, antes de liberar outros tenants.
 - [x] **Decisão:** backup inicial global diário, retenção de 7 diários/4 semanais/3 mensais; RPO alvo de 24 h e RTO alvo de 8 h, a medir; ensaio mensal de restauração.
-- [x] **Decisão:** conta do proprietário somente no ensaio inicial; identidade Workspace dedicada para a rotina de backup. Arquivo de fotos terá identidade e raiz próprias, separadas da cópia do banco.
+- [x] **Decisão de 17/11:** a conta Workspace do proprietário já conectada será usada para a rotina de backup global. Arquivo de fotos mantém identidade e raiz próprias, separadas da cópia do banco.
 - [x] **Decisão:** fidelidade e revisão jurídica futura ficaram para depois do primeiro release; nenhuma regra de fidelidade foi aprovada por inferência.
 - [x] **Prova de preparação do release:** backup online de 16/11 restaurado em banco isolado; cadeia `0090→0126` ensaiada nessa cópia, preservando os registros financeiros comparados e o fator TOTP. Isso não comprova backup recorrente nem cópia no Drive.
 
@@ -23,11 +23,12 @@ Fontes: [D15–D17](decisions.md#decisões-de-backup-de-06112026), [gates pós-r
 
 - [ ] **Configuração no Google Cloud:** conferir o cliente OAuth Web já criado, Drive API, audience, titularidade e custodiante; recuperar as credenciais pelo store seguro, sem recriar a integração por padrão.
 - [x] **Custódia OAuth no runtime:** armazenar o JSON do cliente Web em `/etc/pyp-google-drive/oauth-client.json` (`root:root`, modo `0400`, diretório `root:root`/`0700`), montar somente na API em `/run/secrets/google-drive-oauth-client.json` como read-only e remover as três variáveis `GOOGLE_DRIVE_*` do metadata de todos os containers. Merge e recibo em 17/11/2026; nenhum valor de credencial é registrado nesta checklist.
-- [ ] **Configuração:** validar publicamente o callback `/api/admin/platform/drive/oauth/callback`, HTTPS, origem e correspondência com o URI autorizado no Google.
-- [ ] **Consentimento do proprietário:** em Plataforma, reautenticar no formulário de conexão e revisar a conta Google, callback e escopo `drive.file` na tela de consentimento. Aprovar somente após a revisão manual; depois confirmar o registro do refresh token cifrado. O executor para na tela Google e não compartilha senha/TOTP.
-- [ ] **Configuração:** escolher o destino concreto — pasta em My Drive ou Shared Drive — e comprovar acesso, permissões herdadas, quota disponível e limites do serviço.
-- [ ] **Ensaio:** enviar arquivo sintético, conferir metadata/checksum, ler novamente e baixar; registrar contagens/IDs técnicos e resultado, sem tokens ou conteúdo pessoal.
-- [ ] **Configuração:** cadastrar a identidade Workspace dedicada da rotina e definir custódia/recuperação das credenciais; conferir independência em relação ao servidor de origem.
+- [x] **Callback OAuth em produção.** HTTPS e proteção sem sessão confirmados em `/api/admin/platform/drive/oauth/callback`. O runtime conferiu o URI da configuração e a conexão manual completou o callback em 17/11/2026.
+- [x] **Consentimento do proprietário.** Conexão concluída manualmente em Plataforma. Às `19:48:59 UTC`, a API registrou `connected`, escopo `drive.file`, refresh token em envelope cifrado e evento de auditoria. [Recibo](../../openspec/changes/add-google-drive-owner-connect-ui/deployment.md#conexão-confirmada-em-17112026).
+- [x] **Quota do Drive no ensaio do proprietário.** A API Google retornou 100 TiB de limite e aproximadamente 90,31 TiB disponíveis em 17/11/2026. [Evidência](../../openspec/changes/add-google-drive-storage-foundation/production-drive-proof.md).
+- [x] **Destino do backup global:** `Meu Drive / Pick-your-Pic Tenants` foi criada e verificada na raiz pela conexão selecionada. O Drive confirmou acesso do app, capacidade de gravar e somente permissão de proprietário. [Recibo](../../openspec/changes/add-google-drive-storage-foundation/production-drive-proof.md#destino-da-rotina-verificado).
+- [x] **Ensaio em pasta privada temporária.** Upload retomável, conferência dos metadados, download e SHA-256 do texto sintético aprovados. Arquivo e pasta excluídos e ausência confirmada. [Recibo](../../openspec/changes/add-google-drive-storage-foundation/production-drive-proof.md#ensaio-com-pasta-temporária-concluído).
+- [ ] **Configuração:** vincular a rotina ao acesso protegido da conta Workspace escolhida e definir a recuperação da credencial diante de perda do servidor de origem.
 
 Fontes: [configuração OAuth](../../openspec/changes/add-google-drive-storage-foundation/configuration-inventory.md), [operação Drive](../../openspec/changes/add-google-drive-storage-foundation/operations.md), tasks 1.1/3.1 da [fundação Drive](../../openspec/changes/add-google-drive-storage-foundation/tasks.md).
 
@@ -35,12 +36,14 @@ Fontes: [configuração OAuth](../../openspec/changes/add-google-drive-storage-f
 
 O escopo inicial aprovado é PostgreSQL completo e configurações essenciais cifradas, com recuperação global. Backup/recuperação lógica individual por tenant foi faseado para etapa própria. A organização de fotos em subpastas por UUID de tenant pertence ao arquivo de mídia, na seção 4. O pedido atual de backup por tenant fica explicitamente rastreado abaixo, sem declarar uma capacidade individual já entregue.
 
-- [ ] **Configuração:** definir a pasta externa de backup do banco e manter sua identidade/raiz separadas do arquivo de fotos.
-- [ ] **Configuração:** provisionar material de cifragem/recuperação no store aprovado; guardar cópia offline sob custódia do proprietário e versões de chave necessárias aos backups retidos.
-- [ ] **Ensaio:** executar backup → upload → readback → autenticação criptográfica → restore global em destino descartável, usando primeiro a conta do proprietário.
+[Operação da rotina e recuperação manual](operacao-backup.md).
+
+- [x] **Configuração Drive:** a pasta externa do backup global do banco foi criada na raiz do Meu Drive, em destino próprio.
+- [x] **Configuração da chave e do destino.** Chave AES-256 própria do backup provisionada no Oracle e copiada para a unidade removível escolhida, com leitura autenticada em ambas. A pasta do Drive foi registrada na configuração desativada. [Recibo de custódia e próximas etapas](../../openspec/changes/enable-platform-backup-runtime/tasks.md).
+- [x] **Ensaio sintético de recuperação pelo Drive.** Backup PostgreSQL cifrado → upload → readback → autenticação → restore global em PostgreSQL descartável. A conta do proprietário e uma pasta temporária foram usadas. Arquivo, pasta e ambientes de ensaio foram removidos e a ausência confirmada. [Recibo](../../openspec/changes/add-platform-backup-recovery/drive-restore-proof.md).
 - [ ] **Implementação:** integrar e publicar o caller/worker/scheduler produtivo de backup. A fundação e o adapter Workspace existentes não instalam a rotina de produção; não usar flags de teste para contornar esse limite.
 - [ ] **Configuração, após o caller:** definir horário/fuso e habilitar a rotina diária somente para o projeto Pick-your-Pic, preservando timers e cópias dos demais projetos do servidor.
-- [ ] **Ensaio:** comprovar cópia recorrente e retry idempotente com a identidade dedicada; falha ou estado desconhecido deve ficar visível.
+- [ ] **Ensaio:** comprovar cópia recorrente e retry idempotente com a conta Workspace escolhida e o destino definitivo. Falha ou estado desconhecido deve ficar visível.
 - [ ] **Configuração/ensaio:** aplicar a retenção global 7/4/3 com preservação do último ponto recuperável; só descartar cópia após existir outra independente e restaurável.
 - [ ] **Configuração/ensaio:** agendar e registrar o restore mensal, medir RPO/RTO efetivos e comprovar recuperação com as chaves correspondentes ao snapshot.
 - [ ] **Implementação — backup por tenant:** definir e implementar o recorte de dados, dependências compartilhadas, cifragem, destino e restauração seletiva preservando IDs, vínculos e histórico financeiro; testar isolamento antes de oferecer essa capacidade.

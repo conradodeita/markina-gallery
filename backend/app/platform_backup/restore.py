@@ -13,11 +13,11 @@ from .archive import (
     BackupContext,
     _key,
     _local_runtime,
-    open_archive,
-    verify_ciphertext,
+    _open_archive,
+    _verify_ciphertext,
 )
 from .catalog import BackupCatalog
-from .payload import open_payload
+from .payload import _open_payload
 
 
 class BackupRestoreError(RuntimeError):
@@ -55,6 +55,12 @@ def restore_global(source: BinaryIO, *, key: bytes, expected: BackupContext,
                    artifact: ArchiveReceipt, target: RestoreTarget,
                    at: datetime) -> RestoreReceipt:
     _local_runtime()
+    return _restore_global(source, key=key, expected=expected, artifact=artifact, target=target, at=at)
+
+
+def _restore_global(source: BinaryIO, *, key: bytes, expected: BackupContext,
+                    artifact: ArchiveReceipt, target: RestoreTarget,
+                    at: datetime) -> RestoreReceipt:
     _key(key)
     start = time.monotonic()
     try:
@@ -62,10 +68,10 @@ def restore_global(source: BinaryIO, *, key: bytes, expected: BackupContext,
                 or artifact.backup_id != expected.backup_id or not isinstance(at, datetime)
                 or at.utcoffset() != timedelta(0)):
             raise ValueError
-        verify_ciphertext(source, artifact)
+        _verify_ciphertext(source, artifact)
         with (
-            open_archive(source, key=key, expected=expected) as clear,
-            open_payload(clear.stream, expected=expected) as payload,
+            _open_archive(source, key=key, expected=expected) as clear,
+            _open_payload(clear.stream, expected=expected) as payload,
         ):
             state = target.inspect()
             if (not isinstance(state, RestoreTargetState) or not isinstance(state.instance_id, UUID)

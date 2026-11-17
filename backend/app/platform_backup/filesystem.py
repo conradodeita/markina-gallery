@@ -31,6 +31,12 @@ def io_error(error: OSError) -> BackupStorageError:
 @contextmanager
 def directory(root: Path):
     _local_runtime()
+    with _directory(root) as descriptor:
+        yield descriptor
+
+
+@contextmanager
+def _directory(root: Path):
     if os.name != "posix" or not root.is_absolute():
         raise BackupStorageError("unsafe")
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)

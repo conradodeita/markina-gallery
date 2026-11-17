@@ -11,12 +11,12 @@ from .archive import (
     BackupContext,
     _key,
     _local_runtime,
-    open_archive,
-    verify_ciphertext,
+    _open_archive,
+    _verify_ciphertext,
 )
 from .catalog import BackupCatalog
 from .filesystem import BackupStorageError
-from .payload import BackupPayloadError, open_payload
+from .payload import BackupPayloadError, _open_payload
 from .restore import (
     BackupRestoreError,
     RestoreReceipt,
@@ -52,6 +52,14 @@ def copy_workspace_backup(source: BinaryIO, *, receipt: ArchiveReceipt,
     feita sem que o chamador forneça explicitamente um transporte configurado.
     """
     _local_runtime()
+    return _copy_workspace_backup(source, receipt=receipt, context=context, key=key,
+                                  store=store, catalog=catalog, at=at)
+
+
+def _copy_workspace_backup(source: BinaryIO, *, receipt: ArchiveReceipt,
+                           context: BackupContext, key: bytes,
+                           store: WorkspaceDriveBackupStore, catalog: BackupCatalog,
+                           at: datetime) -> CopyReceipt:
     _key(key)
     if (
         not isinstance(receipt, ArchiveReceipt)
@@ -76,10 +84,10 @@ def copy_workspace_backup(source: BinaryIO, *, receipt: ArchiveReceipt,
         _record_once(catalog, context.backup_id, "uploaded", at=at,
                      destination_id=store.destination_id, receipt=receipt)
         with store.open(context.backup_id) as remote:
-            verify_ciphertext(remote, receipt)
+            _verify_ciphertext(remote, receipt)
             with (
-                open_archive(remote, key=key, expected=context) as clear,
-                open_payload(clear.stream, expected=context),
+                _open_archive(remote, key=key, expected=context) as clear,
+                _open_payload(clear.stream, expected=context),
             ):
                 pass
         _record_once(catalog, context.backup_id, "verified", at=at,
