@@ -21,10 +21,10 @@ Fontes: [D15–D17](decisions.md#decisões-de-backup-de-06112026), [gates pós-r
 
 ## 2. Google Drive / Workspace no servidor
 
-- [ ] **Configuração:** conferir o cliente OAuth Web já criado, Drive API, audience, titularidade e custodiante; recuperar as credenciais pelo store seguro, sem recriar a integração por padrão.
-- [ ] **Configuração:** preencher `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET` e `GOOGLE_DRIVE_REDIRECT_URI` no store seguro e conferir a entrega ao runtime correto.
+- [ ] **Configuração no Google Cloud:** conferir o cliente OAuth Web já criado, Drive API, audience, titularidade e custodiante; recuperar as credenciais pelo store seguro, sem recriar a integração por padrão.
+- [x] **Custódia OAuth no runtime:** armazenar o JSON do cliente Web em `/etc/pyp-google-drive/oauth-client.json` (`root:root`, modo `0400`, diretório `root:root`/`0700`), montar somente na API em `/run/secrets/google-drive-oauth-client.json` como read-only e remover as três variáveis `GOOGLE_DRIVE_*` do metadata de todos os containers. Merge e recibo em 17/11/2026; nenhum valor de credencial é registrado nesta checklist.
 - [ ] **Configuração:** validar publicamente o callback `/api/admin/platform/drive/oauth/callback`, HTTPS, origem e correspondência com o URI autorizado no Google.
-- [ ] **Ensaio:** conectar a conta do proprietário pelo fluxo owner-only, com reautenticação, state/PKCE e escopo `drive.file`; confirmar refresh token cifrado e reautorização/revogação.
+- [ ] **Consentimento do proprietário:** revisar a tela Google e aprovar somente o escopo `drive.file`; depois confirmar refresh token cifrado e reautorização/revogação. O fluxo ainda não foi iniciado e aguarda o consentimento explícito.
 - [ ] **Configuração:** escolher o destino concreto — pasta em My Drive ou Shared Drive — e comprovar acesso, permissões herdadas, quota disponível e limites do serviço.
 - [ ] **Ensaio:** enviar arquivo sintético, conferir metadata/checksum, ler novamente e baixar; registrar contagens/IDs técnicos e resultado, sem tokens ou conteúdo pessoal.
 - [ ] **Configuração:** cadastrar a identidade Workspace dedicada da rotina e definir custódia/recuperação das credenciais; conferir independência em relação ao servidor de origem.
