@@ -1,6 +1,6 @@
 # Checklist de configuração após o deploy SaaS
 
-Atualizado em 16/11/2026. Solicitação do proprietário: reunir as configurações deliberadamente deixadas para quando o candidato estiver no servidor, incluindo Drive e backup por tenant. Este documento acompanha o release; as tarefas abaixo não voltam a ser requisitos do primeiro push, que já ocorreu.
+Atualizado em 17/11/2026. Solicitação do proprietário: reunir as configurações deliberadamente deixadas para quando o candidato estiver no servidor, incluindo Drive e backup por tenant. Este documento acompanha o release; as tarefas abaixo não voltam a ser requisitos do primeiro push, que já ocorreu.
 
 `[x]` indica uma decisão registrada ou uma prova executada, conforme o texto do item. `[ ]` indica trabalho pendente. Cada item identifica configuração, ensaio, implementação ou decisão comercial. Uma fundação validada localmente não equivale a serviço recorrente instalado.
 
@@ -24,7 +24,7 @@ Fontes: [D15–D17](decisions.md#decisões-de-backup-de-06112026), [gates pós-r
 - [ ] **Configuração no Google Cloud:** conferir o cliente OAuth Web já criado, Drive API, audience, titularidade e custodiante; recuperar as credenciais pelo store seguro, sem recriar a integração por padrão.
 - [x] **Custódia OAuth no runtime:** armazenar o JSON do cliente Web em `/etc/pyp-google-drive/oauth-client.json` (`root:root`, modo `0400`, diretório `root:root`/`0700`), montar somente na API em `/run/secrets/google-drive-oauth-client.json` como read-only e remover as três variáveis `GOOGLE_DRIVE_*` do metadata de todos os containers. Merge e recibo em 17/11/2026; nenhum valor de credencial é registrado nesta checklist.
 - [ ] **Configuração:** validar publicamente o callback `/api/admin/platform/drive/oauth/callback`, HTTPS, origem e correspondência com o URI autorizado no Google.
-- [ ] **Consentimento do proprietário:** revisar a tela Google e aprovar somente o escopo `drive.file`; depois confirmar refresh token cifrado e reautorização/revogação. O fluxo ainda não foi iniciado e aguarda o consentimento explícito.
+- [ ] **Consentimento do proprietário:** em Plataforma, reautenticar no formulário de conexão e revisar a conta Google, callback e escopo `drive.file` na tela de consentimento. Aprovar somente após a revisão manual; depois confirmar o registro do refresh token cifrado. O executor para na tela Google e não compartilha senha/TOTP.
 - [ ] **Configuração:** escolher o destino concreto — pasta em My Drive ou Shared Drive — e comprovar acesso, permissões herdadas, quota disponível e limites do serviço.
 - [ ] **Ensaio:** enviar arquivo sintético, conferir metadata/checksum, ler novamente e baixar; registrar contagens/IDs técnicos e resultado, sem tokens ou conteúdo pessoal.
 - [ ] **Configuração:** cadastrar a identidade Workspace dedicada da rotina e definir custódia/recuperação das credenciais; conferir independência em relação ao servidor de origem.

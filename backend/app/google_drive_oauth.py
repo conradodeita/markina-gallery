@@ -16,7 +16,7 @@ from uuid import uuid4
 import httpx
 from argon2.exceptions import InvalidHashError
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, SecretStr
 from sqlalchemy import select
 
@@ -232,8 +232,7 @@ def observe_quota(request: Request, response: Response):
         raise HTTPException(503, "Não foi possível observar a quota do Google Drive.", headers=HEADERS) from None
 
 
-@router.post("/connect")
-def connect(payload: ConnectInput, request: Request):
+def _begin_connect(payload: ConnectInput, request: Request) -> str:
     from app.main import require_same_origin
     require_same_origin(request)
     session, tenant_id = _owner(request)
@@ -279,7 +278,18 @@ def connect(payload: ConnectInput, request: Request):
     params = {"client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code",
               "scope": SCOPE, "access_type": "offline", "prompt": "consent", "state": state,
               "code_challenge": challenge, "code_challenge_method": "S256"}
-    return RedirectResponse(AUTH_ENDPOINT + "?" + urlencode(params), status_code=303, headers=HEADERS)
+    return AUTH_ENDPOINT + "?" + urlencode(params)
+
+
+@router.post("/connect")
+def connect(payload: ConnectInput, request: Request):
+    return RedirectResponse(_begin_connect(payload, request), status_code=303, headers=HEADERS)
+
+
+@router.post("/connect/start")
+def connect_start(payload: ConnectInput, request: Request):
+    authorization_url = _begin_connect(payload, request)
+    return JSONResponse({"authorization_url": authorization_url}, headers=HEADERS)
 
 
 @router.get("/oauth/callback")
