@@ -20,3 +20,7 @@ Validação local de preparação em 17/11: 123 testes de backup e Workspace pas
 - Retorno: desativar somente `pyp-platform-backup.timer` e colocar o vínculo em `enabled=false` quando não houver execução em curso. Preservar o catálogo, as cópias e a chave. O serviço compartilhado do Oracle, Nginx, outros containers, volumes, rede, DNS, clientes e banco ativo ficam fora do procedimento de retorno.
 
 Este documento registra a pré-revisão sem instalar unidade, gerar backup real, mudar agenda ou acessar dados de clientes. O pacote aprovado, a prova de origem/credenciais recuperáveis e a janela precisam ser revalidados para o primeiro disparo.
+
+## Ajuste do gate CI após o primeiro push
+
+A execução `44174150953` do SHA `17e7d7acbfafd1bac9828af9af644533ec5b1cee` terminou com falha somente em `backend/tests/test_app_env_transition_inventory.py::test_environment_and_credential_consumers_match_reviewed_matrix`. O shard falho registrou 866 testes aprovados, 5 ignorados e 1 falha. O relatório mostrou que a matriz esperada ainda não listava as referências existentes a `APP_ENV` em `production_cli.py`, `runtime_config.py` e `runtime_source.py`. A matriz foi atualizada com uma referência por arquivo; o teste focado local passou (**2 passed**). O push da correção e o CI correspondente continuam pendentes.
