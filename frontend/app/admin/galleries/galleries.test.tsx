@@ -80,7 +80,7 @@ describe("telas administrativas de galerias", () => {
     expect(fetchMock.mock.calls.some(([path]) => String(path).includes("derived-galleries"))).toBe(false);
   });
   it("exige confirmação antes de bloquear uma galeria privada", async () => {
-    const fetchMock = vi.fn((path: string) =>
+    const fetchMock = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>((path) =>
       Promise.resolve(
         new Response(
           JSON.stringify(
@@ -123,7 +123,7 @@ describe("telas administrativas de galerias", () => {
     expect(window.confirm).toHaveBeenCalledWith(
       "Bloquear o acesso desta galeria privada para todos os membros?",
     );
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method && init.method !== "GET")).toBe(false);
   });
 
   it("organiza o acervo por pasta e mantém agregados e seleção de cada cliente", async () => {
@@ -153,7 +153,20 @@ describe("telas administrativas de galerias", () => {
     expect(screen.getByText("Quero esta em destaque.")).toBeTruthy();
     expect((screen.getByRole("combobox", { name: "Exibição das pastas herdada" }) as HTMLSelectElement).value).toBe("sequential");
     expect(screen.getAllByText("Selecionadas e não compradas")).toHaveLength(2);
-    expect(screen.getByRole("link", { name: "Baixar seleção individual" }).getAttribute("href")).toBe("/api/admin/derived-galleries/private-1/selection/export.html?client_id=client-1");
+    const download = screen.getByRole("link", { name: "Baixar seleção individual" }) as HTMLAnchorElement;
+    expect(download.getAttribute("href")).toBe("/api/admin/derived-galleries/private-1/selection/export.html?client_id=client-1");
+    const previousAccent = document.documentElement.style.getPropertyValue("--mk-brand");
+    try {
+      document.documentElement.style.setProperty("--mk-brand", "#123456");
+      download.addEventListener("click", (event) => event.preventDefault(), { once: true });
+      fireEvent.click(download);
+      const target = new URL(download.href);
+      expect(target.searchParams.get("client_id")).toBe("client-1");
+      expect(target.searchParams.get("highlight")).toBe("#123456");
+    } finally {
+      if (previousAccent) document.documentElement.style.setProperty("--mk-brand", previousAccent);
+      else document.documentElement.style.removeProperty("--mk-brand");
+    }
     expect(screen.getByText("Disponível após a primeira compra confirmada.")).toBeTruthy();
     expect(screen.getByText("2", { selector: ".private-member-cards dd" })).toBeTruthy();
     expect(screen.getByText("5", { selector: ".private-member-cards dd" })).toBeTruthy();
@@ -221,7 +234,10 @@ describe("telas administrativas de galerias", () => {
   });
 
   it("carrega JPEGs do dispositivo somente em pasta própria da privada", async () => {
-    vi.stubGlobal("crypto", { subtle: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) } });
+    vi.stubGlobal("crypto", {
+      subtle: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) },
+      randomUUID: vi.fn(() => "00000000-0000-4000-8000-000000000001"),
+    });
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/upload-batches")) return Promise.resolve(new Response(JSON.stringify(init?.method === "POST" ? { id: "batch-1", count: 0, assets: [] } : { batches: [] }), { status: 200 }));
       if (path.endsWith("/close")) return Promise.resolve(new Response(JSON.stringify({ status: "closed" }), { status: 200 }));
@@ -272,7 +288,10 @@ describe("telas administrativas de galerias", () => {
   });
 
   it("retoma foto do lote com namespace do servidor sem cadastrar outra foto", async () => {
-    vi.stubGlobal("crypto", { subtle: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) } });
+    vi.stubGlobal("crypto", {
+      subtle: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) },
+      randomUUID: vi.fn(() => "00000000-0000-4000-8000-000000000001"),
+    });
     const key = `private/private-1/folder-private/${"0".repeat(64)}.jpg`;
     const batch = { id: "batch-open", status: "open", count: 1,
       assets: [{ id: "photo-existing", storage_key: `tenants/owner/${key}`, upload_key: key, status: "not_imported" }] };

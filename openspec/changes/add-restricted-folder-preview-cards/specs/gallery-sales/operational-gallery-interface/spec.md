@@ -2,7 +2,7 @@
 
 ### Requirement: Identificação visual das pastas administrativas
 
-O resumo administrativo da galeria SHALL identificar a lista comum como `Pastas Públicas`. Dentro do `Acervo da cliente`, a lista de pastas atribuídas SHALL ser identificada como `Pastas restritas ao cliente`. Cada pasta restrita SHALL mostrar sua própria prévia protegida, quando pronta, junto do nome, contagem de fotos e estado; a prévia e o texto SHALL formar uma ação clicável única que abre e recolhe a pasta. A falta de prévia SHALL manter uma alternativa textual e a ação de abrir. Abrir ou recolher SHALL alterar somente a apresentação e SHALL NOT mudar configuração, público ou processamento.
+O resumo administrativo SHALL chamar a lista comum de `Pastas Públicas`; no `Acervo da cliente`, a lista atribuída SHALL ser `Pastas restritas ao cliente`. Cada card SHALL exibir nome, contagem, estado e sua própria prévia protegida quando pronta. Prévia e texto, ou placeholder textual, SHALL compor ação única para abrir/recolher somente a pasta. Essa ação SHALL alterar apenas a apresentação, sem mudar público, configuração ou processamento.
 
 #### Scenario: Duas pastas restritas com prévias
 
@@ -21,7 +21,7 @@ O resumo administrativo da galeria SHALL identificar a lista comum como `Pastas 
 
 ### Requirement: Busca de clientes no contexto da galeria
 
-O resumo administrativo da galeria SHALL oferecer busca por nome ou telefone que filtre somente os cards de clientes vinculadas àquela galeria, preservando os dados e contadores gerais retornados pelo backend. Uma busca sem correspondência SHALL mostrar estado vazio claro e permitir retornar à lista completa. A busca geral da página `Galerias` SHALL continuar localizando galerias por nome, evento ou cliente vinculada pelo modelo atual; resultados SHALL continuar limitados às galerias existentes e autorizadas ao fotógrafo.
+O resumo da galeria SHALL filtrar somente os cards de clientes vinculadas por nome ou telefone, sem alterar dados ou contadores do backend; resultado vazio SHALL mostrar estado claro e permitir limpar o filtro para restaurar a lista. A busca geral da página `Galerias` SHALL continuar encontrando galerias por nome, evento ou cliente vinculada pelo modelo atual, limitando os resultados às galerias autorizadas do fotógrafo.
 
 #### Scenario: Cliente vinculada encontrada no resumo
 

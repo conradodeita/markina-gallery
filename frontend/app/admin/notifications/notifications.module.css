@@ -16,6 +16,7 @@
 .card label > span { font-size:.75rem; color:var(--mk-ink-muted); font-weight:400; }
 .card input:not([type=checkbox]),.card textarea { width:100%; min-width:0; padding:12px; border:1px solid var(--mk-border); border-radius:10px; background:var(--mk-surface); color:var(--mk-ink); font:inherit; }
 .card textarea { resize:vertical; }
+.card :is(input,textarea):disabled { opacity:.55; cursor:not-allowed; }
 .card .toggle { justify-content:flex-start; align-items:center; min-height:44px; padding:10px; border-radius:10px; background:var(--mk-surface-subtle); }
 .toggle input { width:20px; height:20px; accent-color:var(--mk-brand); }
 .fields { display:grid; gap:14px; }

@@ -97,6 +97,21 @@ require_existing_facial_runtime() {
   done
 }
 
+require_facial_processing_enabled_in_config() {
+  local config
+  config="$(compose config --format json 2>/dev/null)" || fail "não foi possível validar a flag facial no Compose"
+  printf '%s\n' "$config" | python3 -c 'import json,sys
+try:
+    services=json.load(sys.stdin)["services"]
+    valid=all(isinstance(services[name].get("environment",{}),dict)
+              and services[name]["environment"].get("FACIAL_PROCESSING_ENABLED")=="true"
+              for name in ("api","face-search-worker"))
+except (AttributeError,KeyError,TypeError,ValueError):
+    valid=False
+sys.exit(0 if valid else 1)' \
+    || fail "FACIAL_PROCESSING_ENABLED deve permanecer true na API e no worker após o deploy"
+}
+
 verify_reviewed_docker_changes() {
   local git_root="$1" changed expected actual
   changed="$(git -C "$git_root" diff --name-only "$CHECKOUT_SHA" "$TARGET_SHA" -- docker/)" || fail "diff Docker indisponível"
@@ -203,6 +218,7 @@ runtime_snapshot() {
   local service id project actual_service workdir files hash health image config_hash hashes
   require_existing_facial_runtime
   compose config --quiet 2>/dev/null || fail "configuração Compose inválida"
+  require_facial_processing_enabled_in_config
   hashes="$(resolved_compose_hashes)"
   config_hash="$(printf '%s\n' "$hashes" | LC_ALL=C sort | sha256sum | awk '{print $1}')"
   for service in "${SERVICES[@]}"; do
@@ -284,6 +300,7 @@ release() {
   git switch --detach "$TARGET_SHA" >/dev/null
   COMPOSE_APP_VERSION="$TARGET_SHA"
   compose config --quiet || fail "configuração Compose alvo inválida"
+  require_facial_processing_enabled_in_config
   compose build "${SERVICES[@]}"
   # O build pode ser longo: recusa mudança de containers/ambiente ocorrida
   # desde o inventário aprovado, mantendo a versão ativa na comparação.

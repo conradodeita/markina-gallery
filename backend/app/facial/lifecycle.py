@@ -321,6 +321,8 @@ def cleanup_sources(db, *, limit=64):
     for photo_id, tenant_id in ids:
         try:
             with db.begin_nested():
+                from app.tenancy import bind_privacy_retention
+                bind_privacy_retention(db, tenant_id)
                 # Cancelamento/falha terminal também libera a mídia após restart do worker facial.
                 media_can_proceed(db, photo_id, tenant_id=tenant_id)
                 removed += int(cleanup_source(db, photo_id, tenant_id=tenant_id))
@@ -366,6 +368,8 @@ def cleanup_upload_fragments(*, limit=64, db):
             if path.is_symlink() or path.resolve().parent != staging or path.stat().st_mtime >= cutoff:
                 continue
             UUID(path.stem)  # apenas nomes produzidos pela escrita atômica
+            from app.tenancy import bind_privacy_retention
+            bind_privacy_retention(db, tenant_id)
             require_active_owner(db, tenant_id)
             if staging != (root / ".pyp-uploading").resolve() and staging != (root / "tenants" / str(tenant_id) / ".pyp-uploading"):
                 continue  # symlink de diretório não escolhe outra conta

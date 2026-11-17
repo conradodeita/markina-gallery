@@ -8,7 +8,7 @@ from secrets import token_hex
 from typing import Protocol
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,8 +20,15 @@ from app.auth import (
     ParentGallery,
     PhotoAsset,
     Tenant,
+    TenantClosureRequest,
     expired,
     now,
+)
+from app.facial.closure_gate import (
+    FacialCleanupInProgress,
+    biometric_cleanup_started,
+    lock_facial_tenant,
+    require_facial_queue_write_allowed,
 )
 from app.facial.crypto import FacialCryptoError
 from app.facial.provider import FacialProviderError
@@ -109,6 +116,10 @@ class FacialJobRepository:
             raise FacialJobError("Job de índice facial sem versão ou fingerprint.")
         if kind == "search" and search_request_id is None:
             raise FacialJobError("Job de consulta facial sem request.")
+        try:
+            require_facial_queue_write_allowed(db, tenant_id)
+        except FacialCleanupInProgress as exc:
+            raise FacialJobError("Fila facial indisponível durante o encerramento.") from exc
         self.require_origin(db, tenant_id=tenant_id, parent_gallery_id=parent_gallery_id,
                             derived_gallery_id=derived_gallery_id, photo_asset_id=photo_asset_id,
                             search_request_id=search_request_id)
@@ -154,41 +165,72 @@ class FacialJobRepository:
         job_class: str | None = None,
     ) -> ClaimedFacialJob | None:
         current = instant or now()
-        query = select(FacialJob).join(Tenant, Tenant.id == FacialJob.tenant_id).where(
-            Tenant.status == "active",
-            FacialJob.available_at <= current,
-            or_(
-                FacialJob.status == "queued",
-                (
-                    (FacialJob.status == "processing")
-                    & (FacialJob.lease_expires_at <= current)
-                ),
+        eligible_job = or_(
+            FacialJob.status == "queued",
+            (
+                (FacialJob.status == "processing")
+                & (FacialJob.lease_expires_at <= current)
             ),
         )
+        cleanup_started = select(TenantClosureRequest.id).where(
+            TenantClosureRequest.tenant_id == FacialJob.tenant_id,
+            TenantClosureRequest.state == "closing",
+            TenantClosureRequest.biometric_cleanup_started_at.is_not(None),
+        ).exists()
+        tenant_query = select(
+            FacialJob.tenant_id,
+            func.min(FacialJob.priority).label("priority"),
+            func.min(FacialJob.available_at).label("available_at"),
+        ).join(Tenant, Tenant.id == FacialJob.tenant_id).where(
+            Tenant.status == "active", Tenant.lifecycle != "closed",
+            FacialJob.available_at <= current, eligible_job, ~cleanup_started,
+        ).group_by(FacialJob.tenant_id)
         if job_class is not None:
             kinds = FACIAL_JOB_KINDS_BY_CLASS.get(job_class)
             if kinds is None:
                 raise FacialJobError("Classe de worker facial inválida.")
-            query = query.where(FacialJob.kind.in_(kinds))
-        item = db.scalar(
-            query
-            .order_by(FacialJob.priority, FacialJob.available_at, FacialJob.created_at)
-            .limit(1)
-            .with_for_update(skip_locked=True, of=FacialJob)
-        )
-        if item is None:
-            return None
-        self.require_origin(db, tenant_id=item.tenant_id, parent_gallery_id=item.parent_gallery_id,
-                            derived_gallery_id=item.derived_gallery_id, photo_asset_id=item.photo_asset_id,
-                            search_request_id=item.search_request_id)
-        lease_token = token_hex(24)
-        item.status = "processing"
-        item.lease_token = lease_token
-        item.lease_expires_at = current + timedelta(seconds=lease_seconds)
-        item.attempts += 1
-        item.updated_at = current
-        db.commit()
-        return ClaimedFacialJob(id=item.id, tenant_id=item.tenant_id, lease_token=lease_token, kind=item.kind)
+            tenant_query = tenant_query.where(FacialJob.kind.in_(kinds))
+        candidate_tenants = db.execute(
+            tenant_query.order_by("priority", "available_at").limit(64)
+        ).all()
+        for tenant_id, _priority, _available_at in candidate_tenants:
+            tenant = lock_facial_tenant(db, tenant_id, skip_locked=True)
+            if (
+                tenant is None
+                or tenant.status != "active"
+                or tenant.lifecycle == "closed"
+                or biometric_cleanup_started(db, tenant_id)
+            ):
+                continue
+            item_query = select(FacialJob).where(
+                FacialJob.tenant_id == tenant_id,
+                FacialJob.available_at <= current,
+                eligible_job,
+            )
+            if job_class is not None:
+                item_query = item_query.where(FacialJob.kind.in_(kinds))
+            item = db.scalar(
+                item_query
+                .order_by(FacialJob.priority, FacialJob.available_at, FacialJob.created_at)
+                .limit(1)
+                .with_for_update(skip_locked=True, of=FacialJob)
+            )
+            if item is None:
+                continue
+            self.require_origin(db, tenant_id=item.tenant_id, parent_gallery_id=item.parent_gallery_id,
+                                derived_gallery_id=item.derived_gallery_id, photo_asset_id=item.photo_asset_id,
+                                search_request_id=item.search_request_id)
+            lease_token = token_hex(24)
+            item.status = "processing"
+            item.lease_token = lease_token
+            item.lease_expires_at = current + timedelta(seconds=lease_seconds)
+            item.attempts += 1
+            item.updated_at = current
+            db.commit()
+            return ClaimedFacialJob(
+                id=item.id, tenant_id=item.tenant_id, lease_token=lease_token, kind=item.kind
+            )
+        return None
 
     def progress(
         self,

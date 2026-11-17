@@ -165,8 +165,9 @@ def test_postgres_strict_rollout_gates_upload_and_index_admission(
 ) -> None:
     _require_postgres(client_db)
 
-    client_db.add(Tenant(id=FIXTURE_TENANT_ID, status="active"))
-    client_db.commit()
+    if client_db.get(Tenant, FIXTURE_TENANT_ID) is None:
+        client_db.add(Tenant(id=FIXTURE_TENANT_ID, status="active"))
+        client_db.commit()
 
     derivative_root = tmp_path / "derivatives"
     monkeypatch.setenv("MEDIA_DERIVATIVES_ROOT", str(derivative_root))

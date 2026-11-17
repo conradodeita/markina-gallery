@@ -17,10 +17,16 @@ PAYMENT_REQUIRED_MESSAGE = (
 )
 
 
-def lock_payment_account(db: Session, tenant_id: UUID) -> None:
-    require_active_owner(db, tenant_id)
+def lock_payment_account(db: Session, tenant_id: UUID, *, reconciliation: bool = False) -> None:
+    if reconciliation:
+        from app.tenancy import bind_financial_reconciliation
+        bind_financial_reconciliation(db, tenant_id)
+    else:
+        require_active_owner(db, tenant_id)
     db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update()
               .execution_options(populate_existing=True))
+    if not reconciliation:
+        require_active_owner(db, tenant_id)
 
 
 def payment_methods(db: Session, *, tenant_id: UUID, client_id: UUID | None = None) -> dict:

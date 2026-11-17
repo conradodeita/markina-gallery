@@ -4,6 +4,7 @@ import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, use
 
 import { MarkinaButton, MetricCard, StatusBadge, SystemState } from "../../ui-kit";
 import { PaymentActions } from "./payment-actions";
+import { applyPurchasedPhotoExportTheme } from "../purchased-photo-export";
 
 import RemovedHistory from "./removed-history";
 import { OrderDeliveryForm, type OrderDelivery } from "./order-delivery";
@@ -36,7 +37,7 @@ type Communication = {
   client_notification: Delivery | null;
 };
 
-type FinancialStatus = "reported" | "confirmed" | "confirmed_undelivered" | "awaiting_payment" | "not_found" | "overdue" | "verifying" | "exception" | "hold"
+type FinancialStatus = "reported" | "confirmed" | "confirmed_undelivered" | "awaiting_payment" | "selection_finalized" | "not_found" | "verifying" | "exception" | "hold" | "reopened"
   | "processing" | "rejected" | "canceled" | "expired" | "refunded" | "partially_refunded" | "charged_back" | "duplicate_review";
 type Order = {
   assets_removed?: boolean;
@@ -48,6 +49,7 @@ type Order = {
   payment_method?: "credit_card" | "pix";
   provider_payment_state?: string;
   provider_payment_id?: string;
+  provider_cart_recovery?: { reopened_at: string | null; requires_reconciliation: boolean };
   payment_provider?: string;
   payment_status?: string;
   mercadopago?: { id: string; state: string; method: string; active: boolean;
@@ -56,7 +58,6 @@ type Order = {
     order_status: string | null; order_detail: string | null;
     transaction_status: string | null; transaction_detail: string | null };
   created_at: string;
-  selection_expires_at: string | null;
   communications: Communication[];
   communication: Communication | null;
   delivery_statuses: string[];
@@ -101,7 +102,7 @@ type Dashboard = {
   groups: ClientGroup[];
   page: { next_cursor: string | null; limit: number };
 };
-type Reopening = { id: string; gallery_id: string; gallery_name: string; status: "pending" | "approved" | "refused"; created_at: string; approved_until: string | null; notification: { id: string | null; status: string; attempts: number; can_retry: boolean } };
+type Reopening = { id: string; gallery_id: string; gallery_name: string; folder_id?: string | null; folder_name?: string | null; folder_access_scope?: "all" | "client" | null; requested_by_client_name?: string; status: "pending" | "approved" | "refused"; created_at: string; approved_until: string | null; approved_duration_days?: number | null; notification: { id: string | null; status: string; attempts: number; can_retry: boolean } };
 type Filters = {
   query?: string;
   client_id?: string;
@@ -116,13 +117,14 @@ const defaultFilters: Filters = { financial_status: "priority" };
 const financialPresentation: Record<FinancialStatus, { label: string; tone: "neutral" | "success" | "warning" | "danger" | "dark" }> = {
   reported: { label: "Pagamento comunicado", tone: "warning" },
   confirmed: { label: "Pagamento confirmado", tone: "success" },
-  confirmed_undelivered: { label: "Pagamento confirmado - fotos não entregue", tone: "danger" },
+  confirmed_undelivered: { label: "Pagamento confirmado - fotos não entregues", tone: "danger" },
   awaiting_payment: { label: "Aguardando pagamento", tone: "neutral" },
+  selection_finalized: { label: "Seleção finalizada sem cobrança", tone: "neutral" },
   not_found: { label: "Pagamento não localizado", tone: "danger" },
-  overdue: { label: "Prazo expirado", tone: "dark" },
   verifying: { label: "Verificando cartão", tone: "warning" },
   exception: { label: "Pagamento em análise", tone: "danger" },
   hold: { label: "Pagamento em revisão", tone: "dark" },
+  reopened: { label: "Tentativa encerrada por reabertura", tone: "neutral" },
   processing: { label: "Pagamento em processamento", tone: "warning" },
   rejected: { label: "Pagamento recusado", tone: "danger" },
   canceled: { label: "Pagamento cancelado", tone: "neutral" },
@@ -137,13 +139,14 @@ const financialColor: Record<FinancialStatus, string> = {
   confirmed: "var(--payment-status-confirmed)",
   confirmed_undelivered: "var(--payment-status-confirmed-undelivered)",
   awaiting_payment: "var(--payment-status-awaiting)",
+  selection_finalized: "var(--payment-status-cart)",
   not_found: "var(--payment-status-not-found)",
-  overdue: "var(--payment-status-overdue)",
   verifying: "var(--payment-status-verifying)",
   exception: "var(--payment-status-exception)",
   hold: "var(--payment-status-hold)",
+  reopened: "var(--payment-status-awaiting)",
   processing: "var(--payment-status-verifying)", rejected: "var(--payment-status-not-found)",
-  canceled: "var(--payment-status-awaiting)", expired: "var(--payment-status-overdue)",
+  canceled: "var(--payment-status-awaiting)", expired: "var(--payment-status-expired)",
   refunded: "var(--payment-status-awaiting)", partially_refunded: "var(--payment-status-reported)",
   charged_back: "var(--payment-status-exception)", duplicate_review: "var(--payment-status-exception)",
 };
@@ -212,6 +215,7 @@ function PaymentsDashboard() {
   const loadRequest = useRef<AbortController | null>(null);
   const exportRequest = useRef<AbortController | null>(null);
   const loadedPages = useRef(1);
+  const deepLinkTarget = useRef<{ clientId: string; selectionAnchorId: string } | null>(null);
 
   useEffect(() => {
     const header = document.querySelector<HTMLElement>(".admin-topbar");
@@ -248,6 +252,15 @@ function PaymentsDashboard() {
         fetchedPages++;
       }
       if (controller.signal.aborted) return;
+      const linkedClientId = deepLinkTarget.current?.clientId;
+      if (linkedClientId) {
+        const linkedClient = payload.groups.find((group) => group.client.id === linkedClientId)?.client
+          ?? payload.selections_without_order?.find((selection) => selection.client.id === linkedClientId)?.client;
+        if (linkedClient) {
+          setClientQuery(linkedClient.name);
+          setSelectedClientId(linkedClient.id);
+        }
+      }
       loadedPages.current = append ? loadedPages.current + fetchedPages : fetchedPages;
       setDashboard((current) => append && current ? {
         ...payload,
@@ -263,9 +276,45 @@ function PaymentsDashboard() {
 
   useEffect(() => {
     let active = true;
-    queueMicrotask(() => { if (active) void load(defaultFilters); });
+    const parameters = new URLSearchParams(window.location.search);
+    const clientId = parameters.get("client_id");
+    const parentGalleryId = parameters.get("parent_gallery_id");
+    let initialFilters: Filters = defaultFilters;
+    if (clientId && parentGalleryId) {
+      initialFilters = { client_id: clientId, parent_gallery_id: parentGalleryId };
+      const hash = window.location.hash.slice(1);
+      deepLinkTarget.current = {
+        clientId,
+        selectionAnchorId: hash.startsWith("open-selection-") ? hash : "",
+      };
+    }
+    queueMicrotask(() => {
+      if (!active) return;
+      if (clientId && parentGalleryId) {
+        setFilters(initialFilters);
+        setDraftFilters(initialFilters);
+        setSelectedClientId(clientId);
+        setAdvancedFiltersOpen(true);
+      }
+      void load(initialFilters);
+    });
     return () => { active = false; loadRequest.current?.abort(); exportRequest.current?.abort(); };
   }, [load]);
+  useEffect(() => {
+    const pending = deepLinkTarget.current;
+    if (!pending || !dashboard) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = (pending.selectionAnchorId
+        ? document.getElementById(pending.selectionAnchorId)
+        : null) ?? document.getElementById(`payment-client-${pending.clientId}`);
+      if (target) {
+        target.scrollIntoView?.({ block: "start" });
+        target.focus({ preventScroll: true });
+      }
+      deepLinkTarget.current = null;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [dashboard]);
   const loadReopenings = useCallback(() => fetch("/api/admin/gallery-reopening-requests", { credentials: "same-origin" }).then(async (response) => { if (!response.ok) throw new Error(); setReopenings((await response.json()).requests ?? []); }).catch(() => setReopenings([])), []);
   useEffect(() => { void loadReopenings(); }, [loadReopenings]);
   useEffect(() => {
@@ -275,11 +324,24 @@ function PaymentsDashboard() {
   }, [filters, load]);
 
   async function decideReopening(item: Reopening, decision: "approved" | "refused") {
-    let selection_expires_at: string | null = null;
-    if (decision === "approved") { const value = window.prompt("Novo prazo (AAAA-MM-DD):"); if (!value) return; selection_expires_at = `${value}T23:59:59.000Z`; }
+    let access_duration_days: number | undefined;
+    if (decision === "approved") {
+      const value = window.prompt("Por quantos dias esta pasta ficará reaberta? Informe um número inteiro positivo contado a partir da aprovação.");
+      if (value === null) return;
+      access_duration_days = Number(value.trim());
+      if (!Number.isInteger(access_duration_days) || access_duration_days < 1) {
+        setMessage("Informe um número inteiro de dias maior que zero.");
+        return;
+      }
+    }
     setBusyAction(`reopening:${item.id}`);
-    const response = await fetch(`/api/admin/gallery-reopening-requests/${item.id}/decision`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision, selection_expires_at }) });
-    setMessage(response.ok ? (decision === "approved" ? "Galeria reaberta para todos os membros." : "Solicitação recusada; a galeria permanece congelada.") : "Não foi possível registrar a decisão de reabertura.");
+    const response = await fetch(`/api/admin/gallery-reopening-requests/${item.id}/decision`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision, ...(access_duration_days !== undefined ? { access_duration_days } : {}) }) });
+    const approvedMessage = item.folder_access_scope === "client"
+      ? "Pasta reaberta somente para a cliente solicitante."
+      : item.folder_access_scope === "all"
+        ? "Pasta reaberta para todas as clientes autorizadas."
+        : "Prazo registrado. Confira o alcance atual na pasta.";
+    setMessage(response.ok ? (decision === "approved" ? approvedMessage : "Solicitação recusada; a pasta permanece fechada.") : "Não foi possível registrar a decisão de reabertura.");
     if (response.ok) { await loadReopenings(); await load(filters); } setBusyAction("");
   }
   async function retryReopening(item: Reopening) {
@@ -292,6 +354,7 @@ function PaymentsDashboard() {
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    deepLinkTarget.current = null;
     const data = new FormData(event.currentTarget);
     const nextFilters: Filters = {
       query: clientQuery.trim() || undefined,
@@ -308,6 +371,7 @@ function PaymentsDashboard() {
   }
 
   function clearFilters() {
+    deepLinkTarget.current = null;
     setFilters({ ...defaultFilters });
     setDraftFilters({ ...defaultFilters });
     setClientQuery("");
@@ -316,6 +380,7 @@ function PaymentsDashboard() {
   }
 
   function selectClient(suggestion: ClientSuggestion) {
+    deepLinkTarget.current = null;
     setClientQuery(suggestion.name); setSelectedClientId(suggestion.id);
     const next = { ...filters, query: suggestion.name, client_id: suggestion.id };
     setFilters(next); setDraftFilters(next);
@@ -395,14 +460,24 @@ function PaymentsDashboard() {
     </section>
 
 
-    {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>A aprovação define um novo prazo para todos os membros daquela galeria privada.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => <article className="payment-order" key={item.id}><div className="payment-order__heading"><div><StatusBadge tone={item.status === "pending" ? "warning" : item.status === "approved" ? "success" : "danger"}>{item.status === "pending" ? "Aguardando decisão" : item.status === "approved" ? "Reaberta" : "Recusada"}</StatusBadge><h3>{item.gallery_name}</h3><p>Solicitada em {new Date(item.created_at).toLocaleString("pt-BR")} · aviso {deliveryLabels[item.notification.status] ?? item.notification.status}</p></div></div>{item.status === "pending" ? <div className="dashboard-actions"><MarkinaButton disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "approved")}>Definir novo prazo</MarkinaButton><MarkinaButton variant="secondary" disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "refused")}>Recusar</MarkinaButton></div> : null}{item.notification.can_retry ? <MarkinaButton variant="secondary" disabled={busyAction === `reopening-notice:${item.id}`} onClick={() => void retryReopening(item)}>Tentar aviso novamente</MarkinaButton> : null}</article>)}</div></section> : null}
+    {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>Cada cartão informa quem receberá o acesso se você aprovar.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => {
+      const scopeDescription = item.folder_id
+        ? item.folder_access_scope === "client"
+          ? "Pasta privada · o novo prazo valerá somente para a cliente solicitante."
+          : item.folder_access_scope === "all"
+            ? "Pasta pública · o novo prazo valerá para todas as clientes autorizadas."
+            : null
+        : null;
+      const canApprove = Boolean(item.folder_id && scopeDescription);
+      return <article className="payment-order" key={item.id}><div className="payment-order__heading"><div><StatusBadge tone={item.status === "pending" ? "warning" : item.status === "approved" ? "success" : "danger"}>{item.status === "pending" ? "Aguardando decisão" : item.status === "approved" ? "Reaberta" : "Recusada"}</StatusBadge><h3>{item.gallery_name}{item.folder_name ? ` · ${item.folder_name}` : ""}</h3><p>{item.requested_by_client_name ? `Solicitada por ${item.requested_by_client_name} · ` : ""}Solicitada em {new Date(item.created_at).toLocaleString("pt-BR")} · aviso {deliveryLabels[item.notification.status] ?? item.notification.status}</p>{scopeDescription ? <p className={styles.reopeningScope}>{scopeDescription}</p> : null}{item.status === "pending" && !item.folder_id ? <p className={styles.reopeningNotice} role="note">Esta solicitação antiga não identifica uma pasta. Para definir um novo prazo, peça à cliente uma nova solicitação pela pasta desejada.</p> : null}{item.status === "pending" && item.folder_id && !scopeDescription ? <p className={styles.reopeningNotice} role="note">Não foi possível identificar o alcance desta solicitação. Atualize os dados antes de definir um novo prazo.</p> : null}{item.approved_duration_days ? <p>Prazo aprovado: {item.approved_duration_days} dia(s)</p> : null}</div></div>{item.status === "pending" ? <div className="dashboard-actions">{canApprove ? <MarkinaButton disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "approved")}>Definir novo prazo</MarkinaButton> : null}<MarkinaButton variant="secondary" disabled={busyAction === `reopening:${item.id}`} onClick={() => void decideReopening(item, "refused")}>Recusar</MarkinaButton></div> : null}{item.notification.can_retry ? <MarkinaButton variant="secondary" disabled={busyAction === `reopening-notice:${item.id}`} onClick={() => void retryReopening(item)}>Tentar aviso novamente</MarkinaButton> : null}</article>;
+    })}</div></section> : null}
 
     {failed ? <p className="form-message form-message--error" role="alert">Não foi possível atualizar. Os dados carregados continuam visíveis.</p> : null}
-    {!dashboard.groups.length ? <SystemState title={filters.financial_status === "priority" && !hasFilters ? "Nenhuma pendência prioritária" : hasFilters ? "Nenhum pagamento neste filtro" : "Nenhum pedido ainda"} detail="Ajuste os filtros ou selecione Todos para consultar outras situações." /> : null}
-    {!dashboard.groups.length && hasFilters ? <MarkinaButton variant="secondary" onClick={clearFilters}>Limpar filtros</MarkinaButton> : null}
+    {!dashboard.groups.length && !dashboard.selections_without_order?.length ? <SystemState title={filters.financial_status === "priority" && !hasFilters ? "Nenhuma pendência prioritária" : hasFilters ? "Nenhum pagamento neste filtro" : "Nenhum pedido ainda"} detail="Ajuste os filtros ou selecione Todos para consultar outras situações." /> : null}
+    {!dashboard.groups.length && !dashboard.selections_without_order?.length && hasFilters ? <MarkinaButton variant="secondary" onClick={clearFilters}>Limpar filtros</MarkinaButton> : null}
 
     <div className="payment-client-groups">
-      {dashboard.groups.map((group) => <section className={`admin-card payment-client-card payment-client-card--${group.financial_status}`} key={group.client.id}>
+      {dashboard.groups.map((group) => <section id={`payment-client-${group.client.id}`} tabIndex={-1} style={{ scrollMarginTop: `${adminHeaderHeight + 12}px` }} className={`admin-card payment-client-card payment-client-card--${group.financial_status}`} key={group.client.id}>
         <header><div><p className="eyebrow">Cliente · {group.totals.orders} pedido(s)</p>
           <StatusBadge tone={groupPresentation(group).tone} className={groupPresentation(group).className}>{groupPresentation(group).label}</StatusBadge>
           <h2>{group.client.name}</h2></div><div className="payment-client-total"><span>Pedidos comunicados · {group.totals.reported_orders}</span><strong>{money(group.totals.reported_cents)}</strong><span>Receita confirmada · {money(group.totals.confirmed_cents)}</span></div></header>
@@ -413,7 +488,7 @@ function PaymentsDashboard() {
     </div>
 
     {dashboard.page.next_cursor ? <div className="payment-pagination"><MarkinaButton variant="secondary" disabled={loadingMore} onClick={() => void load(filters, dashboard.page.next_cursor, true)}>{loadingMore ? "Carregando…" : "Carregar mais clientes"}</MarkinaButton></div> : null}
-    {dashboard.selections_without_order?.length ? <section className="admin-card payment-open-selections"><div className="section-heading"><div><h2>Seleções em aberto</h2><p>Fotos selecionadas sem pedido preparado; aparecem depois dos estados financeiros.</p></div><StatusBadge tone="neutral" className="payment-status-badge--cart">{dashboard.selections_without_order.length}</StatusBadge></div><div className="payment-orders">{dashboard.selections_without_order.map((selection) => <article className="payment-order payment-order--cart" key={`${selection.gallery.id}:${selection.client.id}`}><div className="payment-order__heading"><div><StatusBadge tone="neutral" className="payment-status-badge--cart">No carrinho</StatusBadge><h3>{selection.client.name}</h3><p>{selection.gallery.name} · {selection.parent_gallery.name}</p></div><div className="payment-client-total"><strong>{selection.total_cents === null ? "Preço indisponível" : money(selection.total_cents)}</strong><span>{selection.selected_count} foto(s)</span></div></div><details><summary>Ver seleção por pasta</summary>{selection.folders.map((folder) => <section key={folder.id}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul></section>)}</details></article>)}</div></section> : null}
+    {dashboard.selections_without_order?.length ? <section className="admin-card payment-open-selections"><div className="section-heading"><div><h2>Seleções em aberto</h2><p>Fotos selecionadas sem pedido preparado; aparecem depois dos estados financeiros.</p></div><StatusBadge tone="neutral" className="payment-status-badge--cart">{dashboard.selections_without_order.length}</StatusBadge></div><div className="payment-orders">{dashboard.selections_without_order.map((selection) => <article id={`open-selection-${selection.gallery.id}-${selection.client.id}`} tabIndex={-1} style={{ scrollMarginTop: `${adminHeaderHeight + 12}px` }} className="payment-order payment-order--cart" key={`${selection.gallery.id}:${selection.client.id}`}><div className="payment-order__heading"><div><StatusBadge tone="neutral" className="payment-status-badge--cart">No carrinho</StatusBadge><h3>{selection.client.name}</h3><p>{selection.gallery.name} · {selection.parent_gallery.name}</p></div><div className="payment-client-total"><strong>{selection.total_cents === null ? "Preço indisponível" : money(selection.total_cents)}</strong><span>{selection.selected_count} foto(s)</span></div></div><details><summary>Ver seleção por pasta</summary>{selection.folders.map((folder) => <section key={folder.id}><h4>{folder.name}</h4><ul>{folder.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul></section>)}</details></article>)}</div></section> : null}
     {message ? <p className="form-message" role="status">{message}</p> : null}
     </div>
   </section>;
@@ -543,24 +618,31 @@ function ClientAutocomplete({
 
 function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: string; onRefresh: () => Promise<void>; }) {
   const [expanded, setExpanded] = useState(false);
-  const presentation = financialPresentation[order.financial_status];
+  const recovery = order.provider_cart_recovery;
+  const presentation = recovery?.reopened_at && order.financial_status !== "confirmed" && order.financial_status !== "confirmed_undelivered"
+    ? recovery.requires_reconciliation
+      ? { label: "Conferência após reabertura", tone: "warning" as const }
+      : { label: "Tentativa encerrada por reabertura", tone: "neutral" as const }
+    : financialPresentation[order.financial_status];
   const communication = order.communication;
   const paymentGroup = communication?.payment_group;
   const quantity = order.folders.reduce((total, folder) => total + folder.items.length, 0);
   const canDownloadPurchasedPhotos = (order.financial_status === "confirmed" || order.financial_status === "confirmed_undelivered") && !order.assets_removed && !order.gallery.removed;
   const downloadPurchasedPhotos = canDownloadPurchasedPhotos
-    ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${encodeURIComponent(order.parent_gallery.id)}/clients/${encodeURIComponent(clientId)}/selection/export.html`}>Baixar fotos compradas</a>
+    ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${encodeURIComponent(order.parent_gallery.id)}/clients/${encodeURIComponent(clientId)}/selection/export.html`}
+      onClick={applyPurchasedPhotoExportTheme}
+    >Baixar fotos compradas</a>
     : null;
   return <article className={`payment-order payment-order--${order.financial_status}`}>
     {order.assets_removed ? <p>Acervo removido ou revisão indisponível. Nomes, valores e estado financeiro preservados.</p> : null}
-    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{order.mercadopago ? <>Compra {order.mercadopago.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.mercadopago ? ` · Mercado Pago · ${order.payment_method === "pix" ? "PIX" : "Cartão de crédito"}` : order.provider_payment_id ? " · InfinitePay (histórico)" : order.payment_method === "credit_card" ? " · cartão de crédito" : " · PIX do sistema"} · {quantity} foto(s)</p></div><strong>{money(order.total_cents)}</strong></div>
+    <div className="payment-order__heading"><div><StatusBadge tone={presentation.tone} className={`payment-status-badge--${order.financial_status}`}>{presentation.label}</StatusBadge><h3>{order.gallery.name}{order.gallery.removed ? " · Galeria removida" : ""}</h3><p>{order.mercadopago ? <>Compra {order.mercadopago.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : paymentGroup ? <>Compra {paymentGroup.id.slice(0, 8)} · Pedido {order.id.slice(0, 8)}</> : <>Pedido {order.id.slice(0, 8)}</>} · {order.parent_gallery.name}{order.mercadopago ? ` · Mercado Pago · ${order.payment_method === "pix" ? "PIX" : "Cartão de crédito"}` : order.provider_payment_id ? " · InfinitePay (histórico)" : order.payment_status === "not_required" ? " · sem cobrança" : order.payment_method === "credit_card" ? " · cartão de crédito" : " · PIX do sistema"} · {quantity} foto(s)</p></div><strong>{order.payment_status === "not_required" ? "Seleção sem cobrança" : money(order.total_cents)}</strong></div>
     <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary>Ver pedido e entrega</summary>
       <div className={styles.orderDetail}>
-      <dl className="payment-order__facts"><div><dt>Criado em</dt><dd>{new Date(order.created_at).toLocaleString("pt-BR")}</dd></div><div><dt>Galeria pública</dt><dd>{order.parent_gallery.name}{order.parent_gallery.removed ? " (removida)" : ""}</dd></div>{order.selection_expires_at ? <div><dt>Prazo</dt><dd>{new Date(order.selection_expires_at).toLocaleDateString("pt-BR")}</dd></div> : null}</dl>
+      <dl className="payment-order__facts"><div><dt>Criado em</dt><dd>{new Date(order.created_at).toLocaleString("pt-BR")}</dd></div><div><dt>Galeria pública</dt><dd>{order.parent_gallery.name}{order.parent_gallery.removed ? " (removida)" : ""}</dd></div></dl>
       <section className={styles.photoSection} aria-label="Fotografias do pedido"><h4>Fotografias do pedido <span>· {quantity}</span></h4>
       {expanded && order.folders?.length ? <OrderPhotos folders={order.folders} /> : !order.folders?.length ? <p>Nenhuma fotografia disponível.</p> : null}
-      <p className={styles.photoTotal}>Total do pedido <strong>{money(order.total_cents)}</strong></p></section>
+      {order.payment_status === "not_required" ? <p className={styles.photoTotal}>Seleção sem cobrança</p> : <p className={styles.photoTotal}>Total do pedido <strong>{money(order.total_cents)}</strong></p>}</section>
       <section className={styles.paymentSection} aria-label="Pagamento do pedido"><h4>Pagamento</h4>
       {order.mercadopago ? <>
         {order.mercadopago.test_account ? <p>TESTE · Compra simulada, excluída da receita e do CSV padrão.</p> : null}
@@ -577,7 +659,7 @@ function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: str
       </> : order.provider_payment_id || order.payment_method === "credit_card" ? <>
         <p>Registro de pagamento InfinitePay legado, somente leitura: {order.provider_payment_state ?? "estado indisponível"}{order.provider_payment_id ? ` · compra ${order.provider_payment_id.slice(0, 8)}` : ""}.</p>
         {downloadPurchasedPhotos ? <div className="dashboard-actions">{downloadPurchasedPhotos}</div> : null}
-      </> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
+      </> : order.payment_status === "not_required" ? <p>Seleção finalizada sem cobrança.</p> : !communication && isConfirmedFinancialStatus(order.financial_status) ? <p>Pagamento confirmado no histórico.</p> : !communication ? <p>A cliente ainda não comunicou o pagamento.</p> : <>
         <p><strong>{decisionLabel[communication.status]}</strong> · comunicado em {new Date(communication.created_at).toLocaleString("pt-BR")}</p>
         <div className="dashboard-actions">
           <PaymentActions order={{ ...communication, quantity }} clientName={communication.client_name} onRefresh={onRefresh} />
@@ -585,9 +667,11 @@ function OrderCard({ order, clientId, onRefresh }: { order: Order; clientId: str
         </div>
       </>}
       </section>
-      <section className={styles.deliverySection} aria-label="Entrega do pedido"><h4>Entrega</h4><p>{order.delivery?.album_url && isConfirmedFinancialStatus(order.financial_status) ? "Fotos disponíveis" : "Fotos indisponíveis"}</p>
-      <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh}
-        unavailableMessage={order.mercadopago ? "A entrega depende da confirmação automática e da liberação financeira desta compra." : undefined} />
+      <section className={styles.deliverySection} aria-label="Entrega do pedido"><h4>Entrega</h4><p>{order.delivery?.album_url && (isConfirmedFinancialStatus(order.financial_status) || order.payment_status === "not_required") ? "Fotos disponíveis" : "Fotos indisponíveis"}</p>
+      {recovery?.reopened_at && order.payment_status !== "confirmed"
+        ? <p>Esta tentativa reaberta permanece somente para conferência; ações de entrega estão indisponíveis.</p>
+        : <OrderDeliveryForm orderId={order.id} delivery={order.delivery ?? { album_url: null, version: 0, can_send: false, can_resend: false }} onRefresh={onRefresh}
+          unavailableMessage={order.mercadopago ? "A entrega depende da confirmação automática e da liberação financeira desta compra." : undefined} />}
       </section></div>
     </details>
   </article>;

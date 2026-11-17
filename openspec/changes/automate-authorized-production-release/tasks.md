@@ -8,12 +8,12 @@
 ## 2. Continuidade protegida
 
 - [x] 2.1 Adaptar operação manual designada a reutilizar CI comprovado, preservando checks em PR/push e nomes dos gates; testar workflow e recusa de skipped/falhas. Evidência: workflow separado sem push/PR, 10 testes de seleção, jobs e contrato passaram; etapas operacionais verificadas idênticas às originais, com escopo e gates preservados.
-- [ ] 2.2 Encadear inventário apresentado, fingerprint e aprovação automática no escopo autorizado, com revalidação sob lock e testes de mudança de SHA/estado e autorização ausente. Fluxo local propaga fingerprint do mesmo inventário e condiciona ambiente protegido a checkbox; testes de contrato e 10 regressões existentes do release passaram. Falta verificar o encadeamento sem mutação no runner e integração de aprovação por executor autorizado.
+- [ ] 2.2 Encadear inventário apresentado, fingerprint e aprovação automática no escopo autorizado, com revalidação sob lock e testes de mudança de SHA/estado e autorização ausente. **Parte local validada:** o fluxo repassa o fingerprint do preflight, revalida inventário sob lock e recusa autorização divergente antes da mutação; 33 testes sintéticos de contrato, inventário e fluxo passaram. **Bloqueada para validação final:** falta comprovar o encadeamento sem mutação no runner e a integração de aprovação por executor autorizado. Essa prova exige PR/push e não foi acionada, pois o proprietário determinou que o primeiro push só ocorrerá quando o trabalho atingir 100%.
 - [x] 2.3 Documentar limites da autorização, backup, impacto, recuperação e verificação pós-release; revisar duplicações e riscos no diff. Evidência: docs/AUTOMATED-AUTHORIZED-RELEASE.md; testes comparam as etapas operacionais ao workflow existente para detectar desvio.
 
 ## 3. Validação e publicação
 
-- [ ] 3.1 Executar testes focados dos gates, política de release, OpenSpec strict e revisão do diff; registrar evidência. Evidência parcial: 10 testes novos, 10 testes de inventário e 10 testes existentes de release passaram; política anterior e OpenSpec strict passaram. Validação do workflow real no runner e do gate de autorização permanece pendente.
+- [x] 3.1 Executar testes focados dos gates, política de release, OpenSpec strict e revisão do diff; registrar evidência em `validation.md`. Em 08/11, inventário de ambiente + política do candidato + evidência de CI + contrato do workflow: **23 passed**; política estática do workflow passou; Ruff e `openspec validate --strict` passaram; diff da matriz e do fluxo foi revisado. A prova no runner real pertence à task 2.2 e permanece bloqueada.
 - [ ] 3.2 Publicar PR em draft, acompanhar CI do SHA exato a cada 14 minutos e validar o fluxo sem mutação. Somente após reconciliar o release 0090 e seus SHAs, integrar conforme autorização vigente.
 
 ## Workflow follow-up

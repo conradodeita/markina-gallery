@@ -300,7 +300,7 @@ def search_gallery_index(
         ))
         .where(
             settings.enabled,
-            Tenant.id == tenant_id, Tenant.status == "active",
+            Tenant.id == tenant_id, Tenant.status == "active", Tenant.lifecycle != "closed",
             ParentGallery.id == gallery_id, ParentGallery.tenant_id == tenant_id,
             ParentGallery.active.is_(True), ParentGallery.lifecycle_status == "active",
             GalleryFacialPolicy.status == "active",

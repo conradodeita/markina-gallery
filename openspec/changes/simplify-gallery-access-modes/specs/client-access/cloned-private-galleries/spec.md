@@ -4,7 +4,7 @@
 
 ### Requirement: Entrada por link não listado e vínculo individual
 
-O sistema SHALL tratar um link de galeria como não listado e insuficiente para conceder acesso a fotografias. O visitante SHALL informar nome e telefone, concluir OTP e ter vínculo individual autorizado antes de visualizar pastas comuns ou atribuídas. Os modos operacionais SHALL ser `standard` e `invite_only`: o primeiro permite cadastro/vínculo por link válido após OTP; o segundo exige vínculo prévio ativo ou convite individual autorizado. Ambos SHALL aplicar o público de cada pasta e o bloqueio individual. Registros legados `collective_protected` SHALL continuar negando navegação até alteração explícita do modo pelo fotógrafo, sem conversão automática.
+O sistema SHALL tratar link de galeria como não listado e insuficiente para autorizar fotos: nome/telefone, OTP e vínculo individual válido precedem acesso. Modos são `standard` (vínculo após OTP por link) e `invite_only` (vínculo ativo ou convite autorizado); ambos respeitam público das pastas. Legado `collective_protected` permanece bloqueado até mudança explícita, sem conversão automática.
 
 #### Scenario: Cliente entra pelo link compartilhado
 

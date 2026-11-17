@@ -431,6 +431,19 @@ def main() -> None:
     require('[[ "$target_sha" == "$TARGET_SHA" ]]', "alvo buscado permanece igual ao HEAD verificado", script)
     require('git -C "$git_dir" merge-base --is-ancestor "$CHECKOUT_SHA" "$target_sha"', "candidato descende do baseline ativo", script)
     require("require_existing_facial_runtime", "manutenção não ativa runtime desligado", script)
+    require("require_facial_processing_enabled_in_config", "alvo facial mantém processamento true", script)
+    facial_release_script = script.split("release() {", 1)[1].split("main() {", 1)[0]
+    if not (facial_release_script.index("compose config --quiet")
+            < facial_release_script.index("require_facial_processing_enabled_in_config")
+            < facial_release_script.index("compose build") < facial_release_script.index("compose up")):
+        raise AssertionError("release facial deve recusar flag false antes de build, migration ou recreate")
+    retirement_release_script = retirement_script.split("release() {", 1)[1].split("main() {", 1)[0]
+    require("require_facial_processing_enabled", "release InfinitePay mantém processamento facial true", retirement_script)
+    if not (retirement_release_script.index("compose config --quiet")
+            < retirement_release_script.index("require_facial_processing_enabled")
+            < retirement_release_script.index("compose build api web worker")
+            < retirement_release_script.index("compose up -d --no-deps --force-recreate")):
+        raise AssertionError("release InfinitePay deve validar flag facial antes de build/recreate")
     runtime_source, candidate_ready, candidate_reason = release_candidate_snapshot(ROOT, app_manifest)
     print(f"publication_candidate_ready={str(candidate_ready).lower()} / {candidate_reason}")
     for path, expected in maintenance["runtime_blobs"].items():
@@ -472,6 +485,7 @@ def main() -> None:
 
     require('EXPECTED_DATABASE_REVISION="20261022_0087"', "schema atual da aplicação fixado", app_script)
     require('readonly SERVICES=(api web)', "release app inclui somente API e web", app_script)
+    require("require_facial_processing_enabled_in_config", "release app preserva FACIAL_PROCESSING_ENABLED=true", app_script)
     require('compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
             "release app não recria dependências", app_script)
     for fragment, label in (

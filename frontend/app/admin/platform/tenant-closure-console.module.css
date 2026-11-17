@@ -1,0 +1,188 @@
+.panel {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  margin-block: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--mk-border);
+}
+
+.headingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.headingRow h3,
+.batches h4,
+.actionForm h4 {
+  margin: 0;
+}
+
+.eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--mk-ink-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.75rem;
+}
+
+.summary p {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.8rem;
+  border: 1px solid var(--mk-border);
+  border-radius: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.summary span {
+  color: var(--mk-ink-muted);
+  font-size: 0.86rem;
+}
+
+.summary strong {
+  font-size: 0.98rem;
+}
+
+.batches,
+.actionForm,
+.deletion {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--mk-border);
+  border-radius: 0.75rem;
+}
+
+.panel p {
+  margin-block: 0;
+}
+
+.deletion > .actionForm {
+  padding: 0.75rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--mk-border);
+  border-radius: 0;
+}
+
+.deletion h4,
+.deletion h5 {
+  margin: 0;
+}
+
+.deletionSummary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: 0.6rem;
+}
+
+.deletionSummary p {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.65rem;
+  border: 1px solid var(--mk-border);
+  border-radius: 0.6rem;
+  overflow-wrap: anywhere;
+}
+
+.deletionSummary span {
+  color: var(--mk-ink-muted);
+  font-size: 0.84rem;
+}
+
+.deletionErrors {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--mk-danger);
+}
+
+.batches ul {
+  display: grid;
+  gap: 0.65rem;
+  padding-left: 1.25rem;
+}
+
+.batches li {
+  overflow-wrap: anywhere;
+}
+
+.actionForm label {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.actionForm input:not([type="checkbox"]),
+.actionForm select {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--mk-border);
+  border-radius: 0.5rem;
+  color: var(--mk-ink);
+  background: var(--mk-surface);
+  font: inherit;
+}
+
+.actionForm input:focus-visible,
+.actionForm select:focus-visible,
+.confirm input:focus-visible {
+  outline: 3px solid var(--mk-focus);
+  outline-offset: 2px;
+}
+
+.confirm {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.confirm input {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0.15rem 0 0;
+}
+
+.error,
+.blocker {
+  color: var(--mk-danger);
+}
+
+.notice {
+  color: var(--mk-success);
+}
+
+.review {
+  padding: 0.8rem;
+  border-left: 0.25rem solid var(--mk-warning);
+  background: var(--mk-warning-soft);
+}
+
+@media (max-width: 42rem) {
+  .headingRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .batches,
+  .actionForm,
+  .deletion {
+    padding: 0.75rem;
+  }
+}

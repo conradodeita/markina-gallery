@@ -1,13 +1,14 @@
 "use client";
 
 import { BrandLogo } from "./brand-logo";
+import Link from "next/link";
 import { safeAdminReturn, safeClientGalleryReturn, safeClientPurchaseReturn } from "./session-recovery";
 
 
 import { FormEvent, useEffect, useState } from "react";
 
 type Context = "client" | "admin";
-type Step = "details" | "code" | "recovery-email" | "recovery-code" | "recovery-sent";
+type Step = "details" | "private-notice" | "code" | "recovery-email" | "recovery-code" | "recovery-sent";
 const genericError =
   "Não foi possível concluir a autenticação. Confira os dados e tente novamente.";
 const brazilPhoneError =
@@ -185,9 +186,18 @@ export function AuthEntry({
       );
       const result = await response.json();
       if (!response.ok) throw new Error();
+      if (context === "admin" && result.destination === "/admin") {
+        navigate(recoveryContext === "admin" ? safeAdminReturn(invitation.returnTo) : "/admin");
+        return;
+      }
       setChallengeId(result.challenge_id);
-      setMessage(context === "client" ? clientOtpGuidance : result.message);
-      setStep("code");
+      if (context === "client" && result.show_private_gallery_notice === true) {
+        setMessage("");
+        setStep("private-notice");
+      } else {
+        setMessage(context === "client" ? clientOtpGuidance : result.message);
+        setStep("code");
+      }
     } catch {
       setMessage(genericError);
     } finally {
@@ -284,6 +294,26 @@ export function AuthEntry({
       setChallengeId(result.challenge_id);
       setMessage(result.message);
       setStep("recovery-code");
+    } catch {
+      setMessage("Não foi possível iniciar a recuperação agora. Tente novamente mais tarde.");
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function requestEmailRecovery() {
+    if (!recoveryEmail) return;
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/auth/photographer-signup/recovery/email-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: recoveryEmail }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error();
+      setMessage(result.message);
+      setStep("recovery-sent");
     } catch {
       setMessage("Não foi possível iniciar a recuperação agora. Tente novamente mais tarde.");
     } finally {
@@ -427,6 +457,9 @@ export function AuthEntry({
                 </label>
               </>
             )}
+            {context === "client" ? (
+              <p className="auth-helper">Use este acesso somente para suas fotos. Dúvidas ou problemas de privacidade? Contate o fotógrafo pelo canal em que recebeu o convite.</p>
+            ) : null}
             <button className="primary" disabled={loading}>
               {loading
                 ? "Aguarde…"
@@ -435,27 +468,60 @@ export function AuthEntry({
                   : "Continuar"}
             </button>
             {context === "admin" ? (
-              <button
-                type="button"
-                className="link-button"
-                onClick={() => { setStep("recovery-email"); setMessage(""); }}
-              >
-                Esqueci minha senha
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => { setStep("recovery-email"); setMessage(""); }}
+                >
+                  Esqueci minha senha
+                </button>
+                <Link className="link-button" href="/photographer-signup">Criar conta de fotógrafo</Link>
+              </>
             ) : null}
           </form>
+        ) : step === "private-notice" && context === "client" ? (
+          <section className="auth-form" aria-labelledby="private-gallery-title">
+            <div>
+              <h2 id="private-gallery-title">Galeria privada</h2>
+              <p>Esta galeria é privada. Para acessar, peça ao fotógrafo um convite individual.</p>
+              <p>Se você já recebeu um convite, continue para informar o código.</p>
+            </div>
+            <button
+              type="button"
+              className="primary"
+              disabled={loading}
+              onClick={() => {
+                setMessage(clientOtpGuidance);
+                setStep("code");
+              }}
+            >
+              Já tenho um convite
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={loading}
+              onClick={() => {
+                setMessage("");
+                setStep("details");
+              }}
+            >
+              Voltar
+            </button>
+          </section>
         ) : step === "code" ? (
           <form onSubmit={verifyCode} className="auth-form">
             <label>
               {context === "client"
                 ? "Código de acesso"
-                : "Código do autenticador"}
+                : "Código do autenticador ou de recuperação"}
               <input
                 name="code"
-                inputMode="numeric"
+                inputMode={context === "client" ? "numeric" : "text"}
                 autoComplete="one-time-code"
-                pattern="[0-9]{6}"
-                maxLength={6}
+                pattern={context === "client" ? "[0-9]{6}" : "[0-9]{6}|[A-Za-z0-9_-]{24}"}
+                maxLength={context === "client" ? 6 : 24}
                 required
                 autoFocus
               />
@@ -485,13 +551,14 @@ export function AuthEntry({
           <form onSubmit={requestRecovery} className="auth-form" aria-labelledby="recovery-title">
             <div>
               <h2 id="recovery-title">Recuperar acesso</h2>
-              <p className="auth-helper">Informe o e-mail administrativo. Se a conta estiver apta, o código de confirmação será enviado ao WhatsApp do fotógrafo.</p>
+              <p className="auth-helper">Informe o e-mail administrativo. Contas com WhatsApp próprio recebem um código nesse canal. Contas criadas pelo website podem solicitar um link por e-mail e confirmar com o autenticador ou código de recuperação.</p>
             </div>
             <label>
               E-mail administrativo
-              <input name="recoveryEmail" type="email" autoComplete="email" defaultValue={recoveryEmail} required autoFocus />
+              <input name="recoveryEmail" type="email" autoComplete="email" value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value)} required autoFocus />
             </label>
             <button className="primary" disabled={loading}>{loading ? "Aguarde…" : "Receber código"}</button>
+            <button type="button" className="secondary" disabled={loading || !recoveryEmail} onClick={requestEmailRecovery}>Receber link por e-mail</button>
             <button type="button" className="secondary" onClick={() => { setStep("details"); setMessage(""); }}>Voltar ao login</button>
           </form>
         ) : step === "recovery-code" ? (

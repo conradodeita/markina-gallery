@@ -28,6 +28,7 @@ from app.auth import (
     ParentGalleryRegistration,
     PhotoAsset,
     PhotoFolder,
+    Tenant,
 )
 from app.facial.capacity import FacialSearchCapacityError, measure_search_queue
 from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION, FacialSettings
@@ -234,6 +235,31 @@ def test_upload_attempt_is_recoverable_and_collision_does_not_replace_reference(
     assert {p: p.read_bytes() for p in (tmp_path / "references").rglob("*") if p.is_file()} == stored
 
 
+
+
+def test_new_search_is_rejected_while_tenant_closure_is_pending(tmp_path: Path) -> None:
+    db, parent, client = _fixture(tmp_path, index_ready=True)
+    tenant = db.get(Tenant, FIXTURE_TENANT_ID)
+    assert tenant is not None
+    tenant.lifecycle = "closing"
+    db.commit()
+
+    with pytest.raises(FacialSearchError, match="indisponível"):
+        create_search_request(
+            db,
+            parent_gallery_id=parent.id,
+            client_id=client.id,
+            consent_version=CLIENT_REFERENCE_CONSENT_VERSION,
+            subject_declaration="conditional",
+            representation_reference=None,
+            payload=_jpeg(),
+            settings=_settings(tmp_path),
+            consent_accepted=True,
+        )
+    db.rollback()
+
+    assert db.scalar(select(func.count()).select_from(FacialSearchRequest)) == 0
+    assert not (tmp_path / "references").exists()
 
 
 def test_search_admission_requires_gallery_in_active_rollout(

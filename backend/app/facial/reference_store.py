@@ -34,16 +34,19 @@ def delete_reference_file(root: Path, request_id: UUID) -> bool:
     resolved = root.resolve()
     if resolved == Path(resolved.anchor) or resolved == Path.home().resolve():
         raise FacialReferenceError("Diretório temporário facial inseguro.")
-    target = (resolved / f"{request_id}.reference").resolve()
-    if target.parent != resolved or target.is_symlink():
-        raise FacialReferenceError("Destino temporário facial inválido.")
-    try:
-        target.unlink()
-        return True
-    except FileNotFoundError:
-        return False
-    except OSError as exc:
-        raise FacialReferenceError("Referência facial não pôde ser eliminada.") from exc
+    removed = False
+    for suffix in (".reference", ".part"):
+        target = resolved / f"{request_id}{suffix}"
+        if target.parent.resolve() != resolved or target.is_symlink():
+            raise FacialReferenceError("Destino temporário facial inválido.")
+        try:
+            target.unlink()
+            removed = True
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise FacialReferenceError("Referência facial não pôde ser eliminada.") from exc
+    return removed
 
 
 @dataclass(frozen=True)

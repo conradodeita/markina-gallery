@@ -17,10 +17,10 @@ from app.auth import (
     SaleOrder,
     SaleOrderItem,
     audit,
-    expired,
     now,
 )
 from app.checkout import CheckoutError, _synchronize_order, client_photo_is_frozen_any
+from app.folder_access import lock_selected_content_folders
 from app.integration_secrets import IntegrationSecretError
 from app.mercadopago_provider import MercadoPagoError
 from app.mercadopago_settings import account_for, credential_provider, effective_mercadopago
@@ -36,8 +36,8 @@ def utc(value):
     return value.replace(tzinfo=UTC) if value and value.tzinfo is None else value
 
 
-def lock_customer(db, client):
-    lock_payment_account(db, client.tenant_id)
+def lock_customer(db, client, *, reconciliation=False):
+    lock_payment_account(db, client.tenant_id, reconciliation=reconciliation)
     stored = db.scalar(select(Client).where(
         Client.id == client.id, Client.tenant_id == client.tenant_id).with_for_update())
     if not stored:
@@ -175,6 +175,12 @@ def prepare_payment(db, client, *, revision, key, method):
 
 
 def freeze_orders(db, client, payment):
+    try:
+        lock_selected_content_folders(
+            db, tenant_id=client.tenant_id, client_id=client.id,
+        )
+    except ValueError as exc:
+        raise CheckoutError(str(exc)) from exc
     materials = _valid_materials(db, client)
     if _fingerprint(materials) != payment.cart_revision:
         raise CheckoutError("Sua seleção mudou. Volte ao carrinho para conferir.")
@@ -268,7 +274,7 @@ def restore_selection(db, payment, orders):
             gallery = db.scalar(select(DerivedGallery).where(
                 DerivedGallery.tenant_id == payment.tenant_id,
                 DerivedGallery.id == order.derived_gallery_id))
-        if not gallery or (gallery.selection_expires_at and expired(gallery.selection_expires_at)):
+        if not gallery:
             continue
         for item in db.scalars(select(SaleOrderItem).where(
             SaleOrderItem.tenant_id == payment.tenant_id, SaleOrderItem.sale_order_id == order.id
@@ -406,14 +412,15 @@ def apply_order(db, payment, resource):
                         "contexto_pagamento": f"da compra {str(payment.id)[:8]}"},
                 target_path=f"/library/purchases#payment-{payment.id}",
                 recipients=[payment.client_id], client_id=payment.client_id,
-                sale_order_id=orders[0].id if orders else None)
+                sale_order_id=orders[0].id if orders else None,
+                financial_reconciliation=payment.tenant_id in db.info.get("tenant_financial_reconciliation", ()))
     payment.check_attempts = 0
     payment.next_check_at = now() + (timedelta(minutes=2) if payment.active else timedelta(days=1))
     return True
 
 
 def reconcile(db, client, payment_id):
-    lock_customer(db, client)
+    lock_customer(db, client, reconciliation=True)
     payment = own_payment(db, payment_id, client, lock=True)
     if payment.state in {"prepared", "abandoned"}:
         return payment

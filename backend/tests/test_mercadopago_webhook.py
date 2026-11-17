@@ -242,7 +242,7 @@ def test_aprovacao_antiga_com_nova_cobranca_enviada_exige_revisao(commerce):
         assert len(network.creates) == 2
 
 
-def test_worker_nao_processa_financas_de_tenant_suspenso(commerce):
+def test_worker_concilia_pagamento_iniciado_sem_reativar_tenant_suspenso(commerce):
     _, payment, network = pending_payment(commerce)
     with TestClient(app) as browser:
         assert send_event(browser, payment).status_code == 200
@@ -251,11 +251,11 @@ def test_worker_nao_processa_financas_de_tenant_suspenso(commerce):
         db.get(Tenant, payment.tenant_id).status = "suspended"
         db.get(MercadoPagoPayment, payment.id).next_check_at = now() - timedelta(seconds=1)
         db.commit()
-    assert not process_next_mercadopago_event()
-    assert not reconcile_next_mercadopago_payment()
+    assert process_next_mercadopago_event()
     with SessionLocal() as db:
-        assert db.get(MercadoPagoPayment, payment.id).state == "pending"
-        assert db.scalar(select(MercadoPagoWebhook.state)) == "queued"
+        assert db.get(MercadoPagoPayment, payment.id).state == "confirmed"
+        assert db.scalar(select(MercadoPagoWebhook.state)) == "done"
+        assert db.get(Tenant, payment.tenant_id).status == "suspended"
 
 
 def test_polling_apos_confirmacao_detecta_reembolso_sem_callback(commerce):

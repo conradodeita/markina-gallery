@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { MarkinaButton, MarkinaLink, StatusBadge, SystemState } from "../../ui-kit";
+import { mediaArchiveStatusLabel, type MediaArchiveStatus } from "../../media-archive-status";
 
 type Person = { id: string; name: string };
 type PrivateFolderGallery = {
@@ -10,7 +11,7 @@ type PrivateFolderGallery = {
   name: string;
   owner: Person;
   active_members: Person[];
-  folders: { id: string; name: string; status: string; photo_count: number }[];
+  folders: { id: string; name: string; status: string; photo_count: number; media_state?: MediaArchiveStatus }[];
 };
 
 export function PrivateFolderClientOverview({ sourceId, refreshToken = 0 }: { sourceId: string; refreshToken?: number }) {
@@ -43,7 +44,10 @@ export function PrivateFolderClientOverview({ sourceId, refreshToken = 0 }: { so
           : <div className="private-access-list">{state.galleries.map((gallery) => <article className="private-access-card" key={gallery.id} aria-label={`Galeria privada ${gallery.name}`}>
             <header><div><h4>{gallery.name}</h4><strong>Responsável principal: {gallery.owner.name}</strong></div><StatusBadge>Privada</StatusBadge></header>
             {gallery.active_members.length ? <div><p>{gallery.active_members.some((member) => member.id !== gallery.owner.id) ? "Acesso compartilhado — membros ativos:" : "Membro ativo:"}</p><ul>{gallery.active_members.map((member) => <li key={member.id}>{member.name}</li>)}</ul></div> : <p>Nenhum membro ativo cadastrado.</p>}
-            <ul aria-label={`Pastas de ${gallery.owner.name}`}>{gallery.folders.map((folder) => <li key={folder.id}><strong>{folder.name}</strong> · {folder.photo_count} foto(s) · <StatusBadge tone={folder.status === "released" ? "success" : "warning"}>{folder.status === "released" ? "Disponível" : "Em preparação"}</StatusBadge></li>)}</ul>
+            <ul aria-label={`Pastas de ${gallery.owner.name}`}>{gallery.folders.map((folder) => {
+              const archivedStatus = folder.media_state && folder.media_state !== "available";
+              return <li key={folder.id}><strong>{folder.name}</strong> · {folder.photo_count} foto(s) · <StatusBadge tone={archivedStatus ? "warning" : folder.status === "released" ? "success" : "warning"}>{archivedStatus ? mediaArchiveStatusLabel(folder.media_state!) : folder.status === "released" ? "Disponível" : "Em preparação"}</StatusBadge></li>;
+            })}</ul>
             <div className="gallery-access-actions"><MarkinaLink href={`/admin/galleries/${gallery.id}`} variant="secondary">Abrir galeria privada de {gallery.owner.name}</MarkinaLink></div>
           </article>)}</div>}
   </section>;

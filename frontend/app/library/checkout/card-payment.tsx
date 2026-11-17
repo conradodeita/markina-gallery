@@ -2,7 +2,6 @@
 
 import Script from "next/script";
 import { useEffect, useRef, useState } from "react";
-import type { MercadoPagoPayment } from "../mercadopago";
 import styles from "./checkout.module.css";
 
 export type CardData = {
@@ -11,8 +10,14 @@ export type CardData = {
 };
 type Controller = { unmount(): Promise<void> };
 let brickLifecycle = Promise.resolve();
+export type CardPaymentSetup = {
+  id: string;
+  public_key?: string | null;
+  total_cents: number;
+  payer?: { email: string; identification: { type: "CPF"; number: string } };
+};
 type BrickSettings = {
-  initialization: { amount: number };
+  initialization: { amount: number; payer?: { email: string; identification: { type: "CPF"; number: string } } };
   customization: { visual: { style: { theme: "default" } }; paymentMethods: {
     types: { excluded: string[] }; minInstallments: number; maxInstallments: number;
   } };
@@ -31,14 +36,14 @@ declare global {
 
 export default function CardPayment({
   payment, onSubmit,
-}: { payment: MercadoPagoPayment; onSubmit(data: CardData): Promise<void> }) {
+}: { payment: CardPaymentSetup; onSubmit(data: CardData): Promise<void> }) {
   return <CardPaymentFields key={`${payment.id}:${payment.public_key}:${payment.total_cents}`}
     payment={payment} onSubmit={onSubmit} />;
 }
 
 function CardPaymentFields({
   payment, onSubmit,
-}: { payment: MercadoPagoPayment; onSubmit(data: CardData): Promise<void> }) {
+}: { payment: CardPaymentSetup; onSubmit(data: CardData): Promise<void> }) {
   const [sdkReady, setSdkReady] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -62,7 +67,7 @@ function CardPaymentFields({
     brickLifecycle = brickLifecycle.catch(() => undefined).then(async () => {
       if (disposed) return;
       const instance = await sdk.bricks().create("cardPayment", "mp-card-payment", {
-      initialization: { amount: payment.total_cents / 100 },
+      initialization: { amount: payment.total_cents / 100, payer: payment.payer },
       customization: { visual: { style: { theme: "default" } }, paymentMethods: {
         types: { excluded: ["debit_card", "prepaid_card"] }, minInstallments: 1, maxInstallments: 1,
       } },
@@ -91,7 +96,7 @@ function CardPaymentFields({
         if (previous) await previous.unmount();
       });
     };
-  }, [sdkReady, payment.id, payment.public_key, payment.total_cents]);
+  }, [sdkReady, payment.id, payment.public_key, payment.total_cents, payment.payer]);
 
   return <div className={styles.card}>
     <Script src="https://sdk.mercadopago.com/js/v2" strategy="afterInteractive"

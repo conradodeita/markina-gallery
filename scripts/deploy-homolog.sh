@@ -638,7 +638,7 @@ apply_target_migrations() {
   # alterado. O rollback automático de código fica bloqueado até comprovarmos
   # que a revisão permaneceu exatamente igual à anterior.
   SCHEMA_ROLLBACK_UNSAFE=1
-  compose run --rm --no-deps migrate || {
+  compose run --rm --no-deps migrate alembic upgrade "$target_heads" || {
     fail "migration do SHA alvo falhou; banco preservado para revisão humana"
     return 1
   }

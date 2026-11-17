@@ -3,12 +3,16 @@
 import { PRODUCT_NAME, DEFAULT_WATERMARK_TEXT } from "../../product-brand";
 
 
-import { ChangeEvent, CSSProperties, FormEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, CSSProperties, FormEvent, MouseEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { SystemState } from "../../ui-kit";
 import PixPanel from "./pix-panel";
 import PaymentProvidersPanel from "./payment-providers-panel";
 import WhatsAppPanel from "./whatsapp-panel";
 import SecurityPanel from "./security-panel";
+import { OnboardingPanel } from "./onboarding-panel";
+import { TenantAddressPanel } from "./tenant-address-panel";
+import { PhotographerClosurePanel } from "./tenant-closure-panel";
+import styles from "./settings-page.module.css";
 
 type Branding = {
   login_title: string;
@@ -171,8 +175,53 @@ function ProtectionPreviewSurface({ surface, settings }: { surface: "dark" | "li
   </div>;
 }
 
+function revealSettingsAnchor(hash: string) {
+  let id: string;
+  try { id = decodeURIComponent(hash.replace(/^#/, "")); } catch { return; }
+  if (!id) return;
+  const target = document.getElementById(id);
+  if (!target) return;
+  let ancestor: HTMLElement | null = target;
+  while (ancestor) {
+    if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+    ancestor = ancestor.parentElement;
+  }
+  target.scrollIntoView?.({ block: "start" });
+}
+
+function handleSettingsAnchor(event: MouseEvent<HTMLElement>) {
+  if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  const link = event.target instanceof Element ? event.target.closest('a[href^="#"]') : null;
+  if (link instanceof HTMLAnchorElement) revealSettingsAnchor(link.hash);
+}
+
+function SettingsGroup({ id, title, description, children, initiallyOpen = false }: {
+  id: string; title: string; description: string; children: ReactNode; initiallyOpen?: boolean;
+}) {
+  return <details id={id} className={styles.group} open={initiallyOpen}>
+    <summary className={styles.groupSummary}>
+      <div className={styles.groupHeading}>
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </div>
+      <span className={styles.chevron} aria-hidden="true">⌄</span>
+    </summary>
+    <div className={styles.groupContent}>{children}</div>
+  </details>;
+}
+
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<Branding | null>(null);
+  const [termsPortalTarget, setTermsPortalTarget] = useState<HTMLDivElement | null>(null);
+  const settingsLoaded = settings !== null;
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const revealHash = () => revealSettingsAnchor(window.location.hash);
+    revealHash();
+    window.addEventListener("hashchange", revealHash);
+    return () => window.removeEventListener("hashchange", revealHash);
+  }, [settingsLoaded, termsPortalTarget]);
   const [protectionPreview, setProtectionPreview] = useState(fallback);
   const [message, setMessage] = useState("");
   const [assetVersion, setAssetVersion] = useState(0);
@@ -294,92 +343,130 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <main className="admin-shell">
-      <p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p>
-      <h1>Configurações</h1>
-      <p className="intro">Personalize a mensagem que clientes e fotógrafos encontram antes de entrar. Os textos são simples, sem HTML ou scripts.</p>
-      <WhatsAppPanel />
-      <SecurityPanel />
-      <PixPanel />
-      <PaymentProvidersPanel />
-      <form className="gallery-editor-panel gallery-settings-form" onSubmit={save}>
-        <label>Título da entrada<input name="login_title" defaultValue={settings.login_title} maxLength={120} required /></label>
-        <label>Texto introdutório<textarea name="login_intro" defaultValue={settings.login_intro} maxLength={300} rows={3} required /></label>
-        <label>Orientação auxiliar<input name="login_helper" defaultValue={settings.login_helper} maxLength={240} required /></label>
-        <div className="auth-preview" aria-live="polite">
-          <p className="eyebrow">Prévia</p>
-          {settings.logo_url ? <img className="auth-brand-logo" src={`/api${settings.logo_url}?v=${assetVersion}`} alt="Logo configurado" /> : null}
-          <h2>{settings.login_title}</h2>
-          <p>{settings.login_intro}</p>
-          <small>{settings.login_helper}</small>
-        </div>
-        <button className="primary">Salvar textos</button>
-      </form>
-      <section className="admin-card" aria-labelledby="branding-assets-title">
-        <h2 id="branding-assets-title">Identidade visual</h2>
-        <p className="intro">Envie somente os ativos oficiais. O servidor confere formato, MIME, dimensões e tamanho antes de substituir a configuração.</p>
-        <div className="gallery-settings-assets">
-          {(Object.keys(assetDetails) as Asset[]).map((asset) => {
-            const detail = assetDetails[asset];
-            const configuredUrl = settings[detail.url] as string | null;
-            return <label key={asset} className="gallery-settings-asset">
-              <span>{detail.label}</span>
-              <small>{detail.help}</small>
-              <input aria-label={`Enviar ${detail.label}`} type="file" accept={detail.accept} disabled={uploading !== null} onChange={(event) => upload(asset, event)} />
-              {/* eslint-disable-next-line @next/next/no-img-element -- Ativo de marca validado no upload, atualizado sem cache de transformação. */}
-              {configuredUrl ? <img className="branding-asset-preview" src={`/api${configuredUrl}?v=${assetVersion}`} alt={`${detail.label} configurado`} /> : null}
-              {uploading === asset ? <span className="asset-status">Enviando…</span> : configuredUrl ? <span className="asset-status">Configurado</span> : <span className="asset-status">Ainda não configurado</span>}
-            </label>;
-          })}
-        </div>
-      </section>
-      <section className="admin-card protection-settings" aria-labelledby="visual-protection-title">
-        <div className="protection-settings-heading">
-          <div>
-            <p className="eyebrow">Padrão da sua conta</p>
-            <h2 id="visual-protection-title">Proteção visual das galerias</h2>
+    <main className={`admin-shell ${styles.page}`} onClick={handleSettingsAnchor}>
+      <header className={styles.pageHeader}>
+        <p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p>
+        <h1>Configurações</h1>
+        <p>Encontre cada ajuste pelo assunto: acesso, comunicação, recebimentos, marca e encerramento da conta.</p>
+      </header>
+      <nav className={styles.navigation} aria-label="Seções de configurações">
+        <a href="#settings-start">Primeiros passos</a>
+        <a href="#settings-security">Acesso e segurança</a>
+        <a href="#settings-whatsapp">WhatsApp</a>
+        <a href="#settings-payments">Recebimentos</a>
+        <a href="#settings-brand">Marca e aparência</a>
+        <a href="#settings-closure">Encerrar conta</a>
+        <a href="#settings-terms">Termos de uso</a>
+      </nav>
+
+      <SettingsGroup id="settings-start" title="Primeiros passos" description="Configure o link da sua marca e acompanhe o que falta para operar." initiallyOpen>
+        <TenantAddressPanel />
+        <OnboardingPanel termsPortalTarget={termsPortalTarget} />
+      </SettingsGroup>
+
+      <SettingsGroup id="settings-security" title="Acesso e segurança" description="Gerencie sua senha, autenticador e formas de recuperar o acesso à conta.">
+        <SecurityPanel />
+      </SettingsGroup>
+
+      <SettingsGroup id="settings-whatsapp" title="WhatsApp" description="Conecte seu número para enviar notificações aos clientes.">
+        <WhatsAppPanel />
+      </SettingsGroup>
+
+      <SettingsGroup id="settings-payments" title="Recebimentos" description="Configure como os clientes pagam pelas fotos e onde você recebe.">
+        <PixPanel />
+        <PaymentProvidersPanel />
+      </SettingsGroup>
+
+      <SettingsGroup id="settings-brand" title="Marca e aparência" description="Personalize a entrada da plataforma e a proteção visual aplicada às prévias.">
+        <form className="gallery-editor-panel gallery-settings-form" onSubmit={save}>
+          <h3>Textos da página de entrada</h3>
+          <p>Os textos são simples, sem HTML ou scripts.</p>
+          <label>Título da entrada<input name="login_title" defaultValue={settings.login_title} maxLength={120} required /></label>
+          <label>Texto introdutório<textarea name="login_intro" defaultValue={settings.login_intro} maxLength={300} rows={3} required /></label>
+          <label>Orientação auxiliar<input name="login_helper" defaultValue={settings.login_helper} maxLength={240} required /></label>
+          <div className="auth-preview" aria-live="polite">
+            <p className="eyebrow">Prévia</p>
+            {settings.logo_url ? <img className="auth-brand-logo" src={`/api${settings.logo_url}?v=${assetVersion}`} alt="Logo configurado" /> : null}
+            <h2>{settings.login_title}</h2>
+            <p>{settings.login_intro}</p>
+            <small>{settings.login_helper}</small>
           </div>
-          <span className="protection-settings-status">Aplicada pelo servidor</span>
-        </div>
-        <p className="intro">Defina a identificação que será gravada nas prévias protegidas. Os arquivos originais permanecem fora do navegador; esta camada desestimula cópias, mas não promete bloquear capturas de tela.</p>
-        <form className="protection-settings-form" onSubmit={saveProtection} onChange={updateProtectionPreview}>
-          <div className="protection-settings-controls">
-            <fieldset className="protection-settings-group">
-              <legend>Conteúdo</legend>
-              <p>Use uma identificação curta e reconhecível em todas as galerias.</p>
-              <label>Texto da marca-d’água<input name="watermark_text" defaultValue={settings.watermark_text} maxLength={120} required /></label>
-              <label>Tipografia da marca-d’água<select name="watermark_font" defaultValue={settings.watermark_font}><option value="sans-serif">Sans-serif</option><option value="serif">Serifada</option><option value="monospace">Monoespaçada</option><option value="DejaVuSans">DejaVu Sans</option><option value="DejaVuSerif">DejaVu Serif</option></select></label>
-            </fieldset>
-            <fieldset className="protection-settings-group protection-settings-appearance">
-              <legend>Aparência</legend>
-              <p>A prova ao lado ajuda a conferir legibilidade em fundos opostos.</p>
-              <label>Cor da marca-d’água<span className="protection-color-control"><input name="watermark_color" type="color" defaultValue={settings.watermark_color} /><code>{protectionPreview.watermark_color.toUpperCase()}</code></span></label>
-              <label>Cobertura da marca-d’água (%)<input aria-label="Cobertura da marca-d’água (%)" name="watermark_size" type="number" min={10} max={96} defaultValue={settings.watermark_size} /><small>Percentual aproximado do eixo da foto; o texto é reduzido apenas se necessário para permanecer inteiro.</small></label>
-              <label>Direção<select name="watermark_direction" defaultValue={settings.watermark_direction}><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option><option value="diagonal">Diagonal</option></select></label>
-              <label>Transparência — {protectionPreview.watermark_opacity}%<input name="watermark_opacity" type="range" min={10} max={100} step={1} defaultValue={settings.watermark_opacity} /></label>
-              <label className="protection-toggle"><input name="watermark_shadow" type="checkbox" defaultChecked={settings.watermark_shadow} /> Aplicar sombra ao texto</label>
-              <label className="protection-toggle"><input name="watermark_security_lines" type="checkbox" defaultChecked={settings.watermark_security_lines} /> Usar linhas transversais de segurança</label>
-              <fieldset className="watermark-position-control">
-                <legend>Posição principal do padrão</legend>
-                {watermarkPositions.map(([value, label]) => <label key={value} title={label}><input aria-label={label} type="radio" name="watermark_position" value={value} defaultChecked={settings.watermark_position === value} /><span aria-hidden="true" /></label>)}
-              </fieldset>
-            </fieldset>
-            <button className="primary protection-settings-save">Salvar proteção da sua conta</button>
-          </div>
-          <aside className="protection-settings-preview" aria-labelledby="protection-preview-title" aria-live="polite">
-            <div>
-              <p className="eyebrow">Prova de contraste</p>
-              <h3 id="protection-preview-title">Como a identificação se comporta</h3>
-              <p>Superfícies neutras para avaliar leitura. Elas não simulam uma fotografia.</p>
-            </div>
-            <div className="protection-preview-surfaces">
-              {(["dark", "light"] as const).map((surface) => <ProtectionPreviewSurface surface={surface} settings={protectionPreview} key={surface} />)}
-            </div>
-            <p className="protection-settings-note">A identificação aparecerá uma única vez em cada prévia protegida gerada pelo processamento seguro.</p>
-          </aside>
+          <button className="primary">Salvar textos</button>
         </form>
-      </section>
-      {message ? <p className="form-message" role="status">{message}</p> : null}
+        <section className="admin-card" aria-labelledby="branding-assets-title">
+          <h3 id="branding-assets-title">Logo e ícones</h3>
+          <p className="intro">Envie os ativos da sua marca. O servidor confere formato, dimensões e tamanho antes de substituir a configuração.</p>
+          <div className="gallery-settings-assets">
+            {(Object.keys(assetDetails) as Asset[]).map((asset) => {
+              const detail = assetDetails[asset];
+              const configuredUrl = settings[detail.url] as string | null;
+              return <label key={asset} className="gallery-settings-asset">
+                <span>{detail.label}</span>
+                <small>{detail.help}</small>
+                <input aria-label={`Enviar ${detail.label}`} type="file" accept={detail.accept} disabled={uploading !== null} onChange={(event) => upload(asset, event)} />
+                {/* eslint-disable-next-line @next/next/no-img-element -- Ativo de marca validado no upload, atualizado sem cache de transformação. */}
+                {configuredUrl ? <img className="branding-asset-preview" src={`/api${configuredUrl}?v=${assetVersion}`} alt={`${detail.label} configurado`} /> : null}
+                {uploading === asset ? <span className="asset-status">Enviando…</span> : configuredUrl ? <span className="asset-status">Configurado</span> : <span className="asset-status">Ainda não configurado</span>}
+              </label>;
+            })}
+          </div>
+        </section>
+        <section className="admin-card protection-settings" aria-labelledby="visual-protection-title">
+          <div className="protection-settings-heading">
+            <div>
+              <p className="eyebrow">Padrão da sua conta</p>
+              <h3 id="visual-protection-title">Proteção visual das galerias</h3>
+            </div>
+            <span className="protection-settings-status">Aplicada pelo servidor</span>
+          </div>
+          <p className="intro">Defina a identificação que será gravada nas prévias protegidas. Os arquivos originais permanecem fora do navegador; esta camada desestimula cópias, mas não promete bloquear capturas de tela.</p>
+          <form className="protection-settings-form" onSubmit={saveProtection} onChange={updateProtectionPreview}>
+            <div className="protection-settings-controls">
+              <fieldset className="protection-settings-group">
+                <legend>Conteúdo</legend>
+                <p>Use uma identificação curta e reconhecível em todas as galerias.</p>
+                <label>Texto da marca-d’água<input name="watermark_text" defaultValue={settings.watermark_text} maxLength={120} required /></label>
+                <label>Tipografia da marca-d’água<select name="watermark_font" defaultValue={settings.watermark_font}><option value="sans-serif">Sans-serif</option><option value="serif">Serifada</option><option value="monospace">Monoespaçada</option><option value="DejaVuSans">DejaVu Sans</option><option value="DejaVuSerif">DejaVu Serif</option></select></label>
+              </fieldset>
+              <fieldset className="protection-settings-group protection-settings-appearance">
+                <legend>Aparência</legend>
+                <p>A prova ao lado ajuda a conferir legibilidade em fundos opostos.</p>
+                <label>Cor da marca-d’água<span className="protection-color-control"><input name="watermark_color" type="color" defaultValue={settings.watermark_color} /><code>{protectionPreview.watermark_color.toUpperCase()}</code></span></label>
+                <label>Cobertura da marca-d’água (%)<input aria-label="Cobertura da marca-d’água (%)" name="watermark_size" type="number" min={10} max={96} defaultValue={settings.watermark_size} /><small>Percentual aproximado do eixo da foto; o texto é reduzido apenas se necessário para permanecer inteiro.</small></label>
+                <label>Direção<select name="watermark_direction" defaultValue={settings.watermark_direction}><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option><option value="diagonal">Diagonal</option></select></label>
+                <label>Transparência — {protectionPreview.watermark_opacity}%<input name="watermark_opacity" type="range" min={10} max={100} step={1} defaultValue={settings.watermark_opacity} /></label>
+                <label className="protection-toggle"><input name="watermark_shadow" type="checkbox" defaultChecked={settings.watermark_shadow} /> Aplicar sombra ao texto</label>
+                <label className="protection-toggle"><input name="watermark_security_lines" type="checkbox" defaultChecked={settings.watermark_security_lines} /> Usar linhas transversais de segurança</label>
+                <fieldset className="watermark-position-control">
+                  <legend>Posição principal do padrão</legend>
+                  {watermarkPositions.map(([value, label]) => <label key={value} title={label}><input aria-label={label} type="radio" name="watermark_position" value={value} defaultChecked={settings.watermark_position === value} /><span aria-hidden="true" /></label>)}
+                </fieldset>
+              </fieldset>
+              <button className="primary protection-settings-save">Salvar proteção da sua conta</button>
+            </div>
+            <aside className="protection-settings-preview" aria-labelledby="protection-preview-title" aria-live="polite">
+              <div>
+                <p className="eyebrow">Prova de contraste</p>
+                <h4 id="protection-preview-title">Como a identificação se comporta</h4>
+                <p>Superfícies neutras para avaliar leitura. Elas não simulam uma fotografia.</p>
+              </div>
+              <div className="protection-preview-surfaces">
+                {(["dark", "light"] as const).map((surface) => <ProtectionPreviewSurface surface={surface} settings={protectionPreview} key={surface} />)}
+              </div>
+              <p className="protection-settings-note">A identificação aparecerá uma única vez em cada prévia protegida gerada pelo processamento seguro.</p>
+            </aside>
+          </form>
+        </section>
+        {message ? <p className="form-message" role="status">{message}</p> : null}
+      </SettingsGroup>
+
+      <SettingsGroup id="settings-closure" title="Encerramento da conta" description="Consulte prazos, pendências e consequências antes de solicitar o encerramento.">
+        <PhotographerClosurePanel />
+      </SettingsGroup>
+
+      <SettingsGroup id="settings-terms" title="Termos de uso" description="Leia os termos vigentes e consulte o histórico de aceites registrados para sua conta.">
+        <div className={styles.termsSlot} ref={setTermsPortalTarget} />
+      </SettingsGroup>
     </main>
   );
 }

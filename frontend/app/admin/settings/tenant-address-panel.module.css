@@ -1,0 +1,21 @@
+.panel { display:grid; gap:12px; margin-block:20px; scroll-margin-top:24px; min-width:0; }
+.panel > p,.panel h2 { margin:0; }
+.step { min-width:0; border:1px solid var(--line); border-radius:12px; }
+.step summary { display:flex; align-items:center; gap:12px; padding:14px; cursor:pointer; list-style:none; }
+.step summary::-webkit-details-marker { display:none; }
+.step summary small { display:block; margin-top:3px; color:var(--muted); }
+.complete,.pending { display:grid; place-items:center; width:30px; height:30px; flex:0 0 30px; border-radius:50%; border:1px solid var(--line); }
+.complete { background:#e8f3ea; color:#21673b; border-color:#2d7046; }
+.pending { color:var(--muted); }
+.chevron { margin-left:auto; color:var(--muted); }
+.content { display:grid; gap:12px; padding:0 16px 16px; }
+.content p { margin:0; line-height:1.5; }
+.form { display:grid; gap:10px; min-width:0; }
+.form label { font-weight:650; }
+.form input { width:100%; min-height:44px; border:1px solid var(--line); border-radius:9px; padding:10px 12px; font:inherit; color:var(--ink); background:var(--mk-surface); }
+.form small,.form p,.preparation { color:var(--muted); line-height:1.5; }
+.preview { display:grid; gap:5px; padding:14px; border-radius:10px; background:var(--mk-surface-subtle); overflow-wrap:anywhere; }
+.hostname { overflow-wrap:anywhere; font-weight:650; }
+.panel button,.panel a { justify-self:start; }
+.panel :is(input,button,summary,a):focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
+@media(max-width:600px) { .panel { padding:16px; }.panel button,.panel a { width:100%; justify-self:stretch; } }

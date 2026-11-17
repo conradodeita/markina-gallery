@@ -25,6 +25,7 @@ from app.auth import (
     now,
 )
 from app.facial.capacity import require_search_capacity
+from app.facial.closure_gate import FacialCleanupInProgress, require_facial_mutation_allowed
 from app.facial.config import CLIENT_REFERENCE_CONSENT_VERSION, FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope
 from app.facial.jobs import FacialJobRepository
@@ -147,6 +148,11 @@ def create_search_request(
     request_id: UUID | None = None,
 ) -> FacialSearchRequest:
     tenant_id = _require_search_context(db, parent_gallery_id, client_id)
+    try:
+        # Serializa a admissão com o lifecycle e o marcador do encerramento.
+        require_facial_mutation_allowed(db, tenant_id)
+    except FacialCleanupInProgress as exc:
+        raise FacialSearchError("Busca facial indisponível.") from exc
     policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     if (
         not rollout_is_active(

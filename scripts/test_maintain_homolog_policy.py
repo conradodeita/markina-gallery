@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = (ROOT / "scripts" / "maintain-homolog-data.sh").read_text(encoding="utf-8")
 WORKFLOW = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+DISPATCH_WORKFLOW = (ROOT / ".github" / "workflows" / "maintenance-homolog.yml").read_text(encoding="utf-8")
 MODULE = (ROOT / "backend" / "app" / "homolog_cleanup.py").read_text(encoding="utf-8")
 
 
@@ -181,6 +182,25 @@ def main() -> None:
         "Homolog-Cleanup: galleries-and-clients'"
     ):
         raise AssertionError("o trailer sem backup deve ser testado antes do trailer legado")
+    require(
+        "if: github.ref == 'refs/heads/develop'",
+        "job remoto restrito à ref develop",
+        DISPATCH_WORKFLOW,
+    )
+    require(
+        "if: github.ref != 'refs/heads/develop'",
+        "ref default/main roteada para recusa local",
+        DISPATCH_WORKFLOW,
+    )
+    registration_job = DISPATCH_WORKFLOW.split("\n  registration:\n", 1)[1]
+    require(
+        "Selecione a ref develop para usar Maintenance homolog",
+        "mensagem de recusa fora de develop",
+        registration_job,
+    )
+    require("exit 1", "workflow default termina em erro", registration_job)
+    if any(secret in registration_job for secret in ("HOMOLOG_SSH_", "secrets.", "ssh -i")):
+        raise AssertionError("a ref default não pode ler credenciais nem iniciar SSH")
     require("ALLOWED_ENVIRONMENTS", "gate APP_ENV", MODULE)
     require('order = operational_delete_order()', "ordem explícita de filhos antes dos pais", MODULE)
     require('db.execute(delete(Base.metadata.tables[name]))', "exclusão restrita à lista operacional", MODULE)

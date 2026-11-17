@@ -19,7 +19,6 @@ from app.auth import (
     PhotoSelection,
     SaleOrder,
     SaleOrderItem,
-    expired,
 )
 from app.unified_checkout import communication_join, payment_scopes
 
@@ -178,7 +177,6 @@ def build_commercial_projections(
         row.derived_gallery_id_snapshot for row in order_rows.values()
     }
     for gallery_id in projection_gallery_ids:
-        gallery = galleries.get(gallery_id)
         available_count = len(available_photo_ids.get(gallery_id, set()))
         for client_id in client_ids:
             key = (gallery_id, client_id)
@@ -191,8 +189,6 @@ def build_commercial_projections(
                 commercial_status = "awaiting_payment"
             elif "confirmed" in statuses:
                 commercial_status = "paid"
-            elif gallery and gallery.selection_expires_at and expired(gallery.selection_expires_at):
-                commercial_status = "overdue"
             elif "cancelled" in statuses:
                 commercial_status = "cancelled"
             else:

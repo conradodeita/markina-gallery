@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.acervo_context import require_active_owner
-from app.auth import WhatsAppChannelSettings
+from app.auth import WhatsAppChannelSettings, WhatsAppTenantCredential
 from app.messaging import (
     EvolutionWhatsAppProvider,
     SandboxWhatsAppProvider,
@@ -72,8 +72,44 @@ class WhatsAppBinding:
 def resolve_binding(db: Session, tenant_id: UUID) -> WhatsAppBinding:
     require_active_owner(db, tenant_id)
     aliases = binding_aliases()
+    from app.whatsapp_tenant_credentials import (
+        credential_for_tenant,
+        provider_for_credential,
+    )
+
+    credential = credential_for_tenant(db, tenant_id=tenant_id)
+    if credential is not None:
+        if tenant_id in aliases:
+            raise _invalid()
+        provider = provider_for_credential(db, credential=credential)
+        settings = db.scalar(select(WhatsAppChannelSettings).where(
+            WhatsAppChannelSettings.tenant_id == tenant_id,
+            WhatsAppChannelSettings.environment == credential.environment,
+        ))
+        identity = (
+            "tenant-credential", str(credential.id), credential.environment,
+            credential.instance_name, str(credential.webhook_secret_envelope),
+            provider.api_url, provider.api_key,
+        )
+        return WhatsAppBinding(
+            tenant_id, "evolution", provider, identity,
+            settings.expected_phone_e164 if settings else None,
+        )
     alias = aliases.get(tenant_id)
     if alias is None:
+        if (os.getenv("APP_ENV", "development").strip() in {"development", "test"}
+                and os.getenv("PHOTOGRAPHER_TEST_WHATSAPP_SANDBOX") == "true"):
+            from app.auth import PhotographerSignup
+            signup = db.scalar(select(PhotographerSignup.id).where(
+                PhotographerSignup.activated_tenant_id == tenant_id,
+                PhotographerSignup.state == "active",
+            ))
+            if signup:
+                environment = os.getenv("APP_ENV", "development").strip()
+                return WhatsAppBinding(
+                    tenant_id, "sandbox", SandboxWhatsAppProvider(),
+                    (environment, "local-photographer-demo", str(tenant_id)),
+                )
         try:
             if require_single_tenant(db).id != tenant_id:
                 raise _invalid()
@@ -186,8 +222,11 @@ def webhook_owner(db: Session, payload: dict, provided: str) -> UUID:
     if not provided or not isinstance(instance, str) or not instance:
         raise HTTPException(status_code=403, detail="Evento não autorizado.")
     aliases = binding_aliases()
-    if aliases:
-        owners = aliases.keys()
+    credential_owners = set(db.scalars(select(WhatsAppTenantCredential.tenant_id).where(
+        WhatsAppTenantCredential.environment == os.getenv("APP_ENV", "development").strip(),
+    )))
+    if aliases or credential_owners:
+        owners = set(aliases).union(credential_owners)
     else:
         try:
             owners = [require_single_tenant(db).id]

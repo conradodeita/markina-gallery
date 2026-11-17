@@ -1,7 +1,6 @@
 """Resolução transacional de membros em galerias privadas compartilhadas."""
 
 from dataclasses import dataclass
-from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy import select
@@ -62,7 +61,7 @@ def operational_galleries_for_client(
     """Lista associações ativas e, transitoriamente, privadas legadas sem backfill."""
 
     owner = select(Client.tenant_id).join(Tenant, Tenant.id == Client.tenant_id).where(
-        Client.id == client_id, Tenant.status == "active",
+        Client.id == client_id, Tenant.status == "active", Tenant.lifecycle != "closed",
     ).scalar_subquery()
     membership_query = (
         select(DerivedGallery)
@@ -110,7 +109,7 @@ def client_has_operational_membership(
 
     client = db.get(Client, client_id)
     tenant = db.get(Tenant, gallery.tenant_id, populate_existing=True)
-    if not client or client.tenant_id != gallery.tenant_id or not tenant or tenant.status != "active":
+    if not client or client.tenant_id != gallery.tenant_id or not tenant or tenant.status != "active" or tenant.lifecycle == "closed":
         return False
     membership = db.scalar(
         select(DerivedGalleryMembership).where(
@@ -165,11 +164,6 @@ def _create_legacy_compatible_gallery(
                 parent_gallery_id=parent.id,
                 client_id=client.id,
                 name=(name or f"{parent.name} — {client.full_name}")[:200],
-                selection_expires_at=(
-                    now() + timedelta(days=parent.selection_duration_days)
-                    if parent.selection_duration_days
-                    else None
-                ),
             )
             db.add(gallery)
             db.flush()

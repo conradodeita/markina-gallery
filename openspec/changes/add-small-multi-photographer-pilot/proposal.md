@@ -14,7 +14,7 @@ Publicação seletiva autorizada em 04/10/2026: após revisão do escopo e impac
 
 Correção LOCAL autorizada em03/10/2026 após APIunhealthy/pooltimeouts nas prévias administrativas antes da rodada50: reproduzir concorrência com pool sintético pequeno, delimitar aquisição aninhada de autenticação e corrigir somente as rotas administrativas de prévia afetadas, sem mudar tamanho do pool, autenticação/isolamento/auditoria ou entrega privada. Validar sessões revogadas, conta/vínculo inativo, e-mail não verificado e recursos de outra conta com cookies reais. A autorização não inclui commit/push/deploy nem liberação antecipada dos uploads; logs remotos e latches permanecem preservados.
 
-- Permitir operação controlada de duas contas de fotógrafo após completar e testar o isolamento do domínio, sem cadastro público de fotógrafos.
+- Permitir uma validação técnica controlada de duas contas de fotógrafo após completar e testar o isolamento do domínio; abrir o cadastro público não pertence a esta change e segue o gate pré-tenants de produção descrito no `design.md` e na change do portal.
 - **BREAKING**: tornar a identidade da cliente e a unicidade do telefone próprias de cada fotógrafo. Conforme decisão explícita do proprietário em 30/09/2026, o mesmo telefone pode identificar cadastros independentes, sem fusão ou compartilhamento automático de nomes, sessões, galerias, seleções, pedidos ou histórico.
 - Resolver o fotógrafo no backend a partir do vínculo administrativo ou do link autorizado da galeria; vincular desafios OTP, sessões e convites ao mesmo contexto.
 - Isolar acervo, clientes, comércio, PIX, branding, configurações, notificações, jobs, caches, arquivos e operações de manutenção. Dados técnicos de infraestrutura continuam próprios da instalação.
@@ -43,7 +43,7 @@ Preparação de canais após publicação: completar entrega do contrato de bind
 
 Backend FastAPI/SQLAlchemy/Alembic, resolvedores de identidade e autorização, rotas e workers do domínio, índices/constraints, configuração PIX/branding/notificações, caches e acesso à mídia, frontend de autenticação e capacidade, fixtures e testes PostgreSQL. A migration deve preservar o legado único e ser ensaiada em banco descartável antes de liberação autorizada.
 
-Esta proposta substitui a restrição arquitetural de fotógrafo único somente depois de revisão e aceite explícitos. Não altera código, roadmap consolidado, banco, credenciais ou homologação nesta fase. A fundação `add-tenant-ownership-foundation` está no código e seu PR #115 foi integrado; suas evidências e pendências documentais de liberação precisam ser reconciliadas antes de iniciar esta implementação.
+Esta proposta substitui a restrição arquitetural de fotógrafo único somente depois de revisão e aceite explícitos. Nesta implementação local, não altera infraestrutura, banco, credenciais ou outro ambiente remoto. O release posterior usará o servidor de produção existente, mantendo o cadastro público fechado até o ensaio pré-tenants do proprietário passar. A fundação `add-tenant-ownership-foundation` está no código e seu PR #115 foi integrado; suas evidências e pendências documentais de liberação precisam ser reconciliadas antes de iniciar esta implementação.
 
 ## Non-goals
 

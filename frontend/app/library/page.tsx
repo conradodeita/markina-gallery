@@ -4,9 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { MarkinaLink, PageHeading, StatusBadge, SystemState } from "../ui-kit";
 import { EmptyState } from "../validation-ui";
-import { SelectionDeadline } from "../selection-deadline";
 import Link from "next/link";
 import { GalleryCardPreview, galleryCoverUrl } from "../gallery-card-preview";
+import { SelectionDeadline } from "../selection-deadline";
 
 type PublicGallery = {
   id: string;
@@ -20,7 +20,6 @@ type PrivateGallery = {
   id: string;
   name: string;
   message: string;
-  selection_expires_at: string | null;
   gallery_status: "active" | "expired" | "origin_removed";
   origin_removed: boolean;
   origin: { id: string; name: string; available: boolean; browse_url: string | null };
@@ -36,7 +35,7 @@ type Journey = {
   cover_preview_url?: string | null;
   public_gallery: PublicGallery | null;
   private_gallery: PrivateGallery | null;
-  selection_expires_at?: string | null;
+  selection_deadlines?: Array<{ folder_id: string; folder_name: string; expires_at: string }>;
   selection: {
     quantity: number;
     total_cents?: number;
@@ -113,14 +112,31 @@ export default function LibraryPage() {
           const latestOrder = journey.orders?.find((order) => order.commercial_state !== "awaiting_payment");
           const browse = journey.actions.continue_url ?? journey.actions.prepared_url ?? journey.actions.fallback_url ?? journey.browse_url;
           const primaryAction = browse ? { href: browse, label: "Ver fotos" } : latestOrder ? { href: "/library/purchases", label: latestOrder.commercial_state === "selection_finalized" ? "Ver seleção" : "Ver compra" } : null;
+          const deadlines = journey.selection_deadlines ?? [];
+          const refreshDeadlineId = deadlines.find((deadline) => Date.parse(deadline.expires_at) > Date.now())?.folder_id
+            ?? deadlines[0]?.folder_id;
           return (
             <article className={`library-card journey-card journey-card--${journey.status}`} key={journey.id}>
               {browse ? <Link href={browse} className="library-cover-link" aria-label={`Abrir galeria ${journey.name}`}><GalleryCardPreview src={galleryCoverUrl(journey.cover_preview_url)} name={journey.name} /></Link> : <GalleryCardPreview src={null} name={journey.name} />}
               <header><StatusBadge tone={status.tone}>{status.label}</StatusBadge></header>
               <strong>{journey.name}</strong>
               {journey.event_name ? <small>{journey.event_name}</small> : null}
-              <SelectionDeadline expiresAt={journey.selection_expires_at ?? journey.private_gallery?.selection_expires_at} onRevalidate={revalidateLibrary} />
               {latestOrder ? <StatusBadge tone={latestOrder.commercial_state === "purchased" ? "success" : latestOrder.commercial_state === "payment_reported" ? "warning" : "neutral"}>{latestOrder.commercial_state === "selection_finalized" ? "Seleção finalizada" : latestOrder.commercial_state === "purchased" ? "Pagamento confirmado" : latestOrder.commercial_state === "payment_reported" ? "Pagamento informado" : "Pagamento não localizado"}</StatusBadge> : null}
+              {deadlines.length ? <section className="library-card-deadlines" aria-label={"Prazos de seleção: " + journey.name}>
+                <h3>Prazo para novas seleções</h3>
+                {deadlines.map((deadline) => <div
+                  className="library-card-deadline"
+                  key={deadline.folder_id}
+                  role="group"
+                  aria-label={"Prazo na pasta " + deadline.folder_name}
+                >
+                  <strong>{deadline.folder_name}</strong>
+                  <SelectionDeadline
+                    expiresAt={deadline.expires_at}
+                    onRevalidate={deadline.folder_id === refreshDeadlineId ? revalidateLibrary : undefined}
+                  />
+                </div>)}
+              </section> : null}
               <div className="library-card-actions">
                 {primaryAction ? <MarkinaLink href={primaryAction.href} prefetch>{primaryAction.label}</MarkinaLink> : <span>Indisponível</span>}
               </div>

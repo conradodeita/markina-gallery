@@ -9,7 +9,7 @@ import { mercadoPagoState, paymentMoney } from "../mercadopago";
 import { RemovedMovements, type RemovedMovement } from "../../removed-movements";
 
 type PurchaseGroup = { id: string; total_cents: number; orders: Order[] };
-type ProviderPaymentGroup = { id: string; state: string; total_cents: number; orders: Order[]; capture_method?: "credit_card" | "pix" | null };
+type ProviderPaymentGroup = { id: string; state: string; total_cents: number; orders: Order[]; capture_method?: "credit_card" | "pix" | null; cart_reopened_at?: string | null; requires_reconciliation?: boolean };
 type MercadoPagoGroup = { id: string; state: string; active: boolean; method: string; total_cents: number; test_account?: boolean; orders: Order[] };
 const cardStateLabel: Record<string, string> = {
   creating: "Preparando checkout",
@@ -59,8 +59,9 @@ export default function PurchasesPage() {
       </section>)}
       {result.provider_payment_groups.map((group) => <section className="unified-purchase" key={group.id} id={`payment-${group.id}`} aria-label={`Registro legado InfinitePay ${group.id.slice(0, 8)}`}>
         <h2>Compra {group.id.slice(0, 8)}</h2>
-        <p>InfinitePay · {cardStateLabel[group.state] ?? "estado preservado"} · {group.total_cents ? (group.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : ""}</p>
+        <p>InfinitePay · {group.cart_reopened_at && group.requires_reconciliation && group.state !== "confirmed" ? "Conferência após reabertura" : cardStateLabel[group.state] ?? "estado preservado"} · {group.total_cents ? (group.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : ""}</p>
         <p>Registro histórico somente para consulta. O checkout não está mais disponível.</p>
+        {group.cart_reopened_at && group.requires_reconciliation && group.state !== "confirmed" ? <p>Há evidência tardia da tentativa anterior. Esta ocorrência não confirma pagamento nem altera o carrinho.</p> : null}
         {group.orders.map((order) => <LibraryOrderCard key={order.id} order={order} />)}
       </section>)}
       <RemovedMovements items={result.removed_movements} />

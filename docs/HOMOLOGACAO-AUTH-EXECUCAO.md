@@ -19,7 +19,7 @@ Não copie banco, senha, TOTP, token DuckDNS, token WhatsApp ou segredo de produ
 
 1. Confirmar que o diretório de destino e o arquivo `.env.homolog` pertencem ao serviço da Markina Gallery e não são legíveis por outros usuários.
 2. Executar `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml config`.
-3. Construir e subir somente a Markina Gallery. O serviço `migrate` executa `alembic upgrade head` antes da API e do worker.
+3. Construir somente os serviços da Markina Gallery e assegurar que o PostgreSQL exclusivo está saudável. Antes de subir API e workers em uma homologação autorizada, identificar a revisão de destino com `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml run --rm --no-deps migrate alembic heads`; aplicar somente a revisão validada usando o mesmo prefixo seguido de `migrate alembic upgrade <revisão-validada>`. Conferir depois usando o mesmo prefixo seguido de `migrate`, que só lê as revisões. Não aplicar `head` automaticamente nem passar por contract TOTP sem seus gates próprios.
 4. Criar o administrador inicial uma única vez com `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml --profile bootstrap run --rm seed-admin`. A senha e o TOTP ficam disponíveis apenas durante esse container temporário, nunca na API em execução.
 5. Conectar somente o serviço `nginx` da Markina à rede externa `npm-network`, sob o alias `markina-homolog-nginx`. Configurar no Nginx Proxy Manager o host `markina.pickyourpic.com.br` apontando para `markina-homolog-nginx:80`, com certificado HTTPS para esse host. Não editar hosts existentes nem conectar serviços da Markina à rede do ClearBudget.
 

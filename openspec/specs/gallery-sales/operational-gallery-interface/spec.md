@@ -56,7 +56,7 @@ O sistema SHALL apresentar estados de carregamento, vazio, erro, preparação, p
 
 ### Requirement: Interface orientada pelo backend
 
-O sistema SHALL obter dados, permissões, disponibilidade e resultados de ações administrativas exclusivamente de APIs autenticadas do backend. Estatísticas SHALL oferecer filtros combináveis por período, evento, galeria, pasta, cliente, meio de pagamento e status do pedido; tabelas e indicadores SHALL refletir o mesmo escopo. Valores consolidados SHALL permitir abrir os registros detalhados correspondentes. A interface SHALL NOT conceder acesso ao CSV por ocultação de botão apenas nem criar autorização, registros, progresso de upload ou liberação simulados no browser.
+APIs autenticadas do backend SHALL ser a fonte de dados, permissões, disponibilidade e resultados administrativos. Filtros, tabelas e indicadores SHALL compartilhar escopo; valores consolidados SHALL abrir registros detalhados. A interface SHALL NOT autorizar CSV só ocultando botão nem simular permissões, registros, progresso ou liberações no browser.
 
 #### Scenario: Filtros combinados
 
@@ -89,7 +89,7 @@ O sistema SHALL permitir exclusão operacional de galeria ou pasta somente se os
 
 ### Requirement: Acervo da cliente no card da Galeria pública
 
-Na etapa Clientes da Galeria pública, cada card SHALL oferecer uma seção inicialmente recolhida intitulada `Acervo da cliente`, com criação de pasta restrita, upload de JPEGs, atribuição de outras clientes, pastas, fotos e estados individuais retornados pelo backend. Abrir ou recolher a seção SHALL alterar somente o estado de apresentação. A pasta criada no card SHALL ser inicialmente atribuída àquela cliente e continuar única quando compartilhada. Pastas comuns SHALL permanecer na etapa Imagens. A interface SHALL NOT oferecer criação, clonagem ou abertura de galeria privada derivada.
+Cada card de cliente SHALL ter seção recolhida `Acervo da cliente` para pastas restritas, upload JPEG e atribuições controladas pelo backend. Abrir/recolher SHALL alterar somente a apresentação. A pasta nasce atribuída à cliente do card e permanece única ao ser compartilhada; pastas comuns ficam em Imagens. A interface SHALL NOT criar, clonar ou abrir galeria privada derivada.
 
 #### Scenario: Fotógrafo abre o card
 
@@ -228,3 +228,50 @@ A área Vendas e pagamentos SHALL posicionar o filtro existente antes dos resumo
 
 - **WHEN** o fotógrafo rola pelos cards e listas
 - **THEN** o filtro permanece acessível no topo abaixo da navegação e não encobre os controles operacionais
+
+### Requirement: Clientes com seleção atual na Visão geral
+
+A Visão geral SHALL apresentar até cinco grupos de seleção atual do tenant autenticado, com cliente, Galeria pública, quantidade de fotos e o instante em que o carrinho atual começou. Os grupos SHALL ser ordenados pela atividade de seleção mais recente, e o card SHALL preservar os atalhos de galerias recentes.
+
+#### Scenario: Cliente inicia uma seleção
+
+- **WHEN** uma cliente autorizada seleciona fotos em uma Galeria pública
+- **THEN** a próxima consulta da Visão geral pode apresentar o grupo dessa cliente, com a quantidade atual e o instante em que a primeira foto da seleção atual foi escolhida
+
+#### Scenario: Remover a primeira foto escolhida
+
+- **WHEN** a cliente remove a primeira foto que escolheu, mas mantém outras fotos no carrinho
+- **THEN** o horário de início permanece o instante em que a seleção atual começou
+
+#### Scenario: Ordenar atividade recente
+
+- **WHEN** há mais de cinco grupos com fotos selecionadas
+- **THEN** a Visão geral apresenta os cinco grupos com adição de foto mais recente, identificando o início de cada seleção atual
+
+#### Scenario: Seleção de outro tenant
+
+- **WHEN** uma cliente de outro tenant tem fotos selecionadas
+- **THEN** a Visão geral atual não revela seu nome, galeria, quantidade ou horário
+
+#### Scenario: Nenhum grupo atual
+
+- **WHEN** nenhuma foto permanece selecionada em qualquer grupo do tenant
+- **THEN** a interface apresenta um estado vazio sem inventar cliente ou atividade histórica
+
+### Requirement: Horário sem registro do carrinho atual
+
+Se o horário exato não estiver registrado, a interface SHALL mostrar `Horário não registrado` e não SHALL estimar o início pelas fotos que restaram.
+
+#### Scenario: Carrinho sem início registrado
+
+- **WHEN** há uma seleção atual sem horário exato registrado
+- **THEN** a interface mantém cliente e galeria visíveis e informa `Horário não registrado`, sem estimar o início
+
+### Requirement: Fuso horário visível do horário da seleção
+
+O backend SHALL manter e retornar o instante da seleção em UTC. Como não há fuso configurável por tenant, a Visão geral SHALL exibir a hora convertida para o fuso local do dispositivo e identificar essa regra na interface.
+
+#### Scenario: Apresentar o horário registrado
+
+- **WHEN** a Visão geral apresenta um início exato de seleção
+- **THEN** a interface converte o instante UTC para o fuso do dispositivo e informa que os horários seguem esse fuso

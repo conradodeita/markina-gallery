@@ -57,3 +57,30 @@ it("fecha por botão/backdrop e mantém placeholder quando a imagem falha", () =
   fireEvent.click(dialog);
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+it("mostra o coração na prévia e o comentário abaixo do valor da foto", () => {
+  const comment = "Comentário visível sobre esta foto, com limite aplicado no servidor.";
+  const annotatedFolders = [{
+    ...folders[0],
+    items: [{ ...folders[0].items[0], comment_preview: comment, favorited: true }],
+  }];
+  render(<OrderPhotos folders={annotatedFolders} />);
+
+  const trigger = screen.getByRole("button", {
+    name: "Ampliar foto-1.jpg. Favoritada pela cliente",
+  });
+  expect(screen.queryByRole("note")).toBeNull();
+  const commentLine = screen.getByText(`Comentário: ${comment}`);
+  expect(commentLine.tagName).toBe("SMALL");
+  expect(screen.getByText("R$ 7,00").compareDocumentPosition(commentLine) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(trigger).queryByText(comment)).toBeNull();
+  fireEvent.load(trigger.querySelector("img")!);
+  expect(within(trigger).getByText("♥")).toBeTruthy();
+  expect(within(trigger).queryByText(comment)).toBeNull();
+
+  fireEvent.click(trigger);
+  const dialog = screen.getByRole("dialog", { name: "Fotografias do pedido" });
+  fireEvent.load(dialog.querySelector("img")!);
+  expect(within(dialog).getByRole("note", { name: "Favoritada pela cliente" })).toBeTruthy();
+  expect(within(dialog).queryByText(comment)).toBeNull();
+});

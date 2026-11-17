@@ -20,7 +20,9 @@ from app.auth import (
     ParentGallery,
     PhotoAsset,
     Tenant,
+    TenantClosureRequest,
 )
+from app.facial.closure_gate import FacialCleanupInProgress
 from app.facial.config import (
     FacialConfigurationError,
     FacialSettings,
@@ -323,7 +325,12 @@ def reconcile_automatic_gallery_policies(
             select(ParentGallery.id, ParentGallery.tenant_id)
             .join(Tenant, Tenant.id == ParentGallery.tenant_id)
             .where(
-                Tenant.status == "active",
+                Tenant.status == "active", Tenant.lifecycle == "open",
+                ~select(TenantClosureRequest.id).where(
+                    TenantClosureRequest.tenant_id == ParentGallery.tenant_id,
+                    TenantClosureRequest.state == "closing",
+                    TenantClosureRequest.biometric_cleanup_started_at.is_not(None),
+                ).exists(),
                 ParentGallery.active.is_(True),
                 ParentGallery.lifecycle_status == "active",
             )
@@ -339,12 +346,19 @@ def reconcile_automatic_gallery_policies(
             tenant_id=tenant_id,
         ):
             continue
-        _policy, changed = ensure_automatic_policy(
-            db,
-            tenant_id=tenant_id,
-            parent_gallery_id=gallery_id,
-            settings=settings,
-        )
+        try:
+            _policy, changed = ensure_automatic_policy(
+                db,
+                tenant_id=tenant_id,
+                parent_gallery_id=gallery_id,
+                settings=settings,
+            )
+        except FacialPolicyError as exc:
+            # O encerramento pode vencer depois da consulta de candidatos. Nesse
+            # caso, ignore a galeria; outros erros de configuração continuam visíveis.
+            if isinstance(exc.__cause__, FacialCleanupInProgress):
+                continue
+            raise
         if not changed:
             continue
         changed_count += 1

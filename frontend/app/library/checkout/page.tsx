@@ -27,6 +27,7 @@ export default function CheckoutPage() {
   const [loaded, setLoaded] = useState(false);
   const locked = useRef(false);
   const mounted = useRef(true);
+  const pollSequence = useRef(0);
 
   const prepare = useCallback(async (current: Cart, method: "credit_card" | "pix") => {
     if (!current.mercadopago_available || !current.cart_revision) {
@@ -83,8 +84,11 @@ export default function CheckoutPage() {
   useEffect(() => {
     if (!payment?.active || payment.state === "prepared") return;
     const timer = window.setInterval(() => {
+      if (locked.current) return;
+      const current = ++pollSequence.current;
       void paymentRequest<MercadoPagoPayment>(`/library/mercadopago/${payment.id}`).then((result) => {
-        if (mounted.current) {
+        if (mounted.current && current === pollSequence.current && !locked.current) {
+          pollSequence.current++;
           setPayment(result);
           if (result.state !== payment.state || result.active !== payment.active) notifyCartChanged();
         }
@@ -129,6 +133,7 @@ export default function CheckoutPage() {
   async function action(kind: "cancel" | "reconcile") {
     if (!payment || locked.current) return;
     locked.current = true; setBusy(true); setError("");
+    pollSequence.current++;
     try {
       const result = await paymentRequest<MercadoPagoPayment>(
         `/library/mercadopago/${payment.id}/${kind}`, {});

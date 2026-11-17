@@ -1,0 +1,235 @@
+{
+  "activation": {
+    "real_acme_or_dns_calls_performed": false,
+    "services_enabled": false,
+    "socket_enabled": false,
+    "timer_enabled": false,
+    "unit_templates_have_install_section": false
+  },
+  "dependencies": {
+    "advisory_report": "openspec/changes/archive/2026-11-08-prepare-operational-wildcard-certificate-issuer/dependency-advisories-fixed.json",
+    "helper": "scripts/wildcard_issuer/helper-dependency-manifest.json",
+    "issuer": "scripts/wildcard_issuer/dependency-manifest.json"
+  },
+  "files": {
+    "backend/app/integration_secrets.py": {
+      "sha256": "babcaa800b82ac2e581b1bf8ce5aaca70084685ddd86076fb9ff980b12621e75",
+      "size": 6984,
+      "unix_mode": "0644"
+    },
+    "openspec/changes/archive/2026-11-08-prepare-operational-wildcard-certificate-issuer/dependency-advisories-fixed.json": {
+      "sha256": "1dfa6c2128ab34bd7b20af5c453b9d2326ef11f67ab69382d46a06cac0552b8b",
+      "size": 3193,
+      "unix_mode": "0644"
+    },
+    "openspec/changes/archive/2026-11-08-prepare-operational-wildcard-certificate-issuer/dependency-inventory.md": {
+      "sha256": "8184278987cc6ffb7703e6638f8d6b45d4cded98978711a5624a6f08c97bb39b",
+      "size": 5404,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_issuer/OPERACAO.md": {
+      "sha256": "e7275eaa1f1e071fa34b8f0bff35182edfd50628e1903b9545e92e7b4d30a73c",
+      "size": 7608,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_issuer/dependency-manifest.json": {
+      "sha256": "d4eb786bb8c2122dd0234c58c809d3b66af2d1ff4bf619e799c82e1b87c18271",
+      "size": 15404,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_issuer/helper-dependency-manifest.json": {
+      "sha256": "341352c06b950e5a5757cc63682b8dcb92d5ebe16aeabbee8aab3294764c65ea",
+      "size": 1958,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_issuer/requirements-helper-arm64.lock": {
+      "sha256": "f09ded805f471edfd3cf6dc632f33b54c5d11438a9e29d34f06e0b42a848770a",
+      "size": 289,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_issuer/requirements-linux-arm64.lock": {
+      "sha256": "f03b483b76d74aed3a76f396b3eb4aaa765395a5ac0b15454fc0efecda3cdfcb",
+      "size": 3000,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_issuer/templates/pyp-acme-installer.service": {
+      "sha256": "7d94c7c71e72d8f352d070d27a000d61d3d6e7ac4072a7156e45adfb91242c83",
+      "size": 642,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_issuer/templates/pyp-acme-installer.socket": {
+      "sha256": "bb56ee1e10c75f64fad9e1804020ff1043bad07724af6f81f51018f3dae2f0c2",
+      "size": 349,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_issuer/templates/pyp-acme-issuer.service": {
+      "sha256": "66e37afda8410f8c6425d20df8361e541a122d4aae8e95d7e72b5041da4039e4",
+      "size": 845,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_issuer/templates/pyp-acme-issuer.timer": {
+      "sha256": "a59485ea2d5546c94ec505b9ec837606a7822ffd2f491f3cfc603e0e4d92adb2",
+      "size": 248,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_bundle.py": {
+      "sha256": "745a91651fd94fc7634e7b200f31ea2ec348e795a1ca9477a99268606fcbb618",
+      "size": 4481,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_custody.py": {
+      "sha256": "bf3b8f522ca9b9e471156d6122fc4e7cdc35106ae46de6ef4dc0ffa208094b5c",
+      "size": 5012,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_files.py": {
+      "sha256": "2384b8256d3ac36625129eef588375c62e87eae5e1ae3016cf4d567c264fbd44",
+      "size": 3178,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_gateway.py": {
+      "sha256": "98a8e63c380117fec88b5878f64ca1f8b54ef383ec8dac8434b06878f5666f62",
+      "size": 4702,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_installer.py": {
+      "sha256": "c71f45ef879091eef5272bff652d741525aa447403fc26e433b8b5b90e89bd18",
+      "size": 7061,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_issuer.py": {
+      "sha256": "9e3bfe0cb41c2270f80679c6be3b80aeea5fde47d229b63e91418846ad31d5a6",
+      "size": 4959,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_npm_helper.py": {
+      "sha256": "e86e687fa267c1da4a68cddbcc9259c9272bc01b049241a63da637ce2d3163ba",
+      "size": 4409,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_protocol.py": {
+      "sha256": "6cd521f2eee2fe5380c8ab4b94f90453326618e0da4064f87bc3288648fa35a3",
+      "size": 3734,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_runtime.py": {
+      "sha256": "806b879c2807a604323a42094d3373adf939d298d3770042462221c56bb118d1",
+      "size": 1833,
+      "unix_mode": "0644"
+    },
+    "scripts/wildcard_operational_service.py": {
+      "sha256": "32b459364faa7feac3bb760847d5904c4a4342b81c275ce9bebd1e5a76919932",
+      "size": 6091,
+      "unix_mode": "0644"
+    }
+  },
+  "fixed_executables": {
+    "certbot": "/opt/pyp-acme-issuer/bin/certbot",
+    "certbot_arguments": [
+      "certonly",
+      "--non-interactive",
+      "--config",
+      "/dev/null",
+      "--account",
+      "<account-id-from-approved-config>",
+      "--server",
+      "https://acme-v02.api.letsencrypt.org/directory",
+      "--config-dir",
+      "/var/lib/pyp-acme-issuer",
+      "--work-dir",
+      "<private-temporary-directory>",
+      "--logs-dir",
+      "<private-temporary-directory>",
+      "--no-directory-hooks",
+      "--dns-cloudflare",
+      "--dns-cloudflare-credentials",
+      "<temporary-token-ini-path>",
+      "--dns-cloudflare-propagation-seconds",
+      "60",
+      "--cert-name",
+      "pyp-tenant-wildcard",
+      "-d",
+      "*.pickyourpic.com.br",
+      "--keep-until-expiring"
+    ],
+    "docker": "/usr/bin/docker",
+    "docker_host": "unix:///var/run/docker.sock",
+    "docker_operation_shapes": [
+      [
+        "inspect",
+        "--format",
+        "<fixed-target-metadata>",
+        "<approved-container-id>"
+      ],
+      [
+        "exec",
+        "<approved-container-id>",
+        "sha256sum",
+        "<fixed-helper-files>"
+      ],
+      [
+        "exec",
+        "-i",
+        "<approved-container-id>",
+        "<fixed-python>",
+        "-B",
+        "<fixed-helper-script>"
+      ]
+    ],
+    "nginx_commands": [
+      [
+        "-t"
+      ],
+      [
+        "-s",
+        "reload"
+      ]
+    ],
+    "nginx_inside_npm": "/usr/sbin/nginx"
+  },
+  "fixed_paths": {
+    "config": "/etc/pyp-acme-issuer",
+    "installer_socket": "/run/pyp-acme-installer/installer.sock",
+    "npm_certificates": "/data/pyp-wildcard-certificates",
+    "npm_helper": "/data/pyp-wildcard-helper",
+    "runtime": "/run/pyp-acme-issuer",
+    "source_key": "/etc/pyp-acme-issuer/private/envelope-key",
+    "vault": "/var/lib/pyp-acme-issuer/vault"
+  },
+  "generated_at": "2026-11-14",
+  "identity": {
+    "installer": "root:pyp-acme; acionado somente pelo socket restrito",
+    "issuer": "pyp-acme:pyp-acme; UID nao fixado ate inventario remoto",
+    "issuer_in_docker_group": false,
+    "socket_mode": "0660"
+  },
+  "npm_approval": {
+    "container_name": "/nginx-proxy-manager",
+    "fixed_helper_files": [
+      "scripts/wildcard_operational_npm_helper.py",
+      "scripts/wildcard_operational_installer.py",
+      "scripts/wildcard_operational_bundle.py",
+      "scripts/wildcard_operational_custody.py",
+      "scripts/wildcard_operational_protocol.py",
+      "scripts/wildcard_operational_files.py",
+      "scripts/wildcard_operational_runtime.py",
+      "backend/app/integration_secrets.py",
+      "trust.pem",
+      "runtime-manifest.json"
+    ],
+    "image_id": "sha256:bd94715ff0d6f11047446b2c149d4adb45deaa8e18152b34befb13945b3dbd7b",
+    "repo_digest": "jc21/nginx-proxy-manager@sha256:52b2c59994f3d36acfcf70a1626f29734df0ed8c71bacc0269f78b6f939858bb",
+    "runtime_manifest_sha256": "generated_from_verified_helper_wheels_at_install_time"
+  },
+  "schema_version": 1,
+  "status": "candidato local; sem autorizacao de instalacao externa",
+  "unix_permissions": {
+    "installer_socket": "0660 root:pyp-acme",
+    "npm_helper_directory": "0700 root:root inside approved NPM data mount",
+    "source_key": "0400 root:root",
+    "source_key_directory": "0700 root:root",
+    "temporary_token_ini": "0600 pyp-acme:pyp-acme",
+    "unit_files": "0644 root:root",
+    "vault_and_runtime": "0700 pyp-acme:pyp-acme"
+  }
+}

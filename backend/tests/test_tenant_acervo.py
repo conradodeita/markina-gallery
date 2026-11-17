@@ -2,6 +2,7 @@
 
 import asyncio
 from functools import partial
+from hashlib import sha256
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -10,7 +11,15 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from app import main
-from app.auth import DerivedGalleryPhoto, MediaDerivative, MediaJob, PhotoAsset, PhotoFolder, Role
+from app.auth import (
+    DerivedGalleryPhoto,
+    MediaDerivative,
+    MediaJob,
+    PhotoAnalysis,
+    PhotoAsset,
+    PhotoFolder,
+    Role,
+)
 from tests.test_tenant_client_auth import client_db as _client_db
 from tests.test_tenant_client_auth import graph as _graph
 from tests.test_tenant_client_auth import links as _links
@@ -93,10 +102,10 @@ def test_catalogos_e_criacao_administrativa_preservam_proprietario(client_db, gr
     private = main.list_derived_galleries(admin_request, query=None, tab="active", state=None,
                                          offset=0, limit=30, db=client_db)
     assert [item["id"] for item in private["galleries"]] == [str(first["gallery"].id)]
-    created = main.create_photo_folder(first["parent"].id, main.PhotoFolderInput(name="Pasta A"),
+    created = main.create_photo_folder(first["parent"].id, main.PhotoFolderInput(name="Pasta A", access_duration_days=14),
                                        admin_request, client_db)
     assert client_db.get(PhotoFolder, UUID(created["id"])).tenant_id == first["tenant"].id
-    created = main.create_private_gallery_folder(first["gallery"].id, main.PhotoFolderInput(name="Privada A"),
+    created = main.create_private_gallery_folder(first["gallery"].id, main.PhotoFolderInput(name="Privada A", access_duration_days=14),
                                                  admin_request, client_db)
     assert client_db.get(PhotoFolder, UUID(created["id"])).tenant_id == first["tenant"].id
 
@@ -121,6 +130,83 @@ def test_upload_namespace_idempotencia_legado_e_owner_job(client_db, graph, admi
     main.enqueue_derivatives(client_db, photo)
     client_db.commit()
     assert client_db.scalar(select(MediaJob).where(MediaJob.photo_asset_id == photo.id)).tenant_id == photo.tenant_id
+
+
+def test_reenvio_identico_exige_confirmacao_e_pode_criar_nova_operacao(
+    client_db, graph, admin_request,
+):
+    first = graph[0]
+    fingerprint = sha256(b"same-jpeg-content").hexdigest()
+    prefix = f"{first['parent'].id}/{first['folder'].id}"
+    first_key = f"{prefix}/{fingerprint}-{uuid4()}.jpg"
+    first_photo = main.register_folder_photo_asset(
+        first["folder"].id,
+        main.PhotoAssetInput(filename="same.jpg", storage_key=first_key),
+        admin_request,
+        client_db,
+    )
+
+    retry = main.register_folder_photo_asset(
+        first["folder"].id,
+        main.PhotoAssetInput(filename="same.jpg", storage_key=first_key),
+        admin_request,
+        client_db,
+    )
+    assert retry["id"] == first_photo["id"]
+
+    deliberate_key = f"{prefix}/{fingerprint}-{uuid4()}.jpg"
+    with pytest.raises(HTTPException) as confirmation:
+        main.register_folder_photo_asset(
+            first["folder"].id,
+            main.PhotoAssetInput(filename="same.jpg", storage_key=deliberate_key),
+            admin_request,
+            client_db,
+        )
+    assert confirmation.value.status_code == 409
+    assert "já existe nesta pasta" in confirmation.value.detail
+
+    duplicate = main.register_folder_photo_asset(
+        first["folder"].id,
+        main.PhotoAssetInput(filename="same.jpg", storage_key=deliberate_key,
+                             allow_duplicate_content=True),
+        admin_request,
+        client_db,
+    )
+    assert duplicate["id"] != first_photo["id"]
+
+
+def test_reenvio_identico_detecta_fingerprint_da_analise_legada(client_db, graph, admin_request):
+    first = graph[0]
+    legacy_fingerprint = sha256(b"legacy-source-content").hexdigest()
+    prefix = f"{first['parent'].id}/{first['folder'].id}"
+    legacy = main.register_folder_photo_asset(
+        first["folder"].id,
+        main.PhotoAssetInput(filename="legacy.jpg", storage_key=f"{prefix}/legacy-source.jpg"),
+        admin_request,
+        client_db,
+    )
+    client_db.add(PhotoAnalysis(
+        tenant_id=first["tenant"].id,
+        photo_asset_id=UUID(legacy["id"]),
+        source_fingerprint=legacy_fingerprint,
+        source_bytes=123,
+        width=100,
+        height=100,
+        expires_at=main.now() + main.timedelta(hours=1),
+    ))
+    client_db.commit()
+
+    with pytest.raises(HTTPException) as confirmation:
+        main.register_folder_photo_asset(
+            first["folder"].id,
+            main.PhotoAssetInput(
+                filename="legacy-copy.jpg",
+                storage_key=f"{prefix}/{legacy_fingerprint}-{uuid4()}.jpg",
+            ),
+            admin_request,
+            client_db,
+        )
+    assert confirmation.value.status_code == 409
 
 
 @pytest.mark.parametrize("key", ["../escape.jpg", "private/foreign/folder/image.jpg", "/absolute.jpg"])
@@ -201,7 +287,7 @@ def test_lote_e_capa_novos_tem_owner_namespace_e_replay(client_db, graph, admin_
     created = main.begin_private_upload_batch(first["gallery"].id, admin_request, client_db)
     batch_id = UUID(created["id"])
     folder = main.create_private_gallery_folder(first["gallery"].id,
-        main.PhotoFolderInput(name="JPEGs sintéticos"), admin_request, client_db)
+        main.PhotoFolderInput(name="JPEGs sintéticos", access_duration_days=14), admin_request, client_db)
     folder_id = UUID(folder["id"])
     key = f"private/{first['gallery'].id}/{folder_id}/{uuid4()}.jpg"
     photo = main.register_folder_photo_asset(folder_id,
@@ -266,7 +352,7 @@ def test_pasta_restrita_preserva_publico_e_cliente_B_nao_recebe_atribuicao(
     link_client_to_parent(client_db, parent_gallery_id=first["parent"].id, client_id=other.id)
     client_db.commit()
     folder = main.create_admin_client_restricted_folder(first["parent"].id, first["client"].id,
-        main.PhotoFolderInput(name="Pasta restrita A"), admin_request, client_db)
+        main.PhotoFolderInput(name="Pasta restrita A", access_duration_days=14), admin_request, client_db)
     folder_id = UUID(folder["id"])
     photo = PhotoAsset(tenant_id=first["tenant"].id, parent_gallery_id=first["parent"].id,
         folder_id=folder_id, filename="synthetic.jpg", storage_key=f"synthetic/{uuid4()}.jpg", available=False)

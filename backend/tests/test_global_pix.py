@@ -5,7 +5,7 @@ from uuid import UUID
 import pytest
 from fastapi import Response
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.auth import (
     AdminSecurityChallenge,
@@ -34,6 +34,7 @@ from app.auth import (
 from app.checkout import CheckoutError, create_pending_checkout
 from app.global_pix import apply_configuration, canonical_proposal, normalize_configuration
 from app.main import app
+from app.totp_crypto import TotpSecretCipher
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
 
 
@@ -51,20 +52,24 @@ def clean_database():
 
 @pytest.fixture
 def client():
+    yield from _admin_client("development")
+
+
+def _admin_client(environment: str):
     with TestClient(app) as client:
         with SessionLocal() as db:
             admin = fixture_admin(AdminUser(
                 email="pix@markina.test",
                 email_verified=True,
                 password_hash=password_hasher.hash("Senha-atual-2026"),
-                totp_secret="JBSWY3DPEHPK3PXP",
+                totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
             ))
             db.add(admin)
             db.flush()
             cookie = create_session(db, Response(), Role.ADMIN, admin.id)
             db.add(
                 WhatsAppChannelSettings(tenant_id=FIXTURE_TENANT_ID,
-                    environment="development",
+                    environment=environment,
                     status="sandbox",
                     expected_phone_e164="+5511999999999",
                 )
@@ -199,9 +204,20 @@ def test_wrong_password_unavailable_channel_rate_limit_and_sensitive_audit(clien
 def test_pix_challenge_fails_closed_when_sensitive_payload_key_is_missing(
     client, monkeypatch
 ):
-    monkeypatch.setenv("APP_ENV", "homolog")
     monkeypatch.setenv("AUTH_PII_FINGERPRINT_SALT", "homolog-test-fingerprint-salt-32-bytes")
     monkeypatch.delenv("EMAIL_PAYLOAD_ENCRYPTION_KEY", raising=False)
+    with SessionLocal() as db:
+        admin = db.scalar(select(AdminUser).where(AdminUser.email == "pix@markina.test"))
+        admin_id = admin.id
+        secret = admin.totp_secret
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "homolog")
+    homolog_cipher = TotpSecretCipher.from_environment()
+    with SessionLocal() as db:
+        db.execute(update(AdminUser).where(AdminUser.id == admin_id).values(
+            _totp_secret_envelope=homolog_cipher.encrypt(secret, admin_id=admin_id)
+        ))
+        db.commit()
 
     response = client.post(
         "/admin/settings/pix/challenge",

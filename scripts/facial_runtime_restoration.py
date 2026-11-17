@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import UUID
 
-UTC = timezone.utc  # noqa: UP017 -- operador do host usa Python 3.10, sem datetime.UTC.
+# The operational host uses Python 3.10, where datetime.UTC is unavailable.
+UTC = timezone.utc  # noqa: UP017, RUF100 -- Operational host uses Python 3.10.
 PROJECT = "markina-gallery"
 SCHEMA = "20261026_0090"
 SERVICES = ("api", "worker", "face-search-worker", "face-index-worker", "face-maintenance-worker")

@@ -27,15 +27,21 @@ from tests.test_integration_secrets import secret_keyring  # noqa: F401
 BACKEND = Path(__file__).resolve().parents[1]
 FOUNDATION = "20260929_0069"
 TRANSITION = "20260930_0070"
-CURRENT_SCHEMA = "20261025_0089"
+CURRENT_SCHEMA = "20261113_0126"
 POST_TRANSITION_TABLES = frozenset({
+    "platform_admin_event", "photographer_signup", "google_drive_connection", "google_drive_oauth_attempt",
     "installation_operator", "platform_owner", "system_monitor_grant",
     "system_monitor_activity", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_incident", "system_monitor_transition",
-    "facial_embedding_experiment_setting",
+    "facial_embedding_experiment_setting", "facial_search_consent_proof",
+    "admin_totp_recovery_code",
     "provider_payment", "provider_payment_attempt", "provider_payment_receipt",
     "provider_payment_correction", "raw_development_settings", "raw_development_job",
     "mercadopago_account", "mercadopago_payment", "mercadopago_webhook", "payment_preferences",
+    "mercadopago_credit_purchase", "mercadopago_credit_purchase_event",
+    "tenant_credit_wallet", "photographer_credit_package", "photographer_credit_entry",
+    "photo_credit_operation", "photo_credit_operation_event",
+    "photographer_credit_allocation_event",
 })
 
 
@@ -105,21 +111,22 @@ def assert_preserved(connection, before):
         assert after == old, name
 
 
-def assert_catalog(connection):
+def assert_catalog(connection, baseline):
     inspector = sa.inspect(connection)
     assert not POST_TRANSITION_TABLES & set(inspector.get_table_names())
+    assert set(inspector.get_table_names()) == set(baseline.tables)
+    additions = {}
+    for table, column, _definition in revision_module().PLAN["add_columns"]:
+        additions.setdefault(table, set()).add(column)
     for name, target in auth.Base.metadata.tables.items():
         # Contrato histórico 0070: tabelas/colunas de revisions posteriores ainda não existem.
-        if name in POST_TRANSITION_TABLES:
+        if name not in baseline.tables:
             continue
         actual_columns = {column["name"]: column for column in inspector.get_columns(name)}
-        future_columns = {
-            "facial_search_request": {"search_engine"},
-            "private_upload_batch": {"folder_id", "parent_gallery_id"},
-            "sale_order": {"provider_payment_id", "mercadopago_payment_id"},
-            "tenant": {"canonical_host"},
-        }
+        allowed_columns = set(baseline.tables[name].c.keys()) | additions.get(name, set())
+        future_columns = {name: set(target.c.keys()) - allowed_columns}
         future_nullability = {
+                "admin_user": {"totp_secret": False},
             "private_upload_batch": {"derived_gallery_id": False},
         }
         historical_columns = [column for column in target.c if column.name not in future_columns.get(name, set())]
@@ -144,7 +151,12 @@ def assert_catalog(connection):
         expected_unique = {
             tuple(column.name for column in u.columns)
             for u in target.constraints
-            if isinstance(u, sa.UniqueConstraint) and u.name != "uq_tenant_canonical_host"
+            if isinstance(u, sa.UniqueConstraint) and u.name not in {
+                "uq_tenant_canonical_host",
+                # Added by 0113; it is not part of the historical 0070 catalog.
+                "uq_owner_photo_folder_id_derived_gallery_id_tenant_id",
+            }
+            and all(column.name in allowed_columns for column in u.columns)
         }
         expected_unique |= {
             ("tenant_id", "photo_asset_id"),
@@ -160,10 +172,15 @@ def assert_catalog(connection):
         assert all(not unique for key, (_, unique) in actual_indexes.items() if key not in expected_indexes), name
         by_name = {i["name"]: i for i in inspector.get_indexes(name)}
         for index in target.indexes:
-            expected_where = index.dialect_kwargs.get("postgresql_where")
+            if any(column.name not in allowed_columns for column in index.columns):
+                continue
+            historical_index = next((item for item in baseline.tables[name].indexes
+                                     if item.name == index.name), index)
+            expected_where = historical_index.dialect_kwargs.get("postgresql_where")
             if expected_where is None:
                 continue
-            expression = str(expected_where.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+            expression = (expected_where if isinstance(expected_where, str) else str(
+                expected_where.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})))
             actual_where = by_name[index.name].get("dialect_options", {}).get("postgresql_where")
             normalize = lambda sql: re.sub(r"[()\s]", "", str(sql).replace("::text", "")).lower()
             assert normalize(expression) == normalize(actual_where), index.name
@@ -229,6 +246,193 @@ def legacy(connection):
     insert_model(connection, auth.AuthChallenge, kind="client_otp", secret_hash="synthetic-hash",
                  expires_at=auth.now() + timedelta(minutes=1))
     return {"owner": owner, "admin": admin, "client": client, "parent": parent, "gallery": gallery, "photo": photo}
+
+
+def seed_persistent_owner(connection, *, admin_id=None, second_membership=False):
+    tenant_id = connection.scalar(sa.text("SELECT id FROM tenant ORDER BY id LIMIT 1"))
+    assert tenant_id is not None
+    admin_id = admin_id or uuid4()
+    if connection.scalar(sa.text("SELECT id FROM admin_user WHERE id=:id"), {"id": admin_id}) is None:
+        from app.totp_crypto import TotpSecretCipher
+
+        insert_model(
+            connection,
+            auth.AdminUser,
+            id=admin_id,
+            email=f"credit-owner-{uuid4().hex[:12]}@example.test",
+            password_hash="synthetic-owner-hash",
+            totp_secret=None,
+            totp_secret_envelope=TotpSecretCipher.from_environment().encrypt(
+                "synthetic-owner-totp", admin_id=admin_id,
+            ),
+            email_verified=True,
+        )
+    if connection.scalar(sa.text(
+        "SELECT id FROM tenant_admin WHERE tenant_id=:tenant_id AND admin_user_id=:admin_id"
+    ), {"tenant_id": tenant_id, "admin_id": admin_id}) is None:
+        insert_model(connection, auth.TenantAdmin, tenant_id=tenant_id, admin_user_id=admin_id)
+    connection.execute(sa.text(
+        "INSERT INTO platform_owner "
+        "(singleton, admin_user_id, authorization_reference, established_at) "
+        "VALUES (1, :admin_id, 'synthetic-credit-migration-test', CURRENT_TIMESTAMP)"
+    ), {"admin_id": admin_id})
+    other_tenant_id = None
+    if second_membership:
+        other_tenant_id = uuid4()
+        insert_model(connection, auth.Tenant, id=other_tenant_id)
+        insert_model(
+            connection,
+            auth.TenantAdmin,
+            tenant_id=other_tenant_id,
+            admin_user_id=admin_id,
+        )
+    return tenant_id, admin_id, other_tenant_id
+
+
+def test_credit_wallet_empty_installation_upgrades_and_downgrades_without_rows(
+    migration_db, secret_keyring,  # noqa: F811
+):
+    url, engine = migration_db
+    migrate(url, "20261031_0093")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("TRUNCATE tenant CASCADE")
+        assert connection.scalar(sa.text("SELECT count(*) FROM tenant")) == 0
+        assert connection.scalar(sa.text("SELECT count(*) FROM platform_owner")) == 0
+
+    migrate(url, "head")
+    with engine.connect() as connection:
+        assert connection.scalar(sa.text("SELECT count(*) FROM tenant_credit_wallet")) == 0
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == CURRENT_SCHEMA
+
+    migrate(url, "20261031_0093", downgrade=True)
+    with engine.connect() as connection:
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20261031_0093"
+        assert "tenant_credit_wallet" not in sa.inspect(connection).get_table_names()
+
+
+def test_credit_wallet_existing_tenants_get_owner_exception_and_safe_downgrade_refusal(
+    migration_db, secret_keyring,  # noqa: F811
+):
+    url, engine = migration_db
+    migrate(url, "20261031_0093")
+    with engine.begin() as connection:
+        owner_tenant_id, _admin_id, finite_tenant_id = seed_persistent_owner(
+            connection, second_membership=False,
+        )
+        finite_tenant_id = uuid4()
+        insert_model(connection, auth.Tenant, id=finite_tenant_id)
+
+    migrate(url, "head")
+    with engine.connect() as connection:
+        wallets = dict(connection.execute(sa.text(
+            "SELECT tenant_id, mode FROM tenant_credit_wallet ORDER BY tenant_id"
+        )).all())
+        assert wallets == {owner_tenant_id: "unmetered", finite_tenant_id: "finite"}
+        before = snapshot(connection)
+
+    failed_downgrade = migrate(url, "20261031_0093", downgrade=True, succeeds=False)
+    assert "Preserve o schema da carteira" in failed_downgrade.stderr
+    with engine.connect() as connection:
+        assert_preserved(connection, before)
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == CURRENT_SCHEMA
+
+
+def test_credit_wallet_ambiguous_owner_aborts_before_any_credit_ddl(migration_db, secret_keyring):  # noqa: F811
+    url, engine = migration_db
+    migrate(url, "20261031_0093")
+    with engine.begin() as connection:
+        seed_persistent_owner(connection, second_membership=True)
+
+    failed_upgrade = migrate(url, "head", succeeds=False)
+    assert "vínculo ativo do proprietário ausente ou ambíguo" in failed_upgrade.stderr
+    with engine.connect() as connection:
+        tables = set(sa.inspect(connection).get_table_names())
+        assert not {
+            "tenant_credit_wallet", "photographer_credit_package", "photo_credit_operation",
+            "photographer_credit_entry", "photographer_credit_allocation_event",
+            "photo_credit_operation_event",
+        } & tables
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20261031_0093"
+
+
+def test_credit_ledger_and_allocation_history_reject_update_and_delete(
+    migration_db, secret_keyring,  # noqa: F811
+):
+    url, engine = migration_db
+    migrate(url, "20261031_0093")
+    with engine.begin() as connection:
+        _owner_tenant_id, owner_admin_id, _ = seed_persistent_owner(connection)
+        finite_tenant_id = uuid4()
+        insert_model(connection, auth.Tenant, id=finite_tenant_id)
+
+    migrate(url, "head")
+    grant_id, revocation_id = uuid4(), uuid4()
+    operation_id, photo_id, gallery_id, folder_id = uuid4(), uuid4(), uuid4(), uuid4()
+    with engine.begin() as connection:
+        insert_model(
+            connection, auth.ParentGallery, id=gallery_id,
+            tenant_id=finite_tenant_id, name="Galeria sintética",
+            payment_required=False,
+        )
+        insert_model(
+            connection, auth.PhotoFolder, id=folder_id,
+            tenant_id=finite_tenant_id, parent_gallery_id=gallery_id,
+            name="Pasta sintética", purpose="content", position=0,
+        )
+        insert_model(
+            connection, auth.PhotoAsset, id=photo_id,
+            tenant_id=finite_tenant_id, parent_gallery_id=gallery_id,
+            folder_id=folder_id, filename="foto.jpg",
+            storage_key=f"tenants/{finite_tenant_id}/foto.jpg", available=False,
+        )
+        insert_model(
+            connection, auth.PhotoCreditOperation, id=operation_id,
+            tenant_id=finite_tenant_id, photo_asset_id=photo_id,
+            photo_asset_id_snapshot=photo_id,
+            storage_key_snapshot=f"tenants/{finite_tenant_id}/foto.jpg",
+            payload_fingerprint="a" * 64, quantity=1, status="reserved",
+        )
+        insert_model(
+            connection, auth.PhotographerCreditEntry, id=grant_id,
+            tenant_id=finite_tenant_id, entry_type="owner_grant", delta=2,
+            idempotency_key="synthetic-owner-grant",
+            global_owner_admin_id=owner_admin_id, source_reference="grant",
+        )
+        insert_model(
+            connection, auth.PhotographerCreditEntry, id=revocation_id,
+            tenant_id=finite_tenant_id, entry_type="grant_revocation", delta=-1,
+            idempotency_key="synthetic-owner-revocation",
+            source_entry_id=grant_id, global_owner_admin_id=owner_admin_id,
+            source_reference="revocation",
+        )
+        allocation_id = insert_model(
+            connection, auth.PhotographerCreditAllocationEvent,
+            tenant_id=finite_tenant_id, source_entry_id=grant_id,
+            credit_entry_id=revocation_id, event_type="revoked", quantity=1,
+            idempotency_key="synthetic-revoked-allocation",
+        )
+        operation_event_id = insert_model(
+            connection, auth.PhotoCreditOperationEvent,
+            tenant_id=finite_tenant_id, operation_id=operation_id,
+            event_type="reserved", details={"source_entry_id": str(grant_id)},
+        )
+
+        immutable_rows = (
+            ("photographer_credit_entry", grant_id),
+            ("photographer_credit_allocation_event", allocation_id),
+            ("photo_credit_operation_event", operation_event_id),
+        )
+        for table_name, row_id in immutable_rows:
+            with pytest.raises(sa.exc.DBAPIError), connection.begin_nested():
+                connection.execute(
+                    sa.text(f"UPDATE {table_name} SET id = id WHERE id = :id"),
+                    {"id": row_id},
+                )
+            with pytest.raises(sa.exc.DBAPIError), connection.begin_nested():
+                connection.execute(
+                    sa.text(f"DELETE FROM {table_name} WHERE id = :id"),
+                    {"id": row_id},
+                )
 
 
 def test_gemma_postgres_upgrade_preserves_legacy_and_isolates_namespaces(migration_db):
@@ -310,7 +514,7 @@ def test_upgrade_vazio_catalogo_e_defaults_preservados(migration_db):
     migrate(url, TRANSITION)
     with engine.connect() as connection:
         assert_preserved(connection, before)
-        assert_catalog(connection)
+        assert_catalog(connection, before[0])
         assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == TRANSITION
         assert connection.scalar(sa.text("SELECT count(*) FROM tenant")) == 1
 
@@ -323,8 +527,8 @@ def test_upgrade_preserva_todas_colunas_legadas_e_owner_duravel(migration_db):
     migrate(url, TRANSITION)
     with engine.connect() as connection:
         assert_preserved(connection, before)
-        assert_catalog(connection)
-        for name in set(auth.Base.metadata.tables) - SHARED_TABLES - POST_TRANSITION_TABLES:
+        assert_catalog(connection, before[0])
+        for name in set(before[0].tables) - SHARED_TABLES - {"alembic_version"}:
             assert connection.scalar(sa.text(f'SELECT count(*) FROM "{name}" WHERE tenant_id IS NULL')) == 0, name
             assert connection.scalar(sa.text(f'SELECT count(*) FROM "{name}" WHERE tenant_id != :owner'),
                                      {"owner": records["owner"]}) == 0, name
@@ -438,19 +642,27 @@ def test_dialeto_nao_operacional_recusado_antes_de_alterar(tmp_path):
 
 
 def test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos(
-    migration_db, monkeypatch, tmp_path
+    migration_db, monkeypatch, tmp_path, secret_keyring,  # noqa: F811
 ):
     from app import homolog_cleanup
     from app.tenancy import TenantContextError
 
     url, engine = migration_db
     # O inventário exige o schema operacional completo usado em homologação.
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "homolog")
+    migrate(url, "20261031_0093")
+    with engine.begin() as connection:
+        seed_persistent_owner(connection)
     migrate(url, CURRENT_SCHEMA)
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
     for root in roots.values():
         root.mkdir()
     with Session(engine) as db:
-        db.add(auth.Tenant())
+        new_tenant = auth.Tenant()
+        db.add(new_tenant)
+        db.flush()
+        db.add(auth.TenantCreditWallet(tenant_id=new_tenant.id, mode="finite"))
         db.commit()
         monkeypatch.setenv("APP_ENV", "homolog")
         monkeypatch.setattr(homolog_cleanup, "media_roots", lambda: roots)
@@ -473,7 +685,9 @@ def test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos(
         assert db.scalar(sa.select(sa.func.count()).select_from(auth.Tenant)) == 2
 
 
-def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatch, tmp_path, secret_keyring):  # noqa: F811
+def test_limpeza_legado_completo_preserva_administracao(
+    migration_db, monkeypatch, tmp_path, secret_keyring,  # noqa: F811
+):
     from app import homolog_cleanup
     from app.provision_installation_operator import provision_operator
     from app.system_monitor.models import (
@@ -487,8 +701,12 @@ def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatc
     with engine.begin() as connection:
         records = legacy(connection)
     # A rotina atual exige o catálogo completo, incluindo o monitor 0072.
-    migrate(url, CURRENT_SCHEMA)
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "homolog")
+    migrate(url, "20261031_0093")
+    with engine.begin() as connection:
+        seed_persistent_owner(connection, admin_id=records["admin"])
+    migrate(url, CURRENT_SCHEMA)
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
     for root in roots.values():
         root.mkdir()
@@ -524,7 +742,6 @@ def test_limpeza_legado_completo_preserva_administracao(migration_db, monkeypatc
         admin_session = db.scalar(sa.select(auth.AuthSession).where(auth.AuthSession.role == "admin"))
         minute = auth.now().replace(second=0, microsecond=0)
         db.add_all([
-            PlatformOwner(singleton=1, admin_user_id=records["admin"], authorization_reference="synthetic"),
             MonitorGrant(admin_user_id=records["admin"], permission="metrics", active=True,
                          authorization_reference="synthetic"),
             MonitorBucket(minute=minute, operation="http.read", latency_bin=100, count=1),

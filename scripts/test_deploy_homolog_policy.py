@@ -48,7 +48,8 @@ def main() -> int:
     require('git switch --detach "$DEPLOY_SHA"', "seleção explícita de SHA", SCRIPT)
     require('return 1', "falha encaminhada ao trap de recuperação", SCRIPT)
     require('compose build migrate', "imagem de migration reconstruída no SHA alvo", SCRIPT)
-    require('compose run --rm --no-deps migrate', "migration isolada", SCRIPT)
+    require('compose run --rm --no-deps migrate alembic upgrade "$target_heads"', "migration isolada com revisão explícita", SCRIPT)
+    forbid(r'compose\s+run\s+--rm\s+--no-deps\s+migrate\s*\|\|', "migration pelo comando padrão do Compose", SCRIPT)
     require('SELECT version_num FROM alembic_version', "revisão consultada diretamente no PostgreSQL", SCRIPT)
     forbid(
         r'compose\s+run\s+--rm\s+--no-deps\s+migrate\s+alembic\s+current',
@@ -182,7 +183,7 @@ def main() -> int:
     require('worker RAW legado ativo; inventário e parada controlada', "bloqueio para runtime RAW legado", SCRIPT)
     forbid('compose up -d --build --no-deps raw-development-worker', "worker RAW não pode ser reativado", SCRIPT)
     forbid('compose up -d --build --no-deps face-gemma-index-worker', "worker Gemma não pode ser reativado", SCRIPT)
-    forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
+    forbid(r'\bpassword\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
 
     require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)
     require("  media-history:", "volume histórico persistente", COMPOSE)

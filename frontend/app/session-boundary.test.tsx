@@ -92,6 +92,20 @@ describe("recuperação uniforme de sessão", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it("403 esperado da leitura opcional do link do fotógrafo não mostra aviso global", async () => {
+    const navigate = vi.fn();
+    const fetchMock = vi.fn((input: string | URL | Request) => Promise.resolve(
+      String(input) === "/api/auth/destination" ? authorized() : new Response(null, { status: 403 }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SessionBoundary navigate={navigate}><p>Console do proprietário</p></SessionBoundary>);
+    await screen.findByText("Console do proprietário");
+    await act(async () => { await window.fetch("/api/admin/onboarding/address"); });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Console do proprietário")).toBeTruthy();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("recusa durante verificação anterior agenda nova leitura deduplicada", async () => {
     let checks = 0;
     let complete: (response: Response) => void = () => undefined;

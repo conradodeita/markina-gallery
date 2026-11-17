@@ -2,7 +2,7 @@
 
 ### Requirement: Seleção compacta ao lado do nome da fotografia
 
-A grade da cliente SHALL apresentar nome do arquivo e botão de seleção compactos, lado a lado em uma faixa abaixo da imagem, sem sobrepor a fotografia. SHALL preservar duas colunas no mobile, proporção integral da imagem, indicação de selecionada/comprada e separação entre ampliar e selecionar. Nomes longos SHALL caber sem rolagem horizontal, com nome completo acessível. Reduzir o tamanho visual SHALL preservar área de toque de pelo menos 44 por 44 pixels CSS sem invadir a imagem nem outros controles.
+A grade móvel SHALL mostrar nome completo/acessível e seleção em faixa compacta abaixo da imagem, sem sobreposição; conserva duas colunas, proporção da foto e estados selecionado/comprado. Ampliar e selecionar são distintos. Nomes longos não causam rolagem horizontal; alvo tem pelo menos 44×44 CSS pixels.
 
 #### Scenario: Duas colunas em smartphone
 - **WHEN** a cliente visualiza fotos em largura de 320, 360 ou 390 pixels CSS
@@ -18,7 +18,7 @@ A grade da cliente SHALL apresentar nome do arquivo e botão de seleção compac
 
 ### Requirement: Navegação ampliada sempre visível
 
-O visualizador SHALL manter fechamento, seleção e, quando houver várias fotos, `Anterior` e `Próxima` na área útil da viewport mobile, inclusive com seleção de rostos habilitada. Seleção e navegação SHALL ocupar uma barra abaixo e fora da fotografia, sem sobreposição à imagem, inclusive durante zoom, pan ou rotação do aparelho. SHALL ajustar a área da imagem ao espaço restante e permitir rolagem de conteúdo auxiliar sem exigir rolagem para alcançar a navegação. Zoom/pan SHALL conservar geometria dos rostos e não disparar navegação ou seleção comercial acidental.
+No mobile, o visualizador SHALL manter fechar, selecionar e navegar (`Anterior`/`Próxima`) visíveis em barra externa abaixo da foto, inclusive com busca facial. A imagem se ajusta ao espaço útil; não é preciso rolar para os controles. Zoom, pan e rotação preservam geometria facial sem navegação ou seleção acidental.
 
 #### Scenario: Rostos habilitados em tela curta
 - **WHEN** a cliente habilita rostos em viewport de 360 por 640 pixels CSS

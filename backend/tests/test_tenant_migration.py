@@ -1,5 +1,6 @@
 """Ensaia a fundação 0069; a transição 0070 tem suíte PostgreSQL própria."""
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -47,6 +48,17 @@ def migrate(url, *args, succeeds=True):
     )
     assert (result.returncode == 0) == succeeds, result.stderr
     return result
+
+
+def create_synthetic_owner(url):
+    path = Path(__file__).parents[2] / "scripts" / "local_photographer_demo.py"
+    spec = importlib.util.spec_from_file_location("local_photographer_demo_test", path)
+    assert spec and spec.loader
+    demo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(demo)
+    demo.configure_synthetic_environment()
+    os.environ["ADMIN_TOTP_SECRET_ENV"] = os.environ.get("APP_ENV", "development")
+    demo.create_synthetic_owner(url)
 
 
 def legacy(connection):
@@ -130,12 +142,19 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
     from sqlalchemy.orm import Session
 
     from app import homolog_cleanup
-
-    # O inventário de limpeza precisa corresponder ao schema atual, incluindo
-    # tabelas de pagamento adicionadas depois da fundação de tenants.
-    migrate(migration_database, "upgrade", "20261025_0089")
-    engine = sa.create_engine(migration_database, poolclass=sa.pool.NullPool)
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "homolog")
+    # A limpeza exige o schema corrente completo: pagamentos, TOTP e carteira.
+    migrate(migration_database, "upgrade", "20261031_0093")
+    engine = sa.create_engine(migration_database, poolclass=sa.pool.NullPool)
+    create_synthetic_owner(migration_database)
+    with engine.connect() as connection:
+        admin_id = connection.scalar(sa.text("SELECT admin_user_id FROM platform_owner"))
+    engine.dispose()
+    # `head` is aliased to 0069 by this file's historical-migration helper;
+    # target the current schema explicitly for the cleanup contract.
+    migrate(migration_database, "upgrade", "20261111_0125")
+    engine = sa.create_engine(migration_database, poolclass=sa.pool.NullPool)
     roots = {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS}
     monkeypatch.setattr(homolog_cleanup, "EXPECTED_MEDIA_ROOTS", roots)
     for name, setting in (
@@ -148,11 +167,8 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
         monkeypatch.setenv(setting, str(roots[name]))
     with Session(engine, expire_on_commit=False) as db:
         tenant = db.scalar(sa.select(auth.Tenant))
-        admin = auth.AdminUser(email="clean@example.test", password_hash="synthetic",
-                               totp_secret="synthetic", email_verified=True)
-        admin.tenant_memberships.append(auth.TenantAdmin(tenant_id=tenant.id))
-        db.add(admin)
-        db.flush()
+        admin = db.get(auth.AdminUser, admin_id)
+        expected_totp_secret = admin.totp_secret
         session = auth.AuthSession(tenant_id=tenant.id, role="admin", subject_id=admin.id,
                                    admin_subject_id=admin.id, token_hash="synthetic",
                                    expires_at=auth.now() + timedelta(days=7))
@@ -170,7 +186,7 @@ def test_limpeza_preserva_admin_conta_sessao_e_canal(migration_database, monkeyp
         assert result["preserved"] == before["preserved"]
         assert all(count == 0 for count in result["database"].values())
         db.expire_all()
-        assert db.get(auth.AdminUser, admin.id).totp_secret == "synthetic"
+        assert db.get(auth.AdminUser, admin.id).totp_secret == expected_totp_secret
         assert db.get(auth.AuthSession, session.id) is not None
         assert db.get(auth.Tenant, tenant.id).status == "active"
         assert db.scalar(sa.select(auth.TenantAdmin)).active

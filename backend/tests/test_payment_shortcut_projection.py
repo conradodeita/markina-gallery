@@ -92,8 +92,8 @@ def test_shortcuts_keep_all_pending_orders_first_and_isolate_client_and_gallery(
     public_card = next(item for item in public if item["client_id"] == str(owner_id))
     private_card = client.get(f"/admin/derived-galleries/{gallery_id}/members").json()["members"][0]
     assert public_card["financial_orders"] == private_card["financial_orders"] == orders
-    assert public_card["selection_expires_at"] == private_card["selection_expires_at"]
-    assert public_card["selection_expires_at"].startswith(deadline.date().isoformat())
+    assert public_card["selection_expires_at"] is None
+    assert private_card["selection_expires_at"] is None
     communication_id = orders[0]["id"]
     assert client.post(f"/admin/payment-communications/{communication_id}/decision", json={"decision": "refused"}).status_code == 200
     refused_orders = client.get(f"/admin/derived-galleries/{gallery_id}/members").json()["members"][0]["financial_orders"]
@@ -114,7 +114,7 @@ def test_shortcuts_keep_all_pending_orders_first_and_isolate_client_and_gallery(
         assert len(list(db.scalars(select(SaleOrder)))) == 6
 
 
-def test_effective_deadlines_are_individual_nullable_and_read_only(client):
+def test_legacy_gallery_deadlines_are_ignored_by_access_payloads(client):
     authenticate_admin(client)
     with SessionLocal() as db:
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento com prazos", selection_duration_days=14)
@@ -137,15 +137,15 @@ def test_effective_deadlines_are_individual_nullable_and_read_only(client):
     for index, (gallery_id, owner_id) in enumerate(ids):
         row = next(row for row in public_cards if row["client_id"] == str(owner_id))
         private = client.get(f"/admin/derived-galleries/{gallery_id}/members").json()["members"][0]
-        assert row["selection_expires_at"] == private["selection_expires_at"]
-        assert bool(row["selection_expires_at"]) == (dates[index] is not None)
+        assert row["selection_expires_at"] is None
+        assert private["selection_expires_at"] is None
     client.cookies.clear()
     for index, (gallery_id, owner_id) in enumerate(ids):
         client.cookies.set("markina_session", f"deadline-{index}")
         payload = client.get(f"/public-galleries/{parent_id}")
         assert payload.status_code == 200
         row = next(row for row in public_cards if row["client_id"] == str(owner_id))
-        assert payload.json()["selection_expires_at"] == row["selection_expires_at"]
+        assert payload.json()["selection_expires_at"] is None
     with SessionLocal() as db:
         for index, (gallery_id, _) in enumerate(ids):
             stored = db.get(DerivedGallery, gallery_id).selection_expires_at

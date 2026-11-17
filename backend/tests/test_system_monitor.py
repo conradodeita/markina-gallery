@@ -511,6 +511,7 @@ def test_cleanup_inventory_preserves_monitor_and_security_audit(db, monkeypatch,
     db.add(MonitorBucket(minute=NOW, operation="http.read", latency_bin=100, count=1))
     db.add(MonitorActivity(session_id=session.id, last_activity=NOW))
     audit(db, "system_monitor.grants_granted", str(admin.id), tenant_id=tenant.id)
+    admin_id = admin.id
     db.commit()
     monkeypatch.setenv("APP_ENV", "homolog")
     monkeypatch.setattr(homolog_cleanup, "media_roots", lambda: {"synthetic": tmp_path})
@@ -528,7 +529,7 @@ def test_cleanup_inventory_preserves_monitor_and_security_audit(db, monkeypatch,
         assert result["preserved"][name] == 1
     assert result["preserved"]["admin_security_audit_events"] == 1
     assert result["database"]["client_gallery_audit_events"] == 0
-    assert str(admin.id) not in str(result)
+    assert str(admin_id) not in str(result)
 
 
 def test_photographer_tree_identifies_only_unique_active_email_and_searches_it(db):

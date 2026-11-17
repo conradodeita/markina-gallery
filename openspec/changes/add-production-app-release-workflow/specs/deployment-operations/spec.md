@@ -14,7 +14,7 @@ O workflow SHALL oferecer um release protegido e independente para alterações 
 - **THEN** o preflight compara o diff desde o checkout ativo de produção e falha fechado antes de qualquer mutação, mesmo quando a mudança facial já está em `main`, exigindo plano OpenSpec/release compatível
 
 ### Requirement: Inventário e aprovação do release API/web são vinculados ao SHA
-Antes de publicar, o sistema SHALL validar CI verde, SHA completo alcançável em `main`, árvore remota limpa, identidade do projeto, configuração Compose resolvida, estado e saúde dos serviços, versão ativa da API, revisão do banco, portas e domínio. O inventário SHALL ser somente-leitura, minimizar dados e gerar fingerprint que vincula esses fatos ao SHA candidato. A publicação SHALL aguardar aprovação humana protegida específica para o inventário/fingerprint e SHA exatos, e SHALL recalcular o fingerprint imediatamente antes de mutar.
+O inventário SHALL validar CI verde, SHA completo alcançável em `main`, checkout limpo, identidade do projeto, Compose resolvido, saúde dos serviços, versão da API, schema, portas e domínio. SHALL ser somente-leitura e gerar fingerprint minimizado vinculado ao SHA. A publicação SHALL aguardar aprovação humana protegida para o SHA/fingerprint exatos e recalcular o fingerprint antes de mutar.
 
 #### Scenario: Inventário corresponde ao alvo
 - **WHEN** os pré-requisitos de código, checkout, configuração efetiva, serviços e schema correspondem ao plano
@@ -25,7 +25,7 @@ Antes de publicar, o sistema SHALL validar CI verde, SHA completo alcançável e
 - **THEN** o release é recusado antes de trocar qualquer container
 
 ### Requirement: Release API/web não executa migrations nem altera dependências
-Após a aprovação exata, o release SHALL construir e recriar somente `api` e `web` de `markina-gallery`, com `--no-deps`, preservando o schema e os serviços ativos. O fluxo SHALL NOT recriar workers (inclusive workers faciais), banco, Redis ou nginx, nem alterar configuração Compose, arquivos `.env`, redes, volumes ou recursos de terceiros. Caso necessário para resolver upstreams, ele pode testar e recarregar somente o processo do nginx da Markina, sem editar configuração. A alteração do checkout e a criação de imagens anteriores SHALL ser limitadas ao projeto Markina.
+Após aprovação, o release SHALL construir e recriar somente `api` e `web` do projeto `markina-gallery` com `--no-deps`, sem migrations ou mudança de schema. SHALL NOT recriar workers, banco, Redis ou nginx nem alterar Compose, `.env`, redes, volumes ou recursos de terceiros. Pode recarregar somente o processo nginx da Markina sem editar configuração. Checkout e imagens de recuperação ficam limitados ao projeto Markina.
 
 #### Scenario: Release sem migration
 - **WHEN** os caminhos de migration e Docker/Compose estão vazios e o fingerprint aprovado continua válido

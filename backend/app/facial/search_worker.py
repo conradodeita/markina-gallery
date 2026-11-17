@@ -27,6 +27,7 @@ from app.auth import (
     expired,
     now,
 )
+from app.facial.closure_gate import biometric_cleanup_started
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope
 from app.facial.engine import search_gallery_index
@@ -283,7 +284,7 @@ def process_claimed_search_job(
             )
             for rank, match in enumerate(matches, start=1)
         )
-        if matches:
+        if matches and not biometric_cleanup_started(db, request.tenant_id):
             repository.enqueue(
                 db,
                 kind="cleanup",

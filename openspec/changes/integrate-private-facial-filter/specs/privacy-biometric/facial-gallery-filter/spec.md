@@ -8,7 +8,7 @@ Definir o tratamento biométrico mínimo, isolado e reversível necessário para
 
 ### Requirement: Gate global e política interna automática
 
-O processamento facial SHALL permanecer desligado por padrão no ambiente. Quando o operador habilitar o subsistema com versões, retenção, modelos e criptografia válidos, o sistema SHALL criar ou reconciliar automaticamente uma configuração técnica interna para cada Galeria pública ativa e SHALL NOT exigir declaração, preparação, autorização sobre menores ou ativação manual do fotógrafo. A presença de adultos ou menores nas fotos do acervo SHALL NOT bloquear nem alterar a indexação administrativa. Desligar globalmente SHALL interromper novas indexações e consultas sem retirar seleção manual, pedidos ou histórico.
+Processamento facial SHALL iniciar desligado. Com ambiente, versões, retenção, modelos e criptografia válidos, habilitá-lo SHALL reconciliar a política técnica de cada galeria ativa sem configuração manual do fotógrafo. Adultos e menores no acervo não bloqueiam a indexação administrativa. O kill switch interrompe novas buscas/indexações sem afetar seleção, pedidos ou histórico.
 
 #### Scenario: Ambiente sem prontidão
 
@@ -32,7 +32,7 @@ O processamento facial SHALL permanecer desligado por padrão no ambiente. Quand
 
 ### Requirement: Indexação assíncrona desacoplada da mídia
 
-O sistema SHALL indexar zero ou mais rostos somente depois que a prévia protegida da foto estiver pronta, em fila facial independente e de baixa prioridade. A indexação SHALL nascer de foto ou derivado novo, mudança explícita de versão, backfill ou retentativa, e SHALL NOT manter varredura recorrente da galeria. O estado administrativo agregado SHALL ser somente `processing`, `completed` ou `failed`; estado de política SHALL NOT fazer parte desse contrato. Falha facial SHALL NOT impedir publicação, visualização ou seleção manual da foto.
+Indexação facial SHALL ser assíncrona, de baixa prioridade e independente da entrega de mídia, iniciada apenas por foto/derivado novo, versão, backfill ou retentativa, sem varredura recorrente. O estado agregado é `processing`, `completed` ou `failed`, sem estado de política. Falha facial não bloqueia publicação, visualização ou seleção manual.
 
 #### Scenario: Prévia pronta em ambiente habilitado
 
@@ -61,14 +61,12 @@ O sistema SHALL indexar zero ou mais rostos somente depois que a prévia protegi
 
 ### Requirement: Progresso administrativo cobre todas as pastas
 
-O painel administrativo SHALL exibir na etapa 04, em `Processamento automático` → `Reconhecimento facial`, uma barra de progresso agregada para toda a Galeria pública. O total SHALL incluir cada foto de conteúdo assim que seu upload estiver persistido, independentemente da pasta e mesmo enquanto as prévias ainda estiverem em preparação. A interface SHALL continuar consultando enquanto o estado for `processing`, SHALL encerrar em `completed` quando todas as fotos terminarem e SHALL encerrar em `failed` quando restarem falhas ou o serviço não puder concluir o trabalho. O painel SHALL distinguir contagens reais de fotos prontas, aguardando preparo, na fila, em processamento e com falha sem fabricar percentual, e SHALL NOT exibir estado, gate ou ação de política. Ativos técnicos de capa SHALL NOT participar desse total.
-
-Além do progresso técnico, o painel SHALL informar separadamente a cobertura facial do acervo: quantidade e porcentagem de fotos de conteúdo que possuem ao menos um rosto detectado, usando como denominador o total recebido na Galeria pública. Foto processada com zero rostos SHALL contar como processamento concluído e SHALL NOT ser classificada como falha. A cobertura SHALL ser informativa para a decisão humana de compartilhar o link e SHALL NOT impor limiar automático sem configuração de negócio aprovada.
+Etapa 04 SHALL mostrar progresso facial por galeria e foto de conteúdo recebida, em qualquer pasta e durante preparo de prévias; capas ficam fora. Exibe contagens reais, atualiza enquanto há trabalho e termina em `completed`/`failed`, sem percentual inventado ou estado de política. Informa cobertura de fotos com rosto; zero rostos não é falha nem aciona limiar automático sem regra aprovada.
 
 #### Scenario: Upload distribuído entre pastas
 
 - **WHEN** o administrador envia fotos para uma ou mais pastas da mesma Galeria pública com o processamento facial habilitado
-- **THEN** a etapa 04 apresenta imediatamente `prontas/total` para o conjunto recebido em todas as pastas e atualiza a barra até cada foto terminar ou expor uma falha recuperável
+- **THEN** etapa 04 conta imediatamente todas as fotos recebidas em `prontas`, `aguardando preparo`, `fila`, `processando` ou `falha`, atualiza enquanto houver `processing`, conclui quando todos terminam e falha se restarem erros/indisponibilidade; não inventa percentual, não mostra gate de política e exclui capas técnicas
 
 #### Scenario: Prévia ainda não gerou job facial
 
@@ -78,7 +76,7 @@ Além do progresso técnico, o painel SHALL informar separadamente a cobertura f
 #### Scenario: Cobertura facial após o processamento
 
 - **WHEN** a Galeria pública possui fotos processadas com e sem rostos detectados
-- **THEN** o painel mostra `fotos com rosto/total` e sua porcentagem separadamente de `fotos processadas/total`, sem tratar ausência de rosto como erro
+- **THEN** o painel mostra `fotos com rosto/total` e porcentagem sobre todas as fotos recebidas, separadas de `fotos processadas/total`; zero rostos conta como concluído. A cobertura informa decisão humana e não impõe limiar de compartilhamento sem regra aprovada
 
 ### Requirement: Qualidade técnica versionada por rosto
 
@@ -110,7 +108,7 @@ Cada embedding do acervo SHALL pertencer a uma única Galeria pública, foto e v
 
 ### Requirement: Consentimento da cliente e referência com um rosto
 
-A cliente autenticada e autorizada SHALL aceitar um checkbox de consentimento específico e versionado para o uso temporário da foto de referência na procura por possíveis correspondências naquela Galeria pública antes de enviá-la. Esse consentimento SHALL pertencer à cliente e à referência, SHALL NOT ser substituído por declaração do fotógrafo e SHALL NOT ampliar acesso. O sistema SHALL aceitar somente formato, tamanho e resolução permitidos com exatamente um rosto utilizável, e SHALL retornar estados distintos para nenhum rosto, múltiplos rostos, baixa qualidade, índice incompleto, nenhum candidato, cancelamento e falha técnica.
+Antes do upload, a cliente autenticada e autorizada SHALL consentir, em versão vigente, o uso temporário da referência naquela galeria; declaração do fotógrafo não substitui o aceite nem amplia acesso. O sistema aceita apenas formato, tamanho e resolução permitidos com exatamente um rosto utilizável e distingue ausência/múltiplos rostos, baixa qualidade, índice incompleto, nenhum candidato, cancelamento e falha técnica.
 
 #### Scenario: Referência válida
 
@@ -176,7 +174,7 @@ A busca SHALL retornar somente possíveis fotos já visíveis à cliente na Gale
 
 ### Requirement: Proteção reforçada para menores
 
-O sistema SHALL manter a consulta iniciada por uma cliente com referência infantil desabilitada por padrão. Esse gate SHALL se aplicar somente ao upload temporário da referência e à consulta da cliente; SHALL NOT bloquear a indexação administrativa do acervo, mesmo quando as fotos contenham menores. Em homologação privada, o operador MAY habilitar a consulta infantil somente para uma execução explicitamente autorizada e vinculada a lote enviado pelo administrador/fotógrafo, com origem e finalidade documentadas, acesso autenticado, criptografia, retenção mínima e exclusão controlada. Fora desse modo controlado, a habilitação SHALL exigir mecanismo não biométrico de comprovação do responsável, consentimento verificável, aviso acessível, avaliação do melhor interesse e RIPD aprovado. A referência SHALL NOT ser usada para estimar idade, autenticar identidade, inferir atributos, treinar modelo ou publicidade.
+Consulta infantil SHALL ficar desabilitada por padrão; o gate vale só para upload/consulta da cliente, não para indexação administrativa. Upload exige checkbox único versionado, autodeclaração e consentimento específico, sem cadastro prévio ou prova. Fora da homologação controlada, exige aviso acessível, melhor interesse e RIPD. Referência não pode estimar idade, identificar pessoa, inferir atributos, treinar ou servir à publicidade.
 
 #### Scenario: Política infantil incompleta
 

@@ -20,7 +20,7 @@ O sistema SHALL apresentar todas as seleções persistidas e autorizadas da clie
 
 ### Requirement: Pagamento PIX único com origem preservada
 
-O sistema SHALL vincular um único pagamento manual ao conjunto de pedidos da mesma cliente, incluindo o caso de uma só galeria. O pagamento SHALL preservar um snapshot de valor total, instruções PIX e composição por pedido. QR Code, copia-e-cola e `Informar pagamento` SHALL se referir ao conjunto revisado. Os pedidos SHALL manter origem, itens, preços, regras e operação de produção/entrega próprios. O sistema SHALL NOT confirmar recebimento bancário pela exibição do QR Code ou pela comunicação da cliente.
+Uma revisão da cliente, inclusive de uma única galeria, SHALL usar um pagamento manual PIX e preservar snapshot do total, instruções e composição. QR Code, copia-e-cola e `Informar pagamento` SHALL corresponder à revisão. Cada pedido preserva origem, itens, preços, regras e operação própria. Exibir QR Code ou comunicar pagamento SHALL NOT confirmar recebimento bancário.
 
 #### Scenario: Comunicação consolidada
 - **WHEN** a cliente informa o pagamento da revisão válida de duas galerias

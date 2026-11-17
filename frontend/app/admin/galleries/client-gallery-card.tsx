@@ -1,11 +1,15 @@
 import { type FormEvent, type ReactNode, useRef, useState } from "react";
 
 import { StatusBadge } from "../../ui-kit";
-import { jpegStorageKey, uploadJpeg } from "../../upload-jpeg";
+import { confirmDuplicateJpegs, jpegStorageKey, uploadJpeg } from "../../upload-jpeg";
+import { CreditUploadFeedback, isDefinitiveUploadRejection, useCreditUploadStatus } from "../credits/credit-upload-status";
 import { FinancialOrderShortcuts, type FinancialOrder } from "../payments/payment-actions";
 import { OrderDeliveryForm, type OrderDelivery } from "../payments/order-delivery";
-import { SelectionDeadline } from "../../selection-deadline";
+import { applyPurchasedPhotoExportTheme } from "../purchased-photo-export";
 import { AdminPhotoPreviewDialog, type AdminPhotoPreview } from "./admin-photo-preview-dialog";
+import { FolderDeadlineFields } from "./folder-deadline-fields";
+import { folderAccessStatusLabel, mediaArchiveStatusLabel, type MediaArchiveStatus } from "../../media-archive-status";
+import { useFolderAccessClock } from "../../use-folder-access-clock";
 
 export type ClientGalleryRow = {
   client_id: string;
@@ -20,11 +24,10 @@ export type ClientGalleryRow = {
   selected_count: number;
   purchased_count: number;
   gallery_status: "pending_registration" | "no_selection" | "blocked" | "expired" | "active";
-  commercial_status?: "selection_finalized" | "pending_review" | "awaiting_payment" | "paid" | "overdue" | "cancelled" | "no_order";
+  commercial_status?: "selection_finalized" | "pending_review" | "awaiting_payment" | "paid" | "cancelled" | "no_order";
   reopening_status?: "pending" | "approved" | "refused" | null;
   finalized_orders?: Array<{ id: string; frozen_at: string; delivery: OrderDelivery; items: Array<{ name: string; preview_url: string | null }> }>;
   financial_orders?: FinancialOrder[];
-  selection_expires_at?: string | null;
   last_access_at?: string | null;
 };
 
@@ -41,14 +44,15 @@ const commercialStatus = {
   pending_review: { label: "Pagamento comunicado", tone: "warning" },
   awaiting_payment: { label: "Aguardando pagamento", tone: "neutral" },
   paid: { label: "Pago", tone: "success" },
-  overdue: { label: "Prazo expirado", tone: "danger" },
   cancelled: { label: "Pedido cancelado", tone: "dark" },
   no_order: { label: "Sem pedido", tone: "neutral" },
 } as const;
 
 type CollectionFolder = { id: string; name: string; status: string; photo_count: number;
-  preview_url?: string | null; assigned_client_ids: string[] };
-type CollectionPhoto = { id: string; name: string; preview_url: string | null; publication_state: string; can_delete: boolean };
+  preview_url?: string | null; media_state?: MediaArchiveStatus; assigned_client_ids: string[]; released_at?: string | null;
+  access_duration_days?: number | null; access_expires_at?: string | null };
+type CollectionPhoto = { id: string; name: string; preview_url: string | null; publication_state: string; can_delete: boolean; content_fingerprint?: string | null };
+type UploadIntent = { file: File; id: string; allowDuplicateContent?: boolean };
 type UploadState = { phase: "preparing" | "uploading" | "waiting" | "success" | "error";
   current: number; total: number; completed: number; filename: string;
   fileBytes: number; fileTotal: number };
@@ -68,14 +72,16 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
 }) {
   const [open, setOpen] = useState(false);
   const [folders, setFolders] = useState<CollectionFolder[]>([]);
+  const observedAt = useFolderAccessClock(folders, open);
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [photos, setPhotos] = useState<CollectionPhoto[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [expandedPhoto, setExpandedPhoto] = useState<AdminPhotoPreview | null>(null);
   const [uploadState, setUploadState] = useState<UploadState | null>(null);
-  const [retryFiles, setRetryFiles] = useState<File[]>([]);
+  const [retryFiles, setRetryFiles] = useState<UploadIntent[]>([]);
   const uploading = useRef(false);
+  const creditUpload = useCreditUploadStatus(uploadState !== null);
   const folderPath = `/api/admin/parent-galleries/${parentGalleryId}/clients/${person.client_id}/folders`;
 
   async function loadFolders() {
@@ -109,12 +115,13 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
     if (busy) return;
     const form = event.currentTarget;
     const name = String(new FormData(form).get("name") ?? "").trim();
+    const accessDurationDays = Number(new FormData(form).get("access_duration_days"));
     if (!name) return;
     setBusy(true);
     try {
       await collectionRequest(folderPath, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, access_duration_days: accessDurationDays }),
       });
       form.reset();
       await loadFolders();
@@ -125,38 +132,109 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
     } finally { setBusy(false); }
   }
 
-  async function uploadPhotos(files: File[]) {
-    if (!activeFolder || uploading.current || !files.length) return;
+  async function configureFolderDeadline(folder: CollectionFolder, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const accessDurationDays = Number(new FormData(event.currentTarget).get("access_duration_days"));
+    setBusy(true);
+    try {
+      await collectionRequest(`/api/admin/photo-folders/${folder.id}/deadline`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_duration_days: accessDurationDays }),
+      });
+      await loadFolders();
+      setMessage(folder.released_at
+        ? "Prazo configurado. A contagem começa agora."
+        : "Prazo atualizado. A contagem começa quando você liberar a pasta.");
+      await onRefresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível configurar o prazo da pasta.");
+    } finally { setBusy(false); }
+  }
+
+  async function renameFolder(folder: CollectionFolder) {
+    if (busy) return;
+    const proposedName = window.prompt("Novo nome da pasta", folder.name);
+    if (proposedName === null) return;
+    const name = proposedName.trim();
+    if (!name) { setMessage("Informe um nome para a pasta."); return; }
+    setBusy(true);
+    try {
+      await collectionRequest(`/api/admin/photo-folders/${folder.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      await loadFolders();
+      setMessage("Nome da pasta atualizado.");
+      await onRefresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível renomear a pasta.");
+    } finally { setBusy(false); }
+  }
+
+  async function uploadPhotos(intents: UploadIntent[], retrying = false) {
+    if (!activeFolder || uploading.current || !intents.length) return;
     const folderId = activeFolder;
+    const selectedCount = intents.length;
     uploading.current = true;
     setBusy(true);
     setRetryFiles([]);
     let completed = 0;
-    const failed: File[] = [];
+    let skippedDuplicates = 0;
+    const failed: UploadIntent[] = [];
     const errors: string[] = [];
     try {
+      if (!retrying) {
+        const folderPhotos = await collectionRequest(`/api/admin/photo-folders/${folderId}/photos`) as { photos: CollectionPhoto[] };
+        const review = await confirmDuplicateJpegs(
+          intents,
+          (intent) => intent.file,
+          folderPhotos.photos.map((photo) => photo.content_fingerprint),
+        );
+        const duplicateIndexes = new Set(review.confirmed ? review.duplicateIndexes : []);
+        intents = review.items.map((intent, index) => ({
+          ...intent, allowDuplicateContent: duplicateIndexes.has(index),
+        }));
+        skippedDuplicates = review.skippedCount;
+        if (!intents.length) {
+          setUploadState({ phase: "success", current: selectedCount, total: selectedCount,
+            completed: 0, filename: "", fileBytes: 0, fileTotal: 0 });
+          setMessage(`${skippedDuplicates} foto(s) repetida(s) ignorada(s). Nenhuma foto nova para enviar.`);
+          return;
+        }
+      }
       const openBatches = await collectionRequest(`/api/admin/photo-folders/${folderId}/upload-batches`) as { batches: Array<{ id: string }> };
       const batch = openBatches.batches[0] ?? await collectionRequest(`/api/admin/photo-folders/${folderId}/upload-batches`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
       }) as { id: string };
       try {
-        for (const [index, file] of files.entries()) {
-          const state = { current: index + 1, total: files.length, completed,
+        for (const [index, intent] of intents.entries()) {
+          const { file, id: uploadIntentId } = intent;
+          const state = { current: index + 1, total: intents.length, completed,
             filename: file.name, fileBytes: 0, fileTotal: file.size };
           setUploadState({ ...state, phase: "preparing" });
+          let photoId: string | null = null;
           try {
-            const storageKey = await jpegStorageKey(parentGalleryId, folderId, file);
+            const storageKey = await jpegStorageKey(parentGalleryId, folderId, file, uploadIntentId);
             const photo = await collectionRequest(`/api/admin/photo-folders/${folderId}/photos`, {
               method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ filename: file.name, storage_key: storageKey, upload_batch_id: batch.id }),
+              body: JSON.stringify({ filename: file.name, storage_key: storageKey,
+                upload_batch_id: batch.id,
+                  allow_duplicate_content: intent.allowDuplicateContent ?? false }),
             }) as { id: string };
+            photoId = photo.id;
+            creditUpload.startPhoto(photo.id, file.name);
             await uploadJpeg(`/api/admin/photo-assets/${photo.id}/source`, file,
               () => setUploadState({ ...state, phase: "waiting" }),
               (loaded, total) => setUploadState({ ...state, phase: "uploading",
                 fileBytes: loaded, fileTotal: total }));
+            await creditUpload.refreshPhoto(photo.id, file.name);
             completed++;
           } catch (error) {
-            failed.push(file);
+            if (photoId) {
+              void creditUpload.refreshPhoto(photoId, file.name, isDefinitiveUploadRejection(error));
+            }
+            failed.push(intent);
             errors.push(`${file.name}: ${error instanceof Error ? error.message : "falha no envio"}`);
           }
         }
@@ -166,14 +244,15 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
         });
       }
       setRetryFiles(failed);
-      setUploadState({ phase: failed.length ? "error" : "success", current: files.length,
-        total: files.length, completed, filename: failed[0]?.name ?? files.at(-1)?.name ?? "",
+      setUploadState({ phase: failed.length ? "error" : "success", current: selectedCount,
+        total: selectedCount, completed, filename: failed[0]?.file.name ?? intents.at(-1)?.file.name ?? "",
         fileBytes: 0, fileTotal: 0 });
       await loadFolders();
       const payload = await collectionRequest(`/api/admin/photo-folders/${folderId}/photos`) as { photos: CollectionPhoto[] };
       setPhotos(payload.photos);
-      setMessage(failed.length ? `${completed} de ${files.length} foto(s) enviada(s). ${errors.join(" ")}`
-        : `${completed} foto(s) enviada(s). As prévias serão preparadas pelo processamento normal.`);
+      const skippedNote = skippedDuplicates ? `${skippedDuplicates} repetida(s) ignorada(s). ` : "";
+      setMessage(failed.length ? `${skippedNote}${completed} foto(s) enviada(s). ${errors.join(" ")}`
+        : `${skippedNote}${completed} foto(s) enviada(s). As prévias serão preparadas pelo processamento normal.`);
       await onRefresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Fotos enviadas, mas não foi possível atualizar a lista.");
@@ -278,19 +357,23 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
         <a href={`/api/admin/orders/${order.id}/selection/export.txt`}>Baixar seleção finalizada (TXT)</a>
         <OrderDeliveryForm orderId={order.id} delivery={order.delivery} onRefresh={async () => { await onRefresh(); }} />
       </section>)}
-      <SelectionDeadline expiresAt={person.selection_expires_at} />
-      <button type="button" className="secondary" disabled={busy} onClick={() => { void changeAccess(); }}>
-        {person.access_status === "blocked" ? "Liberar acesso" : "Bloquear acesso"}
-      </button>
-      {person.selected_count > 0 ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${parentGalleryId}/clients/${person.client_id}/selection/export.csv`}>Baixar seleção atual (CSV)</a> : null}
-      {person.purchased_count > 0 ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${parentGalleryId}/clients/${person.client_id}/selection/export.html`}>Baixar fotos compradas</a> : null}
+      <div className="client-collection__actions" role="group" aria-label={`Ações do acervo de ${person.name}`}>
+        <button type="button" className="mk-button mk-button--secondary" disabled={busy} onClick={() => { void changeAccess(); }}>
+          {person.access_status === "blocked" ? "Liberar acesso" : "Bloquear acesso"}
+        </button>
+        {person.selected_count > 0 ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${parentGalleryId}/clients/${person.client_id}/selection/export.csv`}>Baixar seleção atual (CSV)</a> : null}
+        {person.purchased_count > 0 ? <a className="mk-button mk-button--secondary" href={`/api/admin/parent-galleries/${parentGalleryId}/clients/${person.client_id}/selection/export.html`} onClick={applyPurchasedPhotoExportTheme}>Baixar fotos compradas</a> : null}
+      </div>
       {person.reopening_status === "pending" ? <p className="gallery-client-pending">A cliente solicitou reabertura. Decida em Vendas e pagamentos.</p> : null}
       {message ? <p className="form-message" role="status">{message}</p> : null}
-      <h3>Pastas restritas ao cliente</h3>
-      <form className="gallery-inline-form" onSubmit={(event) => { void createFolder(event); }}>
-        <label>Nova pasta restrita<input name="name" maxLength={200} required /></label>
-        <button type="submit" className="primary" disabled={busy}>Criar pasta</button>
-      </form>
+      <section className="client-collection-folder-create">
+        <h3>Pastas restritas ao cliente</h3>
+        <form className="gallery-inline-form gallery-folder-create-form" onSubmit={(event) => { void createFolder(event); }}>
+          <label>Nova pasta restrita<input name="name" maxLength={200} required /></label>
+          <FolderDeadlineFields mode="creation" startsAt="release" />
+          <button type="submit" className="mk-button mk-button--primary" disabled={busy}>Criar pasta</button>
+        </form>
+      </section>
       <div className="client-collection-folder-list">{folders.map((folder) => <section key={folder.id}
         className={`client-collection-folder${activeFolder === folder.id ? " is-open" : ""}`}>
         <button type="button" aria-label={`${activeFolder === folder.id ? "Recolher" : "Abrir"} pasta ${folder.name}`}
@@ -300,35 +383,58 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
               onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
           </span>
           <span className="client-collection-folder__label"><strong>{folder.name}</strong>
-            <small>{folder.photo_count} foto(s) · {folder.status === "released" ? "Disponível" : "Preparando"}</small>
+            <span className="client-collection-folder__summary">
+              <small>{folder.photo_count} foto(s)</small>
+              <span className="mk-badge mk-badge--neutral">{folderAccessStatusLabel(folder, observedAt)}</span>
+            </span>
+            <small className="client-collection-folder__deadline-summary">
+              {folder.access_expires_at ? `Acesso até ${new Date(folder.access_expires_at).toLocaleString("pt-BR")}` : folder.access_duration_days ? `${folder.access_duration_days} dias após liberação` : "Prazo indeterminado"}
+            </small>
           </span>
           <span className="client-collection-folder__chevron" aria-hidden="true">{activeFolder === folder.id ? "▲" : "▼"}</span>
         </button>
-        {activeFolder === folder.id ? <div>
-          <a className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${parentGalleryId}/edit/imagens?folder=${folder.id}`}>Processamento da pasta</a>
-          <button type="button" className="secondary" disabled={busy} onClick={() => { void publishFolder(folder); }}>Disponibilizar fotos prontas</button>
-          <button type="button" className="link-button" disabled={busy} onClick={() => { void removeFolder(folder); }}>Excluir pasta</button>
-          {folder.assigned_client_ids.length > 1 ? <div className="client-collection-recipients">
-            <strong>Pasta compartilhada anterior · clientes com acesso</strong>
+        {activeFolder === folder.id ? <div className="client-collection-folder__body">
+          {folder.media_state && folder.media_state !== "available" ? <p className="client-collection-folder__status" role="status">{mediaArchiveStatusLabel(folder.media_state)}{folder.media_state === "archived" ? <>. Consulte <a href="/admin/credits">Créditos</a> para solicitar a recuperação.</> : "."}</p> : null}
+          {folder.media_state === "available" || !folder.media_state ? <>
+            <section className="client-collection-folder__management" aria-label={`Gestão da pasta ${folder.name}`}>
+              <h4>Ações da pasta</h4>
+              <div className="client-collection-folder__actions" role="group" aria-label={`Ações para pasta ${folder.name}`}>
+                <a className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${parentGalleryId}/edit/imagens?folder=${folder.id}`}>Processamento da pasta</a>
+                <button type="button" className="mk-button mk-button--primary" disabled={busy} onClick={() => { void publishFolder(folder); }}>Disponibilizar fotos prontas</button>
+                <button type="button" className="mk-button mk-button--secondary" disabled={busy} onClick={() => { void renameFolder(folder); }}>Renomear pasta</button>
+                <button type="button" className="mk-button mk-button--danger" disabled={busy} onClick={() => { void removeFolder(folder); }}>Excluir pasta</button>
+              </div>
+            </section>
+          </> : null}
+          {folder.status !== "released" || (!folder.access_duration_days && !folder.access_expires_at) ? <form className="gallery-inline-form client-collection-folder__deadline" onSubmit={(event) => { void configureFolderDeadline(folder, event); }}>
+            <FolderDeadlineFields mode="existing" startsAt={folder.released_at ? "save" : "release"} initialDays={folder.released_at ? null : folder.access_duration_days} />
+            <button type="submit" className="mk-button mk-button--primary" disabled={busy}>{folder.released_at ? "Definir prazo" : "Salvar prazo"}</button>
+          </form> : null}
+          {folder.assigned_client_ids.length > 1 ? <section className="client-collection-recipients" aria-label="Clientes com acesso">
+            <h4>Pasta compartilhada anterior · clientes com acesso</h4>
             <ul>{folder.assigned_client_ids.map((clientId) => <li key={clientId}>
               {linkedClients.find((client) => client.client_id === clientId)?.name ?? "Cliente vinculada"}
               <button type="button" className="link-button" disabled={busy} onClick={() => { void revokeClient(folder, clientId); }}>Remover acesso</button>
             </li>)}</ul>
-          </div> : null}
-          <div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id}>
-            {photo.preview_url ? <button type="button" className="photo-preview-button"
-              aria-label={`Ampliar ${photo.name}`} onClick={(event) => setExpandedPhoto({
-                src: `/api${photo.preview_url}`, alt: `Prévia ampliada de ${photo.name}`,
-                name: photo.name, trigger: event.currentTarget,
-              })}><img src={`/api${photo.preview_url}`} alt={`Prévia de ${photo.name}`} /></button> : <div className="gallery-cover">Preparando prévia</div>}
-            <strong>{photo.name}</strong><small>{photo.publication_state}</small>
-            {photo.can_delete ? <button type="button" className="link-button" disabled={busy} onClick={() => { void removePhoto(folder, photo); }}>Excluir foto</button> : null}
-          </article>)}</div>
-          <div className="gallery-inline-form">
-            <label>Adicionar JPEGs<input type="file" accept="image/jpeg" multiple disabled={busy}
+          </section> : null}
+          <section className="client-collection-folder__photos" aria-label={`Fotos da pasta ${folder.name}`}>
+            <h4>Fotos da pasta</h4>
+            <div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id}>
+              {photo.preview_url ? <button type="button" className="photo-preview-button"
+                aria-label={`Ampliar ${photo.name}`} onClick={(event) => setExpandedPhoto({
+                  src: `/api${photo.preview_url}`, alt: `Prévia ampliada de ${photo.name}`,
+                  name: photo.name, trigger: event.currentTarget,
+                })}><img src={`/api${photo.preview_url}`} alt={`Prévia de ${photo.name}`} /></button> : <div className="gallery-cover">{folder.media_state && folder.media_state !== "available" ? mediaArchiveStatusLabel(folder.media_state) : "Preparando prévia"}</div>}
+              <strong>{photo.name}</strong><small>{folder.media_state && folder.media_state !== "available" ? mediaArchiveStatusLabel(folder.media_state) : photo.publication_state}</small>
+              {photo.can_delete ? <button type="button" className="link-button" disabled={busy} onClick={() => { void removePhoto(folder, photo); }}>Excluir foto</button> : null}
+            </article>)}</div>
+          </section>
+          {folder.media_state === "available" || !folder.media_state ? <section className="client-collection-folder__upload" aria-label={`Upload para pasta ${folder.name}`}>
+            <h4>Enviar fotos</h4>
+            <label>Adicionar fotos (JPEG)<input type="file" accept="image/jpeg" multiple disabled={busy}
               onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []);
-                event.currentTarget.value = ""; void uploadPhotos(files); }} /></label>
-          </div>
+                event.currentTarget.value = ""; void uploadPhotos(files.map((file) => ({ file, id: crypto.randomUUID() }))); }} /></label>
+          </section> : null}
           {uploadState ? <div className={`upload-status upload-status--${uploadState.phase}`} role="status" aria-live="polite">
             <strong>{uploadState.phase === "preparing" ? "Preparando arquivo"
               : uploadState.phase === "uploading" ? `Enviando foto ${uploadState.current} de ${uploadState.total}`
@@ -338,8 +444,10 @@ function ClientCollection({ person, parentGalleryId, linkedClients, onRefresh }:
             {uploadState.phase === "uploading" ? <><progress value={uploadState.fileTotal ? uploadState.fileBytes : undefined}
               max={uploadState.fileTotal || 1} />{uploadState.fileTotal ? <span>{Math.round(uploadState.fileBytes / uploadState.fileTotal * 100)}% desta foto</span> : null}</> : null}
             {retryFiles.length ? <button type="button" className="secondary" disabled={busy}
-              onClick={() => { void uploadPhotos(retryFiles); }}>Tentar novamente {retryFiles.length} foto(s)</button> : null}
+                onClick={() => { void uploadPhotos(retryFiles, true); }}>Tentar novamente {retryFiles.length} foto(s)</button> : null}
           </div> : null}
+          <CreditUploadFeedback wallet={creditUpload.wallet} walletState={creditUpload.walletState}
+            items={creditUpload.items} visible={uploadState !== null} onVerifyPending={creditUpload.verifyPending} />
         </div> : null}
       </section>)}</div>
       {expandedPhoto ? <AdminPhotoPreviewDialog preview={expandedPhoto} onClose={() => setExpandedPhoto(null)} /> : null}

@@ -18,6 +18,17 @@ def main():
                 raise AssertionError(f"{name}: gate ausente {fragment}")
         if re.search(r"git (?:fetch|init)|mktemp|source /dev/stdin", text):
             raise AssertionError(f"{name}: inventário deve usar somente memória e objetos locais")
+    app_release = APP.split("release() {", 1)[1].split("\nrollback() {", 1)[0]
+    if "require_facial_processing_enabled_in_config" not in app_release:
+        raise AssertionError("release API/web deve validar FACIAL_PROCESSING_ENABLED=true no alvo")
+    if not (app_release.index("compose config --quiet")
+            < app_release.index("require_facial_processing_enabled_in_config")
+            < app_release.index("compose build") < app_release.index("compose up")):
+        raise AssertionError("release API/web deve recusar flag facial desabilitada antes do build/recreate")
+    app_rollback = APP.split("rollback() {", 1)[1].split("emergency_maintenance() {", 1)[0]
+    if not (app_rollback.index("require_facial_processing_enabled_in_config")
+            < app_rollback.index("compose up")):
+        raise AssertionError("rollback API/web deve preservar a flag facial ativa")
     for fragment in ('readonly PROJECT_ROOT="/opt/markina-gallery"', 'readonly PROJECT_NAME="markina-gallery"',
                      'readonly COMPOSE_FILE="docker/docker-compose.yml"', 'readonly ENV_FILE="docker/.env.homolog"',
                      'readonly PUBLIC_URL="https://markina.pickyourpic.com.br"',

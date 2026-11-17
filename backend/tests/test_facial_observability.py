@@ -293,7 +293,7 @@ def test_admin_endpoint_is_authenticated_and_exports_only_aggregates() -> None:
                 email="observability@markina.test",
                 email_verified=True,
                 password_hash=password_hasher.hash("Senha-observabilidade-2026"),
-                totp_secret="JBSWY3DPEHPK3PXP",
+                totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
             ))
             session.add(admin)
             session.flush()

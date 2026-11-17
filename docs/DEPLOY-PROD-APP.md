@@ -20,6 +20,14 @@ Para a identificação de responsáveis em pastas privadas, o manifesto fixa `ba
 
 O preflight usa a chave de leitura e o wrapper SSH restrito, inventaria checkout, versão ativa, revisão do banco, estado saudável, hashes da configuração resolvida, portas e smoke HTTPS. O fingerprint cobre o SHA candidato e o estado ativo. O JSON Compose resolvido não é impresso nem gravado.
 
+## Preservação do reconhecimento facial
+
+Em 14/11/2026, o proprietário informou que o reconhecimento facial está funcionando em produção e precisa permanecer com `FACIAL_PROCESSING_ENABLED=true` após deploy. O fluxo API/web valida a variável no runtime atual, no Compose resolvido e no Compose do SHA alvo antes do build/recreate; rollback também valida o alvo antes de recriar os serviços. O fluxo facial dedicado valida API e `face-search-worker`, e o release legado de aposentadoria InfinitePay valida a API e os workers que recria. Se a configuração estiver ausente ou resolver para outro valor, o gate aborta sem alterar os containers. O deploy não ativa a flag por conta própria nem inicia/reindexa workers.
+
+Os pins versionados do wrapper restrito acompanham esses guards: facial `515c3c82c30bf76be0ec8f01013225fb71276df3`, API/web `d2330bb81723f0545db9c8af9abaf8bc8fb943aa` e aposentadoria `d8fb13a50b5254e458f19d2c5d4ed8c43fadea1b`. A cópia root-owned no host é independente e precisa ser atualizada/conferida pelo procedimento autorizado antes de um preflight que use os novos scripts.
+
+O `.env.example` continua com o default local `false`; isso não define o ambiente operacional. A fonte de configuração da produção deve resolver a flag explicitamente como `true`. O fluxo único de transição APP_ENV em `transition-biometric-app-env-context` foi concluído em outubro e não é o caminho de deploy API/web; suas evidências documentam aquela execução, não o estado atual informado pelo proprietário.
+
 Somente após o inventário exato, o job `production` aguarda aprovação protegida. Ele recalcula o fingerprint, salva tags e referências das imagens anteriores, constrói `api` e `web`, recria apenas esses dois serviços, valida saúde, verifica e recarrega somente o Nginx da Markina e testa HTTPS. Falhas não disparam rollback automático. O worker OTP e os workers faciais permanecem fora da lista de serviços e não serão recriados; a reinicialização da API ainda pode interromper brevemente rotas HTTP/OTP, por isso o estado do worker deve ser conferido antes e depois. A recuperação é iniciada manualmente pelo `workflow_dispatch`: o preflight inventaria novamente o SHA anterior, as imagens e o runtime; depois, `production` exige aprovação própria antes de restaurar apenas API/web.
 
 ## Pré-requisito operacional

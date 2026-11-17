@@ -65,7 +65,7 @@ def tenant_for_host(db: Session, host: str | None) -> Tenant | None:
         return None
     tenant = db.scalar(select(Tenant).where(Tenant.canonical_host == hostname).execution_options(populate_existing=True))
     if tenant:
-        return tenant if tenant.status == "active" else None
+        return tenant if tenant.status == "active" and tenant.lifecycle != "closed" and tenant.canonical_host_status != "reserved" else None
     try:
         origin_hostname = configured_origin_hostname()
     except CanonicalHostError:
@@ -73,9 +73,27 @@ def tenant_for_host(db: Session, host: str | None) -> Tenant | None:
     if hostname != origin_hostname:
         return None
     active_tenants = db.scalars(select(Tenant).where(Tenant.status == "active")).all()
-    if len(active_tenants) != 1 or active_tenants[0].canonical_host is not None:
+    if len(active_tenants) != 1 or active_tenants[0].canonical_host is not None or active_tenants[0].lifecycle == "closed":
         return None
     return active_tenants[0]
+
+
+def closed_tenant_for_host(db: Session, host: str | None) -> Tenant | None:
+    """Resolve somente o host exato usado pelo fluxo de identidade de conta encerrada."""
+    try:
+        hostname = request_hostname(host)
+    except CanonicalHostError:
+        return None
+    tenant = db.scalar(
+        select(Tenant)
+        .where(
+            Tenant.canonical_host == hostname,
+            Tenant.lifecycle == "closed",
+            Tenant.canonical_host_status.is_distinct_from("reserved"),
+        )
+        .execution_options(populate_existing=True)
+    )
+    return tenant
 
 
 def tenant_id_for_host(db: Session, host: str | None) -> UUID | None:
@@ -97,7 +115,7 @@ def configured_origin_hostname() -> str:
 
 
 def canonical_host_for_tenant(db: Session, tenant: Tenant) -> str | None:
-    if tenant.status != "active":
+    if tenant.status != "active" or tenant.lifecycle == "closed" or tenant.canonical_host_status == "reserved":
         raise CanonicalHostError("Hostname canônico indisponível.")
     if tenant.canonical_host:
         hostname = normalize_canonical_host(tenant.canonical_host)
