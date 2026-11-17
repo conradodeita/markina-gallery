@@ -86,6 +86,8 @@ jobs:
         run: |
           ruff check scripts/prepare_admin_totp_compatibility.py scripts/test_prepare_admin_totp_compatibility.py
           python -m pytest scripts/test_prepare_admin_totp_compatibility.py -q
+          ruff check scripts/admin_totp_custody.py scripts/test_admin_totp_custody.py
+          python -m unittest scripts.test_admin_totp_custody -v
       - name: Contratos POSIX do corte de ambiente e pacotes cifrados
         run: |
           ruff check scripts/environment_cutover_release.py scripts/test_environment_cutover_release.py scripts/test_biometric_package_store.py

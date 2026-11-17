@@ -18,12 +18,22 @@ O pacote da API observada foi ensaiado somente na cópia isolada já migrada a01
 
 ### Keyring no ambiente protegido
 
-1. Gere uma chave AES de 32 bytes e um `key_id` estável (1–48 caracteres ASCII de letras, números, `_` ou `-`) diretamente no gerenciador de segredos aprovado para o ambiente.
+1. Gere uma chave AES de 32 bytes e um `key_id` estável (1–48 caracteres ASCII de letras, números, `_` ou `-`) diretamente no gerenciador de segredos aprovado para o ambiente, ou na custódia POSIX descrita abaixo.
 2. Configure `APP_ENV`, `ADMIN_TOTP_SECRET_ENV` (valor idêntico), `ADMIN_TOTP_ACTIVE_KEY_ID` e `ADMIN_TOTP_KEYS` como objeto JSON `{ "<key_id>": "<chave em Base64>" }` no secret store. Não coloque valores reais em `.env`, `.env.example`, logs, comandos registrados ou artefatos Git.
 3. Garanta que API, worker, `migrate` e `seed-admin` recebem as mesmas versões necessárias do keyring. Chave ausente, chave ativa ausente, Base64 inválido ou ambiente divergente causa falha fechada.
 4. Antes de habilitar a migration, execute o ensaio com banco PostgreSQL descartável: upgrade de base vazia e com fator sintético, leitura TOTP com o mesmo fator, downgrade e restore isolado. Inspecione somente se o banco contém envelope, sem imprimir a chave nem o plaintext.
 
-## Rotação
+## Alternativa de custódia POSIX
+
+Preparação solicitada pelo proprietário em16/11/2026. `python -m scripts.admin_totp_custody --directory /etc/pyp-totp --environment production -- <consumidor>` lê `keyring.json` e substitui o processo pelo consumidor com as variáveis validadas. Execute de um checkout operacional confiável contendo o helper, suas primitivas POSIX e o cipher do candidato. Os módulos precisam das dependências criptográficas existentes do backend. O helper não gera, provisiona, imprime ou exporta chaves para arquivos temporários.
+
+O diretório `/etc/pyp-totp` deve ser root:root0700 e o arquivo root:root0400 ou0600, regular, com um único hardlink. Todos os pais precisam ter propriedade e permissões aceitas pelas primitivas POSIX; caminhos dentro de diretório gravável por usuário de aplicação são recusados mesmo se a folha for root-only. O JSON contém exclusivamente `ADMIN_TOTP_SECRET_ENV`, `ADMIN_TOTP_ACTIVE_KEY_ID` e `ADMIN_TOTP_KEYS`, todos strings. O último valor é a string JSON do mapa de chaves Base64. O ambiente informado deve corresponder a `APP_ENV`.
+
+Para Docker, passe os nomes via `--env APP_ENV --env ADMIN_TOTP_SECRET_ENV --env ADMIN_TOTP_ACTIVE_KEY_ID --env ADMIN_TOTP_KEYS`; o cliente Docker recebe os valores pelo ambiente herdado do helper. Valores reais não podem aparecer nos argumentos, logs ou recibos. Operadores root e usuários com acesso ao daemon Docker conseguem consultar o ambiente do container. O helper entrega somente o keyring e não substitui o inventário de serviços, as outras configurações nem o procedimento de rollout.
+
+Antes do provisionamento real, guardar cópia controlada do arquivo fora do servidor, sob proteção independente, e comprovar recuperação das versões requeridas pelos backups. O ensaio sintético de16/11 validou Linux/Python3.10, execução do consumidor Docker isolado e recuperação após excluir a origem. A cópia externa usada no ensaio ficou na memória do processo Windows; isso comprova o caminho de transferência/restore, mas a custódia externa durável e offline do keyring real continua pendente. Nenhuma chave de produção foi criada por esse ensaio.
+
+## Rotação do keyring
 
 1. Publique primeiro no secret store a chave nova junto com todas as chaves antigas ainda referenciadas; selecione a nova como ativa. Não remova a antiga.
 2. Em cópia isolada/restaurável, rode `python -m app.rotate_totp_keys --dry-run`. O resumo mostra somente contagens por `key_id`, itens pendentes e o identificador ativo.
