@@ -8,6 +8,9 @@ O estágio inicial após o deploy fica restrito ao proprietário. As provas reai
 
 ## 1. Decisões recuperadas e proteções já comprovadas
 
+- [x] **Deploy do proprietário:** runtime9df3b735, schema0126,13 serviços saudáveis, dados/fator TOTP/índices preservados e integrações conferidas. Evidências e limites no [registro do release](production-release-2026-11-16.md).
+- [x] **Custódia TOTP:** arquivo root-only no servidor e cópia externa escolhida pelo proprietário em D:, com recuperação validada. A guarda offline física permanece sob responsabilidade do proprietário.
+
 - [x] **Decisão:** configurar e testar Drive/backup/arquivo após o release restrito ao proprietário, antes de liberar outros tenants.
 - [x] **Decisão:** backup inicial global diário, retenção de 7 diários/4 semanais/3 mensais; RPO alvo de 24 h e RTO alvo de 8 h, a medir; ensaio mensal de restauração.
 - [x] **Decisão:** conta do proprietário somente no ensaio inicial; identidade Workspace dedicada para a rotina de backup. Arquivo de fotos terá identidade e raiz próprias, separadas da cópia do banco.
@@ -67,7 +70,7 @@ Fonte: task 1.4 **pós-release/pré-tenants** e contratos da [change de arquivo]
 - [ ] **Configuração:** recuperar as chaves do widget Turnstile já criado, `Pick-your-Pic — Cadastro de fotógrafos`, Managed, hostname `pickyourpic.com.br`, sem pre-clearance; instalar as chaves no store da aplicação.
 - [ ] **Configuração/ensaio:** validar `EMAIL_PROVIDER`, `EMAIL_CREDENTIAL_ENV`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS` e TLS/timeout, preservando a configuração existente e o contexto `production`.
 - [ ] **Ensaio:** testar e-mail real para destinatário sintético controlado: entrega, OTP, expiração, rate limit e recuperação; conferir falha segura do Turnstile sem provisionamento de conta.
-- [ ] **Configuração/ensaio:** habilitar as flags de Turnstile/e-mail/cadastro somente após as provas anteriores e os gates Drive/backup/arquivo; verificar cadastro automático por e-mail + MFA, sem inventar aprovação manual do console.
+- [ ] **Implementação/configuração/ensaio:** promover formalmente o gate de prova local para ativação produtiva após as provas anteriores e os gates Drive/backup/arquivo; então habilitar as flags revisadas e verificar cadastro automático por e-mail + MFA. O código atual mantém essas rotas em404 com `APP_ENV=production`; `PHOTOGRAPHER_SIGNUP_LOCAL_PROOF_ENABLED` não é um interruptor de produção e não deve ser usado para contornar essa etapa. O fluxo aprovado não prevê aprovação manual de cada cadastro pelo console.
 
 Fontes: [signup, task 5.1](../../openspec/changes/add-photographer-signup-portal/tasks.md), [ingress por subdomínio](../../openspec/changes/enable-tenant-subdomain-ingress/tasks.md).
 

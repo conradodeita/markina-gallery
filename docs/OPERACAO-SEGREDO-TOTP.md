@@ -1,5 +1,7 @@
 # Operação do segredo TOTP administrativo
 
+Checkpoint16/11/2026 atualizado pelo [release em produção](saas-evolution/production-release-2026-11-16.md). Custódia privada, cópia externa escolhida pelo proprietário, rollout e restore0126 executados. As restrições de preparação local e inventários anteriores abaixo conservam seu contexto histórico. A revisão visual autenticada continua pendente.
+
 ## Escopo e estado
 
 O segredo TOTP do administrador é persistido em envelope AES-256-GCM no banco. O keyring é dedicado e deve vir de um gerenciador de segredos externo ao banco e ao Git. `APP_ENV` e `ADMIN_TOTP_SECRET_ENV` precisam identificar o mesmo ambiente. A API, o worker, a migration e o seed recebem a mesma configuração através do ambiente do servidor; o frontend nunca recebe as chaves.

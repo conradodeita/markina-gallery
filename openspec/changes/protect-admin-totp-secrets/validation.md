@@ -1,5 +1,9 @@
 # Validação e limites
 
+## Release produtivo autorizado — 16/11/2026
+
+Rollout aplicado no commit9df3b735 e schema0126, conforme [registro do release](../../../docs/saas-evolution/production-release-2026-11-16.md). CI da branch43996786889 e da main43999779751 aprovados. Keyring dedicado root-only e cópia externa em D: escolhida pelo proprietário recuperaram a mesma fixture; produção conserva o fator original cifrado, com plaintextNULL. Backup0126 restaurado isoladamente e decifrado. Treze serviços saudáveis,3196 probes de saúde/web sem erro; seis conjuntos financeiros e18891 embeddings preservados. Pagamentos/PIX prontos e WhatsApp reconectado/ready. Revisão visual autenticada pendente pelo erro de conexão Browser. As seções anteriores conservam o histórico dos ensaios e bloqueios de preparação.
+
 ## Custódia em arquivo privado — 16/11/2026
 
 `scripts/admin_totp_custody.py` reutiliza o cipher TOTP e as primitivas POSIX privadas do emissor. Quatro testes passaram em container Linux/Python3.10: modos/proprietário/symlinks/hardlinks, configuração e JSON duplicado, ambiente divergente com recusa antes do consumidor, recuperação após remoção do arquivo fonte. No Windows os quatro casos são explicitamente skipped por dependerem de POSIX; isso não foi contado como validação Linux. Ruff e OpenSpec estrito passaram.
