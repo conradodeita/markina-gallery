@@ -5,7 +5,8 @@
 - Host Oracle compartilhado `clearbudget-vnic`, Ubuntu ARM64, glibc 2.35, Python 3.10.12 e systemd 249. Entrada existente do Pick-your-Pic `markina.pickyourpic.com.br` pelo Nginx da Markina em `127.0.0.1:8080`. O backup não publica portas.
 - API `7d47d9072c29` no release `bfe511f`, PostgreSQL `56caed105a12`, ambos saudáveis e sem bind público. O nome interno histórico do banco contém `homolog`. A consulta somente leitura confrontou o identificador do cluster e o schema `20261113_0126` entre o próprio PostgreSQL e a sessão autenticada da API ativa. Os dois coincidem. A medição observada do banco foi cerca de 507 MiB, sem dump de produção.
 - Aproximadamente 128 GiB livres em `/var/lib`, leitura pontual. O agendamento preexistente compartilhado `oracle-project-backups.timer` está fora do escopo. Próxima execução observada perto de 03h10 BRT. O candidato da Markina propõe 05h30 BRT (08h30 UTC) e requer conferência de janela no ato de ativação.
-- O store `/etc/pyp-backup` está preparado, com vínculo de pasta, chave e `enabled=false`. O OAuth ativo, a pasta privada e a recuperação offline da chave têm recibos anteriores. A instalação ainda requer `source.json` root-only e configuração de recuperação confirmada.
+- O store `/etc/pyp-backup` está preparado, com vínculo inicial de pasta, chave e `enabled=false`. A atualização aprovada de 17/11 escolheu `Oracle-Production-Backups/Pick-your-Pic Global`; as pastas novas foram criadas vazias pelo conector, mas ainda não estão autorizadas pelo OAuth do app. O destino atual não foi alterado. A instalação ainda requer autorização via Picker com `drive.file`, ensaio sintético no novo destino, `source.json` root-only e configuração de recuperação confirmada.
+- A chave do navegador e a configuração do Google Picker ainda não foram provisionadas. O runtime da API espera `/run/secrets/google-drive-picker-config.json`; o Compose versionado não declara esse mount. Antes do gate pós-release, conciliar a configuração efetiva de produção para montar `/etc/pyp-google-drive/picker-config.json` somente na API, read-only, e restringir a chave aos referers e APIs documentados no checklist pós-deploy. Sem esse arquivo, o endpoint responde indisponível e o backup continua desligado.
 
 ## Pacote e execução
 
@@ -21,6 +22,15 @@ Validação local de preparação em 17/11: 123 testes de backup e Workspace pas
 
 Este documento registra a pré-revisão sem instalar unidade, gerar backup real, mudar agenda ou acessar dados de clientes. O pacote aprovado, a prova de origem/credenciais recuperáveis e a janela precisam ser revalidados para o primeiro disparo.
 
-## Ajuste do gate CI após o primeiro push
+## Validação local do seletor e vínculo (17/11/2026)
 
-A execução `44174150953` do SHA `17e7d7acbfafd1bac9828af9af644533ec5b1cee` terminou com falha somente em `backend/tests/test_app_env_transition_inventory.py::test_environment_and_credential_consumers_match_reviewed_matrix`. O shard falho registrou 866 testes aprovados, 5 ignorados e 1 falha. O relatório mostrou que a matriz esperada ainda não listava as referências existentes a `APP_ENV` em `production_cli.py`, `runtime_config.py` e `runtime_source.py`. A matriz foi atualizada com uma referência por arquivo; o teste focado local passou (**2 passed**). O push da correção e o CI correspondente continuam pendentes.
+- A suíte backend dos arquivos alterados concluiu com 55 aprovados e 5 skips no Windows; os 3 testes que exigem POSIX/root foram executados separadamente e passaram em container Linux descartável, sem rede e com o worktree somente leitura. O container foi removido ao terminar.
+- A UI do Picker passou 2 testes; Ruff, `compileall`, ESLint focado, TypeScript e `openspec validate enable-platform-backup-runtime --strict` passaram. `git diff --check` também passou.
+- A chave Google Picker e o arquivo root-only ainda não foram provisionados; a produção precisa montar `/etc/pyp-google-drive/picker-config.json` em `/run/secrets/google-drive-picker-config.json` somente na API. A seleção real e o ensaio de Drive continuam pendentes na task 3.2.
+- A build Next e a varredura Gitleaks ficam para o PR CI: havia processos Node locais ativos, e o ambiente local não tem Gitleaks instalado. O CI anterior `44179699458` refere-se ao SHA `15a56528737b3a00aa30584b3fbe2dfff9dc1ead` e não valida este worktree.
+
+## Gate CI do candidato
+
+A execução `44174150953` do SHA `17e7d7acbfafd1bac9828af9af644533ec5b1cee` falhou somente em `backend/tests/test_app_env_transition_inventory.py::test_environment_and_credential_consumers_match_reviewed_matrix`. A matriz foi corrigida para incluir `production_cli.py`, `runtime_config.py` e `runtime_source.py`; o teste focado local passou (**2 passed**). A correção foi publicada no SHA `15a56528737b3a00aa30584b3fbe2dfff9dc1ead`.
+
+No PR #374, a execução CI `44179699458` concluiu com sucesso em 17/11/2026 para esse SHA: escopo, OpenSpec, Gitleaks, qualidade backend, shards backend, frontend e imagens passaram. Os jobs de release/produção foram ignorados pela regra de escopo. O PR segue aberto e em draft. Esta aprovação não cobre as alterações locais posteriores de OpenSpec sobre o novo layout nem o seletor Google Picker; elas precisam de validação e CI próprios antes de merge/deploy.

@@ -4,12 +4,36 @@
 
 ### Requirement: Configuração e chave do backup operacional
 
-O chamador de backup SHALL usar uma chave operacional própria e um vínculo protegido a uma única pasta autorizada na conta Workspace escolhida. SHALL existir uma cópia offline da chave autenticada para recuperação sob custódia do proprietário.
+O chamador de backup SHALL usar uma chave operacional própria e um vínculo protegido a uma única pasta global autorizada na conta Workspace escolhida. SHALL existir uma cópia offline da chave autenticada para recuperação sob custódia do proprietário.
 
 #### Scenario: Configuração ou credencial incompatível
 
 - **WHEN** a chave, instalação, origem, destino, escopo ou permissão divergir da configuração revisada
 - **THEN** o chamador MUST abortar sem copiar o banco e registrar um código técnico sem expor credenciais
+
+### Requirement: Autorização mínima da pasta global
+
+O escopo OAuth SHALL permanecer `drive.file`. A seleção SHALL conceder acesso somente ao item escolhido. O token de acesso SHALL ser curto e ficar somente em memória no navegador; o refresh token MUST NOT ser exposto ao navegador.
+
+#### Scenario: Seleção do destino global
+
+- **WHEN** o proprietário selecionar pelo app a pasta `Pick-your-Pic Global` dentro de `Oracle-Production-Backups`
+- **THEN** o app SHALL confirmar que o item é uma pasta privada de propriedade do usuário, sob a raiz esperada, autorizada para o app e capaz de receber arquivos; a seleção SHALL ser registrada sem token e a ferramenta root-only SHALL vincular seu ID à configuração protegida mantendo `enabled=false`
+
+#### Scenario: Pasta não autorizada ou fora da raiz
+
+- **WHEN** a pasta não for própria, estiver em drive compartilhado, não tiver autorização do app, estiver fora da raiz esperada ou não aceitar novos itens
+- **THEN** o app MUST recusar o vínculo e o chamador MUST abortar sem copiar o banco
+
+#### Scenario: Publicação sem ativação do backup
+
+- **WHEN** o app e o runtime forem publicados antes da autorização do destino e da prova sintética
+- **THEN** o serviço e o timer SHALL permanecer desativados e nenhuma cópia real SHALL ser iniciada
+
+#### Scenario: Organização futura por tenant
+
+- **WHEN** o operador preparar a raiz `Pick-your-Pic Tenants`
+- **THEN** essa pasta SHALL permanecer apenas reservada até change própria implementar backup/restauração lógica por tenant, sem alterar a rotina de backup global
 
 ### Requirement: Execução interna agendada e manual
 

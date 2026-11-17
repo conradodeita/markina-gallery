@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -159,3 +160,77 @@ def load_runtime_config() -> RuntimeConfig:
             os.close(descriptor)
     except OSError:
         raise BackupStorageError("unsafe") from None
+
+
+def bind_selected_destination(folder_id: str, *, root: Path = CONFIG_ROOT) -> RuntimeConfig:
+    """Atualiza somente o ID do destino, depois da validação externa owner-only."""
+    if (os.getenv("APP_ENV") != "production" or not isinstance(folder_id, str)
+            or not _FOLDER_ID.fullmatch(folder_id)):
+        raise BackupStorageError("unsafe")
+    try:
+        directory = _private_root(root)
+    except OSError:
+        raise BackupStorageError("unsafe") from None
+    temporary_name = None
+    try:
+        keyring = parse_recovery_keyring(_read(directory, "keyring.json"))
+        current_raw = _read(directory, "destination.json")
+        current = _binding(current_raw, keyring)
+        if current.enabled:
+            raise BackupStorageError("unsafe")
+        fields = {"version", "installation_id", "destination_id", "provider", "scope",
+                  "parent_folder_id", "environment", "enabled", "marker"}
+        item = _object(current_raw, fields)
+        if item["parent_folder_id"] == folder_id:
+            return current
+        item["parent_folder_id"] = folder_id
+        updated_raw = (json.dumps(item, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        if not 0 < len(updated_raw) <= _LIMIT:
+            raise BackupStorageError("unsafe")
+        temporary_name = ".destination-" + secrets.token_hex(16) + ".tmp"
+        descriptor = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory,
+        )
+        try:
+            metadata = os.fstat(descriptor)
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0
+                    or metadata.st_nlink != 1 or stat.S_IMODE(metadata.st_mode) != 0o600):
+                raise BackupStorageError("unsafe")
+            with os.fdopen(descriptor, "wb", closefd=True) as stream:
+                descriptor = -1
+                if stream.write(updated_raw) != len(updated_raw):
+                    raise BackupStorageError("unsafe")
+                stream.flush()
+                os.fsync(stream.fileno())
+                os.fchmod(stream.fileno(), 0o400)
+                os.fsync(stream.fileno())
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        if _read(directory, "destination.json") != current_raw:
+            raise BackupStorageError("unsafe")
+        os.replace(temporary_name, "destination.json", src_dir_fd=directory, dst_dir_fd=directory)
+        temporary_name = None
+        os.fsync(directory)
+        updated = _binding(_read(directory, "destination.json"), keyring)
+        if (updated.parent_folder_id != folder_id or updated.enabled
+                or updated.destination_id != current.destination_id
+                or updated.keyring.installation_id != current.keyring.installation_id):
+            raise BackupStorageError("unsafe")
+        return updated
+    except BackupStorageError:
+        raise
+    except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
+        raise BackupStorageError("unsafe") from None
+    finally:
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+        os.close(directory)

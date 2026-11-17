@@ -24,6 +24,7 @@ from app.platform_backup.restore import BackupRestoreError, RestoreTargetState
 from app.platform_backup.runtime_config import (
     DESTINATION_MARKER,
     _binding,
+    bind_selected_destination,
     load_runtime_config,
     parse_recovery_keyring,
 )
@@ -107,12 +108,91 @@ def test_secure_files_reject_mode_symlink_and_hardlink(documents, monkeypatch):
         key_path.chmod(0o444)
         with pytest.raises(BackupStorageError, match="unsafe"):
             load_runtime_config()
+
+
+@pytest.mark.skipif(os.name != "posix" or getattr(os, "geteuid", lambda: -1)() != 0,
+                    reason="Atualização root-only é ensaiada em Linux isolado")
+def test_bind_selected_destination_changes_only_folder_and_keeps_runtime_disabled(
+        documents, monkeypatch):
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    ring, binding = documents
+    monkeypatch.setenv("APP_ENV", "production")
+    with TemporaryDirectory(dir="/root") as temporary:
+        root = Path(temporary)
+        key_path = root / "keyring.json"
+        key_path.write_bytes(dump(ring))
         key_path.chmod(0o400)
-        (root / "linked-key").hardlink_to(key_path)
+        destination_path = root / "destination.json"
+        original = dump(binding)
+        destination_path.write_bytes(original)
+        destination_path.chmod(0o400)
+
+        result = bind_selected_destination("approved-global-folder", root=root)
+
+        assert result.parent_folder_id == "approved-global-folder"
+        assert str(result.destination_id) == binding["destination_id"]
+        assert result.enabled is False
+        updated = json.loads(destination_path.read_bytes())
+        assert updated == {**binding, "parent_folder_id": "approved-global-folder"}
+        assert destination_path.stat().st_mode & 0o777 == 0o400
+        assert (root / "keyring.json").read_bytes() == dump(ring)
+
+
+@pytest.mark.skipif(os.name != "posix" or getattr(os, "geteuid", lambda: -1)() != 0,
+                    reason="Rejeições de configuração root-only são ensaiadas em Linux isolado")
+def test_bind_selected_destination_refuses_enabled_or_linked_configuration(documents, monkeypatch):
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    ring, binding = documents
+    monkeypatch.setenv("APP_ENV", "production")
+    with TemporaryDirectory(dir="/root") as temporary:
+        root = Path(temporary)
+        key_path = root / "keyring.json"
+        key_path.write_bytes(dump(ring))
+        key_path.chmod(0o400)
+        destination = root / "destination.json"
+        enabled = {**binding, "enabled": True}
+        destination.write_bytes(dump(enabled))
+        destination.chmod(0o400)
+        original = destination.read_bytes()
+        with pytest.raises(BackupStorageError, match="unsafe"):
+            bind_selected_destination("approved-global-folder", root=root)
+        assert destination.read_bytes() == original
+
+        destination.unlink()
+        linked = root / "destination-copy.json"
+        linked.write_bytes(dump(binding))
+        linked.chmod(0o400)
+        destination.hardlink_to(linked)
+        with pytest.raises(BackupStorageError, match="unsafe"):
+            bind_selected_destination("approved-global-folder", root=root)
+        destination.unlink()
+        linked.unlink()
+
+        linked.write_bytes(dump(binding))
+        linked.chmod(0o400)
+        destination.symlink_to(linked)
+        with pytest.raises(BackupStorageError, match="unsafe"):
+            bind_selected_destination("approved-global-folder", root=root)
+
+        destination.unlink()
+        destination.write_bytes(dump(binding))
+        destination.chmod(0o400)
+        linked_key = root / "keyring-copy.json"
+        linked_key.hardlink_to(key_path)
         with pytest.raises(BackupStorageError, match="unsafe"):
             load_runtime_config()
+        linked_key.unlink()
+
+        key_path.chmod(0o400)
         key_path.unlink()
-        key_path.symlink_to(root / "linked-key")
+        target_key = root / "keyring-target.json"
+        target_key.write_bytes(dump(ring))
+        target_key.chmod(0o400)
+        key_path.symlink_to(target_key)
         with pytest.raises(BackupStorageError, match="unsafe"):
             load_runtime_config()
 

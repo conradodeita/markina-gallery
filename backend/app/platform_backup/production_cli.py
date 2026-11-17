@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 
@@ -14,6 +15,7 @@ from app.google_drive_client import HttpxDriveTransport
 
 from .filesystem import BackupStorageError
 from .runtime_config import RuntimeConfig, load_runtime_config
+from .runtime_config import bind_selected_destination as bind_folder_id
 from .runtime_source import (
     SourceConfig,
     _attest_database,
@@ -22,7 +24,7 @@ from .runtime_source import (
     load_source_config,
     snapshot,
 )
-from .runtime_worker import WORK_ROOT, RuntimeResult, run_due
+from .runtime_worker import WORK_ROOT, RuntimeResult, _attest_destination, run_due
 from .workspace_store import WorkspaceDriveBackupStore
 
 # A credencial OAuth duradoura permanece no processo da API. O operador recebe
@@ -61,6 +63,41 @@ except Exception:
     sys.exit(1)
 """
 
+_SELECTED_FOLDER_PROVIDER = """
+import json
+import os
+import re
+import sys
+from datetime import timedelta
+from sqlalchemy import select, text
+from app.auth import AuditEvent, GoogleDriveConnection, SessionLocal, now
+from app.google_drive_client import SCOPE
+from app.system_monitor.models import PlatformOwner
+
+try:
+    if os.getenv("APP_ENV") != "production" or os.getenv("APP_VERSION") != sys.argv[1]:
+        raise ValueError
+    with SessionLocal() as db:
+        db.execute(text("SET TRANSACTION READ ONLY"))
+        tenants = db.scalars(select(GoogleDriveConnection.tenant_id).join(
+            PlatformOwner, PlatformOwner.admin_user_id == GoogleDriveConnection.connected_by_admin_id
+        ).where(GoogleDriveConnection.state == "connected",
+                GoogleDriveConnection.revoked_at.is_(None),
+                GoogleDriveConnection.scopes == SCOPE)).all()
+        if len(tenants) != 1:
+            raise ValueError
+        selection = db.scalar(select(AuditEvent).where(
+            AuditEvent.tenant_id == tenants[0],
+            AuditEvent.event == "google_drive.backup_folder_selected",
+            AuditEvent.created_at >= now() - timedelta(minutes=15),
+        ).order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(1))
+        if (selection is None or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", selection.subject)):
+            raise ValueError
+        print(json.dumps({"folder_id": selection.subject}))
+except Exception:
+    sys.exit(1)
+"""
+
 
 def _workspace(source: SourceConfig, config: RuntimeConfig) -> WorkspaceDriveBackupStore:
     attest_container(source.api_container, source.api_image, service="api")
@@ -80,7 +117,51 @@ def _workspace(source: SourceConfig, config: RuntimeConfig) -> WorkspaceDriveBac
         raise BackupStorageError("authorization") from None
 
 
+def _bind_selected_destination() -> RuntimeResult:
+    config = load_runtime_config()
+    if config.enabled:
+        raise BackupStorageError("unsafe")
+    source = load_source_config()
+    attest_container(source.api_container, source.api_image, service="api")
+    try:
+        raw = _docker("exec", source.api_container, "python", "-B", "-c",
+                      _SELECTED_FOLDER_PROVIDER, source.configuration["APP_RELEASE"])
+        if not 0 < len(raw) <= 1_000:
+            raise ValueError
+        result = json.loads(raw)
+        folder_id = result.get("folder_id") if isinstance(result, dict) else None
+        if (set(result) != {"folder_id"} or not isinstance(folder_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", folder_id)):
+            raise ValueError
+        candidate = RuntimeConfig(config.keyring, config.destination_id, folder_id, False)
+        store = _workspace(source, candidate)
+        _attest_destination(candidate, store)
+        bind_folder_id(folder_id)
+        bound = load_runtime_config()
+        if (bound.enabled or bound.parent_folder_id != folder_id
+                or bound.destination_id != config.destination_id
+                or bound.keyring.installation_id != config.keyring.installation_id):
+            raise BackupStorageError("unsafe")
+        return RuntimeResult("destination_bound")
+    except BackupStorageError:
+        raise
+    except (ValueError, TypeError, KeyError, OSError):
+        raise BackupStorageError("authorization") from None
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--bind-selected-destination"]:
+        try:
+            report = _bind_selected_destination()
+        except BackupStorageError as error:
+            report = RuntimeResult("failed", error=error.code)
+        except Exception:  # noqa: BLE001 -- o journal recebe apenas estado técnico sanitizado.
+            report = RuntimeResult("failed", error="io")
+        print(json.dumps(asdict(report), default=str, sort_keys=True))
+        return 0 if report.status == "destination_bound" else 1
+    if sys.argv[1:]:
+        print(json.dumps(asdict(RuntimeResult("failed", error="unsafe")), sort_keys=True))
+        return 1
     try:
         config = load_runtime_config()
         if not config.enabled:
