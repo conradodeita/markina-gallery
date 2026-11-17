@@ -1,6 +1,8 @@
 """Gates locais do OAuth Drive; nenhum cliente/conta Google é acessado."""
 
 import hashlib
+import json
+import os
 from datetime import timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -12,12 +14,31 @@ from sqlalchemy import select
 
 from app import google_drive_client
 from app import google_drive_oauth as drive
-from app.auth import AuditEvent, AuthSession, GoogleDriveConnection, GoogleDriveOAuthAttempt, now
+from app.auth import (
+    AuditEvent,
+    AuthSession,
+    GoogleDriveConnection,
+    GoogleDriveOAuthAttempt,
+    now,
+)
 from app.integration_secrets import IntegrationCipher, SecretEnvelope
 from tests.test_photographer_credits import create_accounts
 from tests.test_tenant_client_isolation import client_db as _client_db
 
 client_db = _client_db
+
+
+def _write_oauth_client_file(monkeypatch, tmp_path, *, client_secret="synthetic-secret",
+                             redirect_uri=drive.GOOGLE_DRIVE_EXPECTED_REDIRECT_URI):
+    path = tmp_path / "oauth-client.json"
+    path.write_text(json.dumps({"web": {
+        "client_id": "synthetic-client",
+        "client_secret": client_secret,
+        "redirect_uris": [redirect_uri],
+    }}), encoding="utf-8")
+    path.chmod(0o400)
+    monkeypatch.setattr(drive, "GOOGLE_DRIVE_CLIENT_CONFIG_PATH", path)
+    return path
 
 
 @pytest.fixture
@@ -39,31 +60,99 @@ def drive_http(client_db, monkeypatch):
 
 def test_external_oauth_and_revoke_are_closed_outside_production(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
-    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_ID", "synthetic-client")
-    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_SECRET", "synthetic-secret")
-    monkeypatch.setenv("GOOGLE_DRIVE_REDIRECT_URI", "https://example.test/callback")
     with pytest.raises(HTTPException) as rejected:
         drive._config()
     assert rejected.value.status_code == 503
     assert "real" in rejected.value.detail
 
 
-def test_callback_candidate_is_accepted_only_as_explicit_production_config(monkeypatch):
+def test_callback_candidate_is_loaded_from_protected_web_client_file(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_ID", "synthetic-client")
-    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_SECRET", "synthetic-secret")
-    monkeypatch.setenv("GOOGLE_DRIVE_REDIRECT_URI", "https://pickyourpic.com.br/api/admin/platform/drive/oauth/callback")
+    _write_oauth_client_file(monkeypatch, tmp_path)
+    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_ID", "legacy-client")
+    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_SECRET", "legacy-secret")
+    monkeypatch.setenv("GOOGLE_DRIVE_REDIRECT_URI", "http://legacy.invalid/callback")
     assert drive._config() == (
         "synthetic-client", "synthetic-secret",
-        "https://pickyourpic.com.br/api/admin/platform/drive/oauth/callback",
+        drive.GOOGLE_DRIVE_EXPECTED_REDIRECT_URI,
     )
 
 
-def test_oauth_redirect_uri_rejects_insecure_production_and_missing_secret(monkeypatch):
+def test_oauth_redirect_uri_rejects_insecure_production_and_missing_secret(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_ID", "synthetic-client")
-    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_SECRET", "")
-    monkeypatch.setenv("GOOGLE_DRIVE_REDIRECT_URI", "http://127.0.0.1:8000/callback")
+    _write_oauth_client_file(monkeypatch, tmp_path, client_secret="",
+        redirect_uri="http://127.0.0.1:8000/callback")
+    with pytest.raises(HTTPException) as rejected:
+        drive._config()
+    assert rejected.value.status_code == 503
+
+
+def test_oauth_client_env_cannot_fallback_when_protected_file_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_ID", "legacy-client")
+    monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_SECRET", "legacy-secret")
+    monkeypatch.setenv("GOOGLE_DRIVE_REDIRECT_URI", "https://legacy.invalid/callback")
+    monkeypatch.setattr(drive, "GOOGLE_DRIVE_CLIENT_CONFIG_PATH", tmp_path / "missing.json")
+
+    with pytest.raises(HTTPException) as rejected:
+        drive._config()
+    assert rejected.value.status_code == 503
+
+
+def test_oauth_client_file_rejects_invalid_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "production")
+    path = tmp_path / "oauth-client.json"
+    path.write_text("{invalid", encoding="utf-8")
+    path.chmod(0o400)
+    monkeypatch.setattr(drive, "GOOGLE_DRIVE_CLIENT_CONFIG_PATH", path)
+
+    with pytest.raises(HTTPException) as rejected:
+        drive._config()
+    assert rejected.value.status_code == 503
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Permissões POSIX são validadas no runtime Linux.")
+def test_oauth_client_file_rejects_permissive_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "production")
+    path = _write_oauth_client_file(monkeypatch, tmp_path)
+    path.chmod(0o644)
+
+    with pytest.raises(HTTPException) as rejected:
+        drive._config()
+    assert rejected.value.status_code == 503
+
+
+def test_oauth_client_file_rejects_unregistered_https_redirect(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "production")
+    _write_oauth_client_file(monkeypatch, tmp_path, redirect_uri="https://attacker.invalid/callback")
+
+    with pytest.raises(HTTPException) as rejected:
+        drive._config()
+    assert rejected.value.status_code == 503
+
+
+def test_oauth_client_file_rejects_multiple_redirect_uris(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "production")
+    path = _write_oauth_client_file(monkeypatch, tmp_path)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["web"]["redirect_uris"].append("https://attacker.invalid/callback")
+    path.chmod(0o600)
+    path.write_text(json.dumps(document), encoding="utf-8")
+    path.chmod(0o400)
+
+    with pytest.raises(HTTPException) as rejected:
+        drive._config()
+    assert rejected.value.status_code == 503
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Proteção contra symlink é validada no runtime Linux.")
+def test_oauth_client_file_rejects_symlink(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "production")
+    target = _write_oauth_client_file(monkeypatch, tmp_path)
+    link = tmp_path / "oauth-client-link.json"
+    link.symlink_to(target)
+    monkeypatch.setattr(drive, "GOOGLE_DRIVE_CLIENT_CONFIG_PATH", link)
+
     with pytest.raises(HTTPException) as rejected:
         drive._config()
     assert rejected.value.status_code == 503
