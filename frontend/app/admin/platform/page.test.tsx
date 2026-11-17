@@ -34,6 +34,7 @@ describe("console privado da plataforma", () => {
     const fetcher = mockApi(false);
     render(<PlatformConsole />);
     expect(await screen.findByText("Console indisponível")).toBeTruthy();
+    expect(screen.queryByLabelText("Senha atual do proprietário")).toBeNull();
     expect(fetcher.mock.calls.map(([path]) => String(path))).toEqual(["/api/admin/platform/console/capabilities"]);
   });
 
@@ -45,6 +46,7 @@ describe("console privado da plataforma", () => {
     fireEvent.change(screen.getByLabelText("Organização"), { target: { value: "all" } });
     fireEvent.click(screen.getByRole("button", { name: "Pesquisar" }));
     await screen.findByText(tenant.admin_email);
+    expect(await screen.findByLabelText("Senha atual do proprietário")).toBeTruthy();
     expect(fetcher.mock.calls.some(([path]) => String(path).includes("mode=all"))).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: `Consultar ${tenant.admin_email}` }));
     expect(await screen.findByText("Galerias: 2 · Fotografias: 7")).toBeTruthy();
@@ -62,6 +64,7 @@ describe("console privado da plataforma", () => {
     mockApi(true, connectedSources);
     render(<PlatformConsole />);
     expect(await screen.findByText("Autorização registrada")).toBeTruthy();
+    expect(screen.queryByLabelText("Senha atual do proprietário")).toBeNull();
     expect(screen.getByText(/A disponibilidade atual do Drive não foi verificada/)).toBeTruthy();
     expect(screen.getByText(/50 TiB usados de 100 TiB/)).toBeTruthy();
     expect(screen.queryByText(/Drive saudável|Drive disponível/i)).toBeNull();

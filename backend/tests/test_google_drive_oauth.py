@@ -5,6 +5,7 @@ import json
 import os
 from datetime import timedelta
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
@@ -259,6 +260,49 @@ def test_callback_without_state_fails_closed_before_provider_access(drive_http, 
     assert response.status_code == 400
     assert "no-store" in response.headers["cache-control"]
     assert "code" not in response.text.lower()
+
+
+def test_connect_start_returns_only_google_authorization_url_and_keeps_redirect_compatibility(
+    drive_http, client_db, monkeypatch
+):
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setattr(drive, "_config", lambda: (
+        "synthetic-client", "synthetic-client-secret", drive.GOOGLE_DRIVE_EXPECTED_REDIRECT_URI))
+    monkeypatch.setattr(drive, "reauthenticate_admin", lambda _admin, _password: None)
+    monkeypatch.setattr(drive, "matching_unused_totp_step", lambda *_args: 12345)
+    client, session = drive_http
+
+    response = client.post("/admin/platform/drive/connect/start",
+        headers={"Origin": "http://testserver"},
+        json={"current_password": "synthetic-password", "totp_code": "123456"})
+
+    assert response.status_code == 200
+    assert "no-store" in response.headers["cache-control"]
+    assert set(response.json()) == {"authorization_url"}
+    authorization_url = response.json()["authorization_url"]
+    parsed = urlsplit(authorization_url)
+    params = parse_qs(parsed.query)
+    assert parsed.scheme == "https" and parsed.netloc == "accounts.google.com"
+    assert parsed.path == "/o/oauth2/v2/auth"
+    assert params["client_id"] == ["synthetic-client"]
+    assert params["redirect_uri"] == [drive.GOOGLE_DRIVE_EXPECTED_REDIRECT_URI]
+    assert params["scope"] == [drive.SCOPE]
+    assert params["response_type"] == ["code"]
+    assert params["code_challenge_method"] == ["S256"]
+    assert "code_challenge" in params and "state" in params
+    assert "client_secret" not in authorization_url and "synthetic-client-secret" not in authorization_url
+    assert "code_verifier" not in authorization_url
+    attempt = client_db.query(GoogleDriveOAuthAttempt).one()
+    assert attempt.actor_admin_id == session.subject_id and attempt.auth_session_id == session.id
+    assert attempt.tenant_id == session.tenant_id and attempt.consumed_at is None
+    assert client_db.query(GoogleDriveConnection).count() == 0
+
+    legacy = client.post("/admin/platform/drive/connect",
+        headers={"Origin": "http://testserver"},
+        json={"current_password": "synthetic-password", "totp_code": "123456"},
+        follow_redirects=False)
+    assert legacy.status_code == 303
+    assert legacy.headers["location"].startswith("https://accounts.google.com/o/oauth2/v2/auth?")
 
 
 def test_callback_consumes_state_and_persists_only_encrypted_refresh_token(drive_http, client_db, monkeypatch):
