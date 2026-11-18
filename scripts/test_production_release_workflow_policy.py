@@ -83,6 +83,17 @@ def main() -> None:
     app_preflight = WORKFLOW.split("  production-app-preflight:", 1)[1].split(
         "  production-app-release:", 1
     )[0]
+    bridge_install = WORKFLOW.split("  production-app-compose-bridge-install:", 1)[1].split(
+        "  production-app-preflight:", 1
+    )[0]
+    require("inputs.operation == 'app-compose-bridge-install'", "instalação da ponte apenas por dispatch explícito", bridge_install)
+    require("github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'", "instalação apenas na main", bridge_install)
+    require("environment: production", "ponte exige ambiente protegido", bridge_install)
+    require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]", "instalação aguarda CI", bridge_install)
+    require("scripts/install-prod-app-compose-bridge.sh", "instalador fixo da ponte", bridge_install)
+    require("scripts/install-prod-preview-migration-wrapper.sh", "wrapper atualizado após instalar ponte", bridge_install)
+    if "PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY" in bridge_install:
+        raise AssertionError("instalação não pode usar a credencial somente leitura")
     app_release = WORKFLOW.split("  production-app-release:", 1)[1]
     compose_reconciliation = WORKFLOW.split("  production-app-compose-reconciliation:", 1)[1].split(
         "  production-app-rollback-preflight:", 1

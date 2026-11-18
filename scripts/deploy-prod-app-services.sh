@@ -9,17 +9,11 @@ readonly RELEASE_LOCK_BLOB="b95712afefc977e3aa8afe95a879c908103a6f79"
 readonly PROJECT_ROOT="/opt/markina-gallery"
 readonly EXPECTED_HOST="clearbudget-vnic"
 readonly PROJECT_NAME="markina-gallery"
-readonly COMPOSE_FILE="docker/docker-compose.yml"
 readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
+readonly APP_COMPOSE_BRIDGE="/usr/local/sbin/markina-gallery-app-compose-bridge"
+readonly APP_COMPOSE_BRIDGE_BLOB="ad12d790433204bb32b39b18841daa533aa66016"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
-readonly COMPOSE_FILE_LABEL="/opt/markina-gallery/docker/docker-compose.yml,/var/lib/markina-gallery/deploy-state/branding.compose.yml,/opt/markina-gallery/docker/docker-compose.preview-adjustment.yml,/opt/markina-gallery/docker/docker-compose.system-monitor.yml,/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
-readonly COMPOSE_EXTRA_FILES=(
-  "/var/lib/markina-gallery/deploy-state/branding.compose.yml"
-  "docker/docker-compose.preview-adjustment.yml"
-  "docker/docker-compose.system-monitor.yml"
-  "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
-)
 readonly SERVICES=(api web)
 readonly EXPECTED_DATABASE_REVISION="20261113_0126"
 
@@ -32,6 +26,7 @@ EXPECTED_URL="${MARKINA_PUBLIC_BASE_URL:-$PUBLIC_URL}"
 CHECKOUT_SHA=""
 ACTIVE_SHA=""
 COMPOSE_APP_VERSION=""
+BRIDGE_SOURCE_FINGERPRINT=""
 DATABASE_REVISION=""
 production_deploy_lock_fd=9
 
@@ -71,17 +66,22 @@ parse_arguments() {
   fi
 }
 
+bridge_call() {
+  local operation="$1"
+  shift
+  [[ "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$APP_COMPOSE_BRIDGE_BLOB" ]] || fail "ponte root-only diverge do blob revisado"
+  sudo -n "$APP_COMPOSE_BRIDGE" --mode "$MODE" --sha "$TARGET_SHA" \
+    --app-version "$COMPOSE_APP_VERSION" --approval-fingerprint "$APPROVAL_FINGERPRINT" \
+    --source-fingerprint "$BRIDGE_SOURCE_FINGERPRINT" \
+    "$operation" -- "$@"
+}
+
 compose() {
-  local files=(--env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE") file
-  for file in "${COMPOSE_EXTRA_FILES[@]}"; do files+=(-f "$file"); done
-  APP_VERSION="$COMPOSE_APP_VERSION" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" </dev/null
+  bridge_call compose "$@"
 }
 
 resolved_hashes() {
-  compose config --format json 2>/dev/null \
-    | docker compose -p "$PROJECT_NAME" -f - --profile facial --profile preview-adjustment \
-      config --no-interpolate --hash api,web 2>/dev/null \
-    || fail "não foi possível calcular hashes Compose resolvidos"
+  bridge_call hashes || fail "não foi possível calcular hashes Compose resolvidos"
 }
 
 database_revision() {
@@ -97,8 +97,7 @@ verify_repository() {
   local origin remote_sha api_id api_version service
   [[ "$(hostname)" == "$EXPECTED_HOST" ]] || fail "host diverge do alvo"
   [[ "$(pwd -P)" == "$PROJECT_ROOT" && "$(git rev-parse --show-toplevel)" == "$PROJECT_ROOT" ]] || fail "checkout Markina ausente"
-  [[ -f "$COMPOSE_FILE" && -f "$ENV_FILE" && -d "$STATE_DIR" ]] || fail "Compose, ambiente ou estado ausente"
-  for file in "${COMPOSE_EXTRA_FILES[@]}"; do [[ -f "$file" ]] || fail "manifesto Compose ativo ausente: $file"; done
+  [[ -f "$ENV_FILE" && -d "$STATE_DIR" ]] || fail "ambiente ou estado ausente"
   git check-ignore -q "$ENV_FILE" || fail "arquivo de ambiente não está ignorado"
   [[ -n "$EXPECTED_REPOSITORY" ]] || fail "repositório esperado ausente"
   [[ -z "$(git status --porcelain)" ]] || fail "checkout contém alterações locais"
@@ -197,15 +196,16 @@ verify_repository() {
   web_id="$(compose ps -q web)"
   [[ -n "$web_id" && "$web_id" != *$'\n'* ]] || fail "web ausente/duplicado"
   web_image="$(docker inspect --format '{{.Image}}' "$web_id")"
-  web_hash="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$web_id")"
+  web_hash="$(bridge_call service-hash web)" || fail "identidade semântica web indisponível"
   if [[ "$APP_INTERRUPTED" == false ]]; then
-    APP_WEB_IDENTITY="$(release_assert_web_identity "$web_image" "$web_hash")" || fail "identidade web não comprovada"
+    APP_WEB_IDENTITY="$(bridge_call web-identity)" || fail "identidade web não comprovada"
+    [[ "$APP_WEB_IDENTITY" == *" $web_image $web_hash "* ]] || fail "recibo web semântico diverge"
   fi
   if [[ "$MODE" == release ]]; then
     local current_image current_tag tag_id ref
     for service in "${SERVICES[@]}"; do
       ref="$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q "$service")")"
-      [[ "$ref" == "$PROJECT_NAME-$service" || "$ref" == "$PROJECT_NAME-$service:latest" ]] || fail "referência ativa inesperada"
+      [[ "$ref" == "$PROJECT_NAME-$service" || "$ref" == "$PROJECT_NAME-$service:latest" || "$ref" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "referência ativa inesperada"
       current_image="$(docker inspect --format '{{.Image}}' "$(compose ps -q "$service")")"
       [[ "$(release_image_id "$current_image")" == "$current_image" ]] || fail "imagem ativa não disponível"
       current_tag="$PROJECT_NAME-app-rollback-$service-${current_image#sha256:}"
@@ -218,20 +218,11 @@ verify_repository() {
 }
 
 require_facial_processing_enabled_in_config() {
-  local config
-  config="$(compose config --format json 2>/dev/null)" || fail "não foi possível validar a flag facial no Compose"
-  printf '%s\n' "$config" | python3 -c 'import json,sys
-try:
-    environment=json.load(sys.stdin)["services"]["api"].get("environment",{})
-    valid=isinstance(environment,dict) and environment.get("FACIAL_PROCESSING_ENABLED")=="true"
-except (AttributeError,KeyError,TypeError,ValueError):
-    valid=False
-sys.exit(0 if valid else 1)' \
-    || fail "FACIAL_PROCESSING_ENABLED deve permanecer true na API após o deploy"
+  bridge_call assert-facial || fail "APP_ENV=production e FACIAL_PROCESSING_ENABLED=true devem permanecer ativos"
 }
 
 runtime_snapshot() {
-  local hashes config_hash service id project actual_service workdir files hash health image expected
+  local hashes config_hash service id project actual_service hash health image expected
   compose config --quiet 2>/dev/null || fail "configuração Compose inválida"
   require_facial_processing_enabled_in_config
   hashes="$(resolved_hashes)"
@@ -241,13 +232,10 @@ runtime_snapshot() {
     [[ -n "$id" && "$(wc -l <<<"$id" | tr -d ' ')" == 1 ]] || fail "container $service ausente ou duplicado"
     project="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' "$id")"
     actual_service="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.service" }}' "$id")"
-    workdir="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$id")"
-    files="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$id")"
     health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id")"
     image="$(docker inspect --format '{{.Image}}' "$id")"
-    hash="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.config-hash" }}' "$id")"
-    [[ "$project" == "$PROJECT_NAME" && "$actual_service" == "$service" \
-      && "$workdir" == "/opt/markina-gallery/docker" && "$files" == "$COMPOSE_FILE_LABEL" ]] \
+    hash="$(bridge_call service-hash "$service")" || fail "prova semântica do serviço falhou"
+    [[ "$project" == "$PROJECT_NAME" && "$actual_service" == "$service" ]] \
       || fail "identidade do container $service diverge"
     expected="$(awk -v service="$service" '$1 == service {print $2}' <<<"$hashes")"
     expected="${expected#sha256:}"
@@ -281,20 +269,23 @@ runtime_snapshot() {
   [[ -n "$nginx_id" ]] || fail "nginx Markina ausente"
   ports="$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$nginx_id")"
   [[ "$ports" == '{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"8080"}]}' ]] || fail "bind nginx diverge"
-  printf 'nginx_bind=%s\ncompose_config=%s\n' "$ports" "$config_hash"
+  local source_fingerprint
+  source_fingerprint="$(bridge_call sources-fingerprint)" || fail "fingerprint das fontes Compose indisponível"
+  [[ "$source_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint das fontes Compose inválido"
+  printf 'nginx_bind=%s\ncompose_config=%s\ncompose_sources=%s\n' "$ports" "$config_hash" "$source_fingerprint"
 }
 
 fingerprint() {
   local fingerprint_mode="$MODE"
   [[ "$MODE" == release ]] && fingerprint_mode=inventory
   [[ "$MODE" == rollback ]] && fingerprint_mode=rollback-inventory
-  local snapshot recovery="" service
+  local snapshot="${1:-}" recovery="" service
   if [[ "$MODE" == rollback* ]]; then
     for service in "${SERVICES[@]}"; do
       recovery+="$(cat "$STATE_DIR/app-$service-rollback-id")|$(cat "$STATE_DIR/app-$service-image-ref")|"
     done
   fi
-  snapshot="$(runtime_snapshot)" || return 1
+  [[ -n "$snapshot" ]] || snapshot="$(runtime_snapshot)" || return 1
   printf '%s\n' "$fingerprint_mode" "$TARGET_SHA" "$ROLLBACK_SHA" "$ACTIVE_SHA" "$CHECKOUT_SHA" "$EXPECTED_URL" \
     "database_revision=$DATABASE_REVISION" "$COMPOSE_APP_VERSION" "${APP_WEB_IDENTITY:-}" "${APP_RESTORE_WEB:-}" "${APP_RESTORE_API_VERSION:-}" "$recovery" "$snapshot" \
     | sha256sum | awk '{print $1}'
@@ -333,17 +324,21 @@ rollback_inventory() {
 }
 
 release() {
-  local current_fp service id image tag ref api_before expected_api expected_web emergency target_hashes
+  local current_fp source_fingerprint service id image tag ref api_before expected_api expected_web emergency target_hashes approval_snapshot
   verify_repository
-  current_fp="$(fingerprint)"
+  approval_snapshot="$(runtime_snapshot)" || fail "runtime Compose não foi inventariado"
+  current_fp="$(fingerprint "$approval_snapshot")"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "fingerprint mudou; nada foi alterado"
+  source_fingerprint="$(sed -n 's/^compose_sources=//p' <<<"$approval_snapshot")"
+  [[ "$source_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint das fontes Compose inválido"
+  BRIDGE_SOURCE_FINGERPRINT="$source_fingerprint"
   printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/app-in-flight.sha"
   release_write_file app-web-rollback.identity "$APP_WEB_IDENTITY" || fail "recibo anterior não salvo"
   release_write_file app-api-rollback.version "$COMPOSE_APP_VERSION" || fail "versão API anterior não salva"
   for service in "${SERVICES[@]}"; do
     id="$(compose ps -q "$service")"
     image="$(docker inspect --format '{{.Image}}' "$id")"
-    ref="$(docker inspect --format '{{.Config.Image}}' "$id")"
+    ref="$PROJECT_NAME-$service"
     tag="$PROJECT_NAME-app-rollback-$service-${image#sha256:}"
     local existing
     if existing="$(release_image_id "$tag")"; then [[ "$existing" == "$image" ]] || fail "tag de recuperação já aponta a outro ID"; fi
@@ -352,10 +347,11 @@ release() {
     printf '%s\n' "$image" > "$STATE_DIR/app-$service-rollback-id"
     printf '%s\n' "$tag" > "$STATE_DIR/app-$service-rollback-image"
     printf '%s\n' "$ref" > "$STATE_DIR/app-$service-image-ref"
-    docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$id" > "$STATE_DIR/app-$service-rollback-hash"
+    bridge_call service-hash "$service" > "$STATE_DIR/app-$service-rollback-hash"
   done
   printf '%s\n' "$ACTIVE_SHA" > "$STATE_DIR/app-previous.sha"
   printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/app-in-flight.sha"
+  bridge_call snapshot || fail "snapshots Compose ativos não foram preservados"
   git switch --detach "$TARGET_SHA" >/dev/null
   api_before="$COMPOSE_APP_VERSION"
   COMPOSE_APP_VERSION="$TARGET_SHA"
@@ -405,7 +401,7 @@ release() {
       || fail "smoke HTTPS falhou em $path"
   done
   local web_hash
-  web_hash="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$(compose ps -q web)")"
+  web_hash="$(bridge_call service-hash web)"
   release_write_file web-current.identity "$TARGET_SHA $expected_web $web_hash $TARGET_SHA" || fail "identidade web não salva"
   # Histórico web-only anterior não é rollback válido depois de trocar a API.
   rm -f "$STATE_DIR/web-previous.identity" "$STATE_DIR/web-previous.services" "$STATE_DIR/web-previous.compose"
@@ -417,10 +413,15 @@ release() {
 
 rollback() {
   local current_fp service id image ref tag current_web current_api restore_web restore_api_version
+  local source_fingerprint approval_snapshot
   local -A restore_ids restore_refs next_ids next_refs next_tags
   verify_repository
-  current_fp="$(fingerprint)"
+  approval_snapshot="$(runtime_snapshot)" || fail "runtime Compose não foi inventariado para rollback"
+  current_fp="$(fingerprint "$approval_snapshot")"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "inventário de rollback mudou; nada foi alterado"
+  source_fingerprint="$(sed -n 's/^compose_sources=//p' <<<"$approval_snapshot")"
+  [[ "$source_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint das fontes Compose inválido"
+  BRIDGE_SOURCE_FINGERPRINT="$source_fingerprint"
   restore_web="$APP_RESTORE_WEB" restore_api_version="$APP_RESTORE_API_VERSION"
   for service in "${SERVICES[@]}"; do
     restore_ids[$service]="$(cat "$STATE_DIR/app-$service-rollback-id")"
@@ -435,7 +436,7 @@ rollback() {
     for service in "${SERVICES[@]}"; do
       id="$(compose ps -q "$service")"
       image="$(docker inspect --format '{{.Image}}' "$id")"
-      ref="$(docker inspect --format '{{.Config.Image}}' "$id")"
+      ref="$PROJECT_NAME-$service"
       tag="$PROJECT_NAME-app-rollback-$service-${image#sha256:}"
       local existing
       if existing="$(release_image_id "$tag")"; then [[ "$existing" == "$image" ]] || fail "tag de preservação em conflito"; fi
@@ -447,6 +448,7 @@ rollback() {
     done
     release_write_file app-rollback-in-flight.sha "$TARGET_SHA" || fail "não registrou tentativa"
   fi
+  bridge_call snapshot || fail "snapshots Compose atuais não foram preservados para rollback"
   current_web="$(release_read_identity "$STATE_DIR/app-rollback-next.identity")" || fail "recibo contingencial ausente"
   current_api="$(cat "$STATE_DIR/app-rollback-next.version")"
   for service in "${SERVICES[@]}"; do

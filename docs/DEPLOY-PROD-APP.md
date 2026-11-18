@@ -1,5 +1,21 @@
 # Release de API e web em produção
 
+## Ponte para snapshots protegidos — candidato de 18/11/2026
+
+Esta seção atualiza o procedimento para a configuração real do host; as notas de outubro abaixo são histórico. A change `add-root-only-compose-release-bridge` registra a autorização do proprietário para ponte root-only e prova semântica por serviço. Implementação local e CI não comprovam instalação nem publicação no servidor: consultar as evidências da change.
+
+- API e web podem usar fontes e diretórios diferentes. A ponte lê os labels de cada serviço e valida caminhos, proprietário, proteção de escrita e checksums. Não é necessário recriar containers para acrescentar `config-hash` ausente.
+- A prova semântica inclui defaults das imagens, ambiente, comando, healthcheck, mounts, redes e políticas Docker. Diferença ou campo sem contrato bloqueia. O digest semântico não é um label Compose e não substitui os IDs de imagem, versão, saúde e fontes no fingerprint.
+- Instalar somente por `CI → Run workflow → operation=app-compose-bridge-install`, em `main`, após todos os gates locais/PR. O job usa o Environment `production`, instala o blob root-owned revisado e depois o wrapper pinado; não publica serviços. Confere que IDs/imagens/inícios/estados dos containers não mudaram.
+- O executável fica em `/usr/local/sbin/markina-gallery-app-compose-bridge` (`root:root 0755`); backups do executável/wrapper ficam em `/var/backups/markina-gallery`, arquivos `0600`. Não alterar sudoers ou permissões das fontes para fazê-las legíveis pela conta comum.
+- O instalador faz fetch somente de `origin/main`, sob o lock operacional, para disponibilizar objetos de suporte; o checkout ativo permanece no SHA anterior. O preflight não faz fetch nem grava estado persistente. Cópias temporárias privadas são removidas na saída.
+- Depois da instalação, executar `operation=app-release`: preflight somente leitura identifica domínio `https://markina.pickyourpic.com.br`, entrada `127.0.0.1:8080`, schema `20261113_0126`, configuração facial e fingerprint. O job mutável continua protegido pelo Environment `production`; o executor recalcula o fingerprint antes de alterar estado.
+- API é construída sobre o ID da imagem ativa, com apenas o código `backend/app` do Git aprovado; diferença em requisitos/Dockerfile/migrations bloqueia. Isso preserva o runtime facial instalado. Web usa seu Dockerfile versionado. Não construir uma API convencional que descarte dependências faciais de produção.
+- Antes do build, guardar imagens e cópias/modelos verificados em `/var/lib/markina-gallery/app-compose-bridge/<operação>/` (`root:root 0700`, arquivos `0600`). O modelo aplicado muda somente imagem e `APP_VERSION` da API. Redes e volumes são externos; `up` é limitado por serviço com `--no-deps --no-build --pull never`.
+- Não reutilizar o recibo web antigo se ele não corresponde à imagem atual. Bootstrap somente leitura exige prova semântica e revisão de release igual ao checkout ancestral aprovado. Após sucesso, salvar recibo de imagem/digest semântico da nova versão.
+- Em falha, conservar marcadores e cópias. `operation=app-rollback` exige inventário/aprovação próprios, confere cópias e restaura somente API/web. Não restaurar banco, limpar fontes ou executar rollback automático. O Nginx só recebe teste/reload já autorizado.
+- Conclusão exige IDs de imagem e versão corretos, semântica preservada, schema intacto, `APP_ENV=production`, `FACIAL_PROCESSING_ENABLED=true`, saúde e HTTPS. Preservar evidência de invariância dos outros serviços. Não apagar cópias de recuperação sem política própria aprovada.
+
 Este fluxo publica somente `api` e `web` para uma mudança comercial previamente revisada. Ele é separado da manutenção facial: alterações mistas são recusadas pelo classificador e não iniciam nenhum release automaticamente.
 
 ## Alvo e impacto

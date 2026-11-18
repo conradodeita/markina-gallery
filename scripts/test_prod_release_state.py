@@ -57,6 +57,9 @@ if kind=="git":
     elif a[0]=="ls-remote": print(s["remote"]+"\trefs/heads/main")
     elif a[0]=="status":
         if s.get("dirty"): print(" M unexpected")
+    elif a[0]=="hash-object":
+        data=(Path(os.environ["SOURCE_ROOT"])/"scripts/production_app_compose_bridge.py").read_bytes().replace(b"\r\n",b"\n")
+        print(hashlib.sha1(b"blob "+str(len(data)).encode()+b"\0"+data).hexdigest())
     elif a[0]=="check-ignore": pass
     elif a[0]=="cat-file":
         if s.get("missing_target"): die("missing commit")
@@ -71,6 +74,22 @@ if kind=="git":
         elif path.endswith("runtime-gates.json"): print("{}")
         else: print((Path(os.environ["SOURCE_ROOT"])/path).read_text())
     else: die("unexpected git "+repr(a))
+elif kind=="app-bridge":
+    operation=a[0]
+    version=next((v.split("=",1)[1] for v in a if v.startswith("__APP_VERSION=")),"")
+    with Path(os.environ["CALLS"]).open("a") as log: log.write("app-bridge "+" ".join(a)+"\n")
+    if operation=="hashes":
+        print("api "+s["services"]["api"]["hash"])
+        print("web "+s["web_hash"])
+    elif operation=="sources-fingerprint": print(hashlib.sha256(Path(s["overlay_native"]).read_bytes()).hexdigest())
+    elif operation=="service-hash": print(s["services"][a[1]]["hash"])
+    elif operation=="web-identity": print(s["checkout"]+" "+s["services"]["web"]["image"]+" "+s["web_hash"]+" "+s["checkout"])
+    elif operation=="assert-facial":
+        facial=s.get("target_facial_config","true") if version==s["main"] else s.get("facial_runtime","true")
+        if facial!="true": die("facial disabled")
+        print("facial_processing_enabled=true app_env=production")
+    elif operation=="snapshot": print("snapshot=preserved")
+    else: die("unexpected app bridge operation "+repr(operation))
 elif kind=="dependency-policy":
     # Pure policy boundary: real Git/build-context behavior is covered by
     # test_dependency_release.py, including its actual shell invocation.
@@ -194,8 +213,15 @@ class ReleaseContracts(unittest.TestCase):
             path = self.base / f"{name}.sh"
             path.write_text(text, encoding="utf-8", newline="\n")
             self.scripts[name] = path
-        files = re.search(r'COMPOSE_FILE_LABEL="([^"]+)"', self.scripts["web"].read_text()).group(1)
-        for path in files.split(","):
+        file_paths = [
+            shell_path(self.project / "docker/docker-compose.yml"),
+            shell_path(self.state / "branding.compose.yml"),
+            shell_path(self.project / "docker/docker-compose.preview-adjustment.yml"),
+            shell_path(self.project / "docker/docker-compose.system-monitor.yml"),
+            shell_path(self.state / "system-monitor.compose.yml"),
+        ]
+        files = ",".join(file_paths)
+        for path in file_paths:
             if os.name == "nt":
                 path = subprocess.check_output([BASH, "-c", 'cygpath -w "$1"', "--", path], text=True).strip()
             f = Path(path)
@@ -264,6 +290,31 @@ git() {{ stub_call git "$@"; }}
 dependency_policy() {{
   if [[ "$1" == web-build ]]; then cat >/dev/null; fi
   stub_call dependency-policy "$@"
+}}
+sudo() {{
+  [[ "${{1:-}}" == -n ]] || return 80
+  shift
+  local executable="$1" mode="" target="" version="" fingerprint="" source_fingerprint="" operation="" after_separator=false
+  shift
+  local -a forwarded=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mode) mode="$2"; shift 2 ;;
+      --sha) target="$2"; shift 2 ;;
+      --app-version) version="$2"; shift 2 ;;
+      --approval-fingerprint) fingerprint="$2"; shift 2 ;;
+      --source-fingerprint) source_fingerprint="$2"; shift 2 ;;
+      compose|hashes|service-hash|web-identity|sources-fingerprint|assert-facial|snapshot) operation="$1"; shift ;;
+      --) after_separator=true; shift ;;
+      *) if [[ "$after_separator" == true ]]; then forwarded+=("$1"); shift; else return 81; fi ;;
+    esac
+  done
+  [[ "$executable" == "$APP_COMPOSE_BRIDGE" && -n "$operation" ]] || return 82
+  if [[ "$operation" == compose ]]; then
+    stub_call docker "__APP_VERSION=$version" compose "${{forwarded[@]}}"
+  else
+    stub_call app-bridge "$operation" "${{forwarded[@]}}" "__APP_VERSION=$version" "$mode" "$target" "$fingerprint" "$source_fingerprint"
+  fi
 }}
 docker() {{
   if [[ "$*" == "compose "* && " $* " == *" -f - "* ]]; then cat >/dev/null; fi
