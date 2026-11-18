@@ -58,6 +58,17 @@ Sem `config-hash`, a ponte SHALL comprovar equivalência efetiva entre snapshot 
 - **THEN** comparar ambiente incluindo defaults da imagem, comando/entrypoint, usuário, diretório, healthcheck, labels de aplicação, mounts, redes e políticas Docker com o snapshot do próprio serviço
 - **AND** somente o digest da comparação pode sair do processo privilegiado
 
+### Requirement: Instalador limita a origem Git sem alterar a configuração do host
+O instalador protegido SHALL aceitar somente as URLs canônicas exatas `https://github.com/conradodeita/markina-gallery.git` e `ssh://github.com/conradodeita/markina-gallery.git`, validar que `origin/main` corresponde ao SHA suportado e MUST NOT reescrever a configuração Git do host. Origem divergente SHALL ser rejeitada antes de qualquer escrita privilegiada.
+
+#### Scenario: Origem canônica em HTTPS ou SSH
+- **WHEN** `origin` usa uma das duas URLs canônicas e `origin/main` corresponde ao SHA suportado
+- **THEN** o instalador continua as verificações fixas de checkout, lock, backup e invariância
+
+#### Scenario: Origem divergente
+- **WHEN** `origin` contém outro host, caminho, protocolo ou credenciais
+- **THEN** o instalador recusa antes de qualquer escrita privilegiada e preserva a configuração do host
+
 ### Requirement: Rollback é inventariado, aprovado e limitado
 O rollback SHALL exigir inventário somente-leitura e aprovação protegida próprios, validar hashes dos snapshots e IDs das imagens preservadas e restaurar somente API/web. Falha de release MUST NOT iniciar rollback automático.
 
