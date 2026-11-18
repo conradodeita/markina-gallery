@@ -13,7 +13,8 @@ STATE = (ROOT / "scripts/deploy-prod-state.sh").read_text(encoding="utf-8")
 def main():
     for name, text in (("web", SCRIPT), ("app", APP)):
         for fragment in ('GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 PYTHONDONTWRITEBYTECODE=1', 'release_load_support || fail',
-                         'acquire_production_deploy_lock', 'release_assert_web_identity'):
+                         'acquire_production_deploy_lock',
+                         'release_assert_web_identity' if name == 'web' else 'bridge_call web-identity'):
             if fragment not in text:
                 raise AssertionError(f"{name}: gate ausente {fragment}")
         if re.search(r"git (?:fetch|init)|mktemp|source /dev/stdin", text):
