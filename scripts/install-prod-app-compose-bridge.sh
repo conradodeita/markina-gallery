@@ -9,7 +9,7 @@ readonly PRIVATE_STATE="/var/lib/markina-gallery/app-compose-bridge"
 fail() { echo "app-bridge-install: $*" >&2; exit 1; }
 origin_is_canonical() {
   case "$1" in
-    "https://github.com/$REPOSITORY.git"|"ssh://github.com/$REPOSITORY.git") return 0 ;;
+    "https://github.com/$REPOSITORY.git"|"ssh://github.com/$REPOSITORY.git"|"git@github.com:$REPOSITORY.git") return 0 ;;
     *) return 1 ;;
   esac
 }

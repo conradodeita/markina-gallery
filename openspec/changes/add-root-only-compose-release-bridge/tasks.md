@@ -11,7 +11,7 @@
 - [x] 2.1 Integrar ponte ao executor mantendo Git/lock/gates existentes. Evidência: 5 regressões de release/rollback e 6 contratos finais shell passaram; IDs vêm de labels e cada modelo é provado por serviço.
 - [x] 2.2 Pinar script app no forced-command wrapper e helper no script app; preservar modos read-only da chave de preflight. Evidência: testes de blob, corpo adulterado, SHA e política passaram.
 - [x] 2.3 Adicionar instalador protegido com backup verificado, metadados, troca atômica e recusa de argumentos inseguros. Evidência: sintaxe, fixture de rejeição antes de privilégio e política de workflow passaram; instalação real segue em 5.1.
-- [x] 2.4 Aceitar no instalador somente as URLs canônicas HTTPS e SSH comprovadas no checkout de produção; testar aceitação e recusa sem reescrever `origin`. Evidência: teste de allowlist no Bash para as duas URLs exatas e seis variantes inválidas; 35 testes da ponte passaram (um skip de symlink no Windows), Ruff, sintaxe Bash e OpenSpec estrito passaram.
+- [x] 2.4 Aceitar no instalador somente as origens canônicas HTTPS e SSH comprovadas no checkout de produção; testar aceitação e recusa sem reescrever `origin`. Evidência: allowlist Bash aceita as três formas exatas HTTPS/SSH URI/SCP e rejeita nove variantes; 34 testes passaram e um teste de symlink real foi pulado no Windows, Ruff, sintaxe Bash, OpenSpec estrito e `git diff --check` passaram.
 
 ## 3. Workflow, política e runbook
 
@@ -22,11 +22,11 @@
 ## 4. Integração e CI
 
 - [x] 4.1 Revisar escopo/segredos e diff exato, executar os gates locais aplicáveis, criar commit Conventional e push da branch; verificar CI completo e corrigir cada falha em commits restritos à change até ficar verde. Evidência: SHA `94662062f7f2dffd9df78714c305035e7dbbbdf7`, workflow `44307098266` concluído verde; jobs de instalação/deploy ficaram pulados com `operation=none`.
-- [ ] 4.2 Abrir PR, acompanhar CI/revisões, corrigir achados válidos e integrar somente quando todos os gates exigidos estiverem verdes; confirmar SHA integrado e CI de `main`. PR #379 integrado em `cf63a0d7e3cc0b6cd0c81af813bdca972c62aaff`; os checks obrigatórios do PR passaram. A CI pós-merge alcançou o preflight remoto, que bloqueou antes de mutação porque o wrapper instalado ainda não correspondia ao blob revisado; o retry depende da instalação protegida.
+- [ ] 4.2 Abrir PR, acompanhar CI/revisões, corrigir achados válidos e integrar somente quando todos os gates exigidos estiverem verdes; confirmar SHA integrado e CI de `main`. PR #379 foi integrado em `cf63a0d7e3cc0b6cd0c81af813bdca972c62aaff`; PR #380 integrou em `128f0d9e61e2aedc7921a33578105de68e65477b`, com checks obrigatórios verdes. CI pós-merge `44329800852` passou nos gates de código e falhou somente no preflight read-only por `script diverge do blob revisado`; a instalação protegida `44329904087` passou seus gates, mas recusou a forma SCP SSH exata antes de qualquer escrita. O follow-up de allowlist ainda precisa de PR verde e preflight pós-instalação.
 
 ## 5. Ativação protegida e deploy
 
-- [ ] 5.1 Instalar helper e wrapper no host apenas pelo workflow protegido; verificar host, backup, `root:root 0755`, SHA-256/blob, recusa de comando arbitrário e invariância de containers/configuração.
+- [ ] 5.1 Instalar helper e wrapper no host apenas pelo workflow protegido; verificar host, backup, `root:root 0755`, SHA-256/blob, recusa de comando arbitrário e invariância de containers/configuração. Evidência parcial: run `44329904087` parou em `origin_invalid` antes de `sudo`, lock, escrita ou consulta Docker; inspeção read-only classificou `origin` como `git@github.com:conradodeita/markina-gallery.git`, checkout limpo e `origin/main` igual ao SHA `128f0d9e61e2aedc7921a33578105de68e65477b`. Repetir após integrar a allowlist exata.
 - [ ] 5.2 Executar inventário root-only read-only para o SHA integrado; confirmar fingerprint, estado minimizado, equivalência permitida, schema `20261113_0126`, `APP_ENV=production`, `FACIAL_PROCESSING_ENABLED=true` e preservação dos snapshots sem revelar configuração.
 - [ ] 5.3 Após aprovação protegida vinculada ao fingerprint, publicar somente API/web sem migrations, mudança `.env`, alteração de dados, workers, backup ou serviços vizinhos; se qualquer gate falhar, não avançar para mutação e registrar causa.
 - [ ] 5.4 Confirmar IDs de imagem e versão, saúde/HTTPS, schema intacto, flag facial `true`, fontes e cópias recuperáveis; registrar evidência final no OpenSpec e checklist anterior.

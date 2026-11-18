@@ -9,6 +9,7 @@ O inventário API/web usa um conjunto canônico de arquivos Compose, mas os cont
 - Criar uma ponte operacional root-only, com interface fixa e comandos allowlistados para inventário, release e rollback somente de `api` e `web`.
 - Validar os arquivos Compose pelos labels dos containers, limitar caminhos às raízes persistentes aprovadas, verificar tipo, symlink, proprietário/modo e hashes, e manter o conteúdo fora de logs e artefatos do GitHub.
 - Fazer o preflight read-only usar a ponte exclusivamente para produzir inventário minimizado e fingerprint; permitir mutação somente pelo workflow protegido `production` após correspondência do fingerprint.
+- Validar a origem Git por allowlist exata em HTTPS, URI SSH ou formato SCP do OpenSSH, somente para o host e repositório autorizados, sem reescrever `origin`.
 - Preservar os snapshots originais e as imagens antes do release, e exigir novo inventário e aprovação próprios para rollback.
 - Manter schema, `.env`, `APP_ENV=production`, `FACIAL_PROCESSING_ENABLED=true`, workers, banco, Redis, nginx, backup, dados e recursos de outros projetos fora do escopo.
 
