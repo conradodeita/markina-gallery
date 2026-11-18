@@ -134,11 +134,20 @@ def prove_service_model(service: str, model: dict, document: dict, item: dict, i
         if not isinstance(mount, dict) or set(mount) - {"type", "source", "target", "read_only", "bind", "volume", "consistency"}:
             raise BridgeError("semantic_mount_field_unsupported")
         kind, source, target = mount.get("type"), mount.get("source"), mount.get("target")
+        bind_options, volume_options = mount.get("bind") or {}, mount.get("volume") or {}
+        if (set(bind_options) - {"propagation", "create_host_path"} or set(volume_options) - {"nocopy"}
+                or mount.get("consistency") not in (None, "", "consistent")):
+            raise BridgeError("semantic_mount_option_unsupported")
         if kind == "volume":
             definition = (document.get("volumes") or {}).get(source)
             if not isinstance(definition, dict) or not isinstance(definition.get("name"), str):
                 raise BridgeError("semantic_volume_name_unproven")
             source = definition["name"]
+            actual_options = next((entry.get("VolumeOptions") or {} for entry in host.get("Mounts") or []
+                                   if entry.get("Target") == target), {})
+            if set(actual_options) - {"NoCopy", "Labels", "DriverConfig"} or actual_options.get("Labels") or actual_options.get("DriverConfig"):
+                raise BridgeError("semantic_volume_option_unsupported")
+            _equal(bool(actual_options.get("NoCopy")), bool(volume_options.get("nocopy")), "volume_nocopy")
         elif kind != "bind":
             raise BridgeError("semantic_mount_type_unsupported")
         expected_mounts.append((kind, source, target, not bool(mount.get("read_only")),
@@ -159,6 +168,11 @@ def prove_service_model(service: str, model: dict, document: dict, item: dict, i
     for name, options in expected_networks.items():
         if not set(options.get("aliases") or []).issubset(set(actual_networks[name].get("Aliases") or [])):
             raise BridgeError("semantic_mismatch_network_aliases")
+        allowed_aliases = set(options.get("aliases") or []) | {service, item.get("Id", "")[:12],
+                           config.get("Hostname", ""), item.get("Name", "").lstrip("/")}
+        if set(actual_networks[name].get("Aliases") or []) - allowed_aliases:
+            raise BridgeError("semantic_unexplained_network_alias")
+        _equal(actual_networks[name].get("GwPriority", 0), options.get("gw_priority", 0), "network_gateway_priority")
 
     # Defaults reflect the Docker Engine contract; explicit values remain exact.
     for field, docker_field, default in (

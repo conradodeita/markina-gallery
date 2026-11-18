@@ -245,6 +245,9 @@ class SemanticProofTests(unittest.TestCase):
             lambda m, d, c, i: c["Mounts"][0].update(RW=False),
             lambda m, d, c, i: c["Mounts"][0].update(Name="other-tenant-volume"),
             lambda m, d, c, i: c["NetworkSettings"]["Networks"].update(other_project={}),
+            lambda m, d, c, i: c["NetworkSettings"]["Networks"]["markina-gallery_internal"].update(Aliases=["api", "unexpected-tenant"]),
+            lambda m, d, c, i: c["NetworkSettings"]["Networks"]["markina-gallery_internal"].update(GwPriority=10),
+            lambda m, d, c, i: c["HostConfig"].update(Mounts=[{"Target": "/media", "VolumeOptions": {"NoCopy": True}}]),
             lambda m, d, c, i: c["HostConfig"].update(Privileged=True),
             lambda m, d, c, i: c["HostConfig"].update(Memory=123456),
             lambda m, d, c, i: c["HostConfig"].update(SecurityOpt=["seccomp=unconfined"]),
@@ -444,6 +447,7 @@ class ProtectedOperationTests(unittest.TestCase):
             model, document, item, image = semantic_fixture()
             document["services"] = {service: model}
             item["Config"]["Labels"]["com.docker.compose.service"] = service
+            item["NetworkSettings"]["Networks"]["markina-gallery_internal"]["Aliases"] = [service]
             item["Config"]["Labels"].pop("com.docker.compose.config-hash")
             documents[service], containers[service] = document, item
         context = {"containers": containers, "config_hashes": {s: None for s in bridge.SERVICES}}
@@ -465,6 +469,7 @@ class ProtectedOperationTests(unittest.TestCase):
                 model, document, item, _image = semantic_fixture()
                 document["services"] = {service: model}
                 item["Config"]["Labels"]["com.docker.compose.service"] = service
+                item["NetworkSettings"]["Networks"]["markina-gallery_internal"]["Aliases"] = [service]
                 models[service], containers[service] = document, item
             manifest = {"version": 1, "target_sha": SHA, "fingerprint": FINGERPRINT,
                         "models": models, "containers": containers, "files": []}

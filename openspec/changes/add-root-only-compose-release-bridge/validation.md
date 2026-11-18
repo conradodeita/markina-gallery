@@ -30,6 +30,8 @@ SSH sem sudo confirmou host `clearbudget-vnic`, checkout `bfe511f850224823254b0f
 
 ## Em andamento
 
+- Primeiro push: commit `ff735dfa35a3334c6208de46bf774c56f17df623`, CI `44306467902`. Frontend, backend-quality, ARM64, OpenSpec e segredos passaram no snapshot consultado; aguardar conclusão dos demais jobs antes de declarar CI verde.
+- Revisão posterior acrescentou negativas para aliases inexplicados, prioridade de gateway e `NoCopy`, com pins recalculados. Os 34 testes da ponte, Ruff e política de workflow passaram novamente; regras existentes do produto/arquitetura não foram alteradas.
 - Gates locais concluídos e diff revisado; nenhum arquivo de aplicação, migration, credencial ou ambiente está no delta desta change. Prossiga ao commit/push e CI com o conjunto explícito; preserve `output`.
 - Não declarar instalação/deploy antes das evidências dos jobs protegidos e validação real do runtime.
 - Instalar ponte e wrapper apenas pelo dispatch protegido depois da integração; o preflight real ainda pode recusar campos de runtime sem contrato comprovado. Não transformar recusa em aprovação automática.
