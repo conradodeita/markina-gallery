@@ -24,3 +24,7 @@ Nenhuma.
 ## Impact
 
 Classificação/consulta de CI, workflow de release, documentação operacional e testes. Não altera aplicação, dados, segredos, regras de branch ou recursos de terceiros. As mudanças de execução protegida só serão ativadas após revisão, CI e integração; a autorização não torna irrestritas futuras operações fora do escopo concedido.
+
+## Extensão aprovada em 18/11/2026
+
+Estender a reutilização de CI à instalação protegida da ponte e do wrapper API/web. A instalação existente repetiu o CI completo no mesmo SHA depois de a primeira execução confirmar todos os checks de código e parar no preflight. O despacho dedicado reaproveita a evidência do push e continua restrito à instalação dos dois executáveis revisados.

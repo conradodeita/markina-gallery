@@ -25,3 +25,10 @@ O CI da PR #300 dividiu o backend, mas o workflow manual ainda roda toda a matri
 - [Estado muda entre consulta e deploy] → fingerprint fresco sob lock, SHA de main atual e recusa antes da mutação.
 - [Interpretação de autorização] → escopo explícito, ambiente e impacto apresentados; não ampliar a operações ou terceiros não autorizados.
 - [Alinhamento com main em release] → PR e integração somente depois da reconciliação do fluxo em andamento.
+
+## Instalação da ponte API/web
+
+- Mover somente o despacho de instalação da ponte/wrapper para um workflow dedicado, acionável manualmente em `main`. O job sem segredos de produção usa `actions: read` e `contents: read` para conferir o push exato, a tentativa mais recente e todos os jobs obrigatórios. Job de instalação exige sucesso na consulta e a revisão de `production`. Os comandos de instalação, pins dos dois blobs, guards do host, backup e teste de invariância são preservados.
+- A política específica da instalação admite um run completo cujo único job não verde seja `production-app-preflight`, concluído como falha, com escopo aprovado e `production-app-release` pulado. Isso permite corrigir a instalação que o próprio inventário precisa. CI pendente, falha de qualquer outro job, metadado incompleto, SHA alterado ou release com estado inesperado bloqueiam. A política estrita dos demais consumidores não muda.
+- A allowlist de escopo aceita os três caminhos de coordenação novos (workflow dedicado, verificador e seu teste), sem alterar blobs de aplicação. A evidência é conferida novamente após a revisão de `production` e antes de abrir o SSH.
+- O release retoma a tentativa original com `gh run rerun <run-id> --failed`, reaproveitando checks verdes. Seu preflight e sua aprovação protegida continuam obrigatórios após a instalação. O despacho de instalação não é um despacho de release.
