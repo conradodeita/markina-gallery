@@ -575,11 +575,119 @@ def _inspect_api_web() -> dict[str, dict]:
     return select_api_web(found)
 
 
-def _discover_context() -> dict:
+ENGINE_BOOTSTRAP_SHA = "bfe511f850224823254b0fc9f51fa7ff60ecfba0"
+ENGINE_BOOTSTRAP_RECEIPT_SHA256 = "70878b45d0f30b09ed6efda0c31aa556cfc035cecb642c4c7f5e1a04922299c0"
+ENGINE_BOOTSTRAP = {
+    "api": ("7d47d9072c290f93658f44c46bb242c22342ab83f1708e51ec4f9e7533c92b4e",
+            "sha256:55f3ae33eaac94c6944676e64b405840e9089a4c83f580a8488cafc4cf061cf7"),
+    "web": ("8bb408c6f48941b8fdf7ae982cd44ec26f1a849d74c6ac3476ab45ed6efe188d",
+            "sha256:a24fa563d7377f6f989bd40a09f8b7892c9b871302bb95b9ed4164f23cbcbf23"),
+}
+ENGINE_BOOTSTRAP_HOSTNAMES = {
+    "api": "pyp-drive-owner-bfe511f-api",
+    "web": "pyp-drive-owner-bfe511f-web",
+}
+ENGINE_CURRENT = "engine-current.json"
+ENGINE_PENDING = "engine-pending.json"
+
+
+def _engine_private_object(path: Path, *, pinned_hash: str = "") -> tuple[dict, str]:
+    _validate_tree_no_symlink(path)
+    _root_metadata(path.parent, directory=True, mode=0o700)
+    _root_metadata(path, mode=0o600)
+    checksum = snapshot_sha256(path)
+    if pinned_hash and checksum != pinned_hash:
+        raise BridgeError("engine_receipt_checksum_mismatch")
+
+    def unique(pairs):
+        result = dict(pairs)
+        if len(result) != len(pairs):
+            raise BridgeError("engine_private_object_ambiguous")
+        return result
+
+    try:
+        value = json.loads(_read_private_copy_source(path, checksum), object_pairs_hook=unique)
+    except (ValueError, TypeError, RecursionError):
+        raise BridgeError("engine_private_object_invalid") from None
+    if not isinstance(value, dict):
+        raise BridgeError("engine_private_object_invalid")
+    return value, checksum
+
+
+def _engine_bootstrap_receipt() -> str:
+    receipt, checksum = _engine_private_object(
+        STATE_DIR / "google-drive-owner-bfe511f" / "cutover.json",
+        pinned_hash=ENGINE_BOOTSTRAP_RECEIPT_SHA256)
+    containers = receipt.get("containers")
+    if (receipt.get("target") != ENGINE_BOOTSTRAP_SHA or receipt.get("phase") != "deployed"
+            or receipt.get("schema") != "20261113_0126" or not isinstance(containers, dict)
+            or set(containers) != set(SERVICES)
+            or any(not isinstance(containers[service], dict)
+                   or (containers[service].get("new_id"), containers[service].get("new_image"))
+                   != ENGINE_BOOTSTRAP[service] for service in SERVICES)):
+        raise BridgeError("engine_receipt_identity_mismatch")
+    return checksum
+
+
+def _engine_revision(item: dict) -> str:
+    config = item["Config"]
+    revision = environment_map(config.get("Env") or []).get("APP_VERSION", "")
+    if not SHA_RE.fullmatch(revision) or config["Labels"].get("io.pickyourpic.release") != revision:
+        raise BridgeError("engine_runtime_revision_mismatch")
+    return revision
+
+
+def _engine_records(containers: dict) -> dict:
+    return {service: {"id": item["Id"], "image": item["Image"], "revision": _engine_revision(item),
+                      "configuration": engine_runtime_identity(service, item)}
+            for service, item in containers.items()}
+
+
+def _engine_discover(mode: str, target_sha: str) -> tuple[dict, dict | None]:
+    pending_path = BRIDGE_STATE / ENGINE_PENDING
+    if pending_path.exists() or pending_path.is_symlink():
+        if mode not in {"rollback-inventory", "rollback"}:
+            raise BridgeError("engine_interrupted_requires_approved_recovery")
+        pending, pending_hash = _engine_private_object(pending_path)
+        participants = _engine_recovery_participants(pending, target_sha)
+        selected = {}
+        for service, (original, candidate) in participants.items():
+            healthy = [item for item in (original, candidate) if item is not None and _engine_healthy(item)]
+            if not healthy:
+                raise BridgeError("engine_recovery_no_healthy_participant")
+            selected[service] = healthy[0]
+        proof = {"type": "engine-recovery", "receipt": _engine_bootstrap_receipt(), "journal": pending_hash,
+                 "participants": _engine_recovery_evidence(participants)}
+        return selected, proof
+
+    selected = _inspect_api_web()
+    current_path = BRIDGE_STATE / ENGINE_CURRENT
+    if current_path.exists() or current_path.is_symlink():
+        current, checksum = _engine_private_object(current_path)
+        _engine_attested_manifest(current)
+        records = _engine_records(selected)
+        if records != current.get("containers"):
+            raise BridgeError("engine_active_proof_mismatch")
+        return selected, {"type": "engine-attested", "receipt": _engine_bootstrap_receipt(),
+                          "attestation": checksum, "containers": records}
+
+    pinned_ids = {slot[0] for slot in ENGINE_BOOTSTRAP.values()}
+    if not pinned_ids.intersection(item["Id"] for item in selected.values()):
+        return selected, None
+    for service in SERVICES:
+        item = selected[service]
+        if ((item["Id"], item["Image"]) != ENGINE_BOOTSTRAP[service]
+                or _engine_revision(item) != ENGINE_BOOTSTRAP_SHA):
+            raise BridgeError("engine_original_pair_mismatch")
+    return selected, {"type": "engine-bootstrap", "receipt": _engine_bootstrap_receipt(),
+                      "containers": _engine_records(selected)}
+
+
+def _discover_context(mode: str = "inventory", target_sha: str = "") -> dict:
     if not PROJECT_ROOT.is_dir() or not WORKING_DIR.is_dir() or not STATE_DIR.is_dir():
         raise BridgeError("project_paths_unavailable")
     env_digest = _validate_env_file()
-    selected = _inspect_api_web()
+    selected, engine = _engine_discover(mode, target_sha)
     sources: dict[str, dict] = {}
     for service in SERVICES:
         item = selected[service]
@@ -605,7 +713,7 @@ def _discover_context() -> dict:
             _validate_snapshot_source(path)
         sources[service] = {"paths": paths, "workdir": workdir, "config_hash": config_hash}
     all_paths = list(dict.fromkeys(path for service in SERVICES for path in sources[service]["paths"]))
-    return {"containers": selected, "paths": all_paths, "sources": sources,
+    return {"containers": selected, "paths": all_paths, "sources": sources, "engine": engine,
             "digests": {str(path): _validate_snapshot_source(path) for path in all_paths},
             "environment_digest": env_digest,
             "config_hashes": {service: sources[service]["config_hash"] for service in SERVICES}}
@@ -627,6 +735,9 @@ def _assert_sources_unchanged(context: dict) -> None:
             raise BridgeError("snapshot_changed_during_operation")
     if _validate_env_file() != context["environment_digest"]:
         raise BridgeError("environment_changed_during_operation")
+    engine = context.get("engine")
+    if engine is not None and _engine_bootstrap_receipt() != engine.get("receipt"):
+        raise BridgeError("engine_bootstrap_receipt_changed")
 
 
 def _resolved_config(context: dict, app_version: str, service: str = "api") -> dict:
@@ -643,6 +754,14 @@ def _resolved_config(context: dict, app_version: str, service: str = "api") -> d
 
 
 def _prove_context(context: dict) -> None:
+    if context.get("engine"):
+        # Historical sources are preserved and fingerprinted. Only the attested
+        # Engine metadata describes these explicitly identified containers.
+        context["models"] = {service: {} for service in SERVICES}
+        context["semantic_hashes"] = {service: _engine_observed_identity(service, item)
+                                      for service, item in context["containers"].items()}
+        _assert_sources_unchanged(context)
+        return
     models, identities = {}, {}
     for service in SERVICES:
         item = context["containers"][service]
@@ -681,13 +800,17 @@ def _sources_fingerprint(context: dict) -> str:
     material = {"compose": {service: {"files": [context["digests"][str(path)] for path in context["sources"][service]["paths"]],
                                       "workdir": str(context["sources"][service]["workdir"])} for service in SERVICES},
                 "environment": context["environment_digest"], "semantic": context.get("semantic_hashes", {})}
+    if context.get("engine"):
+        material["engine_proof"] = context["engine"]
     return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def _check_facial_config(context: dict, app_version: str) -> None:
-    config = context["models"]["api"]
-    api = config["services"].get("api")
-    environment = api.get("environment") if isinstance(api, dict) else None
+    if context.get("engine"):
+        environment = environment_map(context["containers"]["api"]["Config"].get("Env") or [])
+    else:
+        api = context["models"]["api"]["services"].get("api")
+        environment = api.get("environment") if isinstance(api, dict) else None
     if not isinstance(environment, dict):
         raise BridgeError("api_environment_invalid")
     if environment.get("APP_ENV") != "production":
@@ -935,6 +1058,8 @@ def _snapshot_sources(context: dict, mode: str, target_sha: str, fingerprint: st
         "models": context["models"],
         "containers": context["containers"],
     }
+    if context.get("engine"):
+        manifest["engine"] = context["engine"]
     _write_private_file(destination / "manifest.json", json.dumps(manifest, sort_keys=True).encode("utf-8"))
     _root_metadata(destination / "manifest.json")
 
@@ -1006,6 +1131,385 @@ def replacement_document(service: str, document: dict, original: dict, image_id:
     return result
 
 
+ENGINE_NETWORK = PROJECT + "_internal"
+_ENGINE_CONFIG_FIELDS = frozenset({
+    "Hostname", "Domainname", "User", "AttachStdin", "AttachStdout", "AttachStderr",
+    "ExposedPorts", "Tty", "OpenStdin", "StdinOnce", "Env", "Cmd", "Healthcheck",
+    "Image", "Volumes", "WorkingDir", "Entrypoint", "Labels", "StopSignal", "StopTimeout",
+})
+_ENGINE_HOST_FIELDS = frozenset({
+    "Binds", "ContainerIDFile", "LogConfig", "NetworkMode", "PortBindings", "RestartPolicy",
+    "AutoRemove", "VolumeDriver", "VolumesFrom", "ConsoleSize", "CapAdd", "CapDrop", "CgroupnsMode",
+    "Dns", "DnsOptions", "DnsSearch", "ExtraHosts", "GroupAdd", "IpcMode", "Cgroup", "Links",
+    "OomScoreAdj", "PidMode", "Privileged", "PublishAllPorts", "ReadonlyRootfs", "SecurityOpt",
+    "StorageOpt", "Tmpfs", "UTSMode", "UsernsMode", "ShmSize", "Runtime", "Isolation", "CpuShares",
+    "Memory", "NanoCpus", "CgroupParent", "BlkioWeight", "BlkioWeightDevice", "BlkioDeviceReadBps",
+    "BlkioDeviceWriteBps", "BlkioDeviceReadIOps", "BlkioDeviceWriteIOps", "CpuPeriod", "CpuQuota",
+    "CpuRealtimePeriod", "CpuRealtimeRuntime", "CpusetCpus", "CpusetMems", "Devices",
+    "DeviceCgroupRules", "DeviceRequests", "MemoryReservation", "MemorySwap", "MemorySwappiness",
+    "OomKillDisable", "PidsLimit", "Ulimits", "CpuCount", "CpuPercent", "IOMaximumIOps",
+    "IOMaximumBandwidth", "MaskedPaths", "ReadonlyPaths", "Init", "Mounts", "KernelMemory",
+    "KernelMemoryTCP",
+})
+_ENGINE_BIND_ROOTS = ("/etc/pyp-totp", "/etc/pyp-google-drive", "/opt/markina-gallery",
+                      "/var/lib/markina-gallery")
+_ENGINE_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}")
+
+
+def _engine_safe_path(value: object) -> bool:
+    return (isinstance(value, str) and bool(re.fullmatch(r"/[a-zA-Z0-9_./-]{1,4095}", value))
+            and not any(part in {"", ".", ".."} for part in value[1:].split("/")))
+
+
+def engine_service_endpoint(service: str, item: dict, *, shadow: bool = False) -> tuple[str, tuple[str, ...]]:
+    """Check the sole permitted endpoint without accepting static addresses or published ports."""
+    if service not in SERVICES:
+        raise BridgeError("engine_service_invalid")
+    host, network = item.get("HostConfig"), item.get("NetworkSettings")
+    if not isinstance(host, dict) or not isinstance(network, dict) or host.get("NetworkMode") != ENGINE_NETWORK:
+        raise BridgeError("engine_network_mode_invalid")
+    bindings = host.get("PortBindings")
+    published = network.get("Ports")
+    if (bindings not in (None, {}) or host.get("PublishAllPorts", False) is not False
+            or (published is not None and (not isinstance(published, dict)
+                                          or any(value not in (None, []) for value in published.values())))):
+        raise BridgeError("engine_published_ports_not_allowed")
+    endpoints = network.get("Networks")
+    if not isinstance(endpoints, dict) or set(endpoints) != {ENGINE_NETWORK}:
+        raise BridgeError("engine_network_scope_invalid")
+    endpoint = endpoints[ENGINE_NETWORK]
+    if not isinstance(endpoint, dict):
+        raise BridgeError("engine_endpoint_invalid")
+    network_id = endpoint.get("NetworkID")
+    if not isinstance(network_id, str) or not CONTAINER_ID_RE.fullmatch(network_id):
+        raise BridgeError("engine_network_id_invalid")
+    if (endpoint.get("IPAMConfig") not in (None, {}) or endpoint.get("DriverOpts") not in (None, {})
+            or endpoint.get("Links") not in (None, []) or type(endpoint.get("GwPriority", 0)) is not int
+            or endpoint.get("GwPriority", 0) != 0):
+        raise BridgeError("engine_endpoint_options_invalid")
+    from ipaddress import IPv4Address, IPv6Address
+
+    try:
+        if endpoint.get("Gateway"):
+            IPv4Address(endpoint["Gateway"])
+        if endpoint.get("IPv6Gateway"):
+            IPv6Address(endpoint["IPv6Gateway"])
+    except (TypeError, ValueError):
+        raise BridgeError("engine_endpoint_gateway_invalid") from None
+    aliases = endpoint.get("Aliases")
+    if aliases is None:
+        aliases = []
+    identity = item.get("Id", "")
+    if (not isinstance(identity, str) or not CONTAINER_ID_RE.fullmatch(identity)
+            or not isinstance(aliases, list) or len(aliases) > 3
+            or any(not isinstance(alias, str) or not _ENGINE_NAME.fullmatch(alias) for alias in aliases)
+            or len(set(aliases)) != len(aliases)):
+        raise BridgeError("engine_endpoint_aliases_invalid")
+    # Engine API 1.44 and older reports the automatic short ID in Aliases;
+    # 1.45+ moves it to DNSNames. Keep the semantic identity version-neutral.
+    aliases = [alias for alias in aliases if alias != identity[:12]]
+    if len(aliases) > 2:
+        raise BridgeError("engine_endpoint_aliases_invalid")
+    if shadow:
+        name = item.get("Name", "")
+        if (not isinstance(name, str) or not _ENGINE_NAME.fullmatch(name.lstrip("/"))
+                or service in aliases or set(aliases) - {name.lstrip("/"), identity[:12]}):
+            raise BridgeError("engine_shadow_alias_invalid")
+        names = endpoint.get("DNSNames")
+        if (not isinstance(names, list) or any(not isinstance(value, str) for value in names)
+                or set(names) != {name.lstrip("/"), identity[:12]}):
+            raise BridgeError("engine_shadow_dns_not_isolated")
+    elif service not in aliases or any(alias in SERVICES and alias != service for alias in aliases):
+        raise BridgeError("engine_service_alias_unproven")
+    return network_id, tuple(sorted(aliases))
+
+
+def _engine_mount_plan(host: dict, inspected: object, declared: object) -> tuple[list[str], list[dict], list[dict]]:
+    """Build only from effective named mounts; use NoCopy when asking Docker to attach a volume."""
+    binds = host.get("Binds")
+    requested = host.get("Mounts")
+    tmpfs = host.get("Tmpfs")
+    if binds is None:
+        binds = []
+    if requested is None:
+        requested = []
+    if tmpfs is None:
+        tmpfs = {}
+    if (not isinstance(binds, list) or not isinstance(requested, list) or not isinstance(inspected, list)
+            or not isinstance(tmpfs, dict)):
+        raise BridgeError("engine_mount_contract_invalid")
+    if set(tmpfs) - {"/tmp", "/run"} or any(not isinstance(value, str) for value in tmpfs.values()):
+        raise BridgeError("engine_tmpfs_scope_invalid")
+
+    mounts_by_target: dict[str, tuple[str, str, bool]] = {}
+    readonly_binds: list[str] = []
+    for bind in binds:
+        if not isinstance(bind, str) or len(bind.split(":")) not in {2, 3}:
+            raise BridgeError("engine_mount_contract_invalid")
+        source, target, *options = bind.split(":")
+        modes = (options[0] if options else "rw").split(",")
+        if not _engine_safe_path(target) or target in mounts_by_target or target in tmpfs:
+            raise BridgeError("engine_mount_target_invalid")
+        if source.startswith("/"):
+            if (not _engine_safe_path(source)
+                    or not any(source == root or source.startswith(root + "/") for root in _ENGINE_BIND_ROOTS)
+                    or not set(modes) <= {"ro", "private", "rprivate"} or "ro" not in modes):
+                raise BridgeError("engine_host_bind_scope_invalid")
+            readonly_binds.append(bind)
+            mounts_by_target[target] = ("bind", source, True)
+        else:
+            if not _ENGINE_NAME.fullmatch(source) or not source.startswith(PROJECT + "_"):
+                raise BridgeError("engine_volume_name_invalid")
+            if (not set(modes) <= {"ro", "rw", "nocopy"} or {"ro", "rw"} <= set(modes)
+                    or len(modes) != len(set(modes))):
+                raise BridgeError("engine_volume_options_invalid")
+            mounts_by_target[target] = ("volume", source, "ro" in modes)
+    for mount in requested:
+        if (not isinstance(mount, dict) or set(mount) - {"Type", "Source", "Target", "ReadOnly", "VolumeOptions"}
+                or mount.get("Type") != "volume" or mount.get("VolumeOptions") != {"NoCopy": True}
+                or type(mount.get("ReadOnly", False)) is not bool):
+            raise BridgeError("engine_volume_options_invalid")
+        source, target = mount.get("Source"), mount.get("Target")
+        if not isinstance(source, str) or not _ENGINE_NAME.fullmatch(source) or not source.startswith(PROJECT + "_"):
+            raise BridgeError("engine_volume_name_invalid")
+        if not _engine_safe_path(target) or target in mounts_by_target or target in tmpfs:
+            raise BridgeError("engine_mount_target_invalid")
+        mounts_by_target[target] = ("volume", source, mount.get("ReadOnly", False))
+    if declared is not None and (not isinstance(declared, dict)
+                                 or any(path not in mounts_by_target and path not in tmpfs for path in declared)):
+        raise BridgeError("engine_anonymous_volume_not_allowed")
+
+    projected: dict[str, dict] = {}
+    for entry in inspected:
+        if not isinstance(entry, dict) or set(entry) - {
+            "Type", "Name", "Source", "Destination", "Driver", "Mode", "RW", "Propagation",
+        }:
+            raise BridgeError("engine_mount_contract_invalid")
+        target = entry.get("Destination")
+        if not _engine_safe_path(target) or target in projected:
+            raise BridgeError("engine_mount_target_invalid")
+        kind = entry.get("Type")
+        if kind == "tmpfs":
+            if target not in tmpfs:
+                raise BridgeError("engine_tmpfs_scope_invalid")
+            projected[target] = copy.deepcopy(entry)
+            continue
+        expected_kind, source, readonly = mounts_by_target.get(target, (None, None, None))
+        if (kind != expected_kind or type(entry.get("RW")) is not bool or entry["RW"] == readonly
+                or not _engine_safe_path(entry.get("Source"))):
+            raise BridgeError("engine_mount_unproven")
+        stored = copy.deepcopy(entry)
+        if kind == "volume":
+            if entry.get("Name") != source or entry.get("Driver") != "local":
+                raise BridgeError("engine_volume_binding_unproven")
+            # Docker reports the bind mode string differently for a Runtime Mount with NoCopy.
+            stored.pop("Mode", None)
+        elif entry.get("Source") != source or entry.get("Propagation") not in {"private", "rprivate"}:
+            raise BridgeError("engine_host_bind_scope_invalid")
+        projected[target] = stored
+    if set(mounts_by_target) - set(projected):
+        raise BridgeError("engine_mount_unproven")
+    structured_volumes = [
+        {"Type": kind, "Source": source, "Target": target, "ReadOnly": readonly, "VolumeOptions": {"NoCopy": True}}
+        for target, (kind, source, readonly) in sorted(mounts_by_target.items()) if kind == "volume"
+    ]
+    return sorted(readonly_binds), structured_volumes, [projected[target] for target in sorted(projected)]
+
+
+def _engine_projection(service: str, item: dict, *, shadow: bool = False) -> dict:
+    network_id, aliases = engine_service_endpoint(service, item, shadow=shadow)
+    configuration, host = item.get("Config"), item["HostConfig"]
+    image = item.get("Image")
+    if (not isinstance(configuration, dict) or set(configuration) - _ENGINE_CONFIG_FIELDS
+            or not isinstance(image, str) or not IMAGE_ID_RE.fullmatch(image)):
+        raise BridgeError("engine_config_invalid")
+    labels = configuration.get("Labels")
+    if (not isinstance(labels, dict) or labels.get("com.docker.compose.project") != PROJECT
+            or labels.get("com.docker.compose.service") != service
+            or not all(isinstance(key, str) and isinstance(value, str) for key, value in labels.items())):
+        raise BridgeError("engine_service_labels_invalid")
+    reference = configuration.get("Image")
+    if (not isinstance(reference, str) or not (
+        IMAGE_ID_RE.fullmatch(reference) and reference == image
+        or reference in {f"{PROJECT}-{service}", f"{PROJECT}-{service}:latest"}
+    )):
+        raise BridgeError("engine_image_reference_invalid")
+    env = environment_map(configuration.get("Env"))
+    version = env.get("APP_VERSION", "")
+    if not SHA_RE.fullmatch(version) or labels.get("io.pickyourpic.release") != version:
+        raise BridgeError("engine_release_version_invalid")
+    if service == "api" and (env.get("APP_ENV") != "production" or env.get("FACIAL_PROCESSING_ENABLED") != "true"):
+        raise BridgeError("engine_api_environment_invalid")
+
+    if any(value not in (None, False, 0, "", [], {}) for key, value in host.items() if key not in _ENGINE_HOST_FIELDS):
+        raise BridgeError("engine_host_field_unsupported")
+    if (host.get("Privileged", False) is not False
+            or host.get("RestartPolicy") != {"Name": "no", "MaximumRetryCount": 0}
+            or host.get("IpcMode", "private") != "private"
+            or host.get("Runtime", "runc") not in {"", "runc"}
+            or host.get("CgroupnsMode", "") not in {"", "private", "host"}
+            or any(host.get(key) not in (None, False, 0, "", [], {}) for key in (
+                "AutoRemove", "Devices", "DeviceRequests", "DeviceCgroupRules", "VolumesFrom", "Links", "PidMode",
+                "UsernsMode", "UTSMode", "Cgroup", "CgroupParent", "CapAdd", "Sysctls", "ContainerIDFile",
+                "StorageOpt",
+            ))):
+        raise BridgeError("engine_host_policy_invalid")
+    readonly_binds, volumes, mounts = _engine_mount_plan(host, item.get("Mounts"), configuration.get("Volumes"))
+    endpoint = item["NetworkSettings"]["Networks"][ENGINE_NETWORK]
+    return {
+        "config": {**copy.deepcopy(configuration), "Env": env},
+        "host": {**copy.deepcopy(host), "Binds": readonly_binds, "Mounts": volumes},
+        "mounts": mounts,
+        "network": {"id": network_id, "aliases": aliases, "gateway": endpoint.get("Gateway") or "",
+                    "ipv6_gateway": endpoint.get("IPv6Gateway") or ""},
+        "image": image,
+    }
+
+
+def engine_runtime_identity(service: str, item: dict) -> str:
+    """Bind normalized effective configuration to the immutable image and network identity."""
+    return digest(_engine_projection(service, item))
+
+
+def _engine_require_generated_hostname(service: str, original: dict, projection: dict) -> None:
+    hostname = projection["config"].get("Hostname", "")
+    identity = original.get("Id", "")
+    if service not in SERVICES or not isinstance(identity, str) or not CONTAINER_ID_RE.fullmatch(identity):
+        raise BridgeError("engine_legacy_hostname_unproven")
+    expected = identity[:12]
+    if identity == ENGINE_BOOTSTRAP.get(service, (None, None))[0]:
+        expected = ENGINE_BOOTSTRAP_HOSTNAMES[service]
+    if hostname != expected:
+        raise BridgeError("engine_legacy_hostname_unproven")
+
+
+def engine_create_payload(service: str, original: dict, image_id: str, app_version: str,
+                          *, shadow: bool = True) -> dict:
+    """Construct a Docker Engine create request without passing any writable host bind."""
+    if (not isinstance(image_id, str) or not IMAGE_ID_RE.fullmatch(image_id)
+            or not isinstance(app_version, str) or not SHA_RE.fullmatch(app_version)):
+        raise BridgeError("engine_target_identity_invalid")
+    expected = _engine_projection(service, original)
+    _engine_require_generated_hostname(service, original, expected)
+    config = expected["config"]
+    # Docker also publishes Config.Hostname in its embedded DNS. The new ID
+    # must provide the hostname; production names are attached only on promotion.
+    config["Hostname"] = ""
+    config["Image"] = image_id
+    config["Env"]["APP_VERSION"] = app_version
+    config["Env"] = [f"{key}={value}" for key, value in config["Env"].items()]
+    config["Labels"]["io.pickyourpic.release"] = app_version
+    aliases = [] if shadow else list(expected["network"]["aliases"])
+    return {**config, "HostConfig": expected["host"],
+            "NetworkingConfig": {"EndpointsConfig": {ENGINE_NETWORK: {"Aliases": aliases}}}}
+
+
+def engine_verify_candidate(service: str, original: dict, candidate: dict, image_id: str, app_version: str,
+                            *, shadow: bool = True) -> None:
+    """Prove the Docker-managed candidate with only the authorized release differences."""
+    if (not isinstance(image_id, str) or not IMAGE_ID_RE.fullmatch(image_id)
+            or not isinstance(app_version, str) or not SHA_RE.fullmatch(app_version)):
+        raise BridgeError("engine_target_identity_invalid")
+    expected = _engine_projection(service, original)
+    _engine_require_generated_hostname(service, original, expected)
+    candidate_id = candidate.get("Id", "")
+    if not isinstance(candidate_id, str) or not CONTAINER_ID_RE.fullmatch(candidate_id):
+        raise BridgeError("engine_candidate_id_invalid")
+    expected["config"]["Hostname"] = candidate_id[:12]
+    expected["image"] = image_id
+    expected["config"]["Image"] = image_id
+    expected["config"]["Env"]["APP_VERSION"] = app_version
+    expected["config"]["Labels"]["io.pickyourpic.release"] = app_version
+    actual = _engine_projection(service, candidate, shadow=shadow)
+    if len(candidate["HostConfig"].get("Mounts") or []) != len(expected["host"]["Mounts"]):
+        raise BridgeError("engine_candidate_volume_copy_not_disabled")
+    if shadow:
+        if set(actual["network"]["aliases"]) & set(expected["network"]["aliases"]):
+            raise BridgeError("engine_shadow_alias_not_isolated")
+        actual["network"]["aliases"] = expected["network"]["aliases"]
+    for category in ("image", "config", "host", "mounts", "network"):
+        if actual[category] != expected[category]:
+            raise BridgeError("engine_candidate_mismatch_" + category)
+
+
+def _engine_verify_before_start(service: str, original: dict, candidate: dict, image_id: str,
+                                app_version: str, expected_name: str) -> None:
+    """Prove a stopped create result before it can join service DNS or receive traffic."""
+    state = candidate.get("State")
+    identity = candidate.get("Id", "")
+    if (not isinstance(expected_name, str) or not _ENGINE_NAME.fullmatch(expected_name)
+            or candidate.get("Name") != "/" + expected_name
+            or not isinstance(identity, str) or not CONTAINER_ID_RE.fullmatch(identity)
+            or not isinstance(image_id, str) or not IMAGE_ID_RE.fullmatch(image_id)
+            or not isinstance(app_version, str) or not SHA_RE.fullmatch(app_version)
+            or not isinstance(state, dict) or state.get("Status") != "created"
+            or state.get("Running") is not False):
+        raise BridgeError("engine_candidate_not_stopped")
+
+    expected = _engine_projection(service, original)
+    _engine_require_generated_hostname(service, original, expected)
+    expected["config"]["Hostname"] = identity[:12]
+    expected["image"] = image_id
+    expected["config"]["Image"] = image_id
+    expected["config"]["Env"]["APP_VERSION"] = app_version
+    expected["config"]["Labels"]["io.pickyourpic.release"] = app_version
+
+    actual_network = candidate.get("NetworkSettings", {}).get("Networks")
+    if actual_network is None:
+        actual_network = {}
+    if not isinstance(actual_network, dict) or set(actual_network) - {ENGINE_NETWORK}:
+        raise BridgeError("engine_candidate_prestart_network_invalid")
+    if actual_network:
+        endpoint = actual_network[ENGINE_NETWORK]
+        if not isinstance(endpoint, dict):
+            raise BridgeError("engine_candidate_prestart_network_invalid")
+        recorded_id = original["NetworkSettings"]["Networks"][ENGINE_NETWORK]["NetworkID"]
+        if endpoint.get("NetworkID") not in {"", recorded_id}:
+            raise BridgeError("engine_candidate_prestart_network_invalid")
+        aliases = endpoint.get("Aliases") or []
+        dns_names = endpoint.get("DNSNames") or []
+        if (not isinstance(aliases, list) or any(not isinstance(value, str) for value in aliases)
+                or len(aliases) != len(set(aliases)) or set(aliases) - {expected_name, identity[:12]}
+                or not isinstance(dns_names, list) or any(not isinstance(value, str) for value in dns_names)
+                or len(dns_names) != len(set(dns_names))
+                or set(dns_names) - {expected_name, identity[:12]}):
+            raise BridgeError("engine_candidate_prestart_dns_invalid")
+        if (endpoint.get("IPAMConfig") not in (None, {}) or endpoint.get("DriverOpts") not in (None, {})
+                or endpoint.get("Links") not in (None, []) or type(endpoint.get("GwPriority", 0)) is not int
+                or endpoint.get("GwPriority", 0) != 0):
+            raise BridgeError("engine_candidate_prestart_endpoint_invalid")
+        from ipaddress import IPv4Address, IPv6Address
+        try:
+            if endpoint.get("Gateway"):
+                IPv4Address(endpoint["Gateway"])
+            if endpoint.get("IPv6Gateway"):
+                IPv6Address(endpoint["IPv6Gateway"])
+            if endpoint.get("IPAddress"):
+                IPv4Address(endpoint["IPAddress"])
+            if endpoint.get("GlobalIPv6Address"):
+                IPv6Address(endpoint["GlobalIPv6Address"])
+        except (TypeError, ValueError):
+            raise BridgeError("engine_candidate_prestart_endpoint_invalid") from None
+        endpoint_id = endpoint.get("EndpointID")
+        if endpoint_id and (not isinstance(endpoint_id, str) or not CONTAINER_ID_RE.fullmatch(endpoint_id)):
+            raise BridgeError("engine_candidate_prestart_endpoint_invalid")
+
+    # During `create`, Docker may not allocate the endpoint until `start`.
+    # The branch above proves that case has no network route; reuse the original
+    # endpoint only to compare every non-network setting before starting it.
+    staged = copy.deepcopy(candidate)
+    staged_networks = copy.deepcopy(original["NetworkSettings"]["Networks"])
+    if actual_network:
+        staged_networks[ENGINE_NETWORK]["Aliases"] = list(
+            original["NetworkSettings"]["Networks"][ENGINE_NETWORK].get("Aliases") or [])
+    staged.setdefault("NetworkSettings", {})["Networks"] = staged_networks
+    staged["NetworkSettings"]["Ports"] = copy.deepcopy(original["NetworkSettings"].get("Ports") or {})
+    actual = _engine_projection(service, staged)
+    for category in ("image", "config", "host", "mounts"):
+        if actual[category] != expected[category]:
+            raise BridgeError("engine_candidate_prestart_mismatch_" + category)
+
+
 def _assert_common_lock_held() -> None:
     import fcntl
     lock = STATE_DIR / "production-release.lock"
@@ -1027,6 +1531,359 @@ def _assert_common_lock_held() -> None:
         raise BridgeError("outer_release_lock_unavailable") from None
 
 
+def _engine_inspect(selector: str) -> dict:
+    candidate_pattern = rf"{re.escape(PROJECT)}-(api|web)-app-[0-9a-f]{{12}}-[0-9a-f]{{12}}"
+    if not (CONTAINER_ID_RE.fullmatch(selector) or re.fullmatch(candidate_pattern, selector)):
+        raise BridgeError("engine_selector_invalid")
+    result = json.loads(_docker(["container", "inspect", selector]))
+    if (not isinstance(result, list) or len(result) != 1 or not isinstance(result[0], dict)
+            or not CONTAINER_ID_RE.fullmatch(result[0].get("Id", ""))):
+        raise BridgeError("engine_container_identity_invalid")
+    return result[0]
+
+
+def _engine_named_candidate(name: str) -> dict | None:
+    candidate_pattern = rf"{re.escape(PROJECT)}-(api|web)-app-[0-9a-f]{{12}}-[0-9a-f]{{12}}"
+    if not re.fullmatch(candidate_pattern, name):
+        raise BridgeError("engine_candidate_name_invalid")
+    response = _docker(["ps", "-a", "--no-trunc", "--filter", f"name=^/{name}$",
+                        "--format", "{{.ID}}"], max_output=65536).split()
+    if not response:
+        return None
+    if len(response) != 1 or not CONTAINER_ID_RE.fullmatch(response[0]):
+        raise BridgeError("engine_candidate_name_ambiguous")
+    result = _engine_inspect(response[0])
+    if result.get("Name") != "/" + name:
+        raise BridgeError("engine_candidate_name_mismatch")
+    return result
+
+
+def _engine_healthy(item: dict) -> bool:
+    state = item.get("State", {})
+    health = state.get("Health")
+    return state.get("Status") == "running" and isinstance(health, dict) and health.get("Status") == "healthy"
+
+
+def _engine_wait_healthy(identity: str) -> dict:
+    import time
+
+    deadline = time.monotonic() + 125
+    while True:
+        item = _engine_inspect(identity)
+        if _engine_healthy(item):
+            return item
+        if item.get("State", {}).get("Status") not in {"running", "created"} or time.monotonic() >= deadline:
+            raise BridgeError("engine_candidate_health_failed")
+        time.sleep(1)
+
+
+def _engine_archived_manifest(reference: dict) -> tuple[Path, dict]:
+    if not isinstance(reference, dict) or set(reference) != {"mode", "target_sha", "fingerprint"}:
+        raise BridgeError("engine_journal_reference_invalid")
+    directory = _operation_directory(reference["mode"], reference["target_sha"], reference["fingerprint"])
+    manifest = _read_manifest(directory)
+    if (not manifest.get("engine") or any(manifest.get(field) != value for field, value in reference.items())
+            or set(manifest.get("containers", ())) != set(SERVICES)):
+        raise BridgeError("engine_journal_manifest_mismatch")
+    return directory, manifest
+
+
+def _engine_manifest_ref(manifest: dict) -> dict:
+    return {field: manifest[field] for field in ("mode", "target_sha", "fingerprint")}
+
+
+def _engine_attested_manifest(current: dict) -> None:
+    if current.get("version") != 1 or set(current) != {"version", "operation", "journal_sha256", "containers"}:
+        raise BridgeError("engine_attestation_invalid")
+    directory, _ = _engine_archived_manifest(current["operation"])
+    sealed, _ = _engine_private_object(directory / "engine-complete.json", pinned_hash=current["journal_sha256"])
+    if sealed.get("result") != current["containers"] or sealed.get("operation") != current["operation"]:
+        raise BridgeError("engine_attestation_mismatch")
+
+
+def _engine_observed_identity(service: str, item: dict) -> str:
+    return engine_runtime_identity(service, item)
+
+
+def _engine_preserved_original(service: str, recorded: dict, actual: dict) -> None:
+    if any(actual.get(key) != recorded.get(key) for key in ("Id", "Name", "Image", "Config", "HostConfig")):
+        raise BridgeError("engine_original_configuration_changed")
+    key = lambda mount: mount.get("Destination", "")
+    if sorted(actual.get("Mounts", ()), key=key) != sorted(recorded.get("Mounts", ()), key=key):
+        raise BridgeError("engine_original_mounts_changed")
+    if actual.get("State", {}).get("Running") and _engine_observed_identity(service, actual) != _engine_observed_identity(service, recorded):
+        raise BridgeError("engine_original_network_changed")
+
+
+def _engine_validate_running_participants(running: list[str], permitted: list[str]) -> None:
+    for identity in running:
+        if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{12,64}", identity):
+            raise BridgeError("engine_recovery_unknown_participant")
+        matches = [recorded for recorded in permitted if recorded.startswith(identity)]
+        if len(matches) != 1:
+            raise BridgeError("engine_recovery_unknown_participant")
+
+
+def _engine_recovery_participants(pending: dict, target_sha: str) -> dict:
+    if (pending.get("version") != 1 or pending.get("operation", {}).get("target_sha") != target_sha
+            or set(pending.get("candidates", ())) != set(SERVICES)):
+        raise BridgeError("engine_journal_invalid")
+    _engine_archived_manifest(pending["operation"])
+    _, previous = _engine_archived_manifest(pending["restore"])
+    participants = {}
+    for service in SERVICES:
+        original = previous["containers"][service]
+        restored = _engine_inspect(original["Id"])
+        _engine_preserved_original(service, original, restored)
+        slot = pending["candidates"][service]
+        if (set(slot) != {"name", "id", "image", "revision"} or not IMAGE_ID_RE.fullmatch(slot["image"])
+                or not SHA_RE.fullmatch(slot["revision"])):
+            raise BridgeError("engine_journal_slot_invalid")
+        candidate = _engine_inspect(slot["id"]) if slot["id"] else _engine_named_candidate(slot["name"])
+        if candidate is not None:
+            if candidate["Id"] == restored["Id"] or candidate["Name"] != "/" + slot["name"]:
+                raise BridgeError("engine_recovery_participant_mismatch")
+            networks = candidate.get("NetworkSettings", {}).get("Networks") or {}
+            if not networks or not networks.get(ENGINE_NETWORK, {}).get("NetworkID"):
+                # A failure between disconnect and connect leaves only the
+                # verified original serving. Verify the non-network state and
+                # allow cleanup of exactly this candidate after approval.
+                if not _engine_healthy(restored):
+                    raise BridgeError("engine_detached_original_unhealthy")
+                candidate_with_network = copy.deepcopy(candidate)
+                candidate_with_network["NetworkSettings"]["Networks"] = copy.deepcopy(original["NetworkSettings"]["Networks"])
+                endpoint = candidate_with_network["NetworkSettings"]["Networks"][ENGINE_NETWORK]
+                endpoint["Aliases"] = []
+                endpoint["DNSNames"] = [slot["name"], slot["id"][:12]]
+                engine_verify_candidate(service, original, candidate_with_network, slot["image"], slot["revision"])
+            else:
+                aliases = networks[ENGINE_NETWORK].get("Aliases") or []
+                engine_verify_candidate(service, original, candidate, slot["image"], slot["revision"],
+                                        shadow=service not in aliases)
+        running = _list_service_ids(service)
+        permitted = [restored["Id"], *([candidate["Id"]] if candidate is not None else [])]
+        _engine_validate_running_participants(running, permitted)
+        participants[service] = restored, candidate
+    return participants
+
+
+def _engine_recovery_evidence(participants: dict) -> dict:
+    # Identity of a stopped/detached participant still binds config and mounts.
+    # The result remains under the outer source hash, never printed as JSON.
+    return {service: [
+        None if item is None else {
+            "id": item["Id"], "status": item["State"]["Status"],
+            "health": (item["State"].get("Health") or {}).get("Status"),
+            "network": [(name, endpoint.get("NetworkID"), endpoint.get("Aliases"))
+                        for name, endpoint in (item["NetworkSettings"]["Networks"] or {}).items()],
+            "configuration": digest([item["Config"], item["HostConfig"], item["Mounts"]]),
+        } for item in pair] for service, pair in participants.items()}
+
+
+def _engine_write_state(name: str, value: dict) -> None:
+    _ensure_root_bridge_directory()
+    if name not in {ENGINE_CURRENT, ENGINE_PENDING}:
+        raise BridgeError("engine_state_name_invalid")
+    destination = BRIDGE_STATE / name
+    if destination.exists() or destination.is_symlink():
+        _root_metadata(destination, mode=0o600)
+    # The outer release lock excludes another bridge writer. A private temporary
+    # directory avoids stale staging files blocking an approved recovery.
+    with tempfile.TemporaryDirectory(prefix="engine-journal-", dir=BRIDGE_STATE) as temporary:
+        temp = Path(temporary) / name
+        _write_private_file(temp, json.dumps(value, sort_keys=True).encode())
+        os.replace(temp, destination)
+
+
+def _engine_precheck_resources(containers: dict) -> None:
+    for service, item in containers.items():
+        network_id, _ = engine_service_endpoint(service, item)
+        network = json.loads(_docker(["network", "inspect", network_id]))
+        if (len(network) != 1 or network[0].get("Id") != network_id or network[0].get("Name") != ENGINE_NETWORK
+                or network[0].get("Driver") != "bridge"
+                or network[0].get("Labels", {}).get("com.docker.compose.project") != PROJECT):
+            raise BridgeError("engine_existing_network_unproven")
+        for mount in item.get("Mounts", ()):
+            kind = mount.get("Type")
+            if kind == "tmpfs":
+                if mount.get("Destination") not in {"/tmp", "/run"}:
+                    raise BridgeError("engine_tmpfs_scope_invalid")
+                continue
+            if kind not in {"bind", "volume"}:
+                raise BridgeError("engine_existing_mount_unproven")
+            source = Path(mount["Source"])
+            _validate_tree_no_symlink(source)
+            if not source.exists():
+                raise BridgeError("engine_existing_mount_unproven")
+            if mount["Type"] == "volume":
+                found = json.loads(_docker(["volume", "inspect", mount["Name"]]))
+                if (len(found) != 1 or found[0].get("Name") != mount["Name"]
+                        or found[0].get("Driver") != "local" or found[0].get("Mountpoint") != str(source)
+                        or found[0].get("Labels", {}).get("com.docker.compose.project") != PROJECT):
+                    raise BridgeError("engine_existing_volume_unproven")
+
+
+def _engine_create(name: str, payload: dict) -> str:
+    import http.client
+    import socket
+    from urllib.parse import quote
+
+    class DockerConnection(http.client.HTTPConnection):
+        def connect(self):
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.settimeout(self.timeout)
+            self.sock.connect("/var/run/docker.sock")
+
+    if _engine_named_candidate(name) is not None:
+        raise BridgeError("engine_candidate_name_occupied")
+    version = _docker(["version", "--format", "{{.Server.APIVersion}}"], max_output=256).strip()
+    if not re.fullmatch(r"1\.[0-9]{1,3}", version):
+        raise BridgeError("engine_api_version_invalid")
+    connection = DockerConnection("localhost", timeout=60)
+    try:
+        connection.request("POST", f"/v{version}/containers/create?name={quote(name, safe='')}",
+                           body=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+        response = connection.getresponse()
+        raw = response.read(65537)
+        if response.status != 201 or len(raw) > 65536:
+            raise BridgeError("engine_create_refused")
+        result = json.loads(raw)
+        identity = result.get("Id")
+        if not isinstance(identity, str) or not CONTAINER_ID_RE.fullmatch(identity) or result.get("Warnings"):
+            raise BridgeError("engine_create_identity_invalid")
+        return identity
+    except (OSError, http.client.HTTPException, ValueError, AttributeError):
+        raise BridgeError("engine_create_failed") from None
+    finally:
+        connection.close()
+
+
+def _engine_finish(pending: dict, containers: dict) -> None:
+    records = _engine_records(containers)
+    directory, _ = _engine_archived_manifest(pending["operation"])
+    content = {"operation": pending["operation"], "transition": pending, "result": records}
+    complete = directory / "engine-complete.json"
+    encoded = json.dumps(content, sort_keys=True).encode()
+    if complete.exists() or complete.is_symlink():
+        _, existing_hash = _engine_private_object(complete)
+        if existing_hash != hashlib.sha256(encoded).hexdigest():
+            raise BridgeError("engine_completed_journal_changed")
+    else:
+        _write_private_file(complete, encoded)
+    checksum = hashlib.sha256(encoded).hexdigest()
+    _engine_write_state(ENGINE_CURRENT, {"version": 1, "operation": pending["operation"],
+                                        "journal_sha256": checksum, "containers": records})
+    _root_metadata(BRIDGE_STATE / ENGINE_PENDING, mode=0o600)
+    (BRIDGE_STATE / ENGINE_PENDING).unlink()
+
+
+def _engine_release(context: dict, manifest: dict, app_version: str) -> None:
+    originals = manifest["containers"]
+    if app_version != manifest.get("target_sha"):
+        raise BridgeError("engine_release_version_mismatch")
+    if context.get("engine") != manifest["engine"] or _engine_records(originals) != _engine_records(context["containers"]):
+        raise BridgeError("engine_release_source_changed")
+    _engine_precheck_resources(originals)
+    current = _inspect_api_web()
+    if _engine_records(current) != _engine_records(context["containers"]):
+        raise BridgeError("engine_active_source_changed")
+    for service in SERVICES:
+        _engine_preserved_original(service, originals[service], current[service])
+    if _engine_bootstrap_receipt() != context["engine"].get("receipt"):
+        raise BridgeError("engine_bootstrap_receipt_changed")
+    pending = {"version": 1, "operation": _engine_manifest_ref(manifest),
+               "restore": _engine_manifest_ref(manifest), "candidates": {}}
+    payloads = {}
+    for service, old in originals.items():
+        image = _docker(["image", "inspect", "--format", "{{.Id}}", PROJECT + "-" + service]).strip()
+        expected_image = _state_value(f"app-{service}-target-id")
+        if not IMAGE_ID_RE.fullmatch(image) or image != expected_image:
+            raise BridgeError("engine_target_image_changed")
+        name = f"{PROJECT}-{service}-app-{app_version[:12]}-{manifest['fingerprint'][:12]}"
+        payloads[service] = engine_create_payload(service, old, image, app_version)
+        if _engine_named_candidate(name) is not None:
+            raise BridgeError("engine_candidate_name_occupied")
+        pending["candidates"][service] = {"name": name, "id": "", "image": image, "revision": app_version}
+    _assert_sources_unchanged(context)
+    _write_previous_pointer("release", manifest["target_sha"], manifest["fingerprint"])
+    _engine_write_state(ENGINE_PENDING, pending)
+    for service, slot in pending["candidates"].items():
+        identity = _engine_create(slot["name"], payloads[service])
+        slot["id"] = identity
+        _engine_write_state(ENGINE_PENDING, pending)
+        created = _engine_inspect(identity)
+        _engine_verify_before_start(service, originals[service], created, slot["image"], app_version,
+                                    slot["name"])
+        _docker(["start", identity], timeout=60)
+        started = _engine_inspect(identity)
+        engine_verify_candidate(service, originals[service], started, slot["image"], app_version)
+    for service, slot in pending["candidates"].items():
+        candidate = _engine_wait_healthy(slot["id"])
+        engine_verify_candidate(service, originals[service], candidate, slot["image"], app_version)
+    _assert_sources_unchanged(context)
+    _engine_precheck_resources(originals)
+    for service, slot in pending["candidates"].items():
+        old = originals[service]
+        current = _engine_inspect(old["Id"])
+        _engine_preserved_original(service, old, current)
+        if not _engine_healthy(current):
+            raise BridgeError("engine_original_not_healthy")
+        network_id, aliases = engine_service_endpoint(service, old)
+        _docker(["network", "disconnect", network_id, slot["id"]], timeout=30)
+        alias_flags = [part for alias in aliases for part in ("--alias", alias)]
+        _docker(["network", "connect", *alias_flags, network_id, slot["id"]], timeout=30)
+        candidate = _engine_wait_healthy(slot["id"])
+        engine_verify_candidate(service, old, candidate, slot["image"], app_version, shadow=False)
+        _docker(["stop", old["Id"]], timeout=160)
+        verified_old = _engine_inspect(old["Id"])
+        _engine_preserved_original(service, old, verified_old)
+        if verified_old["State"].get("Running"):
+            raise BridgeError("engine_original_stop_unproven")
+    active = _inspect_api_web()
+    for service, slot in pending["candidates"].items():
+        if active[service]["Id"] != slot["id"] or not _engine_healthy(active[service]):
+            raise BridgeError("engine_promotion_unproven")
+        engine_verify_candidate(service, originals[service], active[service], slot["image"], app_version, shadow=False)
+    _engine_finish(pending, active)
+
+
+def _engine_rollback(context: dict, manifest: dict, restore: dict) -> None:
+    if not restore.get("engine"):
+        raise BridgeError("engine_rollback_provenance_missing")
+    pending_path = BRIDGE_STATE / ENGINE_PENDING
+    restore_ref = _engine_manifest_ref(restore)
+    if pending_path.exists() or pending_path.is_symlink():
+        pending, pending_checksum = _engine_private_object(pending_path)
+        if (context["engine"].get("journal") != pending_checksum
+                or pending.get("restore") != restore_ref):
+            raise BridgeError("engine_recovery_journal_changed")
+        pending["operation"] = _engine_manifest_ref(manifest)
+    else:
+        pending = {"version": 1, "operation": _engine_manifest_ref(manifest), "restore": restore_ref,
+                   "candidates": {
+                       service: {"name": item["Name"].lstrip("/"), "id": item["Id"], "image": item["Image"],
+                                 "revision": _engine_revision(item)}
+                       for service, item in manifest["containers"].items()
+                   }}
+    participants = _engine_recovery_participants(pending, manifest["target_sha"])
+    _assert_sources_unchanged(context)
+    _engine_precheck_resources(restore["containers"])
+    _engine_write_state(ENGINE_PENDING, pending)
+    for service, (original, candidate) in participants.items():
+        if not original["State"].get("Running"):
+            _docker(["start", original["Id"]], timeout=60)
+        original = _engine_wait_healthy(original["Id"])
+        _engine_preserved_original(service, restore["containers"][service], original)
+        if candidate is not None and candidate["State"].get("Running"):
+            _docker(["stop", candidate["Id"]], timeout=160)
+    active = _inspect_api_web()
+    for service, original in restore["containers"].items():
+        _engine_preserved_original(service, original, active[service])
+    _engine_finish(pending, active)
+    if context["engine"]["type"] != "engine-recovery":
+        _write_previous_pointer("rollback", manifest["target_sha"], manifest["fingerprint"])
+
+
 def _apply_models(context: dict, mode: str, target_sha: str, app_version: str, fingerprint: str) -> None:
     _assert_common_lock_held()
     directory = _operation_directory(mode, target_sha, fingerprint)
@@ -1041,6 +1898,14 @@ def _apply_models(context: dict, mode: str, target_sha: str, app_version: str, f
         restore = _read_manifest(previous_directory)
     else:
         restore = manifest
+    if manifest.get("engine"):
+        if mode == "rollback":
+            _engine_rollback(context, manifest, restore)
+        else:
+            _engine_release(context, manifest, app_version)
+        return
+    if restore.get("engine"):
+        raise BridgeError("engine_rollback_requires_attested_source")
     candidates = {}
     for service in SERVICES:
         original = restore["containers"][service]
@@ -1238,7 +2103,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         require_root()
         args = _parse_args(list(sys.argv[1:] if argv is None else argv))
-        context = _discover_context()
+        context = _discover_context(args.mode, args.sha)
         with tempfile.TemporaryDirectory(prefix="markina-app-compose-bridge-", dir="/tmp") as temporary:
             context = _prepare_compose_context(context, args.mode, args.sha, args.approval_fingerprint,
                                                Path(temporary))

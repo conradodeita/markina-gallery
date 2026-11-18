@@ -26,3 +26,7 @@ Nenhuma. O contrato geral do release API/web continua sendo o da change `add-pro
 ## Impact
 
 Afeta o helper de release API/web, o wrapper SSH de preflight, o workflow CI, os instaladores root-owned, testes de contrato/segurança e o runbook. A instalação e o primeiro uso no host ocorrerão somente depois de CI/PR verdes e por workflow protegido; nenhuma configuração de produção será lida ou alterada por esta proposta.
+
+## Proveniência do corte de 17/11
+
+O proprietário aprovou em 18/11 a retomada pela configuração efetiva comprovada no recibo privado do promovido `bfe511f8`. A ponte passa a admitir esse par exato de containers Docker Engine e os sucessores registrados por ela. O caminho Compose existente continua exigindo equivalência com as suas próprias fontes. As fontes históricas deste par continuam protegidas, verificadas e preservadas para recuperação sem serem tratadas como prova do runtime promovido.
