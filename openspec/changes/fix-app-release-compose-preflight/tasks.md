@@ -9,6 +9,7 @@
 - [x] 2.2 Preparar somente os objetos/ref de `main` no checkout remoto, sem trocar o checkout ativo, para tornar o SHA integrado verificável.
 - [x] 2.3 Identificar a causa do segundo preflight bloqueado e inventariar somente o bloco Compose persistente, sua identidade e os containers Gemma, sem exibir valores de configuração.
 - [x] 2.4 Implementar e testar uma reconciliação fail-closed e um dispatch de produção protegido que preserve backup, proprietário/modo e todos os bytes não relacionados do overlay.
+- [x] 2.4.1 Tornar o snapshot de containers compatível com estados sem `Health`, incluir regressão com containers sintéticos com e sem healthcheck e registrar a causa do primeiro dispatch protegido.
 - [ ] 2.5 Após CI verde e integração da reconciliação, executar o workflow protegido sob lock no host; validar Compose antes/depois e manter intactos o container Gemma parado e todos os outros containers.
 - [ ] 2.6 Reexecutar o preflight somente-leitura para o SHA atual de `main`; prosseguir somente se fingerprint, identidade, hashes, versão, schema, saúde, ingress e flag facial corresponderem ao plano.
 - [ ] 2.7 Executar o release protegido apenas de API/web, sem migrations, alteração de `.env`, reinício de workers ou instalação/ativação de backup.
@@ -37,3 +38,14 @@
 - `openspec validate fix-app-release-compose-preflight --strict` passou; `openspec validate --strict --all` passou **192/192**. `check_prod_app_release_scope.py --base bfe511f850224823254b0fc9f51fa7ff60ecfba0 --target HEAD` aprovou `somente_api_web`; `test_production_release_workflow_policy.py` passou.
 - A PR #377, run CI `44263110039`, concluiu com sucesso. Os jobs `openspec`, `gitleaks`, `backend-quality`, os três shards de `backend-tests`, `frontend`, imagens AMD64/ARM64 e `homolog-inventory-policy` passaram. O job OpenSpec executou os sete testes do helper em Linux, incluindo backup exclusivo modo `0600` e substituição atômica com preservação de proprietário/modo; ambos também passaram.
 - Próxima sequência: integrar a PR após CI verde; então disparar `app-compose-reconcile`, validar `config --quiet` e refazer o preflight oficial. Se a identidade mudar, houver container Gemma ativo ou Compose não validar, a operação aborta/recupera e não há deploy.
+
+## Evidência da primeira execução protegida — 18/11/2026
+
+- A PR #377 foi integrada em `main` como `aa9373cdf9c800ff825ee9d002f6e62a8552a61c`; o CI do PR concluiu verde no run `44267143827`.
+- O push executou o preflight somente-leitura do run `44271279745`, que confirmou o bloqueio esperado no serviço `face-gemma-index-worker` sem imagem/build; o release foi ignorado.
+- O dispatch `app-compose-reconcile` do run `44271496053` recebeu a aprovação padrão do ambiente protegido `production`, mas abortou antes da leitura ou escrita do overlay com `read_only_precondition_failed`.
+- Diagnóstico SSH somente-leitura reproduziu a falha: o snapshot do Docker usa um template que acessa `.State.Health` em sete containers sem healthcheck. `docker inspect --format '{{json .State}}'` funcionou nos 43 containers e reportou sete sem `Health`.
+- O checkout de produção permaneceu em `bfe511f850224823254b0fc9f51fa7ff60ecfba0`, `origin/main` correspondeu a `aa9373cdf9c800ff825ee9d002f6e62a8552a61c`, a API continuou saudável com `APP_ENV=production` e `FACIAL_PROCESSING_ENABLED=true`. O overlay permaneceu `ubuntu:ubuntu`, modo `0600`, 653 bytes, SHA-256 `c63599b84764f6141cf9860ce1a352f6e11eae55ea4c24b75959ca277c3cd60e`; nenhuma alteração ou backup de ensaio foi criado.
+- O teste do helper passou **10/10** localmente; os dois testes POSIX de backup/substituição ficaram ignorados por esta estação Windows. Ruff, política do workflow, `openspec validate ... --strict`, validação global OpenSpec (**192/192**) e `git diff --check` passaram.
+- O comando remoto somente-leitura `docker inspect --format '{{.Id}} {{json .State}}'` foi processado por Python em **43/43** containers, preservando ID/estado e representando ausência de healthcheck como `none`; sete containers não têm `Health`. Isso reproduziu o formato corrigido contra o runtime real sem alterar containers.
+- Próximo passo: passar CI da correção, integrar e repetir o dispatch protegido. O preflight e o deploy continuam bloqueados até a reconciliação passar.

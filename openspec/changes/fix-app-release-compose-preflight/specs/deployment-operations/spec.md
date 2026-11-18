@@ -16,6 +16,11 @@ Os helpers de inventário e release API/web SHALL NOT exigir um overlay Compose 
 - **WHEN** qualquer outro manifesto exigido pelo inventário não existe
 - **THEN** o preflight falha antes de mutação e informa qual caminho está ausente
 
+#### Scenario: Container sem healthcheck
+
+- **WHEN** o snapshot de identidade inclui containers do projeto com e sem `State.Health`
+- **THEN** a comparação preserva ID e estado de cada container, registra `none` para a saúde não configurada e não aborta por ausência desse campo
+
 ### Requirement: Overlay persistente preserva identidade dos serviços vigentes
 
 Os helpers API/web SHALL continuar carregando todos os manifestos persistentes na ordem esperada. Um serviço aposentado definido em overlay externo sem imagem ou build MUST bloquear o inventário até reconciliação documentada, sem ser ignorado silenciosamente.

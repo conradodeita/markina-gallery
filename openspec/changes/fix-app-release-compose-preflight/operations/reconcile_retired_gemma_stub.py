@@ -115,7 +115,12 @@ def remove_retired_service_block(source: bytes) -> bytes:
     return candidate
 
 
-def run_capture(command: list[str], *, cwd: Path | None = None) -> str:
+def run_capture(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    failure_code: str = "read_only_precondition_failed",
+) -> str:
     try:
         result = subprocess.run(
             command,
@@ -126,8 +131,48 @@ def run_capture(command: list[str], *, cwd: Path | None = None) -> str:
             stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
-        raise OperationError("read_only_precondition_failed") from exc
+        raise OperationError(failure_code) from exc
     return result.stdout.strip()
+
+
+def parse_container_snapshot(output: str, expected_ids: list[str]) -> tuple[str, ...]:
+    lines = output.splitlines()
+    expected_set = set(expected_ids)
+    if len(lines) != len(expected_ids) or len(expected_set) != len(expected_ids):
+        raise OperationError("project_container_snapshot_unreadable")
+    snapshot: list[str] = []
+    seen_ids: set[str] = set()
+    for line in lines:
+        container_id, separator, state_json = line.partition(" ")
+        if (
+            not separator
+            or not container_id
+            or not state_json
+            or container_id not in expected_set
+            or container_id in seen_ids
+        ):
+            raise OperationError("project_container_snapshot_unreadable")
+        try:
+            state = json.loads(state_json)
+        except (TypeError, ValueError) as exc:
+            raise OperationError("project_container_snapshot_unreadable") from exc
+        if not isinstance(state, dict):
+            raise OperationError("project_container_snapshot_unreadable")
+        status = state.get("Status")
+        if not isinstance(status, str) or not status:
+            raise OperationError("project_container_snapshot_unreadable")
+        health = state.get("Health")
+        if health is None:
+            health_status = "none"
+        elif isinstance(health, dict) and isinstance(health.get("Status"), str) and health["Status"]:
+            health_status = health["Status"]
+        else:
+            raise OperationError("project_container_snapshot_unreadable")
+        snapshot.append(f"{container_id} {status} {health_status}")
+        seen_ids.add(container_id)
+    if seen_ids != expected_set:
+        raise OperationError("project_container_snapshot_unreadable")
+    return tuple(sorted(snapshot))
 
 
 def project_container_snapshot() -> tuple[str, ...]:
@@ -136,11 +181,12 @@ def project_container_snapshot() -> tuple[str, ...]:
     command.extend(
         [
             "-q",
+            "--no-trunc",
             "--filter",
             "label=com.docker.compose.project=markina-gallery",
         ]
     )
-    ids = run_capture(command).splitlines()
+    ids = run_capture(command, failure_code="project_container_snapshot_failed").splitlines()
     if not ids:
         return ()
     output = run_capture(
@@ -148,11 +194,12 @@ def project_container_snapshot() -> tuple[str, ...]:
             "docker",
             "inspect",
             "--format",
-            "{{.Id}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+            "{{.Id}} {{json .State}}",
             *ids,
-        ]
+        ],
+        failure_code="project_container_snapshot_failed",
     )
-    return tuple(sorted(line for line in output.splitlines() if line))
+    return parse_container_snapshot(output, ids)
 
 
 def gemma_container_ids(*, all_states: bool = False) -> tuple[str, ...]:
@@ -509,6 +556,29 @@ def apply_reconciliation(expected_main_sha: str) -> None:
 
 
 class TransformTests(unittest.TestCase):
+    def test_container_snapshot_supports_containers_with_and_without_healthchecks(self) -> None:
+        output = (
+            'bbbb {"Status":"exited","ExitCode":130}\n'
+            'aaaa {"Status":"running","Health":{"Status":"healthy"}}\n'
+        )
+        self.assertEqual(
+            parse_container_snapshot(output, ["aaaa", "bbbb"]),
+            ("aaaa running healthy", "bbbb exited none"),
+        )
+
+    def test_container_snapshot_rejects_invalid_state(self) -> None:
+        for output in (
+            "container-id not-json",
+            'container-id {"ExitCode":0}',
+            'container-id {"Status":"running","Health":{}}',
+        ):
+            with self.subTest(output=output), self.assertRaises(OperationError):
+                parse_container_snapshot(output, ["container-id"])
+
+    def test_container_snapshot_rejects_id_mismatch(self) -> None:
+        with self.assertRaises(OperationError):
+            parse_container_snapshot('other-id {"Status":"running"}', ["expected-id"])
+
     def test_removes_only_monitor_block_and_preserves_other_bytes(self) -> None:
         source = (
             b"services:\n"

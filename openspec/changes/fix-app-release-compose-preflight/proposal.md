@@ -10,6 +10,7 @@ O preflight do release API/web falhou antes de inventariar a aplicação porque 
 - Incluir o caminho do manifesto ausente nas mensagens de falha para permitir diagnóstico preciso, mantendo o bloqueio fechado.
 - Atualizar o pin do helper de inventário no wrapper SSH versionado e as regressões/documentação correspondentes.
 - Reconciliar, com backup e guarda por checksum, a declaração de serviço Gemma aposentado encontrada no overlay persistente de monitoramento do host; preservar o caminho do overlay e as demais configurações.
+- Manter a comparação de identidade dos containers compatível com serviços que não declaram healthcheck, preservando o status de saúde quando disponível.
 - Executar essa escrita somente por uma operação de workflow_dispatch dedicada, após CI verde e aprovação do ambiente protegido `production`, sem ampliar a chave read-only do preflight.
 - Reexecutar o preflight somente-leitura; qualquer outro manifesto ausente ou divergência de identidade continua bloqueando o deploy.
 
