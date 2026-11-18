@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -408,6 +409,38 @@ class ProtectedOperationTests(unittest.TestCase):
             result = subprocess.run([bash, str(installer), *arguments], env=env, capture_output=True, text=True, timeout=15, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertRegex(result.stderr, "app-bridge-install: (arguments_invalid|identity_invalid)")
+
+    def test_installer_accepts_only_the_exact_canonical_https_and_ssh_origins(self):
+        bash = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else shutil.which("bash")
+        self.assertTrue(bash)
+        installer = Path(__file__).with_name("install-prod-app-compose-bridge.sh").read_text(encoding="utf-8")
+        match = re.search(r"(?ms)^origin_is_canonical\(\) \{\n.*?^\}", installer)
+        self.assertIsNotNone(match)
+        program = (
+            'REPOSITORY="conradodeita/markina-gallery"\n'
+            + match.group(0)
+            + '\norigin_is_canonical "$1"\n'
+        )
+        accepted = (
+            "https://github.com/conradodeita/markina-gallery.git",
+            "ssh://github.com/conradodeita/markina-gallery.git",
+        )
+        rejected = (
+            "git@github.com:conradodeita/markina-gallery.git",
+            "ssh://git@github.com/conradodeita/markina-gallery.git",
+            "ssh://github.com.evil/conradodeita/markina-gallery.git",
+            "https://github.com/conradodeita/another-repository.git",
+            "https://user@github.com/conradodeita/markina-gallery.git",
+            "http://github.com/conradodeita/markina-gallery.git",
+        )
+        for origin in accepted:
+            with self.subTest(origin=origin):
+                result = subprocess.run([bash, "-c", program, "origin-test", origin], capture_output=True, text=True, timeout=15, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+        for origin in rejected:
+            with self.subTest(origin=origin):
+                result = subprocess.run([bash, "-c", program, "origin-test", origin], capture_output=True, text=True, timeout=15, check=False)
+                self.assertEqual(result.returncode, 1, result.stderr)
 
     def test_app_executor_pins_exact_root_helper_bytes(self):
         source = Path(__file__).with_name("production_app_compose_bridge.py").read_bytes().replace(b"\r\n", b"\n")
