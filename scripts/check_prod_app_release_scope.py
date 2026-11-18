@@ -16,6 +16,19 @@ RUNTIME_FILES = {
     "backend/app/client_lifecycle.py",
     "backend/app/auth.py",
     "backend/app/main.py",
+    "backend/app/google_drive_client.py",
+    "backend/app/google_drive_picker.py",
+    "backend/app/platform_backup/archive.py",
+    "backend/app/platform_backup/catalog.py",
+    "backend/app/platform_backup/filesystem.py",
+    "backend/app/platform_backup/offline_recovery.py",
+    "backend/app/platform_backup/payload.py",
+    "backend/app/platform_backup/production_cli.py",
+    "backend/app/platform_backup/remote_copy.py",
+    "backend/app/platform_backup/restore.py",
+    "backend/app/platform_backup/runtime_config.py",
+    "backend/app/platform_backup/runtime_source.py",
+    "backend/app/platform_backup/runtime_worker.py",
     "backend/app/payment_availability.py",
     "backend/app/order_visibility.py",
     "backend/app/payment_export.py",
@@ -31,9 +44,16 @@ RUNTIME_FILES = {
     "frontend/app/admin/galleries/private-folder-client-overview.tsx",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
     "frontend/app/admin/galleries/[galleryId]/orders/page.tsx",
+    "frontend/app/admin/platform/google-drive-folder-picker.tsx",
+    "frontend/app/admin/platform/page.tsx",
     "frontend/app/library/cart/page.tsx",
     "frontend/app/library/purchase-card.tsx",
     "frontend/app/library/purchases/page.tsx",
+}
+BACKUP_SUPPORT_FILES = {
+    "scripts/backup_runtime/pyp-platform-backup.service",
+    "scripts/backup_runtime/pyp-platform-backup.timer",
+    "scripts/backup_runtime/requirements-py310-arm64.lock",
 }
 RETIRED_STATISTICS_FILES = {
     "frontend/app/admin/statistics/page.tsx",
@@ -97,6 +117,7 @@ ALLOWED_OPERATIONS = {
     "frontend/app/library/cart/checkout-navigation.test.ts",
     "frontend/app/library/library.test.tsx",
     "frontend/app/admin/retirement.test.ts",
+    "frontend/app/admin/platform/google-drive-folder-picker.test.tsx",
     "frontend/scripts/payments-visual-qa.cjs",
     "RELATORIO_IMPLEMENTACAO_VENDAS_PAGAMENTOS.md",
     "design-qa.md",
@@ -127,6 +148,14 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
             status, path = line.split("\t", 1)
             statuses[path] = status
         changed = set(statuses)
+        backup_support_blobs = manifest.get("support_blobs", {})
+        if changed & BACKUP_SUPPORT_FILES:
+            if set(backup_support_blobs) != BACKUP_SUPPORT_FILES:
+                return False, "manifesto_suporte_backup_incompleto"
+            for path, expected in backup_support_blobs.items():
+                actual = git(root, "rev-parse", f"{target}:{path}")
+                if actual != expected:
+                    return False, "suporte_backup_diverge_do_blob_aprovado"
         emergency = manifest.get("emergency_api")
         extra_blobs = {}
         if emergency is not None:
@@ -145,7 +174,8 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
                 if statuses[path] != "D":
                     return False, "arquivo_fora_do_escopo"
                 continue
-            if path in RUNTIME_FILES or path in extra_blobs or path in ALLOWED_OPERATIONS or path.startswith(ALLOWED_PREFIXES):
+            if (path in RUNTIME_FILES or path in extra_blobs or path in BACKUP_SUPPORT_FILES
+                    or path in ALLOWED_OPERATIONS or path.startswith(ALLOWED_PREFIXES)):
                 continue
             return False, "arquivo_fora_do_escopo"
         for path, expected in {**manifest["runtime_blobs"], **extra_blobs}.items():

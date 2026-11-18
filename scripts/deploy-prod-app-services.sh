@@ -22,7 +22,7 @@ readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
 )
 readonly SERVICES=(api web)
-readonly EXPECTED_DATABASE_REVISION="20261022_0087"
+readonly EXPECTED_DATABASE_REVISION="20261113_0126"
 
 MODE=""
 TARGET_SHA=""

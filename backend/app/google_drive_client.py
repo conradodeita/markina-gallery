@@ -24,6 +24,9 @@ class DriveTransport(Protocol):
 
     def put(self, url: str, **kwargs: Any) -> httpx.Response: ...
 
+    def patch(self, url: str, **kwargs: Any) -> httpx.Response: ...
+
+
 class HttpxDriveTransport:
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0), follow_redirects=False) as client:

@@ -130,7 +130,7 @@ elif kind=="docker":
                     if service=="api": s["api_version"]=compose_version or s["main"]
             save()
         elif cmd[0]=="exec":
-            if "alembic" in cmd: print("20261022_0087 (head)")
+            if "alembic" in cmd: print("20261113_0126 (head)")
         else: die("unexpected compose "+repr(cmd))
     else: die("unexpected docker "+repr(a))
 elif kind=="curl":

@@ -28,6 +28,7 @@ O release facial em `.github/workflows/ci.yml` valida blobs próprios e publica 
 - Fingerprint inclui SHA candidato e estado observado necessário ao rollback. O job protegido recalcula o fingerprint após a aprovação e aborta se qualquer componente divergir.
 - O checkout de produção pode avançar após a publicação. A política facial verificará que o baseline autorizado é ancestral do checkout ativo e continuará fixando os blobs faciais permitidos; ela não aceitará alteração facial por causa deste release.
 - Uma falha não dispara rollback automático. O procedimento de rollback faz novo inventário, exige aprovação própria e restaura somente as imagens e SHA de `api`/`web`.
+- Para publicar o código do backup global, o manifesto fixa os blobs exatos dos módulos da API/UI e os arquivos de suporte da rotina. A exceção de classificação limita-se ao módulo `backend/app/platform_backup/runtime_worker.py`; isso não autoriza criar ou iniciar um processo de worker. O deploy API/web não instala unidades, timer, chave/configuração do backup, nem faz cópia real. O schema e a imagem ativa precisam corresponder ao inventário ao vivo antes de atualizar os pins.
 
 ## Risks / Trade-offs
 

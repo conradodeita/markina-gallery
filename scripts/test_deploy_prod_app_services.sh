@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 script="$(cat scripts/deploy-prod-app-services.sh)"
-for required in 'readonly SERVICES=(api web)' 'readonly EXPECTED_DATABASE_REVISION="20261022_0087"' \
+for required in 'readonly SERVICES=(api web)' 'readonly EXPECTED_DATABASE_REVISION="20261113_0126"' \
   'verify_readonly_target_ancestry' 'GIT_WORK_TREE="$PROJECT_ROOT"' 'scripts/check_prod_app_release_scope.py' \
   'git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- backend/migrations/' \
   'require_facial_processing_enabled_in_config' 'FACIAL_PROCESSING_ENABLED=true' \
