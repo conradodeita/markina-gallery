@@ -52,21 +52,47 @@ def container(service="api", *, secret=SECRET_SENTINEL, health="healthy", status
 class RunnerDockerAdapterTests(unittest.TestCase):
     def setUp(self):
         self.original_docker = bridge._docker
+        self.original_run = bridge._run
+        self.original_project_root = bridge.PROJECT_ROOT
         self.addCleanup(setattr, bridge, "_docker", self.original_docker)
+        self.addCleanup(setattr, bridge, "_run", self.original_run)
+        self.addCleanup(setattr, bridge, "PROJECT_ROOT", self.original_project_root)
 
     def test_prefers_fixed_production_cli_when_executable(self):
         with patch.object(engine_proof.Path, "is_file", return_value=True), \
                 patch.object(engine_proof.os, "access", return_value=True), \
                 patch.object(engine_proof.shutil, "which") as which:
-            engine_proof.configure_runner_docker()
+            engine_proof.configure_runner_context()
         self.assertIs(bridge._docker, self.original_docker)
         which.assert_not_called()
+
+    def test_runner_context_rebinds_default_working_directory_to_checkout(self):
+        runner_root = Path(engine_proof.__file__).resolve().parent.parent
+        with patch.object(bridge, "_run", return_value="synthetic") as run, \
+                patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True):
+            engine_proof.configure_runner_context()
+            self.assertEqual(bridge.PROJECT_ROOT, runner_root)
+            self.assertEqual(bridge._run(["git", "status"]), "synthetic")
+        run.assert_called_once_with(["git", "status"], cwd=runner_root, app_version="", input_text=None,
+                                    timeout=120, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES)
+
+    def test_runner_context_preserves_explicit_working_directory(self):
+        runner_root = Path(engine_proof.__file__).resolve().parent.parent
+        explicit_cwd = runner_root / "scripts"
+        with patch.object(bridge, "_run", return_value="synthetic") as run, \
+                patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True):
+            engine_proof.configure_runner_context()
+            self.assertEqual(bridge._run(["git", "status"], cwd=explicit_cwd), "synthetic")
+        run.assert_called_once_with(["git", "status"], cwd=explicit_cwd, app_version="", input_text=None,
+                                    timeout=120, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES)
 
     def test_runner_adapter_uses_resolved_absolute_cli_through_bounded_runner(self):
         with patch.object(engine_proof.Path, "is_file", side_effect=[False, True]), \
                 patch.object(engine_proof.os, "access", return_value=True), \
                 patch.object(engine_proof.shutil, "which", return_value="/opt/hostedtoolcache/docker"):
-            engine_proof.configure_runner_docker()
+            engine_proof.configure_runner_context()
         with patch.object(bridge, "_run", return_value="synthetic") as run:
             result = bridge._docker(["ps"], timeout=30)
         self.assertEqual(result, "synthetic")
@@ -77,7 +103,7 @@ class RunnerDockerAdapterTests(unittest.TestCase):
         with patch.object(engine_proof.Path, "is_file", side_effect=[True, True]), \
                 patch.object(engine_proof.os, "access", side_effect=[False, True]), \
                 patch.object(engine_proof.shutil, "which", return_value="/usr/local/bin/docker"):
-            engine_proof.configure_runner_docker()
+            engine_proof.configure_runner_context()
         with patch.object(bridge, "_run", return_value="synthetic") as run:
             bridge._docker(["version"])
         run.assert_called_once_with(["/usr/local/bin/docker", "version"], input_text=None,
@@ -87,7 +113,7 @@ class RunnerDockerAdapterTests(unittest.TestCase):
         with patch.object(engine_proof.Path, "is_file", return_value=False), \
                 patch.object(engine_proof.shutil, "which", return_value="docker"), \
                 self.assertRaisesRegex(SystemExit, "CLI Docker absoluto"):
-            engine_proof.configure_runner_docker()
+            engine_proof.configure_runner_context()
 
 
 class RootIdentityTests(unittest.TestCase):

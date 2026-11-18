@@ -33,7 +33,22 @@ def require_ci_runner():
         raise SystemExit("Somente runner GitHub-hosted descartável com Docker root é permitido")
 
 
-def configure_runner_docker():
+def configure_runner_context():
+    runner_root = Path(__file__).resolve().parent.parent
+    if not runner_root.is_dir():
+        raise SystemExit("Checkout do runner não está disponível para a prova Engine")
+
+    original_run = bridge._run
+
+    def run_in_runner_workspace(argv, *, cwd=None, app_version="", input_text=None,
+                                timeout=120, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES):
+        effective_cwd = runner_root if cwd is None else cwd
+        return original_run(argv, cwd=effective_cwd, app_version=app_version, input_text=input_text,
+                            timeout=timeout, max_output=max_output)
+
+    bridge.PROJECT_ROOT = runner_root
+    bridge._run = run_in_runner_workspace
+
     fixed = Path("/usr/bin/docker")
     if fixed.is_file() and os.access(fixed, os.X_OK):
         return
@@ -418,7 +433,7 @@ def prove_partial_recovery(root, synthetic_images):
 
 def main():
     require_ci_runner()
-    configure_runner_docker()
+    configure_runner_context()
     run("pull isolated base image", "docker", "pull", BASE_IMAGE, timeout=420)
     with tempfile.TemporaryDirectory(prefix="markina-engine-proof-") as temporary:
         root = Path(temporary)
