@@ -167,6 +167,9 @@ def main() -> None:
         ("os.replace(temp_candidate, OVERLAY)", "helper instala somente por substituição atômica"),
         ("atomic_write(OVERLAY, original", "helper restaura automaticamente em falha pós-troca"),
         ("project_container_snapshot() != project_before", "helper preserva IDs, estados e saúde dos containers"),
+        ('"{{.Id}} {{json .State}}"', "snapshot não exige bloco Health nos containers"),
+        ('"--no-trunc"', "snapshot usa IDs completos para conferir todas as respostas Docker"),
+        ("parse_container_snapshot(output, ids)", "snapshot valida JSON e representa saúde ausente como none"),
     ):
         require(fragment, label, COMPOSE_RECONCILIATION_SCRIPT)
     require("workflow_dispatch:", "rollback manual explícito", WORKFLOW)

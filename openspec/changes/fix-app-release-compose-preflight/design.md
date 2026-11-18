@@ -26,6 +26,7 @@ Após a integração da correção, o run de CI `44247817045`, attempt 2, passou
 
 - Retirar `docker/docker-compose.raw-development.yml` da lista `COMPOSE_EXTRA_FILES` e de `COMPOSE_FILE_LABEL` dos helpers API/web. A prova da aposentadoria vem do commit que removeu o arquivo; não inferir a configuração remota apenas por documentação histórica.
 - Manter as validações restantes de arquivo e de labels dos containers. Se um manifesto ainda exigido estiver ausente, a falha informa o caminho exato e aborta antes de build, troca de imagem ou recriação.
+- Obter o estado dos containers como JSON e tratar `State.Health` ausente como `none`; o template Go anterior falhava quando o mapa `Health` não existia, embora esses containers fossem válidos e precisassem permanecer na comparação. A falha deve continuar fechada se o JSON ou o status do container forem inválidos.
 - Atualizar o blob permitido do helper no wrapper SSH versionado. A cópia root-owned no servidor só será atualizada pelo procedimento operacional autorizado, com conferência de proprietário, modo e hash.
 - Não alterar o helper facial neste escopo. Seu fluxo tem pins, gates e inventário independentes.
 - A correção de estado exige que o overlay ainda tenha o SHA-256 registrado acima, proprietário/modo esperados, uma única entrada `face-gemma-index-worker` com as únicas chaves estruturais `environment` e `SYSTEM_MONITOR_ENABLED`, zero containers Gemma em execução e o container parado preservado. Qualquer diferença aborta sem escrita.
