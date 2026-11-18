@@ -83,17 +83,26 @@ def main() -> None:
     app_preflight = WORKFLOW.split("  production-app-preflight:", 1)[1].split(
         "  production-app-release:", 1
     )[0]
-    bridge_install = WORKFLOW.split("  production-app-compose-bridge-install:", 1)[1].split(
-        "  production-app-preflight:", 1
-    )[0]
-    require("inputs.operation == 'app-compose-bridge-install'", "instalação da ponte apenas por dispatch explícito", bridge_install)
-    require("github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'", "instalação apenas na main", bridge_install)
+    bridge_workflow = (ROOT / ".github/workflows/production-app-compose-bridge-install.yml").read_text(encoding="utf-8")
+    evidence_gate, bridge_install = bridge_workflow.split("  production-app-compose-bridge-install:", 1)
+    require("on:\n  workflow_dispatch:\n\npermissions: {}",
+            "instalação da ponte apenas por despacho explícito e sem permissões padrão", evidence_gate)
+    main_dispatch = "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
+    verify_evidence = 'scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-bridge-install'
+    for block in (evidence_gate, bridge_install):
+        require(main_dispatch, "instalação apenas na main", block)
+        require(verify_evidence, "instalação exige evidência do SHA exato", block)
+        require("set -Eeuo pipefail", "falha da consulta bloqueia mesmo com tee", block)
     require("environment: production", "ponte exige ambiente protegido", bridge_install)
-    require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]", "instalação aguarda CI", bridge_install)
+    require("needs: [ci-evidence]", "instalação aguarda evidência antes da revisão protegida", bridge_install)
     require("scripts/install-prod-app-compose-bridge.sh", "instalador fixo da ponte", bridge_install)
     require("scripts/install-prod-preview-migration-wrapper.sh", "wrapper atualizado após instalar ponte", bridge_install)
-    if "PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY" in bridge_install:
-        raise AssertionError("instalação não pode usar a credencial somente leitura")
+    if "PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY" in bridge_install or "PRODUCTION_SSH_" in evidence_gate:
+        raise AssertionError("segredos da instalação só podem estar no job de instalação protegido")
+    if (bridge_install.index(verify_evidence) > bridge_install.index("scripts/install-prod-app-compose-bridge.sh")
+            or "app-compose-bridge-install" in WORKFLOW
+            or "production-app-release:" in bridge_workflow):
+        raise AssertionError("instalação deve revalidar CI antes de SSH e manter despacho separado do release")
     app_release = WORKFLOW.split("  production-app-release:", 1)[1]
     compose_reconciliation = WORKFLOW.split("  production-app-compose-reconciliation:", 1)[1].split(
         "  production-app-rollback-preflight:", 1

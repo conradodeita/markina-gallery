@@ -78,6 +78,7 @@ ALLOWED_PREFIXES = (
 ALLOWED_OPERATIONS = {
     ".gitleaksignore",
     ".github/workflows/ci.yml",
+    ".github/workflows/production-app-compose-bridge-install.yml",
     "scripts/check_prod_app_release_scope.py",
     "scripts/reset_homolog_owner.py",
     "scripts/classify_prod_release.py",
@@ -95,6 +96,8 @@ ALLOWED_OPERATIONS = {
     "scripts/test_classify_prod_release.py",
     "scripts/test_deploy_prod_app_services.sh",
     "scripts/test_production_release_workflow_policy.py",
+    "scripts/verify_main_ci_evidence.py",
+    "scripts/test_verify_main_ci_evidence.py",
     "scripts/build_python_security_candidates.py",
     "scripts/python_security_release.py",
     "scripts/test_python_security_release.py",

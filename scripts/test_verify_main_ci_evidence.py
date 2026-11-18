@@ -47,6 +47,42 @@ class EvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(EvidenceError, 'job_obrigatorio_nao_verde'):
                 verify_jobs(bad)
 
+    def test_installer_can_reuse_code_checks_with_isolated_app_preflight_failure(self):
+        release_jobs = jobs() + [
+            {'name': 'release-scope', 'status': 'completed', 'conclusion': 'success'},
+            {'name': 'production-app-preflight', 'status': 'completed', 'conclusion': 'failure'},
+            {'name': 'production-app-release', 'status': 'completed', 'conclusion': 'skipped'},
+        ]
+        latest = run(run_attempt=2, conclusion='failure')
+        with patch('scripts.verify_main_ci_evidence.request_json', return_value={'sha': SHA}), \
+             patch('scripts.verify_main_ci_evidence.paginate', side_effect=[[run(), latest], release_jobs]) as api:
+            evidence = verify_remote(SHA, 'synthetic', app_bridge_install=True)
+        self.assertEqual(evidence, {'sha': SHA, 'run_id': 1, 'run_attempt': 2, 'conclusion': 'failure'})
+        self.assertEqual(api.call_args_list[-1].args[0], 'actions/runs/1/attempts/2/jobs')
+        with self.assertRaisesRegex(EvidenceError, 'nao_verde'):
+            select_run([run(), latest], SHA)
+
+    def test_installer_rejects_any_other_failure_incomplete_gate_or_release_attempt(self):
+        scope = {'name': 'release-scope', 'status': 'completed', 'conclusion': 'success'}
+        preflight = {'name': 'production-app-preflight', 'status': 'completed', 'conclusion': 'failure'}
+        release = {'name': 'production-app-release', 'status': 'completed', 'conclusion': 'skipped'}
+        for variant in (
+            [preflight, release],
+            [scope, preflight],
+            [scope, dict(preflight, conclusion='cancelled'), release],
+            [scope, preflight, dict(release, conclusion='success')],
+            [scope, preflight, release, dict(preflight, name='production-other')],
+            [scope, preflight, release, dict(preflight, conclusion='skipped')],
+        ):
+            with self.subTest(variant=variant), \
+                 patch('scripts.verify_main_ci_evidence.request_json', return_value={'sha': SHA}), \
+                 patch('scripts.verify_main_ci_evidence.paginate',
+                       side_effect=[[run(conclusion='failure')], jobs() + variant]), \
+                 self.assertRaises(EvidenceError):
+                verify_remote(SHA, 'synthetic', app_bridge_install=True)
+        with self.assertRaisesRegex(EvidenceError, 'nao_verde'):
+            select_run([run(status='in_progress', conclusion=None)], SHA, app_bridge_install=True)
+
     def test_pagination_complete_and_incomplete(self):
         with patch('scripts.verify_main_ci_evidence.request_json', side_effect=[
                 {'total_count': 2, 'jobs': [{'id': 1}]}, {'total_count': 2, 'jobs': [{'id': 2}]}]):
