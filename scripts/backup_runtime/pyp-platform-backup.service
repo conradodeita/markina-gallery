@@ -1,0 +1,26 @@
+[Unit]
+Description=Backup global cifrado do Pick-your-Pic
+Wants=network-online.target
+After=network-online.target docker.service
+ConditionPathExists=/etc/pyp-backup/keyring.json
+ConditionPathExists=/etc/pyp-backup/destination.json
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/pyp-backup-runtime
+Environment=APP_ENV=production
+Environment=PYTHONPATH=/opt/pyp-backup-runtime/backend
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/pyp-backup-runtime/venv/bin/python -m app.platform_backup.production_cli
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=pyp-backup
+StateDirectoryMode=0700
+CPUQuota=35%
+MemoryMax=512M
+TimeoutStartSec=20min

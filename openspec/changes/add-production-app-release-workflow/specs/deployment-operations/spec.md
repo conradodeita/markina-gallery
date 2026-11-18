@@ -10,8 +10,19 @@ O workflow SHALL oferecer um release protegido e independente para alterações 
 - **THEN** o fluxo de aplicação pode preparar inventário e release somente de `api` e `web`, enquanto o fluxo facial não é executado para esse escopo
 
 #### Scenario: Escopos misturados ou não permitidos
-- **WHEN** a mudança inclui caminhos faciais não autorizados, workers, migration, Docker/Compose, Monitor do sistema ou outro caminho fora do manifesto
+- **WHEN** a mudança inclui caminhos faciais não autorizados, iniciação ou alteração de serviço de worker, migration, Docker/Compose, Monitor do sistema ou outro caminho fora do manifesto
 - **THEN** o preflight compara o diff desde o checkout ativo de produção e falha fechado antes de qualquer mutação, mesmo quando a mudança facial já está em `main`, exigindo plano OpenSpec/release compatível
+
+### Requirement: Publicação do runtime de backup permanece inerte
+O release API/web MAY incluir módulos da rotina de backup global somente quando cada blob estiver fixado no manifesto do candidato e o diff não incluir migrations, alteração de Docker/Compose ou configuração de instalação do serviço. O release SHALL NOT instalar, habilitar ou iniciar o serviço/timer de backup nem iniciar cópia real.
+
+#### Scenario: Código de backup incluído sem ativação
+- **WHEN** o candidato contém módulos de backup exatos e aprovados no manifesto, sem mudança de schema ou infraestrutura
+- **THEN** o fluxo pode publicar somente `api` e `web`; o serviço e o timer de backup permanecem ausentes ou inativos, sem cópia real
+
+#### Scenario: Arquivo ou blob de backup não revisado
+- **WHEN** o candidato inclui módulo, worker, unidade, timer ou lock de dependências fora dos pins e caminhos exatos aprovados
+- **THEN** o preflight MUST falhar antes de build, recriação ou outra mutação
 
 ### Requirement: Inventário e aprovação do release API/web são vinculados ao SHA
 O inventário SHALL validar CI verde, SHA completo alcançável em `main`, checkout limpo, identidade do projeto, Compose resolvido, saúde dos serviços, versão da API, schema, portas e domínio. SHALL ser somente-leitura e gerar fingerprint minimizado vinculado ao SHA. A publicação SHALL aguardar aprovação humana protegida para o SHA/fingerprint exatos e recalcular o fingerprint antes de mutar.

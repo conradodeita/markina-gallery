@@ -48,6 +48,11 @@ def _configuration(value: dict) -> bytes:
 def build_payload(dump: BinaryIO, configuration: dict, destination: BinaryIO,
                   *, context: BackupContext) -> None:
     _local_runtime()
+    _build_payload(dump, configuration, destination, context=context)
+
+
+def _build_payload(dump: BinaryIO, configuration: dict, destination: BinaryIO,
+                   *, context: BackupContext) -> None:
     if not isinstance(context, BackupContext):
         raise BackupPayloadError("Contexto de backup inválido.")
     try:
@@ -109,6 +114,12 @@ def _member(package: zipfile.ZipFile, name: str, limit: int) -> bytes:
 def open_payload(source: BinaryIO, *, expected: BackupContext):
     """Recebe stream autenticado; valida todos os membros antes de ceder o dump."""
     _local_runtime()
+    with _open_payload(source, expected=expected) as payload:
+        yield payload
+
+
+@contextmanager
+def _open_payload(source: BinaryIO, *, expected: BackupContext):
     if not isinstance(expected, BackupContext):
         raise BackupPayloadError("Contexto de backup inválido.")
     package, dump = None, None

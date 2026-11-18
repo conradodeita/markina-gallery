@@ -73,11 +73,18 @@ class BackupCatalog:
     def __repr__(self) -> str:
         return "BackupCatalog(<redacted>)"
 
+    def _directory(self):
+        return fs.directory(self.root)
+
+    def _context(self, instance_id: UUID, backup_id: UUID, schema_revision: str,
+                 environment: str, at: datetime) -> BackupContext:
+        return BackupContext(instance_id, backup_id, schema_revision, environment, at)
+
     def daily_context(self, instance_id: UUID, schema_revision: str,
                       environment: str, at: datetime) -> BackupContext:
-        candidate = BackupContext(instance_id, uuid4(), schema_revision, environment, at)
+        candidate = self._context(instance_id, uuid4(), schema_revision, environment, at)
         name = "day-" + at.date().isoformat() + ".json"
-        with fs.directory(self.root) as directory_fd, fs.lock(directory_fd, name + ".lock"):
+        with self._directory() as directory_fd, fs.lock(directory_fd, name + ".lock"):
             try:
                 fd = fs.open_file(directory_fd, name, os.O_RDONLY)
             except FileNotFoundError:
@@ -104,7 +111,7 @@ class BackupCatalog:
                             self.key, b"day:" + _json(value["context"]), hashlib.sha256).hexdigest())):
                     raise ValueError
                 fields = value["context"]
-                result = BackupContext(UUID(fields["instance_id"]), UUID(fields["backup_id"]),
+                result = self._context(UUID(fields["instance_id"]), UUID(fields["backup_id"]),
                                        fields["schema_revision"], fields["environment"],
                                        datetime.fromisoformat(fields["created_at"]))
                 if (json.loads(result.header()) != fields or result.instance_id != instance_id
@@ -150,7 +157,7 @@ class BackupCatalog:
 
     def events(self, backup_id: UUID) -> list[dict]:
         name = _identifier(backup_id) + ".events"
-        with fs.directory(self.root) as directory_fd, fs.lock(directory_fd, name + ".lock"):
+        with self._directory() as directory_fd, fs.lock(directory_fd, name + ".lock"):
             try:
                 fd = fs.open_file(directory_fd, name, os.O_RDONLY)
             except FileNotFoundError:
@@ -163,7 +170,7 @@ class BackupCatalog:
     def append(self, backup_id: UUID, event: str, *, at: datetime, **values) -> dict:
         name = _identifier(backup_id) + ".events"
         payload = _payload(event, at, values)
-        with fs.directory(self.root) as directory_fd, fs.lock(directory_fd, name + ".lock"):
+        with self._directory() as directory_fd, fs.lock(directory_fd, name + ".lock"):
             fd = fs.open_file(directory_fd, name, os.O_RDWR, create=True)
             try:
                 existing = self._load(fd, backup_id)

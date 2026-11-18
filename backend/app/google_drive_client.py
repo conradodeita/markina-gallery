@@ -24,6 +24,8 @@ class DriveTransport(Protocol):
 
     def put(self, url: str, **kwargs: Any) -> httpx.Response: ...
 
+    def patch(self, url: str, **kwargs: Any) -> httpx.Response: ...
+
 
 class HttpxDriveTransport:
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
@@ -54,3 +56,7 @@ class HttpxDriveTransport:
         # Upload é uma operação de escrita; não repete chunks automaticamente.
         kwargs.setdefault("timeout", httpx.Timeout(120.0, connect=3.0))
         return self._request("PUT", url, **kwargs)
+
+    def patch(self, url: str, **kwargs: Any) -> httpx.Response:
+        kwargs.setdefault("timeout", httpx.Timeout(30.0, connect=3.0))
+        return self._request("PATCH", url, **kwargs)

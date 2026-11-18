@@ -49,6 +49,11 @@ class ReleaseClassifierTests(unittest.TestCase):
             "app",
         )
 
+    def test_platform_backup_worker_module_is_app_but_other_workers_remain_protected(self):
+        self.assertEqual(classify({"backend/app/platform_backup/runtime_worker.py"}), "app")
+        self.assertEqual(classify({"backend/app/platform_backup/worker.py"}), "protected")
+        self.assertEqual(classify({"backend/app/unreviewed_worker.py"}), "protected")
+
     def test_unreconciled_main_history_does_not_trigger_release(self):
         self.assertEqual(classify_from_baseline(set(APP_RUNTIME), baseline_is_ancestor=False), "none")
 

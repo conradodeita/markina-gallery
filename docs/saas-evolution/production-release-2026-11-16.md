@@ -17,7 +17,7 @@ Operação inicial restrita ao proprietário. Runtime aplicado do commit `9df3b7
 
 ## Custódia e rollback
 
-A chave dedicada está em `/etc/pyp-totp/keyring.json`, diretório de root com modo 0700 e arquivo com modo 0400. O proprietário escolheu a cópia externa `D:\Pick-your-Pic-Recovery\keyring.json`; leitura e recuperação da mesma chave foram comprovadas. A pasta NTFS permite a conta Windows do proprietário e SYSTEM. A unidade deve ficar desconectada sob sua guarda. A desconexão física permanece a cargo do proprietário.
+A chave dedicada está em `/etc/pyp-totp/keyring.json`, diretório de root com modo 0700 e arquivo com modo 0400. Leitura e recuperação da cópia externa foram comprovadas na operação original. Em atualização posterior, o proprietário informou que moveu a cópia TOTP para `D:\Pick-your-Pic-Recovery TOTP de todos\keyring.json` e que mantém as chaves e credenciais na unidade `D:`. A presença e as permissões do arquivo TOTP no novo caminho foram conferidas sem ler a chave. A pasta NTFS permite a conta Windows do proprietário e SYSTEM. A unidade deve ficar desconectada sob sua guarda.
 
 O loader validado está em `/usr/local/lib/pyp-totp-custody`. Seu uso e recuperação seguem [a operação TOTP](../OPERACAO-SEGREDO-TOTP.md). Preservar as versões de chave exigidas por backups históricos.
 

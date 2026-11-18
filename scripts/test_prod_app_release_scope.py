@@ -56,6 +56,41 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest), (True, "somente_api_web"))
 
+    def test_platform_backup_runtime_requires_exact_reviewed_blob_and_worker_scope(self):
+        name = "backend/app/platform_backup/runtime_worker.py"
+        path = self.root / name
+        path.write_text("reviewed but changed backup runtime\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "runtime_diverge_do_blob_aprovado"))
+        self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+        unreviewed = self.root / "backend/app/platform_backup/unreviewed_worker.py"
+        unreviewed.write_text("unreviewed worker\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+
+    def test_backup_support_files_require_exact_set_and_pins(self):
+        for name in policy.BACKUP_SUPPORT_FILES:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("reviewed backup support\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "manifesto_suporte_backup_incompleto"))
+        self.manifest["support_blobs"] = {
+            name: self.run_git("rev-parse", f"HEAD:{name}") for name in policy.BACKUP_SUPPORT_FILES
+        }
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+        changed = next(iter(policy.BACKUP_SUPPORT_FILES))
+        (self.root / changed).write_text("different support content\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "suporte_backup_diverge_do_blob_aprovado"))
+
     def test_release_classifier_and_its_test_are_allowed_policy_files(self):
         for name in ("scripts/classify_prod_release.py", "scripts/test_classify_prod_release.py"):
             path = self.root / name
