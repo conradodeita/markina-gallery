@@ -124,6 +124,26 @@ class SnapshotPathTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError):
             bridge.validate_snapshot_metadata(safe, allowed_owners={1000}, root_only=True)
 
+    def test_private_deploy_state_accepts_root_or_checkout_owner(self):
+        for owner in (0, 1000):
+            with self.subTest(owner=owner):
+                directory = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=owner)
+                snapshot = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_nlink=1, st_size=5, st_uid=owner)
+                bridge.validate_private_snapshot_directory_metadata(directory, allowed_owners={0, 1000})
+                bridge.validate_private_snapshot_file_metadata(snapshot, allowed_owners={0, 1000})
+
+    def test_private_deploy_state_rejects_shared_modes_wrong_owners_and_exec_files(self):
+        for mode in (0o710, 0o705, 0o777):
+            directory = SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=1000)
+            with self.subTest(directory_mode=oct(mode)), self.assertRaisesRegex(
+                    bridge.BridgeError, "snapshot_parent_permissions_invalid"):
+                bridge.validate_private_snapshot_directory_metadata(directory, allowed_owners={0, 1000})
+        for owner, mode in ((2000, 0o600), (1000, 0o640), (1000, 0o604), (1000, 0o700)):
+            snapshot = SimpleNamespace(st_mode=stat.S_IFREG | mode, st_nlink=1, st_size=5, st_uid=owner)
+            with self.subTest(owner=owner, mode=oct(mode)), self.assertRaisesRegex(
+                    bridge.BridgeError, "snapshot_file_permissions_invalid"):
+                bridge.validate_private_snapshot_file_metadata(snapshot, allowed_owners={0, 1000})
+
 
 class ContainerAndDisclosureTests(unittest.TestCase):
     def test_selects_exactly_one_running_api_and_web(self):
