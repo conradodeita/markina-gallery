@@ -41,3 +41,7 @@
 - [ ] 6.1 Verificar recibo root-only, pin SHA-256, SHA/IDs/imagens/schema e projeção efetiva pela mesma fronteira. Testar recusas e preservar caminhos Compose genéricos.
 - [ ] 6.2 Preparar e comprovar ambos os candidatos Engine sem tráfego e registrar journal de promoção/recuperação. Exercitar a execução e a recuperação, inclusive falha parcial, com Docker isolado antes de efeito real.
 - [ ] 6.3 Validar escopo, testes de contrato, pins, OpenSpec e CI. Reexecutar o fluxo protegido sem duplicar CI para o mesmo SHA sempre que houver evidência elegível.
+
+### Tentativa CI do PR #384
+
+- A tentativa `44411391749` executou a prova Engine, mas ela terminou com `protected_command_failed`. O traceback minimizado percorreu `_engine_discover → _inspect_api_web → _list_service_ids → _docker → _run` e caiu no tratamento de `OSError`/timeout após 19 s; os comandos do harness via `PATH` já haviam criado recursos sintéticos. Isso sustenta a hipótese de diferença no caminho `/usr/bin/docker` do runner. A prova corrigida foi implementada localmente com adaptador limitado e testes unitários; manter 6.2 pendente até a nova prova Engine real completar no CI.

@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import production_app_compose_bridge as bridge
+import prove_app_engine_promotion as engine_proof
 
 SHA = "a" * 40
 FINGERPRINT = "b" * 64
@@ -46,6 +47,47 @@ def container(service="api", *, secret=SECRET_SENTINEL, health="healthy", status
         },
         "State": {"Status": status, "Health": {"Status": health}},
     }
+
+
+class RunnerDockerAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.original_docker = bridge._docker
+        self.addCleanup(setattr, bridge, "_docker", self.original_docker)
+
+    def test_prefers_fixed_production_cli_when_executable(self):
+        with patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True), \
+                patch.object(engine_proof.shutil, "which") as which:
+            engine_proof.configure_runner_docker()
+        self.assertIs(bridge._docker, self.original_docker)
+        which.assert_not_called()
+
+    def test_runner_adapter_uses_resolved_absolute_cli_through_bounded_runner(self):
+        with patch.object(engine_proof.Path, "is_file", side_effect=[False, True]), \
+                patch.object(engine_proof.os, "access", return_value=True), \
+                patch.object(engine_proof.shutil, "which", return_value="/opt/hostedtoolcache/docker"):
+            engine_proof.configure_runner_docker()
+        with patch.object(bridge, "_run", return_value="synthetic") as run:
+            result = bridge._docker(["ps"], timeout=30)
+        self.assertEqual(result, "synthetic")
+        run.assert_called_once_with(["/opt/hostedtoolcache/docker", "ps"], input_text=None,
+                                   timeout=30, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES)
+
+    def test_runner_adapter_falls_back_when_fixed_cli_is_not_executable(self):
+        with patch.object(engine_proof.Path, "is_file", side_effect=[True, True]), \
+                patch.object(engine_proof.os, "access", side_effect=[False, True]), \
+                patch.object(engine_proof.shutil, "which", return_value="/usr/local/bin/docker"):
+            engine_proof.configure_runner_docker()
+        with patch.object(bridge, "_run", return_value="synthetic") as run:
+            bridge._docker(["version"])
+        run.assert_called_once_with(["/usr/local/bin/docker", "version"], input_text=None,
+                                   timeout=120, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES)
+
+    def test_runner_adapter_rejects_relative_cli_path(self):
+        with patch.object(engine_proof.Path, "is_file", return_value=False), \
+                patch.object(engine_proof.shutil, "which", return_value="docker"), \
+                self.assertRaisesRegex(SystemExit, "CLI Docker absoluto"):
+            engine_proof.configure_runner_docker()
 
 
 class RootIdentityTests(unittest.TestCase):

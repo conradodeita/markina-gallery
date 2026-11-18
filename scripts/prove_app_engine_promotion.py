@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -30,6 +31,23 @@ def require_ci_runner():
             or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
             or os.geteuid() != 0 or not Path("/var/run/docker.sock").is_socket()):
         raise SystemExit("Somente runner GitHub-hosted descartável com Docker root é permitido")
+
+
+def configure_runner_docker():
+    fixed = Path("/usr/bin/docker")
+    if fixed.is_file() and os.access(fixed, os.X_OK):
+        return
+
+    executable = shutil.which("docker")
+    if (not isinstance(executable, str) or not executable.startswith("/")
+            or not Path(executable).is_file() or not os.access(executable, os.X_OK)):
+        raise SystemExit("CLI Docker absoluto não está disponível no runner")
+
+    def run_bridge_docker(args, *, input_text=None, timeout=120,
+                          max_output=bridge.MAX_COMMAND_OUTPUT_BYTES):
+        return bridge._run([executable, *args], input_text=input_text, timeout=timeout, max_output=max_output)
+
+    bridge._docker = run_bridge_docker
 
 
 def run(stage, *args, timeout=240):
@@ -400,6 +418,7 @@ def prove_partial_recovery(root, synthetic_images):
 
 def main():
     require_ci_runner()
+    configure_runner_docker()
     run("pull isolated base image", "docker", "pull", BASE_IMAGE, timeout=420)
     with tempfile.TemporaryDirectory(prefix="markina-engine-proof-") as temporary:
         root = Path(temporary)
