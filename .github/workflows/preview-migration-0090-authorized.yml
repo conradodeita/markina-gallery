@@ -28,7 +28,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Conferir contrato do fluxo protegido
@@ -54,7 +54,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Preparar somente backup online do schema 0089
@@ -79,7 +79,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -100,7 +100,7 @@ jobs:
       PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -139,7 +139,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -192,7 +192,7 @@ jobs:
       PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
       PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Executar migration somente com fingerprint recém-aprovado
