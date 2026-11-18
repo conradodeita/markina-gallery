@@ -410,7 +410,7 @@ class ProtectedOperationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertRegex(result.stderr, "app-bridge-install: (arguments_invalid|identity_invalid)")
 
-    def test_installer_accepts_only_the_exact_canonical_https_and_ssh_origins(self):
+    def test_installer_accepts_only_exact_canonical_git_origins(self):
         bash = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else shutil.which("bash")
         self.assertTrue(bash)
         installer = Path(__file__).with_name("install-prod-app-compose-bridge.sh").read_text(encoding="utf-8")
@@ -424,14 +424,18 @@ class ProtectedOperationTests(unittest.TestCase):
         accepted = (
             "https://github.com/conradodeita/markina-gallery.git",
             "ssh://github.com/conradodeita/markina-gallery.git",
+            "git@github.com:conradodeita/markina-gallery.git",
         )
         rejected = (
-            "git@github.com:conradodeita/markina-gallery.git",
             "ssh://git@github.com/conradodeita/markina-gallery.git",
             "ssh://github.com.evil/conradodeita/markina-gallery.git",
             "https://github.com/conradodeita/another-repository.git",
             "https://user@github.com/conradodeita/markina-gallery.git",
             "http://github.com/conradodeita/markina-gallery.git",
+            "git@github.com.evil:conradodeita/markina-gallery.git",
+            "developer@github.com:conradodeita/markina-gallery.git",
+            "git@github.com:conradodeita/another-repository.git",
+            "git@github.com:conradodeita/markina-gallery.git/extra",
         )
         for origin in accepted:
             with self.subTest(origin=origin):

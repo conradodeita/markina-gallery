@@ -58,16 +58,31 @@ Sem `config-hash`, a ponte SHALL comprovar equivalência efetiva entre snapshot 
 - **THEN** comparar ambiente incluindo defaults da imagem, comando/entrypoint, usuário, diretório, healthcheck, labels de aplicação, mounts, redes e políticas Docker com o snapshot do próprio serviço
 - **AND** somente o digest da comparação pode sair do processo privilegiado
 
-### Requirement: Instalador limita a origem Git sem alterar a configuração do host
-O instalador protegido SHALL aceitar somente as URLs canônicas exatas `https://github.com/conradodeita/markina-gallery.git` e `ssh://github.com/conradodeita/markina-gallery.git`, validar que `origin/main` corresponde ao SHA suportado e MUST NOT reescrever a configuração Git do host. Origem divergente SHALL ser rejeitada antes de qualquer escrita privilegiada.
+### Requirement: Allowlist Git limita a origem do instalador
+O instalador SHALL aceitar somente as formas HTTPS e SSH exatas documentadas nos cenários. Origem divergente SHALL ser recusada antes de qualquer escrita privilegiada.
 
-#### Scenario: Origem canônica em HTTPS ou SSH
-- **WHEN** `origin` usa uma das duas URLs canônicas e `origin/main` corresponde ao SHA suportado
+#### Scenario: Origem HTTPS ou SSH URI exata
+- **WHEN** `origin` é `https://github.com/conradodeita/markina-gallery.git` ou `ssh://github.com/conradodeita/markina-gallery.git` e `origin/main` corresponde ao SHA suportado
 - **THEN** o instalador continua as verificações fixas de checkout, lock, backup e invariância
 
+#### Scenario: Forma SCP exata do OpenSSH
+- **WHEN** `origin` é `git@github.com:conradodeita/markina-gallery.git` e `origin/main` corresponde ao SHA suportado
+- **THEN** o instalador reconhece o mesmo repositório sem alterar `origin`
+
 #### Scenario: Origem divergente
-- **WHEN** `origin` contém outro host, caminho, protocolo ou credenciais
+- **WHEN** `origin` contém outro host, caminho, protocolo, usuário ou credenciais
 - **THEN** o instalador recusa antes de qualquer escrita privilegiada e preserva a configuração do host
+
+### Requirement: Instalador preserva a origem e exige revisão suportada
+O instalador SHALL validar que `origin/main` corresponde ao SHA suportado e MUST NOT reescrever a configuração Git do host.
+
+#### Scenario: Revisão principal suportada
+- **WHEN** `origin/main` corresponde ao SHA completo suportado
+- **THEN** o instalador mantém a origem configurada e continua para as demais verificações
+
+#### Scenario: Revisão principal divergente
+- **WHEN** `origin/main` não corresponde ao SHA suportado
+- **THEN** o instalador recusa antes de qualquer escrita privilegiada
 
 ### Requirement: Rollback é inventariado, aprovado e limitado
 O rollback SHALL exigir inventário somente-leitura e aprovação protegida próprios, validar hashes dos snapshots e IDs das imagens preservadas e restaurar somente API/web. Falha de release MUST NOT iniciar rollback automático.
