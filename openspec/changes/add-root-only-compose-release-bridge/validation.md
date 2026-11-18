@@ -28,10 +28,12 @@ SSH sem sudo confirmou host `clearbudget-vnic`, checkout `bfe511f850224823254b0f
 | Workflow protegido | `python scripts/test_production_release_workflow_policy.py` | Passou; candidato API/web elegível, dispatch protegido e pins exatos |
 | Segredos | Gitleaks 8.24.3 `stdin --redact` sobre `git diff --cached` do conjunto explícito de 20 arquivos | Nenhum segredo encontrado em 164.521 bytes; artefato preexistente `output` excluído |
 
-## Em andamento
+## Push e CI da branch
 
-- Primeiro push: commit `ff735dfa35a3334c6208de46bf774c56f17df623`, CI `44306467902`. Frontend, backend-quality, ARM64, OpenSpec e segredos passaram no snapshot consultado; aguardar conclusão dos demais jobs antes de declarar CI verde.
-- Revisão posterior acrescentou negativas para aliases inexplicados, prioridade de gateway e `NoCopy`, com pins recalculados. Os 34 testes da ponte, Ruff e política de workflow passaram novamente; regras existentes do produto/arquitetura não foram alteradas.
-- Gates locais concluídos e diff revisado; nenhum arquivo de aplicação, migration, credencial ou ambiente está no delta desta change. Prossiga ao commit/push e CI com o conjunto explícito; preserve `output`.
-- Não declarar instalação/deploy antes das evidências dos jobs protegidos e validação real do runtime.
-- Instalar ponte e wrapper apenas pelo dispatch protegido depois da integração; o preflight real ainda pode recusar campos de runtime sem contrato comprovado. Não transformar recusa em aprovação automática.
+- O primeiro commit enviado foi `ff735dfa35a3334c6208de46bf774c56f17df623`. A revisão adicionou recusas para aliases de rede inexplicados, prioridade de gateway e opção `NoCopy` de volume, recalculou os pins e foi publicada no commit `94662062f7f2dffd9df78714c305035e7dbbbdf7` (`fix(ops): prove network and volume options before release`).
+- O CI do commit inicial (`44306467902`) foi cancelado depois que o commit corrigido iniciou uma validação integral sobreposta; ele foi substituído pelo run mais novo, não por uma falha.
+- O run [44307098266](https://github.com/conradodeita/markina-gallery/actions/runs/44307098266), no SHA `94662062f7f2dffd9df78714c305035e7dbbbdf7`, terminou com sucesso em 18/11/2026. Passaram `gitleaks`, `openspec`, classificação de escopo, frontend, qualidade e três partições do backend, gate agregado do backend, imagens AMD64/ARM64, inventário de homologação e todos os demais jobs aplicáveis; o contexto `gemma-runtime` legado também ficou verde.
+- O workflow foi disparado com `operation=none`. Instalação protegida, preflight e release/deploy foram pulados; nenhum container ou serviço de produção foi alterado por essa rodada.
+- Escopo/segredos e diff foram revisados antes dos commits. Nenhum arquivo de aplicação, migration, credencial ou ambiente entrou no delta; o caminho preexistente `output` permaneceu fora do escopo.
+- Task 4.1 concluída com gates locais e CI integral verde neste SHA. A próxima etapa é abrir o PR, acompanhar os checks de PR e integrar somente quando os seis contextos exigidos pela proteção estrita de `main` passarem.
+- Instalar a ponte e o wrapper apenas pelo dispatch protegido depois da integração. O preflight real ainda pode recusar campos de runtime sem contrato comprovado; uma recusa não deve ser convertida em aprovação automática.
