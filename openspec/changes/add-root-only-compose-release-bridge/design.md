@@ -15,7 +15,7 @@ O preflight `44283691264` falhou antes de qualquer deploy. O proprietário escol
 - Helper de biblioteca padrão em `/usr/local/sbin/markina-gallery-app-compose-bridge`, `root:root 0755`. Dispatch explícito em `main`, Environment `production`, confere host, repositório, SHA/blob, backup, checksum e invariância dos containers. O forced-command wrapper continua pinado ao script app e só oferece inventários. Não modificar sudoers, chaves ou permissões existentes.
 - O instalador aceita somente as origens canônicas exatas `https://github.com/conradodeita/markina-gallery.git`, `ssh://github.com/conradodeita/markina-gallery.git` e `git@github.com:conradodeita/markina-gallery.git`. A última é a forma SCP do OpenSSH observada no checkout real; aceita somente o usuário fixo `git`, host e caminho exatos. Não reescrever `remote.origin`; rejeitar host, caminho, protocolo, usuário ou credenciais diferentes antes de qualquer escrita privilegiada.
 - Git, escopo e lock comum permanecem sob `ubuntu`. A ponte exige UID/GID root e tabela fechada de argumentos antes de qualquer consulta. Mutação exige modo apropriado, SHA/marcador correspondentes, lock ocupado e cópia root-only ligada ao fingerprint aprovado.
-- Selecionar exatamente uma API e um web por labels. Arquivos e diretório são próprios de cada serviço. Aceitar somente checkout, estado protegido de origem e raiz privada da ponte; recusar symlink, hard link, escrita por terceiros, proprietário/hash divergentes. Fontes versionadas devem corresponder ao blob de `HEAD`.
+- Selecionar exatamente uma API e um web por labels. Arquivos e diretório são próprios de cada serviço. No `deploy-state`, aceitar snapshots e diretórios sem symlink pertencentes a `root` ou ao proprietário do checkout somente quando a árvore e os arquivos não concederem acesso a grupo/outros; os arquivos também devem ser legíveis pelo proprietário, não executáveis e sem hard links. Recusar outros proprietários/modos e hash divergente. Fontes versionadas devem corresponder ao blob de `HEAD`.
 - Resolver com cópias temporárias privadas das fontes e ambiente, mantendo `--project-directory` original e perfis fixos facial/preview. Remover cópias temporárias ao sair. Inventário não grava estado persistente nem altera imagens/containers. Nunca devolver stderr bruto, ambiente ou JSON Compose.
 - Comparar snapshot resolvido com Docker inspect e defaults da imagem: ambiente sem duplicatas, comando/entrypoint, usuário/diretório, healthcheck, labels da aplicação, mounts, redes, restart, limites, privilégios, capabilities, segurança e portas. Campo sem contrato conhecido falha fechado. Digest semântico é distinto do label Compose; não sintetizar labels ausentes.
 - Identidade web inicial exige prova do snapshot e revisão `io.pickyourpic.release` igual ao checkout ancestral aprovado. Não reescrever recibo antigo durante inventário. Após release, o novo recibo vincula imagem/digest semântico; recibos legados de hash Compose não substituem essa prova.
@@ -27,7 +27,7 @@ O preflight `44283691264` falhou antes de qualquer deploy. O proprietário escol
 
 ## Risks / Trade-offs
 
-Snapshots, defaults ou formatos sem contrato suportado bloqueiam; suporte adicional exige fixture e comparação efetiva. A fronteira root exige validação de argumentos, caminhos, modos, hash e negativas. API/web têm interrupção breve; builds/provas terminam antes e recuperação fica preservada. O estado privado cresce até existir política de retenção aprovada.
+Snapshots, defaults ou formatos sem contrato suportado bloqueiam; suporte adicional exige fixture e comparação efetiva. Fontes em `deploy-state` aceitam somente a árvore privada do root ou do proprietário do checkout; recuperação persistente continua root-only. A fronteira root exige validação de argumentos, caminhos, modos, hash e negativas. API/web têm interrupção breve; builds/provas terminam antes e recuperação fica preservada. O estado privado cresce até existir política de retenção aprovada.
 
 ## Migration Plan
 
@@ -39,4 +39,4 @@ Snapshots, defaults ou formatos sem contrato suportado bloqueiam; suporte adicio
 
 ## Open Questions
 
-Nenhuma decisão arquitetural pendente após a autorização da prova semântica. Gates operacionais ainda podem bloquear campos não comprovados; não relaxar contratos ou permissões automaticamente.
+Nenhuma decisão arquitetural pendente após a autorização da prova semântica. A exceção de owner no `deploy-state` é limitada à árvore privada e ao proprietário do checkout; qualquer outro owner/modo continua bloqueado. Gates operacionais ainda podem bloquear campos não comprovados.

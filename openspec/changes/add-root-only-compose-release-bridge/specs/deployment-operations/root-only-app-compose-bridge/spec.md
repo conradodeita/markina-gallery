@@ -18,7 +18,7 @@ A ponte SHALL exigir UID/GID root e aceitar somente operações, serviços, SHA 
 - **THEN** a ponte recusa sem executar Docker Compose
 
 ### Requirement: Snapshots Compose preservam proveniência e sigilo
-A ponte SHALL obter os caminhos somente dos labels dos containers ativos, limitá-los às raízes persistentes aprovadas e validar arquivo regular, ausência de symlink, proteção de escrita e hash. SHALL ler snapshots sem alterá-los e MUST NOT imprimir seu conteúdo, configuração resolvida, variáveis secretas ou tokens.
+A ponte SHALL obter os caminhos somente dos labels ativos, limitá-los às raízes aprovadas e validar tipo, links, modo e hash. SHALL ler as fontes sem alterá-las e MUST NOT imprimir conteúdo ou segredos.
 
 #### Scenario: Snapshot inseguro ou divergente
 - **WHEN** um caminho escapa das raízes aprovadas, o arquivo ou seus metadados são inseguros, ou o hash muda durante a operação
@@ -49,6 +49,18 @@ A operação mutável SHALL exigir workflow protegido `production`, lock exclusi
 #### Scenario: Fingerprint ou lock divergente
 - **WHEN** estado Compose muda após inventário ou o lock está indisponível
 - **THEN** o release aborta antes de build, troca de imagem ou container
+
+### Requirement: Árvore deploy-state permanece privada
+Para fontes sob `deploy-state`, cada diretório e arquivo SHALL pertencer a `root` ou ao proprietário do checkout e não conceder permissões a grupo/outros. O arquivo SHALL ser legível pelo proprietário e não executável. Antes de mutação, a ponte SHALL copiar as fontes verificadas para estado privado `root:root` e MUST NOT alterar as originais.
+
+#### Scenario: Snapshot privado pertence ao proprietário autorizado
+- **WHEN** a árvore e seus snapshots pertencem a `root` ou ao proprietário do checkout, sem permissões para grupo/outros
+- **THEN** a ponte verifica e resolve a fonte sem alterá-la
+- **AND** cópias persistentes de recuperação permanecem `root:root` com acesso root-only
+
+#### Scenario: Snapshot tem owner ou modo fora da allowlist
+- **WHEN** um arquivo ou diretório da árvore pertence a outro owner ou concede permissões a grupo/outros
+- **THEN** a ponte bloqueia o fingerprint e qualquer mutação antes de build ou recriação
 
 ### Requirement: Ausência de label exige prova semântica por serviço
 Sem `config-hash`, a ponte SHALL comprovar equivalência efetiva entre snapshot e container. MUST NOT sintetizar label nem recriar container só para acrescentar metadados. Divergência ou campo sem contrato de comparação SHALL bloquear fingerprint aprovável.

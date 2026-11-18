@@ -311,6 +311,21 @@ def validate_snapshot_metadata(metadata, *, allowed_owners: set[int], root_only:
         raise BridgeError("snapshot_not_root_only")
 
 
+def validate_private_snapshot_directory_metadata(metadata, *, allowed_owners: set[int]) -> None:
+    permissions = stat.S_IMODE(metadata.st_mode)
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid not in allowed_owners
+            or permissions & 0o077 or not permissions & 0o100):
+        raise BridgeError("snapshot_parent_permissions_invalid")
+
+
+def validate_private_snapshot_file_metadata(metadata, *, allowed_owners: set[int],
+                                            max_size: int = MAX_SNAPSHOT_BYTES) -> None:
+    validate_snapshot_metadata(metadata, allowed_owners=allowed_owners, max_size=max_size)
+    permissions = stat.S_IMODE(metadata.st_mode)
+    if permissions & 0o077 or permissions & 0o111 or not permissions & 0o400:
+        raise BridgeError("snapshot_file_permissions_invalid")
+
+
 def snapshot_sha256(path: str | Path, *, max_size: int = MAX_SNAPSHOT_BYTES) -> str:
     try:
         file_path = Path(path)
@@ -498,19 +513,15 @@ def _validate_snapshot_source(path: Path) -> str:
         if state_root not in checked.parents:
             raise BridgeError("snapshot_path_outside_roots")
         state_metadata = state_root.lstat()
-        if (not stat.S_ISDIR(state_metadata.st_mode) or state_metadata.st_uid not in {0, project_root.stat().st_uid}
-                or stat.S_IMODE(state_metadata.st_mode) & 0o022):
-            raise BridgeError("snapshot_parent_permissions_invalid")
-        validate_snapshot_metadata(metadata, allowed_owners={0})
+        private_owners = {0, project_root.stat().st_uid}
+        validate_private_snapshot_directory_metadata(state_metadata, allowed_owners=private_owners)
+        validate_private_snapshot_file_metadata(metadata, allowed_owners=private_owners)
         for parent in checked.parents:
             if parent == state_root:
                 break
             if state_root not in parent.parents:
                 raise BridgeError("snapshot_path_outside_roots")
-            parent_metadata = parent.lstat()
-            if (not stat.S_ISDIR(parent_metadata.st_mode) or parent_metadata.st_uid != 0
-                    or stat.S_IMODE(parent_metadata.st_mode) & 0o077):
-                raise BridgeError("snapshot_parent_permissions_invalid")
+            validate_private_snapshot_directory_metadata(parent.lstat(), allowed_owners=private_owners)
     else:
         repository_owner = project_root.stat().st_uid
         validate_snapshot_metadata(metadata, allowed_owners={0, repository_owner})
