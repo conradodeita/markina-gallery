@@ -13,10 +13,9 @@ readonly COMPOSE_FILE="docker/docker-compose.yml"
 readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
-readonly COMPOSE_FILE_LABEL="/opt/markina-gallery/docker/docker-compose.yml,/var/lib/markina-gallery/deploy-state/branding.compose.yml,/opt/markina-gallery/docker/docker-compose.raw-development.yml,/opt/markina-gallery/docker/docker-compose.preview-adjustment.yml,/opt/markina-gallery/docker/docker-compose.system-monitor.yml,/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
+readonly COMPOSE_FILE_LABEL="/opt/markina-gallery/docker/docker-compose.yml,/var/lib/markina-gallery/deploy-state/branding.compose.yml,/opt/markina-gallery/docker/docker-compose.preview-adjustment.yml,/opt/markina-gallery/docker/docker-compose.system-monitor.yml,/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
 readonly COMPOSE_EXTRA_FILES=(
   "/var/lib/markina-gallery/deploy-state/branding.compose.yml"
-  "docker/docker-compose.raw-development.yml"
   "docker/docker-compose.preview-adjustment.yml"
   "docker/docker-compose.system-monitor.yml"
   "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
@@ -99,7 +98,7 @@ verify_repository() {
   [[ "$(hostname)" == "$EXPECTED_HOST" ]] || fail "host diverge do alvo"
   [[ "$(pwd -P)" == "$PROJECT_ROOT" && "$(git rev-parse --show-toplevel)" == "$PROJECT_ROOT" ]] || fail "checkout Markina ausente"
   [[ -f "$COMPOSE_FILE" && -f "$ENV_FILE" && -d "$STATE_DIR" ]] || fail "Compose, ambiente ou estado ausente"
-  for file in "${COMPOSE_EXTRA_FILES[@]}"; do [[ -f "$file" ]] || fail "manifesto Compose ativo ausente"; done
+  for file in "${COMPOSE_EXTRA_FILES[@]}"; do [[ -f "$file" ]] || fail "manifesto Compose ativo ausente: $file"; done
   git check-ignore -q "$ENV_FILE" || fail "arquivo de ambiente não está ignorado"
   [[ -n "$EXPECTED_REPOSITORY" ]] || fail "repositório esperado ausente"
   [[ -z "$(git status --porcelain)" ]] || fail "checkout contém alterações locais"
