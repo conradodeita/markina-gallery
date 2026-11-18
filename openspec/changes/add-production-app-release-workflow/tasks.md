@@ -23,7 +23,7 @@
 - [ ] 4.1 Após aprovação da implementação, atualizar o wrapper root-owned por procedimento operacional autorizado e conferir owner, modo e blob instalado; registrar bloqueio caso não haja acesso/autorização específica.
 - [ ] 4.2 Executar inventário somente-leitura no SHA integrado, apresentar fingerprint, impacto e rollback e aguardar aprovação humana protegida para esse inventário exato.
 - [ ] 4.3 Após aprovação, acompanhar release e smoke tests; registrar SHA, revisão do banco e estado de saúde ou executar apenas rollback inventariado e aprovado.
-- [ ] 4.4 Reconciliar a base do manifesto com a revisão ativa observada e fixar os blobs exatos do candidato de backup API/web, distinguindo módulos inertes de serviços/execução; testar a recusa de worker não aprovado, arquivos auxiliares não pinados, migration e alteração de Compose.
+- [x] 4.4 Reconciliar a base do manifesto com a revisão ativa observada e fixar os blobs exatos do candidato de backup API/web, distinguindo módulos inertes de serviços/execução; testar a recusa de worker não aprovado, arquivos auxiliares não pinados, migration e alteração de Compose. Evidência local no commit `7484514568d8ccadf412bee556f10ce518db6557`: base `bfe511f850224823254b0fc9f51fa7ff60ecfba0`/schema `20261113_0126`; 36 pins de runtime e 3 de suporte conferidos; classificação `app`; `app_release_ready=true`; 23 testes de escopo, 16 de classificação, 6 testes de release shell e `production release workflow policy` passaram; OpenSpec estrito passou.
 
 ## Workflow follow-up
 
@@ -60,4 +60,4 @@
 - O diff do candidato contra a base ativa contém 48 caminhos, sem migrations nem Docker/Compose. O código do backup pode ser entregue somente como módulos inertes da imagem API/web; unidades, timer, configuração, ensaio com dados reais e cópia permanecem fora do deploy.
 - O wrapper root-owned observado é `root:root 0755`, SHA-256 `90e93f470056d78e5e625007a47bdb0703a2d66ab4e14bd3c6f7e94cb4d19d74`, e fixa um blob antigo do helper app. O inventário oficial ainda não foi executado e nenhum fingerprint foi emitido. Nenhum serviço, banco, arquivo de configuração, timer ou dado de produção foi alterado.
 - A execução CI #44202373992 falhou em `backend-tests (0)` porque a matriz de consumidores ambientais não refletia os novos módulos; a correção local passou no teste focal (**2 passed**). `backend`, `homolog-inventory-policy` e o agregador legado `gemma-runtime` falharam em consequência desse shard. CI completo do novo candidato permanece pendente.
-- A task 4.4 só será marcada concluída após pins/manifests e testes de escopo passarem. As tasks 4.1–4.3 continuam abertas para wrapper, inventário exato e release protegido.
+- A task 4.4 foi concluída após os pins e testes locais passarem. As tasks 4.1–4.3 continuam abertas para instalar o wrapper, executar o inventário exato e acompanhar o release protegido.
