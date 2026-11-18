@@ -19,3 +19,9 @@
 ## Workflow follow-up
 - Reconciliação em 2026-10-27: PR #306 integrada na main `80075b5dd0fc78e0b5a53ded72c40ceefc62fa82` após CI verde e prova real de preservação. A branch desta change incorporou essa main com resolução focada no CI, mantendo ambas as validações. Dez testes de reutilização/contrato e 36 testes de inventário/release passaram; política de release e OpenSpec strict passaram. O preflight anterior #40443842889 terminou com falha e não há preflight ativo a interromper. A integração da otimização poderá preceder a nova instalação/preflight, após CI da base e da PR atualizada; a nova operação ficará fixada no SHA integrado e não reutilizará fingerprint do run anterior. Aguarda CI push/main #40500230224 antes de publicar a atualização da PR que verifica essa base remotamente. As tasks operacionais continuam abertas até evidência do runner e do ambiente protegido.
 - Sincronizar spec consolidada e arquivar somente após revisão humana conforme política do repositório.
+
+## 4. Instalação da ponte API/web com CI existente
+
+- [x] 4.1 Mover o despacho da ponte/wrapper para fluxo manual dedicado que valide o CI de push para o SHA atual, preservando aprovação protegida e comandos de instalação.
+- [x] 4.2 Validar evidência exata, preflight como única falha elegível, recusa dos demais casos, política da CI e OpenSpec. Atualizar runbook com a retomada do run original.
+- [ ] 4.3 Publicar e verificar o CI da revisão antes de integrar. Provar em runner que a consulta ao SHA elegível ocorre sem a suíte duplicada. A execução real do instalador protegido só ocorre quando necessária ao release autorizado.
