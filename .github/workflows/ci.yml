@@ -14,6 +14,7 @@ on:
         options:
           - none
           - app-release
+          - app-compose-reconcile
           - app-rollback
           - infinitepay-retirement-preflight
           - infinitepay-retirement-release
@@ -415,6 +416,8 @@ jobs:
             echo "::endgroup::"
             exit "$status"
           fi
+      - name: Testar reconciliação delimitada do overlay Gemma aposentado
+        run: python3 openspec/changes/fix-app-release-compose-preflight/operations/reconcile_retired_gemma_stub.py --self-test
 
   homolog-inventory-policy:
     needs: [ci-scope, backend, frontend, runtime-images, openspec, gitleaks]
@@ -1070,6 +1073,45 @@ jobs:
           ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
             "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode release --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
             < scripts/deploy-prod-app-services.sh
+
+  production-app-compose-reconciliation:
+    if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'app-compose-reconcile' }}"
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Reconciliar somente o bloco Compose aposentado com guardas exatas
+        shell: bash
+        env:
+          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          helper='openspec/changes/fix-app-release-compose-preflight/operations/reconcile_retired_gemma_stub.py'
+          helper_blob="$(git rev-parse "$GITHUB_SHA:$helper")"
+          [[ "$helper_blob" =~ ^[0-9a-f]{40}$ ]]
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          printf -v remote_apply_command 'cd /opt/markina-gallery && python3 - --apply --expected-main-sha %q' "$GITHUB_SHA"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" "$remote_apply_command" < "$helper" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "reconciliation_helper_blob=$helper_blob" | tee -a "$GITHUB_STEP_SUMMARY"
 
   production-app-rollback-preflight:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'app-rollback' }}"

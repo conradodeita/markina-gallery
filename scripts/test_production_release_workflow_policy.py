@@ -26,6 +26,7 @@ RETIREMENT_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-infinitepay-retiremen
 ORDERS_INVENTORY_SCRIPT = (ROOT / "scripts/orders_pilot_release.py").read_bytes()
 APP_ENV_INVENTORY_SCRIPT = (ROOT / "scripts/app_env_transition_inventory.py").read_bytes()
 APP_ENV_INVENTORY_CONTRACT = (ROOT / "backend/app/environment_transition_inventory.py").read_bytes()
+COMPOSE_RECONCILIATION_SCRIPT = (ROOT / "openspec/changes/fix-app-release-compose-preflight/operations/reconcile_retired_gemma_stub.py").read_text(encoding="utf-8")
 PREVIEW_MIGRATION_INVENTORY = (ROOT / "scripts/preview_adjustment_migration_inventory.py").read_bytes()
 PREVIEW_MIGRATION_DEPLOY = (ROOT / "scripts/deploy-prod-preview-adjustment-migration.sh").read_text(encoding="utf-8")
 PREVIEW_MIGRATION_WRAPPER_INSTALL = (ROOT / "scripts/install-prod-preview-migration-wrapper.sh").read_text(encoding="utf-8")
@@ -83,6 +84,9 @@ def main() -> None:
         "  production-app-release:", 1
     )[0]
     app_release = WORKFLOW.split("  production-app-release:", 1)[1]
+    compose_reconciliation = WORKFLOW.split("  production-app-compose-reconciliation:", 1)[1].split(
+        "  production-app-rollback-preflight:", 1
+    )[0]
     retirement_scope = WORKFLOW.split("  infinitepay-retirement-scope:", 1)[1].split(
         "  infinitepay-retirement-preflight:", 1
     )[0]
@@ -132,6 +136,39 @@ def main() -> None:
     require("MARKINA_APP_TARGET_SHA=$GITHUB_SHA", "inventário API/web restrito", app_preflight)
     require("environment: production", "aprovação protegida para API/web", app_release)
     require("scripts/deploy-prod-app-services.sh", "release API/web dedicado", app_release)
+    require("- app-compose-reconcile", "operação manual de reconciliação Compose", WORKFLOW)
+    require("inputs.operation == 'app-compose-reconcile'", "reconciliação só por dispatch na main", compose_reconciliation)
+    require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]",
+            "reconciliação aguarda os gates completos de CI", compose_reconciliation)
+    require("environment: production", "reconciliação protegida pelo ambiente de produção", compose_reconciliation)
+    require("PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}",
+            "reconciliação usa a credencial de operação protegida", compose_reconciliation)
+    require("python3 - --apply --expected-main-sha %q", "operação executa apenas o helper fixado no SHA", compose_reconciliation)
+    require("< \"$helper\"", "helper revisado segue por stdin com host key estrita", compose_reconciliation)
+    require("bfe511f850224823254b0fc9f51fa7ff60ecfba0", "helper exige o checkout produtivo inventariado", COMPOSE_RECONCILIATION_SCRIPT)
+    require('["git", "fetch", "--no-tags", "origin", "refs/heads/main:refs/remotes/origin/main"]',
+            "helper atualiza somente origin/main", COMPOSE_RECONCILIATION_SCRIPT)
+    if "git fetch" in compose_reconciliation:
+        raise AssertionError("fetch de main deve ocorrer dentro do lock operacional do helper")
+    if COMPOSE_RECONCILIATION_SCRIPT.index("fcntl.flock(lock_fd") > COMPOSE_RECONCILIATION_SCRIPT.index('"git", "fetch"'):
+        raise AssertionError("helper deve adquirir o lock antes de atualizar a referência Git")
+    if "PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY" in compose_reconciliation:
+        raise AssertionError("reconciliação de estado não pode usar chave somente-leitura")
+    if "\n    env:\n      PRODUCTION_SSH_HOST" in compose_reconciliation:
+        raise AssertionError("credenciais da reconciliação devem ficar limitadas ao passo SSH")
+    if any(token in compose_reconciliation.lower() for token in (
+        "docker compose up", "docker compose down", "docker compose build", "alembic upgrade",
+        "compose stop", "compose restart", "facial_processing_enabled=",
+    )):
+        raise AssertionError("reconciliação não pode alterar containers, schema ou configuração facial")
+    for fragment, label in (
+        ("fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)", "helper adquire lock operacional sem espera"),
+        ("compose_config(temp_candidate, app_version)", "helper valida candidato Compose antes da troca"),
+        ("os.replace(temp_candidate, OVERLAY)", "helper instala somente por substituição atômica"),
+        ("atomic_write(OVERLAY, original", "helper restaura automaticamente em falha pós-troca"),
+        ("project_container_snapshot() != project_before", "helper preserva IDs, estados e saúde dos containers"),
+    ):
+        require(fragment, label, COMPOSE_RECONCILIATION_SCRIPT)
     require("workflow_dispatch:", "rollback manual explícito", WORKFLOW)
     require("- infinitepay-retirement-preflight", "operação manual de preflight", WORKFLOW)
     require("- infinitepay-retirement-release", "operação manual de release", WORKFLOW)
