@@ -45,7 +45,7 @@ MODEL_FIELDS = frozenset({
     "read_only", "cap_drop", "cap_add", "security_opt", "privileged", "devices",
     "mem_limit", "mem_reservation", "cpus", "pids_limit", "init", "tmpfs", "ulimits",
     "dns", "extra_hosts", "logging", "network_mode", "ipc", "pid", "runtime",
-    "stdin_open", "tty", "hostname", "domainname", "shm_size",
+    "stdin_open", "tty", "hostname", "domainname", "shm_size", "cgroup",
 })
 
 
@@ -87,6 +87,57 @@ def _equal(actual, expected, category: str) -> None:
         raise BridgeError("semantic_mismatch_" + category)
 
 
+def tmpfs_options(value: str) -> tuple:
+    """Canonicalize only documented, unambiguous Linux tmpfs mount options."""
+    if not isinstance(value, str):
+        raise BridgeError("semantic_tmpfs_options_invalid")
+    result = {}
+    groups = {v: group for group, values in {"access": ("ro", "rw"), "exec": ("exec", "noexec"),
+              "suid": ("suid", "nosuid"), "dev": ("dev", "nodev")}.items() for v in values}
+    for option in value.split(",") if value else []:
+        key, separator, raw = option.partition("=")
+        group = groups.get(key, key)
+        if group in result:
+            raise BridgeError("semantic_tmpfs_options_ambiguous")
+        if key in groups and not separator:
+            result[group] = key
+        elif key == "size" and separator and re.fullmatch(r"[0-9]+[kKmMgG]?", raw):
+            suffix = raw[-1].lower()
+            result[group] = int(raw[:-1]) * {"k": 1024, "m": 1024**2, "g": 1024**3}[suffix] if suffix.isalpha() else int(raw)
+        elif key == "mode" and separator and re.fullmatch(r"0?[0-7]{3,4}", raw):
+            result[group] = int(raw, 8)
+        elif key in {"uid", "gid"} and separator and raw.isascii() and raw.isdecimal():
+            result[group] = int(raw)
+        else:
+            raise BridgeError("semantic_tmpfs_option_unsupported")
+    return tuple(sorted(result.items()))
+
+
+def tmpfs_model(values) -> dict:
+    if not isinstance(values, list):
+        raise BridgeError("semantic_tmpfs_model_invalid")
+    result = {}
+    for value in values:
+        if not isinstance(value, str):
+            raise BridgeError("semantic_tmpfs_model_invalid")
+        path, _, options = value.partition(":")
+        if not path.startswith("/") or ".." in path.split("/") or path in result:
+            raise BridgeError("semantic_tmpfs_target_invalid")
+        result[path] = tmpfs_options(options)
+    return result
+
+
+def byte_count(value) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    if not isinstance(value, str) or not (match := re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([bkmg])?b?", value.lower())):
+        raise BridgeError("semantic_byte_quantity_invalid")
+    result = decimal.Decimal(match[1]) * {None: 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}[match[2]]
+    if result != int(result):
+        raise BridgeError("semantic_byte_quantity_invalid")
+    return int(result)
+
+
 def prove_service_model(service: str, model: dict, document: dict, item: dict, image: dict) -> str:
     """Fail closed on an unexplained effective Docker/Compose difference.
 
@@ -111,6 +162,8 @@ def prove_service_model(service: str, model: dict, document: dict, item: dict, i
         actual = config.get(docker_field)
         if actual == [] and field in {"command", "entrypoint"}:
             actual = None
+        if field in {"user", "working_dir"}:
+            actual, expected = actual or "", expected or ""
         _equal(actual, expected, field)
     expected_labels = {**(defaults.get("Labels") or {}), **(model.get("labels") or {})}
     application_labels = lambda values: {k: v for k, v in values.items() if not k.startswith("com.docker.compose.")}
@@ -181,7 +234,10 @@ def prove_service_model(service: str, model: dict, document: dict, item: dict, i
         ("pids_limit", "PidsLimit", None), ("init", "Init", None),
         ("pid", "PidMode", ""), ("runtime", "Runtime", "runc"), ("ipc", "IpcMode", "private"),
         ("shm_size", "ShmSize", 67108864)):
-        _equal(host.get(docker_field, default), model.get(field, default), field)
+        expected = model.get(field, default)
+        if field in {"mem_limit", "mem_reservation", "shm_size"}:
+            expected = byte_count(expected)
+        _equal(host.get(docker_field, default), expected, field)
     _equal(host.get("NanoCpus", 0), int(decimal.Decimal(str(model.get("cpus", 0))) * 1000000000), "cpus")
     for field, docker_field in (("cap_drop", "CapDrop"), ("cap_add", "CapAdd"),
                                 ("security_opt", "SecurityOpt"), ("dns", "Dns"), ("extra_hosts", "ExtraHosts")):
@@ -191,8 +247,13 @@ def prove_service_model(service: str, model: dict, document: dict, item: dict, i
     _equal(host.get("RestartPolicy"), {"Name": restart_parts[0], "MaximumRetryCount": int(restart_parts[1]) if len(restart_parts) == 2 else 0}, "restart")
     if model.get("devices") or host.get("Devices") or host.get("DeviceRequests"):
         raise BridgeError("semantic_devices_unsupported")
-    if model.get("tmpfs") or host.get("Tmpfs") or model.get("ulimits") or host.get("Ulimits"):
+    if model.get("ulimits") or host.get("Ulimits"):
         raise BridgeError("semantic_tmpfs_or_ulimits_unsupported")
+    _equal({path: tmpfs_options(options) for path, options in (host.get("Tmpfs") or {}).items()},
+           tmpfs_model(model.get("tmpfs") or []), "tmpfs")
+    if model.get("cgroup", "private") not in {"private", "host"}:
+        raise BridgeError("semantic_cgroup_unsupported")
+    _equal(host.get("CgroupnsMode") or "private", model.get("cgroup", "private"), "cgroup")
     if model.get("ports") or any((host.get("PortBindings") or {}).values()):
         raise BridgeError("semantic_published_ports_not_allowed")
     if model.get("network_mode") or host.get("NetworkMode") not in expected_networks:
@@ -204,10 +265,8 @@ def prove_service_model(service: str, model: dict, document: dict, item: dict, i
         raise BridgeError("semantic_logging_default_unproven")
     for name in ("OomKillDisable", "AutoRemove", "VolumesFrom", "Links", "Sysctls", "GroupAdd",
                  "CpuQuota", "CpuPeriod", "CpuShares", "CpusetCpus", "CpusetMems", "BlkioWeight",
-                 "CgroupParent", "Cgroup", "CgroupnsMode", "UsernsMode", "UTSMode"):
+                 "CgroupParent", "Cgroup", "UsernsMode", "UTSMode"):
         value = host.get(name)
-        if name == "CgroupnsMode" and value == "private":
-            continue
         if value not in (None, False, 0, "", [], {}):
             raise BridgeError("semantic_host_field_unsupported")
     for field, docker_field, default in (("stdin_open", "OpenStdin", False), ("tty", "Tty", False),
@@ -233,13 +292,393 @@ def runtime_semantic_identity(item: dict) -> str:
                      "StopSignal", "StopTimeout", "OpenStdin", "Tty", "Domainname")
     host_fields = ("RestartPolicy", "Memory", "MemoryReservation", "NanoCpus", "PidsLimit", "Init",
                    "ReadonlyRootfs", "CapDrop", "CapAdd", "SecurityOpt", "Privileged", "Devices", "DeviceRequests",
-                   "Runtime", "PidMode", "IpcMode", "NetworkMode", "PortBindings", "Dns", "ExtraHosts", "Ulimits", "Tmpfs", "LogConfig", "ShmSize")
+                   "Runtime", "PidMode", "IpcMode", "NetworkMode", "PortBindings", "Dns", "ExtraHosts", "Ulimits", "Tmpfs", "LogConfig", "ShmSize", "CgroupnsMode")
     mounts = [{k: m.get(k) for k in ("Type", "Name", "Source", "Destination", "RW", "Propagation")}
               for m in item.get("Mounts", [])]
     return digest({"environment": env, "config": {k: config.get(k) for k in config_fields},
                    "labels": {k: v for k, v in (config.get("Labels") or {}).items() if not k.startswith("com.docker.compose.")},
                    "host": {k: host.get(k) for k in host_fields}, "mounts": sorted(mounts, key=lambda m: m["Destination"]),
                    "networks": sorted(item.get("NetworkSettings", {}).get("Networks") or {})})
+
+
+def adoption_document(service: str, item: dict, image: dict) -> dict:
+    """Translate the active runtime, never silently repair a historical source.
+
+    Pure function: callers must separately resolve and prove the result before
+    approval. Docker metadata is not accepted as an opaque Compose payload.
+    """
+    if service not in SERVICES or not IMAGE_ID_RE.fullmatch(item.get("Image", "")):
+        raise BridgeError("adoption_identity_invalid")
+    config, host = item["Config"], item["HostConfig"]
+    labels = config.get("Labels") or {}
+    if labels.get("com.docker.compose.project") != PROJECT or labels.get("com.docker.compose.service") != service:
+        raise BridgeError("adoption_service_invalid")
+    known_config = {"AttachStderr", "AttachStdin", "AttachStdout", "Cmd", "Domainname", "Entrypoint", "Env",
+                    "ExposedPorts", "Healthcheck", "Hostname", "Image", "Labels", "OpenStdin", "StdinOnce",
+                    "StopSignal", "StopTimeout", "Tty", "User", "Volumes", "WorkingDir"}
+    if set(config) - known_config or config.get("StdinOnce") or config.get("AttachStdin"):
+        raise BridgeError("adoption_config_field_unsupported")
+    scalar = {"Memory": "mem_limit", "MemoryReservation": "mem_reservation", "ReadonlyRootfs": "read_only",
+              "Privileged": "privileged", "PidsLimit": "pids_limit", "Init": "init", "PidMode": "pid",
+              "Runtime": "runtime", "IpcMode": "ipc", "ShmSize": "shm_size", "CgroupnsMode": "cgroup"}
+    lists = {"CapDrop": "cap_drop", "CapAdd": "cap_add", "SecurityOpt": "security_opt", "Dns": "dns", "ExtraHosts": "extra_hosts"}
+    supported = set(scalar) | set(lists) | {"NanoCpus", "RestartPolicy", "LogConfig", "Tmpfs", "Binds", "Mounts", "NetworkMode", "PortBindings"}
+    empty_only = {"AutoRemove", "BlkioDeviceReadBps", "BlkioDeviceReadIOps", "BlkioDeviceWriteBps", "BlkioDeviceWriteIOps",
+                  "BlkioWeight", "BlkioWeightDevice", "Cgroup", "CgroupParent", "ContainerIDFile", "CpuCount", "CpuPercent",
+                  "CpuPeriod", "CpuQuota", "CpuRealtimePeriod", "CpuRealtimeRuntime", "CpuShares", "CpusetCpus", "CpusetMems",
+                  "DeviceCgroupRules", "DeviceRequests", "Devices", "DnsOptions", "DnsSearch", "GroupAdd", "IOMaximumBandwidth",
+                  "IOMaximumIOps", "Isolation", "Links", "MemorySwap", "MemorySwappiness", "OomKillDisable", "OomScoreAdj",
+                  "PublishAllPorts", "UTSMode", "Ulimits", "UsernsMode", "VolumeDriver", "VolumesFrom", "Sysctls"}
+    if set(host) - supported - empty_only - {"ConsoleSize", "MaskedPaths", "ReadonlyPaths"}:
+        raise BridgeError("adoption_host_field_unsupported")
+    if any(host.get(k) not in (None, False, 0, "", [], {}) for k in empty_only):
+        raise BridgeError("adoption_host_option_unsupported")
+    if host.get("ConsoleSize") not in (None, [0, 0]):
+        raise BridgeError("adoption_console_unsupported")
+    for binding in host.get("Binds") or []:
+        fields = binding.split(":")
+        if len(fields) not in {2, 3} or (len(fields) == 3 and set(fields[2].split(",")) -
+                {"ro", "rw", "private", "rprivate", "shared", "rshared", "slave", "rslave"}):
+            raise BridgeError("adoption_bind_option_unsupported")
+    for mount in host.get("Mounts") or []:
+        if (set(mount) - {"Type", "Source", "Target", "ReadOnly", "Consistency", "BindOptions", "VolumeOptions"}
+                or set(mount.get("BindOptions") or {}) - {"Propagation"}
+                or mount.get("Consistency") not in (None, "", "consistent")):
+            raise BridgeError("adoption_mount_option_unsupported")
+    # Fixed Engine default policy, covered by the Linux compatibility test.
+    masks = {"/proc/acpi", "/proc/asound", "/proc/interrupts", "/proc/kcore", "/proc/keys", "/proc/latency_stats",
+             "/proc/sched_debug", "/proc/scsi", "/proc/timer_list", "/proc/timer_stats", "/sys/devices/virtual/powercap", "/sys/firmware"}
+    readonly = {"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger"}
+    for key, expected in (("MaskedPaths", masks), ("ReadonlyPaths", readonly)):
+        if key in host and set(host[key] or []) != expected:
+            raise BridgeError("adoption_system_paths_unsupported")
+    model = {"image": item["Image"], "environment": environment_map(config.get("Env") or []),
+             "labels": {k: v for k, v in labels.items() if not k.startswith("com.docker.compose.")}}
+    for field, key in (("command", "Cmd"), ("entrypoint", "Entrypoint"), ("user", "User"), ("working_dir", "WorkingDir")):
+        model[field] = copy.deepcopy(config.get(key))
+        if model[field] is None:
+            model[field] = [] if field in {"command", "entrypoint"} else ""
+    for key, field in scalar.items():
+        if host.get(key) is not None and host[key] != "":
+            model[field] = host[key]
+    for key, field in lists.items():
+        if host.get(key):
+            model[field] = copy.deepcopy(host[key])
+    if host.get("NanoCpus"):
+        model["cpus"] = str(decimal.Decimal(host["NanoCpus"]) / 1000000000)
+    restart = host.get("RestartPolicy") or {"Name": "no", "MaximumRetryCount": 0}
+    model["restart"] = restart["Name"] + (":" + str(restart["MaximumRetryCount"]) if restart.get("MaximumRetryCount") else "")
+    log = host.get("LogConfig") or {"Type": "json-file", "Config": {}}
+    model["logging"] = {"driver": log["Type"], "options": copy.deepcopy(log.get("Config") or {})}
+    for key, field in (("OpenStdin", "stdin_open"), ("Tty", "tty"), ("Domainname", "domainname"), ("StopSignal", "stop_signal")):
+        if key in config:
+            model[field] = config[key]
+    if "StopTimeout" in config:
+        model["stop_grace_period"] = str(config["StopTimeout"]) + "s"
+    if config.get("Hostname") and config["Hostname"] != item.get("Id", "")[:12]:
+        model["hostname"] = config["Hostname"]
+    model["expose"] = sorted(config.get("ExposedPorts") or {})
+    health_fields = {"Test": "test", "Interval": "interval", "Timeout": "timeout", "StartPeriod": "start_period",
+                     "StartInterval": "start_interval", "Retries": "retries"}
+    health = config.get("Healthcheck") or {}
+    if set(health) - set(health_fields):
+        raise BridgeError("adoption_healthcheck_unsupported")
+    if health:
+        model["healthcheck"] = {field: copy.deepcopy(health[key]) if key in {"Test", "Retries"} else str(health[key]) + "ns"
+                                for key, field in health_fields.items() if key in health}
+    document = {"services": {service: model}, "networks": {}, "volumes": {}}
+    model["networks"] = {}
+    for index, (name, network) in enumerate(sorted((item.get("NetworkSettings", {}).get("Networks") or {}).items())):
+        if network.get("IPAMConfig") or network.get("Links") or network.get("DriverOpts"):
+            raise BridgeError("adoption_network_option_unsupported")
+        alias = f"network_{index}"
+        document["networks"][alias] = {"name": name, "external": True}
+        model["networks"][alias] = {"aliases": sorted(set(network.get("Aliases") or []) - {item.get("Id", "")[:12]}),
+                                   "gw_priority": network.get("GwPriority", 0)}
+    model["volumes"] = []
+    for index, mount in enumerate(item.get("Mounts") or []):
+        entry = {"type": mount["Type"], "target": mount["Destination"], "read_only": not mount["RW"]}
+        if mount["Type"] == "volume":
+            alias = f"volume_{index}"
+            document["volumes"][alias] = {"name": mount["Name"], "external": True}
+            entry["source"] = alias
+            options = next((v.get("VolumeOptions") or {} for v in host.get("Mounts") or [] if v.get("Target") == mount["Destination"]), {})
+            if options.get("NoCopy"):
+                entry["volume"] = {"nocopy": True}
+        elif mount["Type"] == "bind":
+            entry.update(source=mount["Source"], bind={"propagation": mount.get("Propagation") or "rprivate", "create_host_path": False})
+        else:
+            raise BridgeError("adoption_mount_type_unsupported")
+        model["volumes"].append(entry)
+    if host.get("Tmpfs"):
+        model["tmpfs"] = [path + (":" + value if value else "") for path, value in sorted(host["Tmpfs"].items())]
+    # Pure validation is necessary, but callers must ALSO resolve via Compose.
+    prove_service_model(service, model, document, item, image)
+    return document
+
+
+def adoption_runtime_binding(containers: dict) -> dict:
+    """Include identity and safety fields omitted from the release digest."""
+    return {service: {"container_id": item["Id"], "image_id": item["Image"],
+                      "configuration": digest({key: item.get(key) for key in
+                                               ("Config", "HostConfig", "Mounts", "NetworkSettings")})}
+            for service, item in containers.items()}
+
+
+def _assert_adoption_runtime_unchanged(context: dict) -> None:
+    current = _inspect_api_web()
+    if adoption_runtime_binding(current) != adoption_runtime_binding(context["containers"]):
+        raise BridgeError("adoption_runtime_changed")
+    for item in current.values():
+        if item.get("State", {}).get("Health", {}).get("Status") != "healthy":
+            raise BridgeError("adoption_runtime_unhealthy")
+    _assert_sources_unchanged(context)
+
+
+def _prepare_adoption(context: dict, target_sha: str) -> tuple[dict, dict]:
+    if _git("rev-parse", "origin/main") != target_sha:
+        raise BridgeError("adoption_support_sha_mismatch")
+    models = {}
+    candidate = copy.copy(context)
+    candidate["sources"] = copy.deepcopy(context["sources"])
+    candidate["compose_paths_by_service"] = {}
+    candidate["config_hashes"] = {service: None for service in SERVICES}
+    for service, item in context["containers"].items():
+        if item["State"].get("Health", {}).get("Status") != "healthy":
+            raise BridgeError("adoption_runtime_unhealthy")
+        image = json.loads(_docker(["image", "inspect", item["Image"]]))
+        if len(image) != 1:
+            raise BridgeError("adoption_image_invalid")
+        document = adoption_document(service, item, image[0])
+        destination = context["temporary_directory"] / f"adoption-{service}.json"
+        _write_private_file(destination, json.dumps(_escape_compose(document), sort_keys=True).encode())
+        candidate["sources"][service]["workdir"] = WORKING_DIR
+        candidate["compose_paths_by_service"][service] = [destination]
+    # Independent resolver + existing semantic comparator, not the generator.
+    _prove_context(candidate)
+    models.update(candidate["models"])
+    api_env = environment_map(context["containers"]["api"]["Config"].get("Env") or [])
+    version = api_env.get("APP_VERSION", "")
+    if (not SHA_RE.fullmatch(version) or api_env.get("APP_ENV") != "production"
+            or api_env.get("FACIAL_PROCESSING_ENABLED") != "true"):
+        raise BridgeError("adoption_application_baseline_invalid")
+    if context["containers"]["web"]["Config"]["Labels"].get("io.pickyourpic.release") != version:
+        raise BridgeError("adoption_web_revision_unproven")
+    _git("merge-base", "--is-ancestor", version, target_sha)
+    schema = _execute_compose(context, "inventory", target_sha, "",
+                              ["exec", "-T", "-e", "PYTHONDONTWRITEBYTECODE=1", "api", "python", "-B", "-m", "alembic", "current"]).strip()
+    if schema != "20261113_0126":
+        raise BridgeError("adoption_schema_mismatch")
+    proof = {"version": 1, "domain": "app-runtime-adoption-v1", "target_sha": target_sha,
+             "runtime": adoption_runtime_binding(context["containers"]), "models": {s: digest(m) for s, m in models.items()},
+             "sources": context["digests"], "environment": context["environment_digest"], "schema": schema, "app_version": version}
+    _assert_adoption_runtime_unchanged(context)
+    return models, proof
+
+
+def _read_base_pointer() -> dict | None:
+    path = BRIDGE_STATE / "active-base.json"
+    if not os.path.lexists(path):
+        return None
+    _validate_tree_no_symlink(BRIDGE_STATE)
+    _root_metadata(BRIDGE_STATE, directory=True, mode=0o700)
+    validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+    value = json.loads(_read_private_copy_source(path, snapshot_sha256(path)))
+    if (not isinstance(value, dict) or set(value) != {"base", "manifest_sha256"}
+            or not HASH_RE.fullmatch(value.get("base", "")) or not HASH_RE.fullmatch(value.get("manifest_sha256", ""))):
+        raise BridgeError("adoption_registry_invalid")
+    return value
+
+
+def _read_runtime_base(pointer: dict) -> tuple[Path, dict]:
+    directory = BRIDGE_STATE / ("base-" + pointer["base"])
+    _root_metadata(directory, directory=True, mode=0o700)
+    manifest_path = directory / "manifest.json"
+    validate_snapshot_metadata(_root_metadata(manifest_path), allowed_owners={0}, root_only=True)
+    manifest = json.loads(_read_private_copy_source(manifest_path, pointer["manifest_sha256"]))
+    if manifest.get("version") != 1 or set(manifest.get("models", {})) != set(SERVICES):
+        raise BridgeError("adoption_manifest_invalid")
+    # Validate every historical copy, even though it is not the selected source.
+    for index, entry in enumerate(manifest.get("historical", [])):
+        path = directory / f"historical-{index:03d}.json"
+        validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+        _read_private_copy_source(path, entry["sha256"])
+    for service in SERVICES:
+        path = directory / f"{service}.compose.json"
+        validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+        _read_private_copy_source(path, manifest["models"][service])
+    return directory, manifest
+
+
+def _select_adopted_sources(context: dict) -> dict:
+    pointer = _read_base_pointer()
+    if pointer is None:
+        context["base_pointer_digest"] = None
+        return context
+    directory, manifest = _read_runtime_base(pointer)
+    if manifest.get("runtime") != adoption_runtime_binding(context["containers"]):
+        raise BridgeError("adoption_registry_runtime_mismatch")
+    for service in SERVICES:
+        path = directory / f"{service}.compose.json"
+        context["paths"].append(path)
+        context["digests"][str(path)] = manifest["models"][service]
+        context["sources"][service] = {"paths": [path], "workdir": WORKING_DIR, "config_hash": None}
+        context["config_hashes"][service] = None
+    context["adopted_base"] = pointer
+    context["base_pointer_digest"] = snapshot_sha256(BRIDGE_STATE / "active-base.json")
+    context["paths"].append(directory / "manifest.json")
+    context["digests"][str(directory / "manifest.json")] = pointer["manifest_sha256"]
+    return context
+
+
+def _record_transition(context: dict, mode: str, target_sha: str, fingerprint: str, candidates: dict) -> None:
+    """Write proof of intended states before the first container replacement."""
+    _assert_common_lock_held()
+    directory = _operation_directory(mode, target_sha, fingerprint)
+    _read_manifest(directory)
+    manifest_path = directory / "manifest.json"
+    record = {"version": 1, "mode": mode, "target_sha": target_sha, "approval": fingerprint,
+              "manifest_sha256": snapshot_sha256(manifest_path), "candidates": {}}
+    for service in SERVICES:
+        path = directory / f"apply-{service}.compose.json"
+        validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+        content = _read_private_copy_source(path, snapshot_sha256(path))
+        if _decode_compose_literals(json.loads(content)) != candidates[service]:
+            raise BridgeError("transition_candidate_changed")
+        record["candidates"][service] = hashlib.sha256(content).hexdigest()
+    destination = directory / "transition.json"
+    content = json.dumps(record, sort_keys=True).encode()
+    if os.path.lexists(destination):
+        validate_snapshot_metadata(_root_metadata(destination), allowed_owners={0}, root_only=True)
+        if _read_private_copy_source(destination, snapshot_sha256(destination)) != content:
+            raise BridgeError("transition_already_exists")
+    else:
+        _write_private_file(destination, content)
+    pointer_path = BRIDGE_STATE / "active-transition.json"
+    if os.path.lexists(pointer_path):
+        validate_snapshot_metadata(_root_metadata(pointer_path), allowed_owners={0}, root_only=True)
+        old = _read_private_copy_source(pointer_path, snapshot_sha256(pointer_path))
+        saved = directory / "previous-transition.json"
+        if not os.path.lexists(saved):
+            _write_private_file(saved, old)
+    pointer = {"mode": mode, "target_sha": target_sha, "approval": fingerprint,
+               "sha256": snapshot_sha256(destination)}
+    staging = directory / ".transition-pointer.tmp"
+    _write_private_file(staging, json.dumps(pointer, sort_keys=True).encode())
+    os.replace(staging, pointer_path)
+    if str(pointer_path) in context["digests"]:
+        context["digests"][str(pointer_path)] = snapshot_sha256(pointer_path)
+
+
+def _select_recovery_sources(context: dict, mode: str, target_sha: str) -> dict:
+    if mode not in {"rollback-inventory", "rollback"}:
+        raise BridgeError("recovery_mode_required")
+    marker_matches = any((STATE_DIR / name).exists() and _state_value(name) == target_sha
+                         for name in ("app-in-flight.sha", "app-rollback-in-flight.sha"))
+    if not marker_matches:
+        raise BridgeError("recovery_interrupted_marker_required")
+    base = _read_base_pointer()
+    if base is None:
+        raise BridgeError("recovery_base_required")
+    _read_runtime_base(base)
+    pointer_path = BRIDGE_STATE / "active-transition.json"
+    validate_snapshot_metadata(_root_metadata(pointer_path), allowed_owners={0}, root_only=True)
+    pointer_hash = snapshot_sha256(pointer_path)
+    pointer = json.loads(_read_private_copy_source(pointer_path, pointer_hash))
+    if pointer.get("target_sha") != target_sha:
+        raise BridgeError("recovery_transition_sha_mismatch")
+    directory = _operation_directory(pointer["mode"], target_sha, pointer["approval"])
+    transition_path = directory / "transition.json"
+    validate_snapshot_metadata(_root_metadata(transition_path), allowed_owners={0}, root_only=True)
+    transition = json.loads(_read_private_copy_source(transition_path, pointer["sha256"]))
+    if (transition.get("version") != 1 or transition.get("mode") != pointer["mode"]
+            or transition.get("target_sha") != target_sha or transition.get("approval") != pointer["approval"]
+            or set(transition.get("candidates", {})) != set(SERVICES)):
+        raise BridgeError("recovery_transition_invalid")
+    manifest_path = directory / "manifest.json"
+    _read_private_copy_source(manifest_path, transition["manifest_sha256"])
+    previous = _read_manifest(directory)
+    chosen, states = {}, {}
+    protected = {pointer_path: pointer_hash, transition_path: pointer["sha256"], manifest_path: transition["manifest_sha256"]}
+    for service, item in context["containers"].items():
+        path = directory / f"apply-{service}.compose.json"
+        validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+        content = _read_private_copy_source(path, transition["candidates"][service])
+        protected[path] = transition["candidates"][service]
+        candidate = _decode_compose_literals(json.loads(content))
+        image = json.loads(_docker(["image", "inspect", item["Image"]]))[0]
+        for state, document in (("previous", previous["models"][service]), ("candidate", candidate)):
+            if document["services"][service].get("image") != item["Image"]:
+                continue
+            try:
+                prove_service_model(service, document["services"][service], document, item, image)
+            except BridgeError:
+                continue
+            chosen[service], states[service] = document, state
+            break
+        if service not in chosen:
+            raise BridgeError("recovery_runtime_outside_transition")
+    for path, checksum in protected.items():
+        if path not in context["paths"]:
+            context["paths"].append(path)
+        context["digests"][str(path)] = checksum
+    context["recovery_models"] = chosen
+    context["recovery_transition"] = {"sha256": pointer_hash, "states": states,
+                                       "runtime": adoption_runtime_binding(context["containers"])}
+    context["base_pointer_digest"] = snapshot_sha256(BRIDGE_STATE / "active-base.json")
+    context["adopted_base"] = base
+    context["config_hashes"] = {service: None for service in SERVICES}
+    return context
+
+
+def _publish_runtime_base(context: dict, models: dict, proof: dict, approval: str) -> None:
+    if not HASH_RE.fullmatch(approval) or (proof.get("domain") == "app-runtime-adoption-v1" and digest(proof) != approval):
+        raise BridgeError("adoption_approval_mismatch")
+    _assert_common_lock_held()
+    _assert_adoption_runtime_unchanged(context)
+    _ensure_root_bridge_directory()
+    material = {"proof": proof, "approval": approval}
+    identity = digest(material)
+    directory = BRIDGE_STATE / ("base-" + identity)
+    if os.path.lexists(directory):
+        raise BridgeError("adoption_base_already_exists")
+    directory.mkdir(mode=0o700)
+    _root_metadata(directory, directory=True, mode=0o700)
+    previous = _read_base_pointer()
+    if previous is not None:
+        _write_private_file(directory / "previous-base.json", json.dumps(previous, sort_keys=True).encode())
+    historical = []
+    for index, source in enumerate(context["paths"]):
+        source_hash = context["digests"][str(source)]
+        content = _read_private_copy_source(source, source_hash)
+        destination = directory / f"historical-{index:03d}.json"
+        _write_private_file(destination, content)
+        historical.append({"source": str(source), "sha256": source_hash})
+    hashes = {}
+    for service in SERVICES:
+        path = directory / f"{service}.compose.json"
+        _write_private_file(path, json.dumps(_escape_compose(models[service]), sort_keys=True).encode())
+        hashes[service] = snapshot_sha256(path)
+    manifest = {"version": 1, "runtime": adoption_runtime_binding(context["containers"]), "models": hashes,
+                "historical": historical, **material}
+    manifest_path = directory / "manifest.json"
+    _write_private_file(manifest_path, json.dumps(manifest, sort_keys=True).encode())
+    pointer = {"base": identity, "manifest_sha256": snapshot_sha256(manifest_path)}
+    # Validate the private copies before the single activation point.
+    for service in SERVICES:
+        _read_private_copy_source(directory / f"{service}.compose.json", hashes[service])
+    for index, entry in enumerate(historical):
+        _read_private_copy_source(directory / f"historical-{index:03d}.json", entry["sha256"])
+    _assert_adoption_runtime_unchanged(context)
+    staging = BRIDGE_STATE / (".active-base-" + identity + ".tmp")
+    _write_private_file(staging, json.dumps(pointer, sort_keys=True).encode())
+    os.replace(staging, BRIDGE_STATE / "active-base.json")
+    descriptor = os.open(BRIDGE_STATE, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    context["base_pointer_digest"] = snapshot_sha256(BRIDGE_STATE / "active-base.json")
 
 
 class BridgeError(RuntimeError):
@@ -627,6 +1066,11 @@ def _assert_sources_unchanged(context: dict) -> None:
             raise BridgeError("snapshot_changed_during_operation")
     if _validate_env_file() != context["environment_digest"]:
         raise BridgeError("environment_changed_during_operation")
+    if "base_pointer_digest" in context:
+        pointer = BRIDGE_STATE / "active-base.json"
+        observed = snapshot_sha256(pointer) if os.path.lexists(pointer) else None
+        if observed != context["base_pointer_digest"]:
+            raise BridgeError("adoption_registry_changed")
 
 
 def _resolved_config(context: dict, app_version: str, service: str = "api") -> dict:
@@ -634,7 +1078,7 @@ def _resolved_config(context: dict, app_version: str, service: str = "api") -> d
                   timeout=120, max_output=MAX_COMMAND_OUTPUT_BYTES)
     _assert_sources_unchanged(context)
     try:
-        config = json.loads(output)
+        config = _decode_compose_literals(json.loads(output))
     except (TypeError, ValueError):
         raise BridgeError("compose_config_invalid") from None
     if not isinstance(config, dict) or not isinstance(config.get("services"), dict):
@@ -681,6 +1125,10 @@ def _sources_fingerprint(context: dict) -> str:
     material = {"compose": {service: {"files": [context["digests"][str(path)] for path in context["sources"][service]["paths"]],
                                       "workdir": str(context["sources"][service]["workdir"])} for service in SERVICES},
                 "environment": context["environment_digest"], "semantic": context.get("semantic_hashes", {})}
+    if context.get("adopted_base"):
+        material["adopted_base"] = context["adopted_base"]
+    if context.get("recovery_transition"):
+        material["recovery_transition"] = context["recovery_transition"]
     return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -733,7 +1181,7 @@ def _classify_compose_args(args: list[str], mode: str) -> str:
         services = args[1:]
         if services in (["web"], ["api", "web"]):
             return "build"
-    up_release = ["up", "-d", "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "120", "api", "web"]
+    up_release = ["up", "-d", "--no-build", "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "120", "api", "web"]
     up_rollback = ["up", "-d", "--no-build", "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "120", "api", "web"]
     if mode == "release" and args == up_release:
         return "up"
@@ -874,6 +1322,11 @@ def _prepare_compose_context(context: dict, mode: str, target_sha: str, fingerpr
                                             for service in SERVICES}
     context["env_path"] = env_path
     context["temporary_directory"] = temporary_directory
+    for service, document in context.get("recovery_models", {}).items():
+        path = temporary_directory / f"recovery-{service}.json"
+        _write_private_file(path, json.dumps(_escape_compose(document), sort_keys=True).encode())
+        context["compose_paths_by_service"][service] = [path]
+        context["sources"][service]["workdir"] = WORKING_DIR
     return context
 
 
@@ -978,6 +1431,21 @@ def _escape_compose(value):
     return value
 
 
+def _decode_compose_literals(value):
+    """Decode config's re-serializable dollar escapes, not source interpolation.
+
+    Only call on `docker compose config` output, never on an unparsed source.
+    Keys are literal per Compose's contract and must not be transformed.
+    """
+    if isinstance(value, str):
+        return value.replace("$$", "$")
+    if isinstance(value, list):
+        return [_decode_compose_literals(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _decode_compose_literals(v) for k, v in value.items()}
+    return value
+
+
 def replacement_document(service: str, document: dict, original: dict, image_id: str,
                          app_version: str) -> dict:
     """Clone a proven model; pin inherited defaults so the image cannot alter them."""
@@ -1071,12 +1539,26 @@ def _apply_models(context: dict, mode: str, target_sha: str, app_version: str, f
                 raise BridgeError("prepared_target_changed")
         else:
             _write_private_file(destination, content)
+    if context.get("adopted_base"):
+        _record_transition(context, mode, target_sha, fingerprint, candidates)
     for service in SERVICES:
         destination = directory / f"apply-{service}.compose.json"
         command = ["/usr/bin/docker", "compose", "--project-directory", str(WORKING_DIR), "-p", PROJECT,
                    "-f", str(destination), "up", "-d", "--no-deps", "--no-build", "--pull", "never",
                    "--force-recreate", "--wait", "--wait-timeout", "120", service]
         _run(command, app_version=app_version, timeout=300)
+    if context.get("adopted_base"):
+        current = _discover_context()
+        for service, item in current["containers"].items():
+            image = json.loads(_docker(["image", "inspect", item["Image"]]))[0]
+            if item["Image"] != candidates[service]["services"][service]["image"]:
+                raise BridgeError("transition_result_image_mismatch")
+            prove_service_model(service, candidates[service]["services"][service], candidates[service], item, image)
+        proof = {"version": 1, "domain": "app-runtime-transition-v1", "target_sha": target_sha,
+                 "mode": mode, "runtime": adoption_runtime_binding(current["containers"]),
+                 "models": {s: digest(m) for s, m in candidates.items()}}
+        _publish_runtime_base(current, candidates, proof, fingerprint)
+        context["base_pointer_digest"] = snapshot_sha256(BRIDGE_STATE / "active-base.json")
     if mode == "rollback":
         _write_previous_pointer(mode, target_sha, fingerprint)
 
@@ -1200,12 +1682,12 @@ class SafeParser(argparse.ArgumentParser):
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = SafeParser(add_help=False, allow_abbrev=False)
-    parser.add_argument("--mode", required=True, choices=("inventory", "release", "rollback-inventory", "rollback"))
+    parser.add_argument("--mode", required=True, choices=("inventory", "release", "rollback-inventory", "rollback", "adopt"))
     parser.add_argument("--sha", required=True)
     parser.add_argument("--app-version", default="")
     parser.add_argument("--approval-fingerprint", default="")
     parser.add_argument("--source-fingerprint", default="")
-    parser.add_argument("operation", choices=("compose", "hashes", "service-hash", "web-identity", "sources-fingerprint", "assert-facial", "snapshot"))
+    parser.add_argument("operation", choices=("compose", "hashes", "service-hash", "web-identity", "sources-fingerprint", "assert-facial", "snapshot", "adoption-inventory", "adopt"))
     parser.add_argument("args", nargs=argparse.REMAINDER)
     try:
         parsed = parser.parse_args(argv)
@@ -1219,8 +1701,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         raise BridgeError("approval_fingerprint_invalid")
     if parsed.source_fingerprint and not HASH_RE.fullmatch(parsed.source_fingerprint):
         raise BridgeError("source_fingerprint_invalid")
-    if parsed.mode in {"release", "rollback"} and not HASH_RE.fullmatch(parsed.approval_fingerprint):
+    if parsed.mode in {"release", "rollback", "adopt"} and not HASH_RE.fullmatch(parsed.approval_fingerprint):
         raise BridgeError("approval_fingerprint_required")
+    if ((parsed.mode == "adopt") != (parsed.operation == "adopt")
+            or parsed.operation == "adoption-inventory" and parsed.mode != "inventory"):
+        raise BridgeError("adoption_mode_invalid")
     parsed.args = parsed.args[1:] if parsed.args[:1] == ["--"] else parsed.args
     if parsed.operation == "compose":
         _classify_compose_args(parsed.args, parsed.mode)
@@ -1238,10 +1723,30 @@ def main(argv: list[str] | None = None) -> int:
     try:
         require_root()
         args = _parse_args(list(sys.argv[1:] if argv is None else argv))
+        if args.operation == "adopt":
+            _assert_common_lock_held()
         context = _discover_context()
+        if args.operation not in {"adopt", "adoption-inventory"}:
+            try:
+                context = _select_adopted_sources(context)
+            except BridgeError as exc:
+                if exc.code != "adoption_registry_runtime_mismatch" or args.mode not in {"rollback-inventory", "rollback"}:
+                    raise
+                context = _select_recovery_sources(context, args.mode, args.sha)
         with tempfile.TemporaryDirectory(prefix="markina-app-compose-bridge-", dir="/tmp") as temporary:
             context = _prepare_compose_context(context, args.mode, args.sha, args.approval_fingerprint,
                                                Path(temporary))
+            if args.operation in {"adopt", "adoption-inventory"}:
+                models, proof = _prepare_adoption(context, args.sha)
+                fingerprint = digest(proof)
+                if args.operation == "adopt":
+                    if fingerprint != args.approval_fingerprint:
+                        raise BridgeError("adoption_approval_mismatch")
+                    _publish_runtime_base(context, models, proof, fingerprint)
+                print("adoption_status=" + ("adopted" if args.operation == "adopt" else "ready"))
+                print("adoption_fingerprint=" + fingerprint)
+                _assert_sources_unchanged(context)
+                return 0
             _prove_context(context)
             if args.operation == "compose":
                 result = _execute_compose(context, args.mode, args.sha, args.app_version, args.args, args.approval_fingerprint)

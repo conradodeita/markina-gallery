@@ -191,7 +191,7 @@ class ComposeAllowlistTests(unittest.TestCase):
     def test_mutating_commands_are_limited_to_api_and_web_release(self):
         self.assertEqual(bridge._classify_compose_args(["build", "api", "web"], "release"), "build")
         self.assertEqual(bridge._classify_compose_args(["build", "web"], "release"), "build")
-        release_up = ["up", "-d", "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "120", "api", "web"]
+        release_up = ["up", "-d", "--no-build", "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "120", "api", "web"]
         rollback_up = ["up", "-d", "--no-build", "--no-deps", "--force-recreate", "--wait",
                        "--wait-timeout", "120", "api", "web"]
         self.assertEqual(bridge._classify_compose_args(release_up, "release"), "up")
@@ -200,7 +200,7 @@ class ComposeAllowlistTests(unittest.TestCase):
             (["build", "worker"], "release"),
             (["build", "nginx"], "release"),
             (release_up + ["worker"], "release"),
-            (rollback_up, "release"),
+            ([arg for arg in release_up if arg != "--no-build"], "release"),
             (["down"], "release"),
             (["exec", "-T", "api", "sh"], "release"),
             (["exec", "-T", "nginx", "nginx", "-s", "reload"], "inventory"),

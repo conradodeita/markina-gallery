@@ -131,6 +131,17 @@ O inventário SHALL selecionar base adotada somente por registro root-owned em l
 - **THEN** o registro passa a vincular os IDs/fontes verificados desse estado e preserva os anteriores para recuperação
 - **AND** falha parcial permanece bloqueada para recuperação explícita, sem declarar publicação saudável
 
+### Requirement: Recuperação parcial usa somente a transição preservada
+Antes de recriação, a ponte SHALL preservar registro root-only da transição com SHA, aprovação, manifesto anterior, modelos candidatos e hashes. Somente `rollback-inventory`/`rollback`, com marcador interrompido do mesmo SHA, SHALL poder comprovar a combinação de estados anteriores/candidatos. Cada serviço SHALL corresponder integralmente a um modelo e imagem preservados. Inventário normal MUST NOT usar essa exceção.
+
+#### Scenario: API candidata e web anterior após interrupção
+- **WHEN** a base está obsoleta pela troca parcial e os dois serviços correspondem aos modelos/imagens da transição preservada
+- **THEN** o inventário explícito identifica recuperação, vincula IDs atuais e prova da transição ao novo fingerprint e aguarda aprovação própria antes de rollback
+
+#### Scenario: Transição inválida ou runtime não pertence à operação
+- **WHEN** falta marcador, SHA, hash, modelo ou serviço, ou a imagem/configuração não corresponde a estado anterior nem candidato
+- **THEN** a recuperação recusa fingerprint e mutação, sem adotar estado arbitrário nem alterar a base
+
 ### Requirement: Allowlist Git limita a origem do instalador
 O instalador SHALL aceitar somente as formas HTTPS e SSH exatas documentadas nos cenários. Origem divergente SHALL ser recusada antes de qualquer escrita privilegiada.
 
