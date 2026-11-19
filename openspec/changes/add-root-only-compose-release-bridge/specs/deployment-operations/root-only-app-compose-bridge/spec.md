@@ -106,3 +106,29 @@ O rollback SHALL exigir inventário somente-leitura e aprovação protegida pró
 #### Scenario: Artefato de recuperação inválido
 - **WHEN** snapshot, imagem, recibo ou fingerprint diverge
 - **THEN** o rollback recusa antes de alterar containers e mantém o diagnóstico minimizado
+
+### Requirement: Recibo da troca Engine autentica apenas o par promovido
+
+O caminho Engine SHALL exigir recibo root-only revisado, SHA, IDs de container e imagens exatos e prova da configuração efetiva. Para sucessores SHALL exigir journal privado da ponte e projeção compatível. O workflow SHALL vincular a prova e fontes históricas ao fingerprint e manter a prova Compose genérica para os demais casos. Divergência MUST bloquear.
+
+#### Scenario: API e web reconhecidos pelo recibo privado
+
+- **WHEN** os dois IDs ativos, suas imagens, o alvo e a configuração efetiva satisfazem o recibo de 17/11 e os demais gates de produção
+- **THEN** o inventário somente leitura emite fingerprint e preserva os snapshots históricos
+
+#### Scenario: Candidatos comprovados antes da promoção
+
+- **WHEN** o fingerprint permanece igual sob lock e os dois candidatos sem tráfego passam igualdade efetiva e saúde
+- **THEN** o release altera exclusivamente API/web e conserva os containers, imagens, fontes e modelos anteriores para recuperação
+
+#### Scenario: Configuração candidata recusada antes de iniciar
+
+- **WHEN** a inspeção do container em estado `created` diverge do modelo aprovado, publica uma porta ou atribui alias/DNS de serviço
+- **THEN** a ponte recusa antes de `start` e mantém os originais saudáveis
+- **AND** volumes nomeados são conectados com `NoCopy: true` para preservar conteúdo anterior, inclusive volumes vazios
+
+#### Scenario: Falha parcial de promoção ou estado desconhecido
+
+- **WHEN** o journal autenticado identifica estado parcial com participantes previstos
+- **THEN** somente inventário de rollback e nova aprovação protegida podem autorizar a restauração
+- **AND** IDs, configuração desconhecida ou journal inválido bloqueiam mutações

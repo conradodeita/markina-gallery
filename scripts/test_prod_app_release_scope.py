@@ -107,6 +107,7 @@ class AppReleaseScopeTests(unittest.TestCase):
             "scripts/test_verify_main_ci_evidence.py",
             "scripts/production_app_compose_bridge.py",
             "scripts/test_production_app_compose_bridge.py",
+            "scripts/prove_app_engine_promotion.py",
             "scripts/install-prod-app-compose-bridge.sh",
             "scripts/deploy-prod-lock.sh",
             "scripts/deploy-prod-state.sh",
@@ -191,7 +192,7 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (True, "somente_api_web"))
 
-        name = sorted(policy.RETIRED_INFINITEPAY_FILES)[0]
+        name = min(policy.RETIRED_INFINITEPAY_FILES)
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("reintroduced InfinitePay behavior\n", encoding="utf-8")
@@ -200,7 +201,7 @@ class AppReleaseScopeTests(unittest.TestCase):
                          (False, "arquivo_fora_do_escopo"))
 
     def test_modification_of_retired_infinitepay_path_is_not_treated_as_removal(self):
-        name = sorted(policy.RETIRED_INFINITEPAY_FILES)[0]
+        name = min(policy.RETIRED_INFINITEPAY_FILES)
         (self.root / name).write_text("modified retired behavior\n", encoding="utf-8")
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),

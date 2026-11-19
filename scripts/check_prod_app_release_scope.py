@@ -85,6 +85,7 @@ ALLOWED_OPERATIONS = {
     "scripts/deploy-prod-app-services.sh",
     "scripts/production_app_compose_bridge.py",
     "scripts/test_production_app_compose_bridge.py",
+    "scripts/prove_app_engine_promotion.py",
     "scripts/install-prod-app-compose-bridge.sh",
     "scripts/check_infinitepay_retirement_scope.py",
     "scripts/deploy-prod-infinitepay-retirement.sh",

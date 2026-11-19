@@ -181,6 +181,11 @@ jobs:
           echo "7bdb2ce2916e5dd0354e5d129892bf96fdcdb1a9ab8eed69b9173e131db4c230  $DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum --check
           chmod 700 "$DOCKER_CONFIG/cli-plugins/docker-compose"
           python scripts/prove_preview_compose_preservation.py
+      - name: Provar promoção Docker Engine e recuperação em runner descartável
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT /usr/bin/python3 -B scripts/prove_app_engine_promotion.py
       - name: Compatibilidade dos helpers operacionais com Python do host
         shell: bash
         run: |

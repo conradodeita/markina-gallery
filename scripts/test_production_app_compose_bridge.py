@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import production_app_compose_bridge as bridge
+import prove_app_engine_promotion as engine_proof
 
 SHA = "a" * 40
 FINGERPRINT = "b" * 64
@@ -46,6 +47,101 @@ def container(service="api", *, secret=SECRET_SENTINEL, health="healthy", status
         },
         "State": {"Status": status, "Health": {"Status": health}},
     }
+
+
+class RunnerDockerAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.original_docker = bridge._docker
+        self.original_run = bridge._run
+        self.original_project_root = bridge.PROJECT_ROOT
+        self.original_project = bridge.PROJECT
+        self.original_selector = bridge.select_api_web
+        self.addCleanup(setattr, bridge, "_docker", self.original_docker)
+        self.addCleanup(setattr, bridge, "_run", self.original_run)
+        self.addCleanup(setattr, bridge, "PROJECT_ROOT", self.original_project_root)
+        self.addCleanup(setattr, bridge, "PROJECT", self.original_project)
+        self.addCleanup(setattr, bridge, "select_api_web", self.original_selector)
+
+    def test_synthetic_original_revision_matches_pinned_bootstrap_revision(self):
+        self.assertEqual(engine_proof.OLD_REVISION, bridge.ENGINE_BOOTSTRAP_SHA)
+
+    def test_prefers_fixed_production_cli_when_executable(self):
+        with patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True), \
+                patch.object(engine_proof.shutil, "which") as which:
+            engine_proof.configure_runner_context()
+        self.assertIs(bridge._docker, self.original_docker)
+        which.assert_not_called()
+
+    def test_runner_context_rebinds_default_working_directory_to_checkout(self):
+        runner_root = Path(engine_proof.__file__).resolve().parent.parent
+        with patch.object(bridge, "_run", return_value="synthetic") as run, \
+                patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True):
+            engine_proof.configure_runner_context()
+            self.assertEqual(bridge.PROJECT_ROOT, runner_root)
+            self.assertEqual(bridge._run(["git", "status"]), "synthetic")
+        run.assert_called_once_with(["git", "status"], cwd=runner_root, app_version="", input_text=None,
+                                    timeout=120, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES)
+
+    def test_runner_context_preserves_explicit_working_directory(self):
+        runner_root = Path(engine_proof.__file__).resolve().parent.parent
+        explicit_cwd = runner_root / "scripts"
+        with patch.object(bridge, "_run", return_value="synthetic") as run, \
+                patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True):
+            engine_proof.configure_runner_context()
+            self.assertEqual(bridge._run(["git", "status"], cwd=explicit_cwd), "synthetic")
+        run.assert_called_once_with(["git", "status"], cwd=explicit_cwd, app_version="", input_text=None,
+                                    timeout=120, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES)
+
+    def test_runner_selector_uses_current_synthetic_project_when_omitted(self):
+        with patch.object(bridge, "_run", return_value="synthetic"), \
+                patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True):
+            engine_proof.configure_runner_context()
+            bridge.PROJECT = "markina-gallery-engine-proof-test"
+            selected = bridge.select_api_web([container("api"), container("web")])
+        self.assertEqual(set(selected), set(bridge.SERVICES))
+
+    def test_runner_selector_preserves_explicit_project(self):
+        with patch.object(bridge, "_run", return_value="synthetic"), \
+                patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True):
+            engine_proof.configure_runner_context()
+            bridge.PROJECT = "current-synthetic-project"
+            containers = [container("api"), container("web")]
+            for item in containers:
+                item["Config"]["Labels"]["com.docker.compose.project"] = "explicit-synthetic-project"
+            selected = bridge.select_api_web(containers, project="explicit-synthetic-project")
+        self.assertEqual(set(selected), set(bridge.SERVICES))
+
+    def test_runner_adapter_uses_resolved_absolute_cli_through_bounded_runner(self):
+        with patch.object(engine_proof.Path, "is_file", side_effect=[False, True]), \
+                patch.object(engine_proof.os, "access", return_value=True), \
+                patch.object(engine_proof.shutil, "which", return_value="/opt/hostedtoolcache/docker"):
+            engine_proof.configure_runner_context()
+        with patch.object(bridge, "_run", return_value="synthetic") as run:
+            result = bridge._docker(["ps"], timeout=30)
+        self.assertEqual(result, "synthetic")
+        run.assert_called_once_with(["/opt/hostedtoolcache/docker", "ps"], input_text=None,
+                                   timeout=30, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES)
+
+    def test_runner_adapter_falls_back_when_fixed_cli_is_not_executable(self):
+        with patch.object(engine_proof.Path, "is_file", side_effect=[True, True]), \
+                patch.object(engine_proof.os, "access", side_effect=[False, True]), \
+                patch.object(engine_proof.shutil, "which", return_value="/usr/local/bin/docker"):
+            engine_proof.configure_runner_context()
+        with patch.object(bridge, "_run", return_value="synthetic") as run:
+            bridge._docker(["version"])
+        run.assert_called_once_with(["/usr/local/bin/docker", "version"], input_text=None,
+                                   timeout=120, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES)
+
+    def test_runner_adapter_rejects_relative_cli_path(self):
+        with patch.object(engine_proof.Path, "is_file", return_value=False), \
+                patch.object(engine_proof.shutil, "which", return_value="docker"), \
+                self.assertRaisesRegex(SystemExit, "CLI Docker absoluto"):
+            engine_proof.configure_runner_context()
 
 
 class RootIdentityTests(unittest.TestCase):
@@ -319,6 +415,339 @@ class SemanticProofTests(unittest.TestCase):
         image["Config"]["Env"].append("NEW_RUNTIME_FLAG=changed")
         with self.assertRaisesRegex(bridge.BridgeError, "semantic_mismatch_environment"):
             bridge.prove_service_model("api", candidate["services"]["api"], candidate, item, image)
+
+
+ENGINE_NETWORK = "markina-gallery_internal"
+ENGINE_NETWORK_ID = "1" * 64
+ENGINE_TARGET_SHA = "2" * 40
+ENGINE_TARGET_IMAGE = "sha256:" + "3" * 64
+ENGINE_CONFIG_BIND = "/etc/pyp-google-drive/oauth-client.json"
+ENGINE_CONFIG_TARGET = "/run/secrets/google-drive-oauth-client.json"
+ENGINE_VOLUME_NAME = "markina-gallery_media-source"
+ENGINE_VOLUME_TARGET = "/var/lib/markina/source"
+ENGINE_VOLUME_MOUNT = {
+    "Type": "volume",
+    "Source": ENGINE_VOLUME_NAME,
+    "Target": ENGINE_VOLUME_TARGET,
+    "ReadOnly": False,
+    "VolumeOptions": {"NoCopy": True},
+}
+
+
+def engine_fixture(*, shadow=False):
+    item = container()
+    item["Id"] = "4" * 64 if shadow else CONTAINER_ID
+    item["Image"] = ENGINE_TARGET_IMAGE if shadow else IMAGE_ID
+    if shadow:
+        item["State"] = {"Status": "created", "Running": False}
+    name = "markina-gallery-api-shadow" if shadow else "markina-gallery-api-previous"
+    item["Name"] = "/" + name
+    config = item["Config"]
+    del config["Labels"]["com.docker.compose.config-hash"]
+    config["Labels"].update({
+        "com.docker.compose.project.config_files": "/var/lib/markina-gallery/deploy-state/historical-api.json",
+        "com.docker.compose.project.working_dir": "/opt/markina-gallery/docker",
+        "io.pickyourpic.release": ENGINE_TARGET_SHA if shadow else SHA,
+    })
+    if shadow:
+        config["Env"][0] = "APP_VERSION=" + ENGINE_TARGET_SHA
+    config.update({
+        "Image": item["Image"],
+        "Hostname": item["Id"][:12],
+        "Entrypoint": ["/usr/local/bin/load-custody"],
+        "Cmd": ["server", "--port", "8000"],
+        "User": "1001:1001",
+        "WorkingDir": "/app",
+        "ExposedPorts": {"8000/tcp": {}},
+        "Healthcheck": {"Test": ["CMD", "probe"], "Interval": 10000000000},
+    })
+    item["HostConfig"] = {
+        "Binds": [
+            f"{ENGINE_CONFIG_BIND}:{ENGINE_CONFIG_TARGET}:ro",
+            f"{ENGINE_VOLUME_NAME}:{ENGINE_VOLUME_TARGET}:rw",
+        ],
+        "Mounts": [],
+        "NetworkMode": ENGINE_NETWORK,
+        "PortBindings": {},
+        "PublishAllPorts": False,
+        "Privileged": False,
+        "ReadonlyRootfs": True,
+        "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=16m"},
+        "CapDrop": ["ALL"],
+        "SecurityOpt": ["no-new-privileges:true"],
+        "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
+        "LogConfig": {"Type": "json-file", "Config": {}},
+    }
+    if shadow:
+        item["HostConfig"]["Binds"].pop()
+        item["HostConfig"]["Mounts"] = [copy.deepcopy(ENGINE_VOLUME_MOUNT)]
+    item["Mounts"] = [
+        {"Type": "bind", "Source": ENGINE_CONFIG_BIND, "Destination": ENGINE_CONFIG_TARGET,
+         "Mode": "ro", "RW": False, "Propagation": "rprivate"},
+        {"Type": "volume", "Name": ENGINE_VOLUME_NAME, "Driver": "local",
+         "Source": f"/var/lib/docker/volumes/{ENGINE_VOLUME_NAME}/_data",
+         "Destination": ENGINE_VOLUME_TARGET, "Mode": "" if shadow else "rw", "RW": True,
+         "Propagation": ""},
+    ]
+    item["NetworkSettings"] = {
+        "Ports": {"8000/tcp": None},
+        "Networks": {
+            ENGINE_NETWORK: {
+                "NetworkID": ENGINE_NETWORK_ID,
+                "EndpointID": "5" * 64 if shadow else "6" * 64,
+                "Aliases": [name] if shadow else ["api", name],
+                **({"DNSNames": [name, item["Id"][:12]]} if shadow else {}),
+                "IPAddress": "172.30.0.11" if shadow else "172.30.0.10",
+                "IPAMConfig": None,
+            },
+        },
+    }
+    return item
+
+
+class EngineBootstrapReceiptTests(unittest.TestCase):
+    @staticmethod
+    def valid_receipt():
+        return {
+            "target": bridge.ENGINE_BOOTSTRAP_SHA,
+            "phase": "deployed",
+            "schema": "20261113_0126",
+            "containers": {
+                service: {"new_id": identity, "new_image": image}
+                for service, (identity, image) in bridge.ENGINE_BOOTSTRAP.items()
+            },
+        }
+
+    @staticmethod
+    def bootstrap_containers():
+        return {
+            service: {
+                "Id": identity,
+                "Image": image,
+                "Config": {
+                    "Env": ["APP_VERSION=" + bridge.ENGINE_BOOTSTRAP_SHA],
+                    "Labels": {"io.pickyourpic.release": bridge.ENGINE_BOOTSTRAP_SHA},
+                },
+            }
+            for service, (identity, image) in bridge.ENGINE_BOOTSTRAP.items()
+        }
+
+    def test_bootstrap_receipt_uses_the_reviewed_path_hash_and_identity(self):
+        checksum = "f" * 64
+        with patch.object(bridge, "_engine_private_object", return_value=(self.valid_receipt(), checksum)) as read:
+            self.assertEqual(bridge._engine_bootstrap_receipt(), checksum)
+        read.assert_called_once_with(
+            bridge.STATE_DIR / "google-drive-owner-bfe511f" / "cutover.json",
+            pinned_hash=bridge.ENGINE_BOOTSTRAP_RECEIPT_SHA256,
+        )
+
+    def test_bootstrap_receipt_rejects_mismatched_or_malformed_container_records(self):
+        malformed = self.valid_receipt()
+        malformed["containers"]["api"] = None
+        with patch.object(bridge, "_engine_private_object", return_value=(malformed, "f" * 64)), \
+                self.assertRaisesRegex(bridge.BridgeError, "engine_receipt_identity_mismatch"):
+            bridge._engine_bootstrap_receipt()
+
+        mismatched = self.valid_receipt()
+        mismatched["containers"]["web"]["new_image"] = IMAGE_ID
+        with patch.object(bridge, "_engine_private_object", return_value=(mismatched, "f" * 64)), \
+                self.assertRaisesRegex(bridge.BridgeError, "engine_receipt_identity_mismatch"):
+            bridge._engine_bootstrap_receipt()
+
+    def test_discovery_selects_only_the_exact_reviewed_bootstrap_pair(self):
+        containers = self.bootstrap_containers()
+        records = {service: {"id": item["Id"]} for service, item in containers.items()}
+        with tempfile.TemporaryDirectory(prefix="engine-bootstrap-discovery-") as temporary, \
+                patch.object(bridge, "BRIDGE_STATE", Path(temporary)), \
+                patch.object(bridge, "_inspect_api_web", return_value=containers), \
+                patch.object(bridge, "_engine_records", return_value=records), \
+                patch.object(bridge, "_engine_bootstrap_receipt", return_value="f" * 64):
+            selected, proof = bridge._engine_discover("inventory", "a" * 40)
+        self.assertIs(selected, containers)
+        self.assertEqual(proof["type"], "engine-bootstrap")
+        self.assertEqual(proof["containers"], records)
+
+        mixed = self.bootstrap_containers()
+        mixed["web"]["Image"] = IMAGE_ID
+        with tempfile.TemporaryDirectory(prefix="engine-bootstrap-mismatch-") as temporary, \
+                patch.object(bridge, "BRIDGE_STATE", Path(temporary)), \
+                patch.object(bridge, "_inspect_api_web", return_value=mixed), \
+                patch.object(bridge, "_engine_bootstrap_receipt", return_value="f" * 64), \
+                self.assertRaisesRegex(bridge.BridgeError, "engine_original_pair_mismatch"):
+            bridge._engine_discover("inventory", "a" * 40)
+
+    def test_discovery_treats_nonbootstrap_runtime_as_a_successor_candidate(self):
+        successor = {
+            service: {
+                "Id": "f" * 64,
+                "Image": IMAGE_ID,
+                "Config": {"Env": ["APP_VERSION=" + SHA], "Labels": {"io.pickyourpic.release": SHA}},
+            }
+            for service in bridge.SERVICES
+        }
+        with tempfile.TemporaryDirectory(prefix="engine-successor-discovery-") as temporary, \
+                patch.object(bridge, "BRIDGE_STATE", Path(temporary)), \
+                patch.object(bridge, "_inspect_api_web", return_value=successor), \
+                patch.object(bridge, "_engine_bootstrap_receipt") as receipt:
+            selected, proof = bridge._engine_discover("inventory", "a" * 40)
+        self.assertIs(selected, successor)
+        self.assertIsNone(proof)
+        receipt.assert_not_called()
+
+
+class EngineRuntimeProofTests(unittest.TestCase):
+    def test_bootstrap_hostname_exception_is_limited_to_the_reviewed_pair(self):
+        original = engine_fixture()
+        original["Id"] = bridge.ENGINE_BOOTSTRAP["api"][0]
+        original["Config"]["Hostname"] = "api"
+        with self.assertRaisesRegex(bridge.BridgeError, "engine_legacy_hostname_unproven"):
+            bridge._engine_require_generated_hostname("api", original, {"config": original["Config"]})
+        original["Config"]["Hostname"] = bridge.ENGINE_BOOTSTRAP_HOSTNAMES["api"]
+        bridge._engine_require_generated_hostname("api", original, {"config": original["Config"]})
+
+    def test_recovery_accepts_docker_short_ids_only_for_recorded_participants(self):
+        bridge._engine_validate_running_participants(["a" * 12], ["a" * 64, "b" * 64])
+        with self.assertRaisesRegex(bridge.BridgeError, "engine_recovery_unknown_participant"):
+            bridge._engine_validate_running_participants(["c" * 12], ["a" * 64, "b" * 64])
+        with self.assertRaisesRegex(bridge.BridgeError, "engine_recovery_unknown_participant"):
+            bridge._engine_validate_running_participants(["a" * 12], ["a" * 12 + "0" * 52,
+                                                                        "a" * 12 + "1" * 52])
+
+    def test_engine_api_short_id_alias_is_normalized_before_promotion(self):
+        original = engine_fixture()
+        _, aliases = bridge.engine_service_endpoint("api", original)
+        legacy_api_original = copy.deepcopy(original)
+        legacy_api_original["NetworkSettings"]["Networks"][ENGINE_NETWORK]["Aliases"].append(
+            original["Id"][:12])
+        legacy_id_network, legacy_id_aliases = bridge.engine_service_endpoint("api", legacy_api_original)
+        self.assertEqual(legacy_id_network, ENGINE_NETWORK_ID)
+        self.assertEqual(legacy_id_aliases, aliases)
+        self.assertEqual(bridge.engine_runtime_identity("api", legacy_api_original),
+                         bridge.engine_runtime_identity("api", original))
+
+    def test_candidate_config_is_proved_before_it_can_start_or_receive_aliases(self):
+        original = engine_fixture()
+        candidate = engine_fixture(shadow=True)
+        candidate["NetworkSettings"]["Networks"] = {}
+        bridge._engine_verify_before_start("api", original, candidate, ENGINE_TARGET_IMAGE,
+                                          ENGINE_TARGET_SHA, "markina-gallery-api-shadow")
+
+        routed = engine_fixture(shadow=True)
+        routed["NetworkSettings"]["Networks"][ENGINE_NETWORK]["Aliases"].append("api")
+        with self.assertRaisesRegex(bridge.BridgeError, "engine_candidate_prestart_dns_invalid"):
+            bridge._engine_verify_before_start("api", original, routed, ENGINE_TARGET_IMAGE,
+                                              ENGINE_TARGET_SHA, "markina-gallery-api-shadow")
+
+        started = engine_fixture(shadow=True)
+        started["State"] = {"Status": "running", "Running": True}
+        with self.assertRaisesRegex(bridge.BridgeError, "engine_candidate_not_stopped"):
+            bridge._engine_verify_before_start("api", original, started, ENGINE_TARGET_IMAGE,
+                                              ENGINE_TARGET_SHA, "markina-gallery-api-shadow")
+
+    def test_shadow_payload_changes_reviewed_image_version_and_release_label_only(self):
+        original = engine_fixture()
+        before = copy.deepcopy(original)
+        payload = bridge.engine_create_payload("api", original, ENGINE_TARGET_IMAGE, ENGINE_TARGET_SHA)
+        self.assertEqual(payload["Image"], ENGINE_TARGET_IMAGE)
+        env = bridge.environment_map(original["Config"]["Env"])
+        env["APP_VERSION"] = ENGINE_TARGET_SHA
+        self.assertEqual(bridge.environment_map(payload["Env"]), env)
+        labels = {**original["Config"]["Labels"], "io.pickyourpic.release": ENGINE_TARGET_SHA}
+        self.assertEqual(payload["Labels"], labels)
+        self.assertEqual(payload["Hostname"], "")  # Docker generates an isolated hostname from the new ID.
+        for field in ("Entrypoint", "Cmd", "User", "WorkingDir", "Healthcheck", "ExposedPorts"):
+            self.assertEqual(payload[field], original["Config"][field])
+        expected_host = copy.deepcopy(original["HostConfig"])
+        expected_host["Binds"] = [f"{ENGINE_CONFIG_BIND}:{ENGINE_CONFIG_TARGET}:ro"]
+        expected_host["Mounts"] = [ENGINE_VOLUME_MOUNT]
+        self.assertEqual(payload["HostConfig"], expected_host)
+        endpoints = payload["NetworkingConfig"]["EndpointsConfig"]
+        self.assertEqual(set(endpoints), {ENGINE_NETWORK})
+        self.assertEqual(endpoints[ENGINE_NETWORK]["Aliases"], [])
+        self.assertEqual(original, before)
+
+    def test_shadow_inspect_proves_equivalence_with_no_live_alias(self):
+        original = engine_fixture()
+        shadow = engine_fixture(shadow=True)
+        bridge.engine_verify_candidate("api", original, shadow, ENGINE_TARGET_IMAGE, ENGINE_TARGET_SHA)
+
+        short_id_alias = copy.deepcopy(shadow)
+        short_id_alias["NetworkSettings"]["Networks"][ENGINE_NETWORK]["Aliases"].append(
+            short_id_alias["Id"][:12])
+        bridge.engine_verify_candidate("api", original, short_id_alias, ENGINE_TARGET_IMAGE, ENGINE_TARGET_SHA)
+
+        original_network, aliases = bridge.engine_service_endpoint("api", original)
+        self.assertEqual(original_network, ENGINE_NETWORK_ID)
+        self.assertIn("api", aliases)
+        shadow_network, shadow_aliases = bridge.engine_service_endpoint("api", shadow, shadow=True)
+        self.assertEqual(shadow_network, original_network)
+        self.assertNotIn("api", shadow_aliases)
+
+    def test_promoted_candidate_keeps_original_route_aliases(self):
+        original = engine_fixture()
+        promoted = engine_fixture(shadow=True)
+        endpoint = promoted["NetworkSettings"]["Networks"][ENGINE_NETWORK]
+        endpoint["Aliases"] = list(reversed(original["NetworkSettings"]["Networks"][ENGINE_NETWORK]["Aliases"]))
+        bridge.engine_verify_candidate("api", original, promoted, ENGINE_TARGET_IMAGE, ENGINE_TARGET_SHA, shadow=False)
+        endpoint["Aliases"].remove("markina-gallery-api-previous")
+        with self.assertRaises(bridge.BridgeError):
+            bridge.engine_verify_candidate("api", original, promoted, ENGINE_TARGET_IMAGE, ENGINE_TARGET_SHA,
+                                           shadow=False)
+
+    def test_runtime_identity_binds_effective_config_without_exposing_values(self):
+        original = engine_fixture()
+        identity = bridge.engine_runtime_identity("api", original)
+        self.assertRegex(identity, r"^[a-f0-9]{64}$")
+        self.assertNotIn(SECRET_SENTINEL, identity)
+        changed = copy.deepcopy(original)
+        changed["Config"]["Env"].append("ADDITIONAL_CONFIG=" + SECRET_SENTINEL)
+        self.assertNotEqual(bridge.engine_runtime_identity("api", changed), identity)
+        self.assertEqual(bridge.engine_runtime_identity("api", original), identity)
+
+    def test_creation_refuses_unsafe_original_engine_config(self):
+        mutations = {
+            "privileged": lambda item: item["HostConfig"].update(Privileged=True),
+            "published-port": lambda item: item["HostConfig"].update(
+                PortBindings={"8000/tcp": [{"HostPort": "8000"}]},
+            ),
+            "other-network": lambda item: item["NetworkSettings"]["Networks"].update(
+                unexpected={"NetworkID": "7" * 64},
+            ),
+            "unmatched-bind": lambda item: item["Mounts"][0].update(Source="/etc/unapproved"),
+        }
+        for boundary, mutate in mutations.items():
+            with self.subTest(boundary=boundary):
+                original = engine_fixture()
+                mutate(original)
+                with self.assertRaises(bridge.BridgeError) as error:
+                    bridge.engine_create_payload("api", original, ENGINE_TARGET_IMAGE, ENGINE_TARGET_SHA)
+                self.assertNotIn(SECRET_SENTINEL, str(error.exception))
+
+    def test_shadow_proof_rejects_runtime_drift_and_live_aliases(self):
+        mutations = {
+            "image": lambda item: item.update(Image=IMAGE_ID),
+            "version": lambda item: item["Config"]["Env"].__setitem__(0, "APP_VERSION=" + SHA),
+            "release-label": lambda item: item["Config"]["Labels"].update({"io.pickyourpic.release": SHA}),
+            "effective-environment": lambda item: item["Config"]["Env"].append("EXTRA=" + SECRET_SENTINEL),
+            "root-filesystem": lambda item: item["HostConfig"].update(ReadonlyRootfs=False),
+            "security-policy": lambda item: item["HostConfig"].update(SecurityOpt=[]),
+            "tmpfs": lambda item: item["HostConfig"].update(Tmpfs={}),
+            "bind-access": lambda item: item["Mounts"][0].update(RW=True),
+            "volume-source": lambda item: item["Mounts"][1].update(Name="other-volume"),
+            "volume-copy": lambda item: item["HostConfig"]["Mounts"][0]["VolumeOptions"].update(NoCopy=False),
+            "network-id": lambda item: item["NetworkSettings"]["Networks"][ENGINE_NETWORK].update(
+                NetworkID="7" * 64,
+            ),
+            "live-alias": lambda item: item["NetworkSettings"]["Networks"][ENGINE_NETWORK]["Aliases"].append("api"),
+        }
+        original = engine_fixture()
+        for boundary, mutate in mutations.items():
+            with self.subTest(boundary=boundary):
+                shadow = engine_fixture(shadow=True)
+                mutate(shadow)
+                with self.assertRaises(bridge.BridgeError) as error:
+                    bridge.engine_verify_candidate("api", original, shadow, ENGINE_TARGET_IMAGE, ENGINE_TARGET_SHA)
+                self.assertNotIn(SECRET_SENTINEL, str(error.exception))
 
 
 class ProtectedOperationTests(unittest.TestCase):
