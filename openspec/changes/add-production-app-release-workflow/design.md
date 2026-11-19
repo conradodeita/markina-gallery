@@ -20,6 +20,8 @@ O release facial em `.github/workflows/ci.yml` valida blobs próprios e publica 
 
 ## Decisions
 
+- Follow-up da PR #385: admitir somente os caminhos exatos dos helpers, testes, documentação raiz e `.env.example` aprovados na otimização; não usar prefixo genérico `scripts/` ou `frontend/`. Os três workflows de homologação são permitidos exclusivamente com status Git `D`; alteração/reintrodução continua bloqueada. Os pins e demais gates de runtime permanecem obrigatórios.
+
 - A política de escopo declarará explicitamente os arquivos de runtime, testes e documentação autorizados para a entrega comercial. O CI comparará os blobs de runtime do SHA candidato com o manifesto versionado; mudanças não declaradas impedem preflight.
 - Um classificador da diferença de `main` selecionará exatamente um fluxo: aplicação, manutenção facial ou nenhum. Mudança que pertença aos dois escopos falha sem release automático.
 - O inventário de aplicação executará por wrapper SSH de comando restrito e somente-leitura, buscando o script imutável pelo SHA e verificando seu blob Git. Reutiliza a chave dedicada de preflight já configurada; a chave de release permanece restrita ao job `production` após aprovação.

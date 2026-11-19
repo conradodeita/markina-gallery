@@ -2,6 +2,17 @@
 
 ## ADDED Requirements
 
+### Requirement: Escopo operacional admite a otimização de CI aprovada
+O gate API/web SHALL admitir os caminhos exatos de ferramentas, testes e documentação da otimização de CI aprovada na PR #385. SHALL aceitar os três workflows de homologação aposentados somente como exclusões Git. Caminhos desconhecidos, recriação desses workflows, migrations, Docker/Compose e blobs de runtime divergentes SHALL continuar sujeitos às recusas existentes.
+
+#### Scenario: Candidato inclui a otimização aprovada
+- **WHEN** o delta contém os arquivos operacionais exatos aprovados e os blobs de runtime correspondem ao manifesto
+- **THEN** a classificação de escopo permite prosseguir aos demais gates, sem autorizar instalação ou deploy
+
+#### Scenario: Workflow aposentado reaparece
+- **WHEN** um workflow de homologação aposentado é adicionado ou modificado
+- **THEN** o gate recusa o candidato antes do inventário remoto
+
 ### Requirement: Release de aplicação em produção é separado da manutenção facial
 O workflow SHALL oferecer um release protegido e independente para alterações de aplicação que exijam atualizar `api` e/ou `web`. Esse fluxo SHALL NOT usar a autorização de manutenção facial como autorização de aplicação. O gate facial existente SHALL permanecer ativo e independente.
 

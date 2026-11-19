@@ -75,7 +75,32 @@ ALLOWED_PREFIXES = (
     "openspec/",
     "docs/",
 )
+RETIRED_HOMOLOG_WORKFLOWS = {
+    ".github/workflows/facial-rollout-homolog.yml",
+    ".github/workflows/inventory-homolog-readonly.yml",
+    ".github/workflows/maintenance-homolog.yml",
+}
 ALLOWED_OPERATIONS = {
+    ".env.example",
+    "AGENTS.md",
+    "DEPLOY.md",
+    "README.md",
+    "frontend/app/public-galleries/public-gallery.test.tsx",
+    "scripts/backend_ci.py",
+    "scripts/backend_ci_durations.json",
+    "scripts/check_backend_ci_results.py",
+    "scripts/ci_feedback.py",
+    "scripts/ci_local.py",
+    "scripts/classify_ci_scope.py",
+    "scripts/resume-homolog.sh",
+    "scripts/test_backend_ci.py",
+    "scripts/test_check_backend_ci_results.py",
+    "scripts/test_ci_feedback.py",
+    "scripts/test_ci_local.py",
+    "scripts/test_ci_workflow_policy.py",
+    "scripts/test_classify_ci_scope.py",
+    "scripts/test_resume_homolog_policy.py",
+
     ".gitleaksignore",
     ".github/workflows/ci.yml",
     ".github/workflows/production-app-compose-bridge-install.yml",
@@ -182,7 +207,7 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
                     return False, "api_fora_do_escopo"
             changed |= api_changes
         for path in changed:
-            if path in RETIRED_INFINITEPAY_FILES:
+            if path in RETIRED_INFINITEPAY_FILES or path in RETIRED_HOMOLOG_WORKFLOWS:
                 if statuses[path] != "D":
                     return False, "arquivo_fora_do_escopo"
                 continue

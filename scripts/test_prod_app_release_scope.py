@@ -330,6 +330,63 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (True, "somente_api_web"))
 
+    def test_approved_ci_optimization_paths_are_allowed(self):
+        names = (
+            ".env.example", "AGENTS.md", "DEPLOY.md", "README.md",
+            "frontend/app/public-galleries/public-gallery.test.tsx",
+            "scripts/backend_ci.py", "scripts/backend_ci_durations.json",
+            "scripts/check_backend_ci_results.py", "scripts/ci_feedback.py",
+            "scripts/ci_local.py", "scripts/classify_ci_scope.py", "scripts/resume-homolog.sh",
+            "scripts/test_backend_ci.py", "scripts/test_check_backend_ci_results.py",
+            "scripts/test_ci_feedback.py", "scripts/test_ci_local.py",
+            "scripts/test_ci_workflow_policy.py", "scripts/test_classify_ci_scope.py",
+            "scripts/test_resume_homolog_policy.py",
+        )
+        for name in names:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("approved operational file\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
+    def test_retired_homolog_workflows_are_allowed_only_as_deletions(self):
+        names = (
+            ".github/workflows/facial-rollout-homolog.yml",
+            ".github/workflows/inventory-homolog-readonly.yml",
+            ".github/workflows/maintenance-homolog.yml",
+        )
+        for name in names:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("legacy workflow\n", encoding="utf-8")
+        self.commit()
+        legacy_base = self.run_git("rev-parse", "HEAD")
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+        for name in names:
+            (self.root / name).write_text("changed workflow\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, legacy_base, "HEAD", self.manifest),
+                         (False, "arquivo_fora_do_escopo"))
+        for name in names:
+            (self.root / name).unlink()
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, legacy_base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+
+    def test_ci_allowlist_does_not_admit_unknown_scripts_or_environment(self):
+        for name in ("scripts/unreviewed.py", ".env", "frontend/app/unreviewed.test.tsx"):
+            with self.subTest(path=name):
+                path = self.root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("unreviewed\n", encoding="utf-8")
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (False, "arquivo_fora_do_escopo"))
+                path.unlink()
+                self.commit()
+
     def test_unlisted_gallery_runtime_is_rejected(self):
         path = self.root / "frontend/app/admin/galleries/unreviewed.tsx"
         path.parent.mkdir(parents=True, exist_ok=True)
