@@ -94,3 +94,8 @@ O diagnóstico read-only subsequente confirmou fontes históricas divergentes em
 O proprietário aprovou preparar no OpenSpec a adoção explícita do runtime saudável como nova base privada, preservando snapshots antigos. A implementação e os gates estão nas tasks 6.2–6.9 de `add-root-only-compose-release-bridge`: prova independente, fingerprint próprio de adoção, persistência protegida e registro vinculado aos IDs atuais. Task 4.2 depende dessa reconciliação, mas continua pendente; planejamento aprovado não autoriza instalação, captura persistente de configuração/credenciais nem deploy. Tasks 4.3 e 4.5 mantêm suas aprovações próprias.
 
 Implementação parcial posterior adicionou o workflow manual de adoção e os comandos locais; ele ainda precisa passar no CI consolidado e na revisão do PR. Nenhuma nova execução remota foi feita.
+
+
+### Reconciliação operacional — 19/11/2026
+
+A base privada foi adotada pelo workflow protegido 44600949150, no SHA integrado 850fce24, com autorização própria e preservação independente de todos os containers/configurações/fontes/.env. Preflight normal via wrapper passou: schema 20261113_0126, facial true, API/web healthy, HTTPS 200; fingerprint de release 39890eb4d897c059e851c59ef8a5e94dce8209d9aa91a0b99388e83ce8b29a4b. A task 4.2 tem inventário válido, mas permanece aberta até aprovação de release vinculada; task 4.5 continua separada. Retentativa somente dos jobs falhos/dependentes do CI main 44594737182 em acompanhamento, sem repetir shards verdes.
