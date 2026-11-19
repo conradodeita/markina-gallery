@@ -19,7 +19,7 @@ def main():
                 raise AssertionError(f"{name}: gate ausente {fragment}")
         if re.search(r"git (?:fetch|init)|mktemp|source /dev/stdin", text):
             raise AssertionError(f"{name}: inventário deve usar somente memória e objetos locais")
-    app_release = APP.split("release() {", 1)[1].split("\nrollback() {", 1)[0]
+    app_release = APP.split("\nrelease() {", 1)[1].split("\nrollback() {", 1)[0]
     if "require_facial_processing_enabled_in_config" not in app_release:
         raise AssertionError("release API/web deve validar FACIAL_PROCESSING_ENABLED=true no alvo")
     if not (app_release.index("compose config --quiet")
@@ -30,7 +30,7 @@ def main():
         raise AssertionError("release API/web deve validar a flag facial e o bundle antes da recriação")
     if "compose build" in app_release or "docker build" in app_release:
         raise AssertionError("release API/web não pode reconstruir imagens no host")
-    app_rollback = APP.split("rollback() {", 1)[1].split("emergency_maintenance() {", 1)[0]
+    app_rollback = APP.split("\nrollback() {", 1)[1].split("\nemergency_maintenance() {", 1)[0]
     if not (app_rollback.index("require_facial_processing_enabled_in_config")
             < app_rollback.index("compose up")):
         raise AssertionError("rollback API/web deve preservar a flag facial ativa")
