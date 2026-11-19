@@ -1,0 +1,37 @@
+# Design
+
+## Context
+
+O CI ativo já tem `ci-scope`, `backend-quality`, três `backend-tests`, o agregador obrigatório `backend`, frontend, imagens, OpenSpec e Gitleaks. Python e npm já usam cache de dependências; a suíte backend coleta todos os testes em cada parte e particiona módulos por quantidade de itens. A classificação atual trata qualquer `scripts/` como infraestrutura de matriz completa. O PR #384 comprova que um harness isolado de Docker pode disparar cerca de 31 min de CI mesmo quando o `backend-quality` dura pouco mais de 2 min.
+
+Evidência recente: runs `44424649626`, `44428285088` e `44433195647` duraram aproximadamente 19,0, 26,9 e 31,4 min; a mediana observada nesta amostra de três é 26,9 min. No último run, os shards levaram 30,9, 19,4 e 20,7 min; a qualidade levou 2,3 min. Os artefatos JUnit/manifesto desse run cobrem 2.625 itens em 251 módulos, 875 itens por shard; a soma do tempo de teste foi 30,0/18,6/19,9 min. Um LPT offline por duração dos módulos estima 22,6/22,6/22,6 min. Esta é uma projeção de uma única execução, não um resultado medido após mudança. O run histórico `40406191752` mediu aproximadamente 8 min no caminho crítico depois da divisão inicial em três runners.
+
+O worktree principal tem alterações locais extensas e está atrás de `origin/main`; esta iniciativa está isolada em branch/worktree limpos. As changes de release e backup permanecem em seus próprios escopos. Nenhuma CI estava em execução ou em fila durante a auditoria.
+
+## Goals / Non-Goals
+
+**Goals:** reduzir espera e desperdício com regras testadas; preservar cobertura completa por padrão, status obrigatório `backend`, execução completa em push/dispatch e proteção contra cancelamento de release; medir o efeito por job e shard.
+
+**Non-Goals:** reduzir assertions, remover testes, executar testes contra produção, cancelar releases, modificar permissões externas, secrets, dados, migrations ou fluxo mutável de produção; reconstruir uma arquitetura paralela de agentes. A promoção do mesmo artefato CI não está implementada nos fluxos atuais e permanece fora desta change até a decisão de arquitetura registrada na seção de limites.
+
+## Decisions
+
+- Introduzir resultados separados para qualidade backend e `backend_tests`, mantendo `backend` como agregador estável. Somente `scripts/ci_feedback.py` e `scripts/test_ci_feedback.py`, uma ferramenta read-only que resume logs redigidos e seus testes, poderão executar qualidade sem os shards de produto; qualquer outro script, código de runtime, arquivo global, risco crítico ou caminho não reconhecido permanece fail-open para a matriz completa.
+- `scripts/ci_local.py` fornece uma única entrada de Fast Feedback por diff/base e worktree, com lints e contratos conhecidos. A saída identifica os gates que continuam obrigatórios no CI; não declara uma suíte parcial como validação completa.
+- A execução com `pull_request` usa grupo `workflow + PR number` e permite cancelamento somente nesse evento. Qualquer outro evento usa `run_id` como grupo único e `cancel-in-progress: false`, impedindo que pushes e dispatches de produção disputem ou substituam uma execução pendente.
+- Manter três shards. Persistir pesos históricos por módulo derivados dos JUnit do run `44433195647`; escalar a duração proporcionalmente à quantidade atual de casos do módulo. Módulos sem histórico recebem fallback baseado na duração mediana por caso. Ordenar por peso decrescente e distribuir sempre para a parte menos carregada; não dividir módulos para preservar fixtures.
+- Vincular o plano ao SHA e à coleção reportados pelos shards. O agregador recalcula a partição com os mesmos pesos, compara coleções e seleções, e bloqueia artefato ausente, falha, cancelamento, omissão ou sobreposição.
+- Python e npm já usam caches por lockfile; primeiro medir e evitar reimplementar essas garantias. Cache Docker/BuildKit só será adotado se o workflow e os runners oferecerem cache seguro por escopo/arquitetura sem permitir contaminação de PR não confiável.
+- Decisão expressa do proprietário em 18/11/2026: homologação foi encerrada; os únicos alvos operacionais são desenvolvimento local, CI e produção. Em `main`, havia um deploy automático de `develop`, três workflows SSH separados e checks que os exercitavam. A mudança remove os quatro caminhos remotos, substitui as provas que exigiam esses arquivos por uma regressão de ausência e mantém intacto o ID obrigatório `homolog-inventory-policy` para não mudar a proteção existente. Não altera ambientes, secrets, permissões ou proteções externas do GitHub.
+- `docs/DEPLOY-PROD-WEB.md` registra que o arquivo histórico `docker/.env.homolog` ainda é usado pelo release web-only como configuração de produção real, não como ambiente intermediário. O caminho é parte de um contrato operacional ativo; não renomeá-lo nem ler/editar seus valores nesta change.
+- Há changes antigas ainda abertas que propõem deploy/limpeza de homologação, incluindo `automate-protected-homolog-deploy`. Esta change não altera, conclui ou arquiva tarefas de outras iniciativas; registra que os passos remotos dessas propostas estão supersedidos pela decisão atual e não devem ser executados. Arquivos de scripts legados ficam fora do caminho ativo enquanto os gates de produção ainda os referenciam como contratos de código.
+- O CI atual não possui cache BuildKit. Pip e npm já têm cache por lockfile. Não adicionar cache Docker até demonstrar ganho, isolamento entre PR não confiável e chave compatível com arquitetura.
+
+## Limites encontrados antes de reduzir cobertura ou alterar publicação
+
+- Não há mapa de impacto backend comprovado. `backend/tests/conftest.py` instala fixture `autouse` que restaura regras DDL em `Base.metadata` compartilhado; `test_derived_galleries.py` recria o schema global por teste e importa `app.main` e vários domínios; `test_unified_checkout.py` importa fixture de `test_derived_galleries.py`. `backend/pyproject.toml` configura somente `testpaths`, sem mapa de impacto. Selecionar testes apenas por nome/import direto não prova ausência de contratos transversais; `backend_tests` permanece completo até um mapa ser validado contra a suíte integral.
+- O job `runtime-images` valida builds com `--load`, mas não publica/retém artefato para promoção. Os fluxos protegidos de API/web (`production-app-release` e `deploy-prod-web.sh`) reconstroem no host após aprovação e validam o ID Docker que executam. Isso preserva identidade local de build/deploy, mas não é reutilização do mesmo artefato construído pelo CI. A change não muda esse contrato: transportar digest imutável exige decisão e gates próprios para registry/transferência, arquitetura nativa do host e acesso de produção; não alterar secrets nem operação de servidor nesta change.
+
+## Risks / Trade-offs
+
+Pesos estáticos envelhecem e novas fixtures podem mudar a distribuição; manifestos continuam atualizando cobertura e os JUnit do CI fornecem a próxima amostra para recalibração. Uma allowlist estreita limita o ganho inicial, mas evita omitir dependências. Cancelar somente PR evita perda de operações de produção; runs intermediários não-PR ainda podem consumir recursos. A mudança do workflow aciona uma CI completa inicial, necessária para validar o novo seletor antes que ele reduza execuções futuras. A medição atual tem amostra pequena e não sustenta percentil 90.

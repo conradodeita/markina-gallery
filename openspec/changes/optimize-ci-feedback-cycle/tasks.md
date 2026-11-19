@@ -1,0 +1,39 @@
+# Tasks
+
+## 1. Auditoria e baseline
+
+- [x] 1.1 Inventariar workflow, classificador, shard planner, caches, mudanças OpenSpec de CI/release, worktrees e runs recentes. Evidência: `design.md` registra runs e tempos; `optimize-ci-validation` está concluída; changes de release seguem separadas; CI atual não tinha runs em execução/fila; árvore principal local foi preservada.
+- [x] 1.2 Baixar e analisar artefatos JUnit/manifesto de `44433195647`, confirmar 2.625 testes, 251 módulos e 875 testes por shard e calcular projeção LPT. Evidência: JUnit 30,0/18,6/19,9 min; projeção 22,6 min por shard, ainda não validada remotamente.
+
+## 2. Concorrência segura e feedback incremental
+
+- [x] 2.1 Adicionar concorrência por PR, sem cancelar eventos de push/dispatch, preservar nomes de jobs e provar a política com teste automatizado do workflow. Evidência: `scripts.test_ci_workflow_policy` verifica grupo pelo número do PR, cancelamento só em `pull_request`, full classifier para push/dispatch e IDs obrigatórios preservados.
+- [x] 2.2 Separar qualidade backend de execução dos shards, manter o agregador `backend` estável e permitir omitir a suíte de produto somente para a ferramenta de diagnóstico CI read-only e seus testes; provar rotas isoladas, mistas, críticas e desconhecidas. Evidência: `scripts.test_check_backend_ci_results` cobre sucesso/falha/skip; `scripts.test_classify_ci_scope` cobre allowlist exata e combinações.
+- [x] 2.3 Manter testes completos em push e `workflow_dispatch`, confirmar que paths sensíveis/infraestrutura seguem full-matrix e cobrir fail-open do classificador com regressões determinísticas. Evidência: teste do workflow prova `--full` fora de PR; regressões cobrem auth, tenancy, pagamentos, biometria, storage, migrations, scripts, workflow e paths desconhecidos.
+
+## 3. Balanceamento por duração
+
+- [x] 3.1 Gerar pesos de duração por módulo dos artefatos JUnit, validar esquema/fallback e distribuir os três shards por carga histórica mantendo módulos inteiros. Evidência: `backend_ci_durations.json` deriva do run `44433195647`; `scripts.test_backend_ci` verifica schema, pesos zero/novos e fallback.
+- [x] 3.2 Testar determinismo, escalonamento quando o número de testes do módulo muda, módulos sem histórico, distribuição equilibrada e cobertura exata sem interseção; validar integração real do pytest sintético. Evidência: `scripts.test_backend_ci` passa cobertura, falha/omissão/sobreposição e execução pytest sintética com parametrização, fixtures e skip.
+
+## 4. CI local, logs e documentação
+
+- [x] 4.1 Atualizar `docs/CI-VALIDATION.md` com baseline amostral, seleção de testes, cancelamento, pesos, artefatos, limites e comando local reproduzível; não apresentar projeção como medição. Evidência: três runs identificados; projeção LPT e amostra única rotuladas; p90 e ganho pós-mudança permanecem pendentes.
+- [x] 4.2 Verificar scripts substituídos, evitar duplicação de gates rápidos e, se houver benefício sem nova infraestrutura, integrar uma única entrada local para detectar paths alterados e executar os checks selecionados. Evidência: `scripts/ci_local.py` combina classifier e lints/contratos existentes, incluindo staged/unstaged/untracked; `scripts.test_ci_local` prova seleção e full-suite pendente; execução real da ferramenta de feedback passou.
+- [x] 4.3 Melhorar relatório de falha da CI para informar workflow/job/etapa/duração/SHA e link com log pertinente redigido, sem secrets; manter artefatos e links restritos ao run/SHA corretos. Evidência: testes de redaction e links; consulta ao run exato `44433195647` identificou backend-quality, etapa `NoCopy volume check` (22 s), erro final redigido e artifacts do run/SHA.
+
+## 5. Matriz de impacto e release
+
+- [ ] 5.1 Mapear dependências entre módulos backend e testes por contrato, começando com grupos de baixo risco; alterações críticas ou sem regra continuam executando a suíte completa. Validar mapa contra testes/fixtures e comparar com full CI antes de reduzir cobertura. **Bloqueada por evidência:** fixtures `autouse` alteram metadata/schema global, arquivos centrais importam `app.main` e vários domínios, e há teste que importa fixture de outro módulo. Não há mapa no pytest config; uma seleção por import/nome poderia omitir testes cruzados. Cobertura total permanece obrigatória; não criar mapa especulativo.
+- [x] 5.2 Retirar os quatro caminhos remotos ativos de homologação, manter intactos os IDs de checks obrigatórios, substituir a prova de ausência de workflows por regressão automatizada e atualizar somente a documentação operacional diretamente conflitante; preservar changes ativas e configurações externas, sem executar operações remotas. Evidência: três workflows e job removidos, regressão `test_ci_workflow_policy`, IDs `homolog-inventory-policy`/`gemma-runtime` mantidos; README, DEPLOY, checklist e inventário facial atualizados. Nenhuma configuração externa foi alterada.
+- [ ] 5.3 Reconciliar otimização de artefatos com `automate-authorized-production-release`/`add-production-app-release-workflow`; preservar digest imutável, CI do SHA exato, aprovação humana, smoke tests e rollback sem duplicar os gates existentes. **Bloqueada por decisão de arquitetura:** jobs de imagem atuais só validam; os releases protegidos fazem build no host e verificam o ID local. Reutilizar o mesmo artefato do CI exige definir transporte/registry, arquitetura-alvo e credenciais/configuração sem alterar proteções de produção. As mudanças atuais preservam checks do SHA, environment `production`, fingerprint, smoke e rollback; não alegam promover o digest do CI.
+
+## 6. Medição e publicação
+
+- [x] 6.1 Revisar diff/segredos e executar testes focados, lint, OpenSpec estrito, validação do workflow e testes integrais necessários antes do primeiro push. Evidência: 55 testes direcionados passaram; Ruff, `compileall`, OpenSpec estrito e parse YAML dos cinco workflows passaram; Gitleaks 8.24.3 (versão e checksum oficial verificados) não encontrou leaks no índice staged. A suíte backend completa e os builds aplicáveis serão confirmados pela CI do PR, que recebe `--full` por alteração do workflow/classificador.
+- [ ] 6.2 Abrir PR da otimização e observar CI até concluir; registrar medianas/p90 somente com amostra suficiente, tempo de fila, duração por job/shard, cobertura e resultados de falha/cancelamento.
+- [ ] 6.3 Corrigir falhas válidas em commits focados e confirmar que o check `backend` preserva gates; deixar merge e deploy para revisão humana/autorização aplicável.
+
+## Workflow follow-up
+
+- Sincronizar a spec principal e arquivar somente após revisão humana e CI verde da change.

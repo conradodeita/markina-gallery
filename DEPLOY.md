@@ -1,51 +1,44 @@
-# DEPLOY — Markina Gallery (homologação e produção)
+# DEPLOY — Pick-your-Pic em produção
 
-> **Regra de ouro:** os servidores executam outros projetos. Toda ação é limitada à Markina Gallery e nunca
-> altera containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de terceiros.
+> Não existe ambiente operacional de homologação. Os alvos são desenvolvimento local, GitHub Actions e produção. Nenhum workflow publica a partir de `develop`.
 
 ## Ambientes
 
-| Ambiente | Banco | Segredos | Integrações | Domínio |
-|---|---|---|---|---|
-| local | PostgreSQL do Compose local | `docker/.env` (não versionado) | sandbox | localhost |
-| homolog | PostgreSQL exclusivo da Markina Gallery | `docker/.env.homolog` no servidor | homologação | subdomínio próprio |
-| prod | PostgreSQL exclusivo da Markina Gallery | `docker/.env.prod` no servidor | produção | subdomínio próprio |
+| Alvo | Uso | Dados e segredos |
+|---|---|---|
+| Desenvolvimento local | Implementação e ensaios locais | `docker/.env`, não versionado; dados sintéticos quando aplicável |
+| GitHub Actions | Lint, testes, builds, OpenSpec e políticas | Serviços efêmeros e dados sintéticos; sem acesso operacional à produção nos jobs de validação |
+| Produção | Operação do fotógrafo proprietário | Recursos e configuração segura exclusivos da Markina Gallery |
 
-Cada ambiente tem banco, Redis, segredos, WhatsApp e integrações totalmente distintos.
+O release web-only ainda consome o caminho histórico `docker/.env.homolog` como configuração da produção real. O nome não representa um ambiente de homologação. Esta mudança preserva esse contrato ativo; não renomeie, migre, leia nem edite esse arquivo por inferência.
 
-## Isolamento obrigatório no servidor (Oracle)
+## Fluxo de publicação
 
-- Diretório próprio da Markina Gallery (ex.: `/opt/markina-gallery`)
-- Usuário/serviço próprio quando aplicável
-- Projeto Compose exclusivo: `markina-gallery` — sempre `docker compose -p markina-gallery -f docker/docker-compose.yml ...`
-- Redes, volumes e containers com prefixo `markina-gallery`
-- Banco (PostgreSQL) e Redis exclusivos da Markina Gallery
-- Portas internas próprias; no host, apenas o Nginx (porta definida no `.env` do ambiente)
-- Subdomínio próprio no proxy reverso existente, **sem alterar rotas de outros projetos**
-- Backups e logs em diretórios próprios da Markina Gallery
-- Procedimento de deploy e rollback documentado e **limitado à Markina Gallery**
+1. Criar pull request e aguardar todos os checks obrigatórios do SHA correspondente.
+2. Revisar a compatibilidade da aplicação e das migrations, o inventário, as portas/domínio, o impacto previsto e a recuperação.
+3. Iniciar somente o workflow protegido de produção previsto para a operação e obter a aprovação humana do environment `production`.
+4. Confirmar o SHA aprovado e a imagem que o runbook gerar ou usar; conferir o ID imutável resultante antes de recriar serviços e não substituir a imagem durante a operação.
+5. Executar smoke tests não destrutivos e conferir a saúde dos serviços após a publicação.
 
-## Antes de qualquer ação em homologação/produção (gate obrigatório)
+Os jobs e gates atuais estão em `.github/workflows/ci.yml` e nas changes OpenSpec de release. Deploy, migration, rollback e escrita de produção continuam exigindo autorização humana específica; CI verde, merge ou aprovação de PR não substituem essa autorização.
 
-1. Executar apenas inspeções seguras: `docker ps`, `docker compose ls`, redes, volumes, serviços systemd e portas ocupadas.
-2. Apresentar ao proprietário: inventário encontrado, portas/subdomínio escolhidos e plano de impacto zero.
-3. Aguardar aprovação explícita antes de qualquer mudança.
+Hoje, a matriz `runtime-images` valida builds, enquanto os fluxos protegidos de API/web constroem no host de produção após a aprovação e conferem o ID local executado. Essa identidade protege a troca e o rollback, mas ainda não promove o mesmo artefato do CI; essa integração permanece pendente de arquitetura própria.
 
-## Proibido em servidores compartilhados
+## Antes de uma operação de produção
 
-- `docker system prune`, `docker container prune`, `docker volume prune`, `docker network prune`
-- `docker compose down` sem o par `-p markina-gallery -f docker/docker-compose.yml`
-- Alterar proxy reverso, firewall, DNS ou certificados existentes sem identificar com precisão o impacto
+- Fazer inventário somente leitura de versão, serviços da Markina, schema, portas, domínio, saúde e recursos de recuperação.
+- Apresentar o plano de impacto zero, incluindo interrupção esperada, migration compatível, smoke tests e rollback aplicável.
+- Aguardar a aprovação explícita do proprietário para a operação, o SHA e o escopo apresentados.
+- Não usar dados reais em testes destrutivos. Não confundir rollback de container com recuperação do banco.
 
-## Segredos
+## Isolamento do servidor compartilhado
 
-- Servidor: `docker/.env.homolog` e `docker/.env.prod` (fora do Git, permissões restritas ao usuário do serviço).
-- CI: exclusivamente GitHub Secrets (`GITHUB_TOKEN` e secrets de workflow).
-- Nunca em código, frontend, logs ou tabelas comuns; varredura com gitleaks na CI.
+- Limitar comandos ao diretório, projeto Compose e serviços da Markina Gallery.
+- Nunca alterar containers, imagens, redes, volumes, proxy, firewall, DNS, certificados ou dados de outros projetos.
+- Nunca executar prunes. Não executar `docker compose down` sem `-p markina-gallery -f docker/docker-compose.yml`.
 
-## Deploy e rollback
+## Segredos e recuperação
 
-- Passo a passo por ambiente: `docs/CHECKLIST-DEPLOY-ROLLBACK.md`.
-- Busca facial: SLOs e rollout em `docs/OPERACAO-BUSCA-FACIAL-PRODUCAO.md`; RIPD, papéis e incidente em `docs/GOVERNANCA-E-INCIDENTE-BUSCA-FACIAL.md`.
-- Backups diários cifrados no Google Drive com restauração testada em homologação: implementados pela mudança do domínio `media-storage`; até lá, backups manuais constam do checklist.
-- SMTP transacional com SPF/DKIM/DMARC será configurado na mudança do domínio `messaging`/`auth`.
+- Segredos nunca entram no Git, frontend ou logs. A produção usa a configuração externa autorizada; `.env.example` serve somente para desenvolvimento local.
+- Consultar `docs/CHECKLIST-DEPLOY-ROLLBACK.md`, os runbooks da operação e a change OpenSpec do candidato antes de qualquer ação.
+- Ensaios de backup/restauração automatizados usam ambiente efêmero e dados sintéticos. Restauração de dados reais exige autorização operacional própria.

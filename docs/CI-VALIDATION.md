@@ -1,42 +1,56 @@
 # Validação CI do backend
 
-A suíte completa permanece obrigatória em pushes protegidos e operações manuais. Em PRs, o classificador existente seleciona as áreas afetadas; workflows, scripts, infraestrutura ou caminhos desconhecidos continuam acionando toda a matriz.
+## Linha de base observada
 
-## Execução
+Amostra de três execuções recentes da CI; não é suficiente para estimar p90. O tempo é o tempo de parede entre criação e atualização do workflow, sem subtrair fila.
 
-- `backend-quality`: lint e testes de políticas/scripts, uma única execução.
-- `backend-tests (0/1/2)`: três runners independentes, cada um com SQLite e dois serviços PostgreSQL descartáveis próprios. Cada runner coleta todos os testes, mas executa somente sua parte; módulos e sua ordem interna permanecem juntos. A carga é balanceada por quantidade de itens coletados.
-- `backend`: exige sucesso de qualidade e de todas as partes e verifica os manifestos. Coleção divergente, parte ausente, cancelada ou falha, seleção incompleta e sobreposição impedem aprovação. Os jobs de release continuam dependendo desse mesmo nome.
+| Run | CI total | Shard backend mais lento | `backend-quality` |
+|---|---:|---:|---:|
+| [44424649626](https://github.com/conradodeita/markina-gallery/actions/runs/44424649626) | 19m03s | 18m25s | 1m47s |
+| [44428285088](https://github.com/conradodeita/markina-gallery/actions/runs/44428285088) | 26m52s | 26m27s | 2m18s |
+| [44433195647](https://github.com/conradodeita/markina-gallery/actions/runs/44433195647) | 31m22s | 30m53s | 2m17s |
 
-Os testes de concorrência já usam PHOTOGRAPHER_TEST_DATABASE_URL no ambiente da suíte completa. Os passos focados redundantes foram removidos. A variante de exclusão em PostgreSQL continua executando na parte 0 com DATABASE_URL explícita; a execução do mesmo contrato em SQLite também permanece na suíte geral.
+A mediana observada da CI nessa amostra é **26m52s**; a mediana do shard mais lento é **26m27s**. `backend-quality` levou entre 1m47s e 2m18s. No run 44433195647, o gate de qualidade falhou em `NoCopy volume check` após 2m17s, mas os três shards continuaram em paralelo e o workflow terminou 29m05s depois. A nova dependência faz os shards esperarem o gate de qualidade; a economia real ainda depende de uma execução após o merge.
 
-## Evidência e diagnóstico
+Os três shards desse run passaram e produziram JUnit e manifestos compatíveis com SHA `feef56a9702c50bea500a511a7c457cbe4aba46b` (head do PR `9dba58e5e589d815762e663d83f92c2b41ba2103`). A amostra cobre **2.625 itens em 251 módulos**. Os tempos agregados do JUnit por distribuição anterior, em minutos de execução de casos, foram **29,786 / 18,407 / 19,733**.
 
-Os artefatos `backend-shard-0`, `backend-shard-1` e `backend-shard-2` contêm manifesto JSON e JUnit XML, com retenção de sete dias. O manifesto inclui SHA, índice, coleção completa, seleção e exit code do pytest. Os logs mostram os 25 testes mais lentos de cada parte. Os artefatos não contêm dados de produção.
+O arquivo `scripts/backend_ci_durations.json` registra os segundos observados por módulo, o run de origem, os dois SHAs e a mediana de **0,849 s por caso** usada como fallback. Uma projeção LPT offline, mantendo módulos inteiros, estima **22,642 min de casos por shard**. A distribuição atual por quantidade estima **29,786 / 18,407 / 19,733 min** sob os mesmos pesos. Essa é uma projeção de uma única coleta, não uma medição posterior à mudança, nem uma promessa sobre o tempo total de parede.
 
-Baseline observado em 26/10/2026: [run 40397675011](https://github.com/conradodeita/markina-gallery/actions/runs/40397675011), SHA 455afaaacb0199da48588dea3ffc0a2b53d03761: backend 32min; passo pytest 27min41s; 1577 passed e 23 skipped. Seis passos focados repetiam cerca de 2min23s; concorrência posterior repetia mais 13s. A regressão de exclusão de 4s é preservada porque a configuração difere.
+## Seleção e gates
 
-A redução real de tempo de parede deve ser medida no CI da PR, incluindo filas, preparação e agregação. A distribuição aumenta o número de runners simultâneos e pode aumentar overhead faturado; não promete redução de minutos faturados. Se um módulo dominar uma parte, usar os novos tempos para analisar sua fixture, sem excluir testes ou reduzir assertions automaticamente.
+- Todos os eventos que não sejam `pull_request`, incluindo push e `workflow_dispatch`, usam `--full`.
+- Workflows, classificador, infraestrutura, runtime, segurança, dependências e caminhos desconhecidos continuam acionando os escopos completos.
+- A única exceção inicial são `scripts/ci_feedback.py` e `scripts/test_ci_feedback.py`: a ferramenta read-only e seus testes rodam no gate de escopo; sozinhos, podem omitir somente a suíte de produto backend. O script operacional de deploy, seu harness de teste, qualquer outro `scripts/*` e combinações com runtime não estão allowlisted.
+- `backend-quality` valida lint e contratos de scripts. `backend-tests` começa somente após sucesso desse gate; a matriz mantém três shards e `fail-fast: false` para coletar todos os diagnósticos de uma suíte que iniciou.
+- O job agregado `backend` mantém o nome/status exigido. Só aceita `backend-tests: skipped` quando `ci-scope` marcou explicitamente `backend_tests=false`; caso contrário exige sucesso e verifica os três artefatos.
+- O agregador `homolog-inventory-policy` conserva o ID de check exigido pela configuração existente, mas não acessa homologação. Um teste impede que workflows, environments ou secrets SSH desse alvo retornem.
 
-Na [PR #300, run 40406191752](https://github.com/conradodeita/markina-gallery/actions/runs/40406191752), SHA `dbd4f74ce5bae0869eb58410932b05548560569e`, as partes concluíram em 8min12s, 5min58s e 8min13s; o agregador passou em 5s. A coleção permaneceu com 1600 itens: 1577 aprovados e 23 skipped, cada um selecionado uma única vez. O tempo do caminho crítico caiu de aproximadamente 32min para 8min20s nessa comparação de execuções. Este resultado é uma medição pontual e não garante a mesma duração em outros runs.
+## Cancelamento e caches
 
-## Reprodução local
+A concorrência usa o número do PR e permite cancelamento somente para `pull_request`. Pushes e `workflow_dispatch` usam `run_id` único e `cancel-in-progress=false` implicitamente, então uma nova execução não cancela release ou operação protegida. Nenhuma proteção externa do GitHub foi alterada.
 
-Em ambiente sintético com dependências e bancos de teste preparados:
+`setup-python` já usa cache pip por arquivos de dependências e `setup-node` cache npm por `package-lock.json`. A matriz de imagens não configura cache BuildKit/GitHub Actions; a change não introduz cache Docker sem demonstração de ganho e isolamento seguro entre PRs não confiáveis.
+
+## Reproduzir os contratos localmente
+
+Antes do push, `python scripts/ci_local.py --base origin/main` detecta diferenças entre a base e `HEAD`, mudanças staged/unstaged e arquivos não rastreados. Executa somente os lints e contratos rápidos conhecidos e lista os gates completos que continuam obrigatórios no CI. Para inspecionar sem executar, acrescente `--dry-run`; para comprovar a seleção, use `--paths <arquivo> ...`. Um lint local não substitui suíte de produto, builds, Gitleaks ou CI do SHA.
 
 ```sh
-python scripts/backend_ci.py run --index 0 --count 3 --output /tmp/backend-reports/shard-0.json
+python -m unittest scripts.test_classify_ci_scope scripts.test_backend_ci \
+  scripts.test_check_backend_ci_results scripts.test_check_ci_results \
+  scripts.test_ci_workflow_policy scripts.test_ci_feedback scripts.test_ci_local -v
+ruff check scripts/backend_ci.py scripts/test_backend_ci.py \
+  scripts/classify_ci_scope.py scripts/test_classify_ci_scope.py \
+  scripts/check_backend_ci_results.py scripts/test_check_backend_ci_results.py \
+  scripts/ci_feedback.py scripts/test_ci_feedback.py scripts/test_ci_local.py \
+  scripts/ci_local.py scripts/test_ci_workflow_policy.py
+npx -y @fission-ai/openspec@1.14.0 validate optimize-ci-feedback-cycle --strict --no-interactive
 ```
 
-Executar as outras partes em ambientes/bancos separados. Não executar as três partes simultaneamente contra os mesmos bancos. Reunir seus manifestos e conferir:
+Os relatórios `backend-shard-0`, `backend-shard-1` e `backend-shard-2` preservam manifesto e JUnit por sete dias. Cada manifesto vincula o plano ao SHA e ao hash do perfil de duração; o verificador rejeita revisão divergente, perfil diferente, seleção alterada, shard ausente, falha, omissão ou sobreposição.
 
-```sh
-python scripts/backend_ci.py verify --count 3 --artifacts /tmp/backend-reports
-python -m unittest scripts.test_backend_ci scripts.test_check_ci_results scripts.test_classify_ci_scope -v
-```
+## Limites e trabalho restante
 
-Sem GITHUB_SHA, os manifestos usam a revisão `local`. Um erro de coleta/teste produz saída não zero; nenhum status anterior pode substituir esse resultado. Cancelamento também é bloqueado pelo resultado do job, mesmo que já exista manifesto.
+A seleção sem shards ainda é estreita: não há mapa abrangente de dependências entre módulos de runtime backend e testes. A fixture `autouse` em `backend/tests/conftest.py` restaura regras DDL sobre `Base.metadata` compartilhado; `test_derived_galleries.py` recria o schema global por caso e importa `app.main` e vários domínios; `test_unified_checkout.py` importa fixture do primeiro arquivo. Por isso, alterações de runtime backend continuam com a suíte completa. A próxima redução exige mapa de impacto comprovado e comparação com full CI antes de ser ativada. Os pesos vieram de uma execução; coletar novos JUnit bem-sucedidos e recalibrar somente com evidência. P90, tempo em fila, consumo faturado de runners e ganho real das mudanças ainda aguardam amostra pós-merge.
 
-## Recuperação e release
-
-Se a distribuição expuser dependências entre módulos ou regressões do workflow, corrigir em PR; reverter a otimização restaura a suíte serial. A mudança não edita testes do produto, chaves, gates de aprovação, migrations nem scripts de deploy. Não cancela runs antigos e não encurta retroativamente uma execução já iniciada. Integração deve ser coordenada com o SHA de suporte/fingerprint de qualquer release em andamento.
+A falha `NoCopy volume check` do run 44433195647 pertence à branch de release bridge e continua independente desta otimização. Nenhuma etapa desta change acessa servidor, secrets, dados de produção, executa migration, deploy ou alteração externa do GitHub.

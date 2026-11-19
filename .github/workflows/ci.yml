@@ -30,11 +30,16 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ci-scope:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
+      backend_tests: ${{ steps.classify.outputs.backend_tests }}
       frontend: ${{ steps.classify.outputs.frontend }}
       backend_image: ${{ steps.classify.outputs.backend_image }}
       frontend_image: ${{ steps.classify.outputs.frontend_image }}
@@ -44,7 +49,10 @@ jobs:
         with:
           fetch-depth: 0
       - name: Testar classificação de escopo e gate agregado
-        run: python -m unittest scripts.test_classify_ci_scope scripts.test_check_ci_results -q
+        run: >-
+          python -m unittest scripts.test_classify_ci_scope scripts.test_check_ci_results
+          scripts.test_check_backend_ci_results scripts.test_ci_feedback
+          scripts.test_ci_workflow_policy scripts.test_ci_local -q
       - name: Classificar validações necessárias
         id: classify
         shell: bash
@@ -112,15 +120,11 @@ jobs:
           PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_inventory -v
           PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_release_flow -v
           PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_release -v
-          bash scripts/test_deploy_homolog.sh
           bash scripts/test_deploy_prod_web.sh
           bash -n scripts/deploy-prod-infinitepay-retirement.sh
           bash scripts/test_deploy_prod_infinitepay_retirement.sh
           bash -n scripts/deploy-prod-facial-services.sh
-          bash scripts/test_reset_homolog_owner.sh
-          python scripts/test_owner_reset_policy.py
           python scripts/check_prod_facial_release_gates.py
-          ruff check scripts/reset_homolog_owner.py
       - name: Contratos POSIX do operador de restauração facial
         run: |
           ruff check scripts/facial_runtime_restoration*.py scripts/test_facial_runtime_restoration*.py scripts/test_facial_runtime_general_restore.py
@@ -202,8 +206,8 @@ jobs:
           python -m pytest scripts/test_facial_runtime_restoration.py scripts/test_facial_runtime_restoration_cli.py scripts/test_facial_runtime_restoration_host.py scripts/test_facial_runtime_general_restore.py -q
 
   backend-tests:
-    needs: [ci-scope]
-    if: ${{ needs.ci-scope.outputs.backend == 'true' }}
+    needs: [ci-scope, backend-quality]
+    if: ${{ needs.ci-scope.outputs.backend_tests == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -300,21 +304,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Exigir sucesso da qualidade e de todas as partes
+      - name: Exigir os gates de backend selecionados
         env:
-          SCOPE_RESULT: ${{ needs.ci-scope.result }}
+          CI_SCOPE_RESULT: ${{ needs.ci-scope.result }}
+          TESTS_REQUIRED: ${{ needs.ci-scope.outputs.backend_tests }}
           QUALITY_RESULT: ${{ needs.backend-quality.result }}
           TESTS_RESULT: ${{ needs.backend-tests.result }}
-        run: |
-          test "$SCOPE_RESULT" = success
-          test "$QUALITY_RESULT" = success
-          test "$TESTS_RESULT" = success
+        run: python scripts/check_backend_ci_results.py
       - uses: actions/download-artifact@v4
+        if: ${{ needs.ci-scope.outputs.backend_tests == 'true' }}
         with:
           pattern: backend-shard-*
           path: ${{ runner.temp }}/backend-reports/
           merge-multiple: true
       - name: Confirmar coleção completa sem omissões ou sobreposição
+        if: ${{ needs.ci-scope.outputs.backend_tests == 'true' }}
         run: python scripts/backend_ci.py verify --count 3 --artifacts "$RUNNER_TEMP/backend-reports"
 
   frontend:
@@ -419,6 +423,7 @@ jobs:
       - name: Testar reconciliação delimitada do overlay Gemma aposentado
         run: python3 openspec/changes/fix-app-release-compose-preflight/operations/reconcile_retired_gemma_stub.py --self-test
 
+# Preserve this legacy required-check ID; it now aggregates current CI and release policies.
   homolog-inventory-policy:
     needs: [ci-scope, backend, frontend, runtime-images, openspec, gitleaks]
     if: ${{ always() }}
@@ -440,17 +445,15 @@ jobs:
           OPENSPEC_RESULT: ${{ needs.openspec.result }}
           GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
         run: python scripts/check_ci_results.py
-      - name: Validar sintaxe Bash do inventário
-        run: bash -n scripts/inventory-homolog-readonly.sh
-      - name: Testar política de escopo e SHA
-        run: python scripts/test_readonly_homolog_inventory_policy.py
+      - name: Impedir regressão de workflows para ambiente removido
+        run: python scripts/test_ci_workflow_policy.py
       - name: Contrato técnico de candidato e recusa de publicação protegida
         run: python -m unittest discover -s scripts -p test_release_candidate_policy.py
       - name: Contratos de dependências por imagem e isolamento web
         run: python scripts/test_dependency_release.py
       - name: Contratos da atualização Orders e recuperação sem perda financeira
         run: python scripts/test_orders_pilot_release.py
-      - name: Regressões do gate restrito facial em homologação
+      - name: Regressões do release facial protegido
         if: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
@@ -505,75 +508,6 @@ jobs:
         run: curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar xz -C /tmp gitleaks
       - name: Executar varredura de segredos (histórico completo)
         run: /tmp/gitleaks git -v
-
-  deploy-homolog:
-    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
-    needs: [backend, frontend, runtime-images, openspec, homolog-inventory-policy, gitleaks]
-    runs-on: ubuntu-latest
-    environment: homolog
-    permissions:
-      contents: read
-    env:
-      HOMOLOG_SSH_HOST: ${{ secrets.HOMOLOG_SSH_HOST }}
-      HOMOLOG_SSH_PORT: ${{ secrets.HOMOLOG_SSH_PORT }}
-      HOMOLOG_SSH_USER: ${{ secrets.HOMOLOG_SSH_USER }}
-      HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
-      HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
-      HOMOLOG_PUBLIC_BASE_URL: ${{ secrets.HOMOLOG_PUBLIC_BASE_URL }}
-      HOMOLOG_FACIAL_MAX_REFERENCE_BYTES: "31457280"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Validar automação de entrega
-        run: bash scripts/test_deploy_homolog.sh
-      - name: Publicar SHA aprovado em homologação
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          for required in HOMOLOG_SSH_HOST HOMOLOG_SSH_PORT HOMOLOG_SSH_USER HOMOLOG_SSH_PRIVATE_KEY HOMOLOG_SSH_KNOWN_HOSTS HOMOLOG_PUBLIC_BASE_URL; do
-            if [[ -z "${!required}" ]]; then
-              echo "Secret obrigatório ausente: $required" >&2
-              exit 1
-            fi
-          done
-          key_file="$(mktemp)"
-          known_hosts_file="$(mktemp)"
-          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
-          printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
-          printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
-          chmod 600 "$key_file" "$known_hosts_file"
-          maintenance_mode="inventory"
-          maintenance_confirmation=""
-          maintenance_without_backup=""
-          if git log -1 --pretty=%B | grep -Fxq 'Homolog-Cleanup: galleries-and-clients-without-backup'; then
-            maintenance_mode="execute"
-            maintenance_confirmation="DELETE_HOMOLOG_GALLERIES_AND_CLIENTS_WITHOUT_BACKUP"
-            maintenance_without_backup="--without-backup"
-          elif git log -1 --pretty=%B | grep -Fxq 'Homolog-Cleanup: galleries-and-clients'; then
-            maintenance_mode="execute"
-            maintenance_confirmation="DELETE_HOMOLOG_GALLERIES_AND_CLIENTS"
-          fi
-          if [[ "$maintenance_without_backup" == "--without-backup" ]]; then
-            expected_sha="$(git log -1 --pretty=%B | sed -nE 's/^Homolog-Cleanup-Expected-SHA: ([0-9a-f]{40})$/\1/p')"
-            [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'SHA inventariado ausente ou inválido' >&2; exit 1; }
-            git merge-base --is-ancestor "$expected_sha" "$GITHUB_SHA"
-            if ! git diff --quiet "$expected_sha" "$GITHUB_SHA" -- backend frontend docker scripts ':(exclude)scripts/test_maintain_homolog_policy.py'; then
-              echo 'Código operacional mudou desde o SHA inventariado; limpeza cancelada' >&2
-              exit 1
-            fi
-            remote_command="$(printf 'cd /opt/markina-gallery && test "$(git rev-parse HEAD)" = %q && curl -fsS http://127.0.0.1:8080/healthz >/dev/null && curl -fsS http://127.0.0.1:8080/api/health >/dev/null' "$expected_sha")"
-            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" </dev/null
-          else
-            remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q FACIAL_MAX_REFERENCE_BYTES=%q bash -s -- --sha %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$HOMOLOG_FACIAL_MAX_REFERENCE_BYTES" "$GITHUB_SHA")"
-            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh
-          fi
-          maintenance_command="$(printf 'cd /opt/markina-gallery && bash -s -- --mode %q --confirmation %q' "$maintenance_mode" "$maintenance_confirmation")"
-          if [[ -n "$maintenance_without_backup" ]]; then
-            maintenance_command+=" --without-backup"
-          fi
-          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$maintenance_command" < scripts/maintain-homolog-data.sh
 
   release-scope:
     if: "${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
