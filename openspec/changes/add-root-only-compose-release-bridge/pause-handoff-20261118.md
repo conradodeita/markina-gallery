@@ -1,24 +1,24 @@
-# Checkpoint do PR #384 após a segunda CI
+# Checkpoint do PR #384 após a terceira CI
 
-Atualizado em 18/11/2026. Nenhuma prova Docker está ativa localmente. O CI `44418238541` terminou; a correção local de contexto do runner foi implementada e passou os gates focados, ainda sem commit/push.
+Atualizado em 18/11/2026. Nenhuma prova Docker está ativa localmente. O CI `44424649626` terminou; uma segunda causa no harness foi corrigida localmente e passou os gates focados, ainda sem commit/push.
 
 ## Estado do repositório
 
 - Worktree: `C:\codex-data\worktrees\saas-release-candidate\Photo Delivery`.
-- Branch `fix/prove-received-app-engine-runtime`, HEAD remoto/local `9380992bb86828e85dd480f77e4297e6fc4203fb`; PR #384: https://github.com/conradodeita/markina-gallery/pull/384.
-- Alterações locais: `scripts/prove_app_engine_promotion.py` adapta o `cwd` implícito da ponte para a raiz do checkout somente após `require_ci_runner()`; testes cobrem `cwd` implícito/explicito e o adaptador de CLI; design, tasks e validação registram o diagnóstico e evidências.
+- Branch `fix/prove-received-app-engine-runtime`, HEAD remoto/local `25fc7f7ef829e66034af7077c97667144bbc7dee`; PR #384: https://github.com/conradodeita/markina-gallery/pull/384.
+- Alterações locais: `scripts/prove_app_engine_promotion.py` adapta `cwd` implícito e o default de projeto do seletor somente após `require_ci_runner()`; testes cobrem `cwd` implícito/explicito, projeto sintético corrente, argumento explícito e adaptador do CLI; design, tasks e validação registram diagnósticos/evidências.
 - `output` já existia sem rastreamento e fica fora do stage/commit.
 - Não rebasear nem usar force push.
 
 ## CI do PR
 
-- Run `44418238541` no SHA `9380992bb86828e85dd480f77e4297e6fc4203fb` terminou com falha no passo da prova Engine após 16 s. Gitleaks, OpenSpec, escopo, frontend, imagens AMD64/ARM64 e os três shards do backend passaram; o agregado e os jobs dependentes falharam em consequência.
-- A hipótese anterior de caminho `/usr/bin/docker` não explicou a falha. O código mostra que `_run` captura `/opt/markina-gallery` como default de `cwd` no import, embora o runner use outra raiz. Isso é a hipótese dominante para o `OSError` minimizado, não uma causa confirmada.
-- A correção local preserva os defaults de produção e mantém todas as chamadas sob o mesmo `_run` limitado. A prova Docker real só deve rodar no runner GitHub-hosted descartável dentro do job existente.
+- Run `44424649626` no SHA `25fc7f7ef829e66034af7077c97667144bbc7dee` falhou no passo da prova Engine com `api_web_container_count_invalid`; os três shards do backend passaram. OpenSpec, escopo, Gitleaks, frontend e imagens AMD64/ARM64 também passaram. Agregados/políticas dependentes falharam e jobs mutáveis de produção/homologação ficaram pulados.
+- A adaptação de `cwd` eliminou o erro anterior e a prova avançou até `select_api_web`. Causa confirmada: `project=PROJECT` capturado no import permaneceu `markina-gallery` enquanto fixtures usam nome sintético por cenário.
+- A correção local preserva os defaults de produção e mantém as chamadas sob o mesmo `_run` limitado. A prova Docker real só deve rodar no runner GitHub-hosted descartável dentro do job existente.
 
 ## Validação local
 
-- `python -m unittest discover -s scripts -p test_production_app_compose_bridge.py`: 57 testes; 56 passaram e 1 skip de symlink real indisponível no Windows.
+- `python -m unittest discover -s scripts -p test_production_app_compose_bridge.py`: 59 testes; 58 passaram e 1 skip de symlink real indisponível no Windows.
 - Ruff, `py_compile`, OpenSpec estrito e `git diff --check` passaram.
 - Não executar `scripts/prove_app_engine_promotion.py` nesta máquina; Docker é compartilhado com Oracle/outros projetos.
 
@@ -32,5 +32,5 @@ Atualizado em 18/11/2026. Nenhuma prova Docker está ativa localmente. O CI `444
 
 1. Revisar o diff exato, preservando o caminho `output` fora do stage.
 2. Criar um commit Conventional restrito à correção e seus artefatos OpenSpec; fazer um único push normal ao PR #384.
-3. Acompanhar a CI nova até concluir; reutilizar somente jobs elegíveis se houver falha sem mudança de código.
+3. Acompanhar a próxima CI até concluir; reutilizar somente jobs elegíveis se houver falha sem mudança de código.
 4. Manter tasks 4.2, 5.2–5.4 e 6.1–6.3 abertas até prova Engine real, CI verde e gates protegidos.

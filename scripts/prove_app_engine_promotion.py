@@ -48,6 +48,13 @@ def configure_runner_context():
 
     bridge.PROJECT_ROOT = runner_root
     bridge._run = run_in_runner_workspace
+    original_select_api_web = bridge.select_api_web
+
+    def select_runner_api_web(containers, project=None):
+        effective_project = bridge.PROJECT if project is None else project
+        return original_select_api_web(containers, effective_project)
+
+    bridge.select_api_web = select_runner_api_web
 
     fixed = Path("/usr/bin/docker")
     if fixed.is_file() and os.access(fixed, os.X_OK):

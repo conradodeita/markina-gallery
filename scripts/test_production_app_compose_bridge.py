@@ -54,9 +54,13 @@ class RunnerDockerAdapterTests(unittest.TestCase):
         self.original_docker = bridge._docker
         self.original_run = bridge._run
         self.original_project_root = bridge.PROJECT_ROOT
+        self.original_project = bridge.PROJECT
+        self.original_selector = bridge.select_api_web
         self.addCleanup(setattr, bridge, "_docker", self.original_docker)
         self.addCleanup(setattr, bridge, "_run", self.original_run)
         self.addCleanup(setattr, bridge, "PROJECT_ROOT", self.original_project_root)
+        self.addCleanup(setattr, bridge, "PROJECT", self.original_project)
+        self.addCleanup(setattr, bridge, "select_api_web", self.original_selector)
 
     def test_prefers_fixed_production_cli_when_executable(self):
         with patch.object(engine_proof.Path, "is_file", return_value=True), \
@@ -87,6 +91,27 @@ class RunnerDockerAdapterTests(unittest.TestCase):
             self.assertEqual(bridge._run(["git", "status"], cwd=explicit_cwd), "synthetic")
         run.assert_called_once_with(["git", "status"], cwd=explicit_cwd, app_version="", input_text=None,
                                     timeout=120, max_output=bridge.MAX_COMMAND_OUTPUT_BYTES)
+
+    def test_runner_selector_uses_current_synthetic_project_when_omitted(self):
+        with patch.object(bridge, "_run", return_value="synthetic"), \
+                patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True):
+            engine_proof.configure_runner_context()
+            bridge.PROJECT = "markina-gallery-engine-proof-test"
+            selected = bridge.select_api_web([container("api"), container("web")])
+        self.assertEqual(set(selected), set(bridge.SERVICES))
+
+    def test_runner_selector_preserves_explicit_project(self):
+        with patch.object(bridge, "_run", return_value="synthetic"), \
+                patch.object(engine_proof.Path, "is_file", return_value=True), \
+                patch.object(engine_proof.os, "access", return_value=True):
+            engine_proof.configure_runner_context()
+            bridge.PROJECT = "current-synthetic-project"
+            containers = [container("api"), container("web")]
+            for item in containers:
+                item["Config"]["Labels"]["com.docker.compose.project"] = "explicit-synthetic-project"
+            selected = bridge.select_api_web(containers, project="explicit-synthetic-project")
+        self.assertEqual(set(selected), set(bridge.SERVICES))
 
     def test_runner_adapter_uses_resolved_absolute_cli_through_bounded_runner(self):
         with patch.object(engine_proof.Path, "is_file", side_effect=[False, True]), \
