@@ -62,8 +62,8 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(1, profile["schema_version"])
         self.assertEqual(2625, profile["source"]["collected_items"])
         self.assertEqual(251, profile["source"]["module_count"])
-        self.assertEqual(2, profile["source"]["sample_count"])
-        self.assertEqual(5250, sum(item["items"] for item in profile["modules"].values()))
+        self.assertEqual(3, profile["source"]["sample_count"])
+        self.assertEqual(7875, sum(item["items"] for item in profile["modules"].values()))
         self.assertEqual(
             profile["source"]["collected_items"] * profile["source"]["sample_count"],
             sum(item["items"] for item in profile["modules"].values()),

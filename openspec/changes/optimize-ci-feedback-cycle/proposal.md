@@ -8,7 +8,7 @@ Uma auditoria anterior reduziu o backend de cerca de 32 min para 8 min por meio 
 
 - Cancelar somente execuções obsoletas de CI de pull requests do mesmo PR; runs de push e dispatch terão grupos únicos e não serão cancelados por essa regra.
 - Separar validações de qualidade da suíte de produto somente para a ferramenta read-only `scripts/ci_feedback.py` e seu teste; todos os demais scripts, caminhos críticos ou desconhecidos continuam executando a cobertura completa.
-- Recalibrar a distribuição por duração histórica e expandir de três para quatro shards com base em dois runs JUnit comparáveis, mantendo módulos/fixtures indivisíveis, cobertura integral e o check obrigatório `backend`.
+- Recalibrar a distribuição por duração histórica e expandir de três para quatro shards com base em três runs JUnit comparáveis, mantendo módulos/fixtures indivisíveis, cobertura integral e o check obrigatório `backend`.
 - Retirar o deploy de `develop` e os workflows remotos de inventário, manutenção e rollout facial de homologação, preservando o ID legado do check obrigatório; atualizar documentação operacional e proteger a ausência com teste.
 - Registrar medições observadas, projeções e limitações da amostra em `docs/CI-VALIDATION.md`; manter as releases de produção nas changes já existentes.
 

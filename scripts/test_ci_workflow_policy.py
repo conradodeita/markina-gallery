@@ -4,11 +4,10 @@ import re
 import unittest
 from pathlib import Path
 
-from scripts.verify_main_ci_evidence import REQUIRED_JOBS
-
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 CI = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+EVIDENCE_POLICY = (ROOT / "scripts" / "verify_main_ci_evidence.py").read_text(encoding="utf-8")
 
 
 class CIWorkflowPolicyTests(unittest.TestCase):
@@ -30,7 +29,8 @@ class CIWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("shard: [0, 1, 2, 3]", shards)
         self.assertIn("--count 4", shards)
         self.assertIn("backend_ci.py verify --count 4", CI)
-        self.assertIn("backend-tests (3)", REQUIRED_JOBS)
+        for index in range(4):
+            self.assertIn(f"'backend-tests ({index})'", EVIDENCE_POLICY)
 
     def test_required_aggregate_contexts_and_production_environments_remain(self):
         for job in ("backend", "frontend", "openspec", "homolog-inventory-policy",
