@@ -32,7 +32,7 @@
 
 - [x] 6.1 Revisar diff/segredos e executar testes focados, lint, OpenSpec estrito, validação do workflow e testes integrais necessários antes do primeiro push. Evidência: 55 testes direcionados passaram; Ruff, `compileall`, OpenSpec estrito e parse YAML dos cinco workflows passaram; Gitleaks 8.24.3 (versão e checksum oficial verificados) não encontrou leaks no índice staged. A suíte backend completa e os builds aplicáveis serão confirmados pela CI do PR, que recebe `--full` por alteração do workflow/classificador.
 - [ ] 6.2 Abrir PR da otimização e observar CI até concluir; registrar medianas/p90 somente com amostra suficiente, tempo de fila, duração por job/shard, cobertura e resultados de falha/cancelamento.
-- [ ] 6.3 Corrigir falhas válidas em commits focados e confirmar que o check `backend` preserva gates; deixar merge e deploy para revisão humana/autorização aplicável.
+- [ ] 6.3 Corrigir falhas válidas em commits focados e confirmar que o check `backend` preserva gates; deixar merge e deploy para revisão humana/autorização aplicável. Em andamento: o run `44450998998` confirmou os três shards e o agregado `backend`, mas revelou uma asserção incompatível com a classificação `app` quando o candidato é recusado por `arquivo_fora_do_escopo`. Ajustada a expectativa do teste para aceitar categorias `app`, `protected` ou `dependencies` somente quando o validador mantém a recusa por um dos motivos explícitos; testes locais `test_production_release_workflow_policy.py`, `test_prod_app_release_scope.py` e `test_ci_workflow_policy.py` passaram. A repetição remota no novo SHA está pendente; `gemma-runtime` falhou em cascata após o check predecessor.
 
 ## Workflow follow-up
 
