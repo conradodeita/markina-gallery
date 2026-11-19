@@ -68,6 +68,28 @@ A CI SHALL agrupar execuções pelo número do PR e cancelar somente uma execuç
 
 ## MODIFIED Requirements
 
+### Requirement: Release API/web promove o artifact ARM64 do mesmo run CI
+A CI SHALL exportar somente a imagem base do container API ativo por um comando read-only restrito que confira o ID retornado pelo inventário; a exportação SHALL NOT incluir volumes, ambiente ou arquivos montados do container. Em runner ARM64, a CI SHALL construir `api` sobre esse ID-base e copiar exclusivamente `backend/app`, preservando runtime facial e dependências instaladas; SHALL construir `web` pelo Dockerfile aprovado. Produção do artifact pode correr em paralelo com a matriz de testes, mas sua promoção SHALL depender dos gates completos, do SHA exato elegível em `main` e da aprovação humana `production`. A publicação SHALL baixar somente os artifacts Actions do mesmo run, verificar hashes, manifesto, SHA, ID-base, IDs de imagem e arquitetura, e transferir o bundle candidato por chave SSH com forced command limitado a upload. O release SHALL falhar fechado se imagem-base/artifact, digest, arquitetura, SHA ou chave restrita estiver ausente ou divergente.
+
+#### Scenario: Artifact de produção aprovado
+- **WHEN** o classificador marca escopo app, a imagem API base exportada corresponde ao ID inventariado, os gates completos do push para `main` terminam com sucesso e a aprovação `production` é concedida
+- **THEN** o release baixa os artifacts imutáveis desse mesmo run/SHA, confere seus digests e o ID-base, e transfere o bundle candidato restrito antes de consumir as imagens com o fingerprint aprovado
+
+#### Scenario: Artifact de PR ou run/SHA/base divergente
+- **WHEN** o evento é PR, artifacts não pertencem ao run atual, seu SHA/hash/manifesto ou ID-base não corresponde ao inventário, ou não há key de upload restrita
+- **THEN** nenhum bundle é transferido nem serviço é recriado
+
+### Requirement: Promoção de imagens não recompila no host
+Após revalidar o fingerprint e preservar as imagens anteriores, o release SHALL confirmar que o ID-base API do bundle é o ID inventariado, carregar as imagens API/web e provar IDs, plataforma `linux/arm64` e revisão de origem antes da recriação. O release comum SHALL NOT executar `compose build`; SHALL continuar sem migrations, limitado a `api` e `web`, com smoke tests e rollback aprovado existentes.
+
+#### Scenario: Imagens correspondem ao artifact
+- **WHEN** o bundle do SHA alvo passa suas verificações e ambas as imagens são `linux/arm64`
+- **THEN** somente `api` e `web` são recriadas com os IDs carregados e sem migrations
+
+#### Scenario: Bundle inválido
+- **WHEN** imagem, ID, arquitetura, label, hash, fingerprint ou alvo diverge
+- **THEN** o release falha antes de carregar o payload inválido ou recriar containers, preservando as imagens de rollback
+
 ### Requirement: Ambientes definidos por variáveis separadas
 O projeto SHALL documentar desenvolvimento local, CI efêmera e produção como seus alvos operacionais. Segredos de produção SHALL permanecer em configuração externa segura; CI SHALL usar somente dados e credenciais sintéticos. Nenhum ambiente operacional ou procedimento remoto de homologação SHALL ser requerido. Caminhos históricos já consumidos por um release protegido de produção ficam sob o contrato existente e fora desta change.
 

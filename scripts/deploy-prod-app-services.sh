@@ -11,6 +11,7 @@ readonly EXPECTED_HOST="clearbudget-vnic"
 readonly PROJECT_NAME="markina-gallery"
 readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
+readonly ARTIFACT_DIR="/tmp/markina-gallery-app-artifacts-${UID}"
 readonly APP_COMPOSE_BRIDGE="/usr/local/sbin/markina-gallery-app-compose-bridge"
 readonly APP_COMPOSE_BRIDGE_BLOB="7d63838e2eae5ba65d70e50a7c500af395c675ba"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
@@ -20,6 +21,7 @@ readonly EXPECTED_DATABASE_REVISION="20261113_0126"
 MODE=""
 TARGET_SHA=""
 APPROVAL_FINGERPRINT=""
+ARTIFACT_SHA256=""
 ROLLBACK_SHA=""
 EXPECTED_REPOSITORY="${MARKINA_EXPECTED_REPOSITORY:-}"
 EXPECTED_URL="${MARKINA_PUBLIC_BASE_URL:-$PUBLIC_URL}"
@@ -28,6 +30,9 @@ ACTIVE_SHA=""
 COMPOSE_APP_VERSION=""
 BRIDGE_SOURCE_FINGERPRINT=""
 DATABASE_REVISION=""
+CANDIDATE_API_IMAGE_ID=""
+CANDIDATE_WEB_IMAGE_ID=""
+CANDIDATE_IMAGE_ARCHIVE=""
 production_deploy_lock_fd=9
 
 fail() { echo "deploy-prod-app-services: $*" >&2; exit 1; }
@@ -55,6 +60,7 @@ parse_arguments() {
       --mode) MODE="${2:-}"; shift 2 ;;
       --sha) TARGET_SHA="${2:-}"; shift 2 ;;
       --approval-fingerprint) APPROVAL_FINGERPRINT="${2:-}"; shift 2 ;;
+      --artifact-sha256) ARTIFACT_SHA256="${2:-}"; shift 2 ;;
       *) fail "argumento não permitido: $1" ;;
     esac
   done
@@ -63,6 +69,11 @@ parse_arguments() {
   [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "SHA alvo inválido"
   if [[ "$MODE" == "release" || "$MODE" == "rollback" ]]; then
     [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint obrigatório"
+  fi
+  if [[ "$MODE" == release ]]; then
+    [[ "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail "digest do bundle obrigatório para release"
+  elif [[ -n "$ARTIFACT_SHA256" ]]; then
+    fail "digest do bundle só é permitido no modo release"
   fi
 }
 
@@ -133,6 +144,9 @@ verify_repository() {
       --base "$CHECKOUT_SHA" --target "$TARGET_SHA" \
       --manifest <(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json") \
       || fail "escopo ou blobs API/web não aprovados"
+    [[ "$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
+      | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("emergency_api") else "no")')" == no ]] \
+      || fail "manifesto emergency_api não é suportado no release por artifact"
   fi
   if [[ "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]]; then
     [[ -f "$STATE_DIR/app-previous.sha" ]] || fail "SHA anterior de API/web ausente"
@@ -323,8 +337,55 @@ rollback_inventory() {
   echo "nenhum comando mutável foi executado"
 }
 
+verify_candidate_artifact() {
+  local expected_api_base="$1" bundle verify_output candidate_archive
+  [[ -d "$ARTIFACT_DIR" && ! -L "$ARTIFACT_DIR" ]] || fail "diretório privado do artifact ausente/inválido"
+  [[ "$(stat -c '%u' -- "$ARTIFACT_DIR")" == "$UID" && "$(stat -c '%a' -- "$ARTIFACT_DIR")" == 700 ]] \
+    || fail "diretório privado do artifact não pertence ao usuário ou não está em modo 0700"
+  bundle="$ARTIFACT_DIR/$TARGET_SHA.bundle"
+  [[ -f "$bundle" && ! -L "$bundle" && "$(stat -c '%u' -- "$bundle")" == "$UID" \
+    && "$(stat -c '%a' -- "$bundle")" == 600 ]] || fail "bundle ausente ou permissões inválidas"
+  verify_output="$(python3 scripts/production_app_artifact.py verify --bundle "$bundle" \
+    --target-sha "$TARGET_SHA" --bundle-sha256 "$ARTIFACT_SHA256" \
+    --api-base-image-id "$expected_api_base" --extract-dir "$ARTIFACT_DIR")" \
+    || fail "bundle não corresponde ao SHA, digest ou imagem API base inventariada"
+  CANDIDATE_API_IMAGE_ID="$(sed -n 's/^api_image_id=//p' <<<"$verify_output")"
+  CANDIDATE_WEB_IMAGE_ID="$(sed -n 's/^web_image_id=//p' <<<"$verify_output")"
+  candidate_archive="$(sed -n 's/^image_archive=//p' <<<"$verify_output")"
+  [[ "$CANDIDATE_API_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+    && "$CANDIDATE_WEB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+    && "$CANDIDATE_API_IMAGE_ID" != "$CANDIDATE_WEB_IMAGE_ID" \
+    && "$candidate_archive" == "$ARTIFACT_DIR"/.images-* \
+    && -f "$candidate_archive" && ! -L "$candidate_archive" ]] \
+    || fail "manifesto do bundle não contém imagens API/web válidas"
+  CANDIDATE_IMAGE_ARCHIVE="$candidate_archive"
+}
+
+load_candidate_artifact() {
+  local api_actual web_actual api_platform web_platform
+  docker load --input "$CANDIDATE_IMAGE_ARCHIVE" >/dev/null || fail "não foi possível carregar o bundle validado"
+  api_actual="$(release_image_id "$PROJECT_NAME-api")" || fail "imagem API do bundle ausente"
+  web_actual="$(release_image_id "$PROJECT_NAME-web")" || fail "imagem web do bundle ausente"
+  [[ "$api_actual" == "$CANDIDATE_API_IMAGE_ID" && "$web_actual" == "$CANDIDATE_WEB_IMAGE_ID" ]] \
+    || fail "tags carregadas não correspondem aos IDs fixados no bundle"
+  api_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$api_actual")" \
+    || fail "arquitetura da imagem API não comprovada"
+  web_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$web_actual")" \
+    || fail "arquitetura da imagem web não comprovada"
+  [[ "$api_platform" == linux/arm64 && "$web_platform" == linux/arm64 ]] \
+    || fail "bundle não contém somente imagens linux/arm64"
+  rm -f -- "$CANDIDATE_IMAGE_ARCHIVE"
+  CANDIDATE_IMAGE_ARCHIVE=""
+}
+
+cleanup_candidate_artifact() {
+  rm -f -- "$ARTIFACT_DIR/$TARGET_SHA.bundle"
+  [[ -z "$CANDIDATE_IMAGE_ARCHIVE" ]] || rm -f -- "$CANDIDATE_IMAGE_ARCHIVE"
+}
+
 release() {
-  local current_fp source_fingerprint service id image tag ref api_before expected_api expected_web emergency target_hashes approval_snapshot
+  local current_fp source_fingerprint service id image tag ref api_before expected_api expected_web target_hashes approval_snapshot
+  trap cleanup_candidate_artifact EXIT
   verify_repository
   approval_snapshot="$(runtime_snapshot)" || fail "runtime Compose não foi inventariado"
   current_fp="$(fingerprint "$approval_snapshot")"
@@ -361,15 +422,6 @@ release() {
   for service in "${SERVICES[@]}"; do
     awk -v service="$service" '$1 == service {sub(/^sha256:/,"",$2); print $2}' <<<"$target_hashes" > "$STATE_DIR/app-$service-target-hash"
   done
-  emergency="$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
-    | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("emergency_api") else "no")')"
-  if [[ "$emergency" == yes ]]; then
-    python3 scripts/prepare_emergency_api_image.py --previous "$(cat "$STATE_DIR/app-api-rollback-id")" \
-      --sha "$TARGET_SHA" --receipt "$STATE_DIR/app-api-homologation.json" || fail "candidato API não homologado"
-    compose build web
-  else
-    compose build "${SERVICES[@]}"
-  fi
   # Compare the original live configuration against its own checkout. The
   # reviewed API-only env_file changes the target's resolved Compose hash.
   git switch --detach "$CHECKOUT_SHA" >/dev/null
@@ -380,22 +432,20 @@ release() {
   git switch --detach "$TARGET_SHA" >/dev/null
   [[ "$(resolved_hashes)" == "$target_hashes" ]] || fail "configuração alvo mudou durante build"
   for service in "${SERVICES[@]}"; do
-    [[ "$(release_image_id "$(cat "$STATE_DIR/app-$service-rollback-image")")" == "$(cat "$STATE_DIR/app-$service-rollback-id")" ]] || fail "backup mudou durante build"
+    [[ "$(release_image_id "$(cat "$STATE_DIR/app-$service-rollback-image")")" == "$(cat "$STATE_DIR/app-$service-rollback-id")" ]] || fail "backup mudou durante release"
   done
-  expected_api="$(release_image_id "$PROJECT_NAME-api")" || fail "build API sem ID"
-  expected_web="$(release_image_id "$PROJECT_NAME-web")" || fail "build web sem ID"
+  verify_candidate_artifact "$(cat "$STATE_DIR/app-api-rollback-id")"
+  load_candidate_artifact
+  expected_api="$CANDIDATE_API_IMAGE_ID"
+  expected_web="$CANDIDATE_WEB_IMAGE_ID"
   release_write_file app-api-target-id "$expected_api" || fail "não registrou ID construído da API"
   release_write_file app-web-target-id "$expected_web" || fail "não registrou ID construído do web"
-  if [[ "$emergency" == yes ]]; then
-    emergency_maintenance start || fail "manutenção não iniciada; containers preservados"
-  fi
-  compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"
+  compose up -d --no-build --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"
   runtime_snapshot
   [[ "$(docker inspect --format '{{.Image}}' "$(compose ps -q api)")" == "$expected_api" \
     && "$(docker inspect --format '{{.Image}}' "$(compose ps -q web)")" == "$expected_web" ]] || fail "runtime não usa IDs construídos"
   compose exec -T nginx nginx -t || fail "configuração nginx Markina inválida"
   compose exec -T nginx nginx -s reload || fail "reload nginx Markina falhou"
-  if [[ "$emergency" == yes ]]; then emergency_maintenance finish || fail "reabertura não validada"; fi
   for path in /healthz /api/health /; do
     curl -fsS --retry 5 --retry-delay 2 --retry-max-time 40 --max-time 5 "$EXPECTED_URL$path" -o /dev/null \
       || fail "smoke HTTPS falhou em $path"

@@ -35,16 +35,53 @@ O inventário SHALL validar CI verde, SHA completo alcançável em `main`, check
 - **WHEN** o checkout, configuração resolvida, versão da API, revisão do banco, saúde, portas ou domínio divergem entre inventário e aprovação
 - **THEN** o release é recusado antes de trocar qualquer container
 
-### Requirement: Release API/web não executa migrations nem altera dependências
-Após aprovação, o release SHALL construir e recriar somente `api` e `web` do projeto `markina-gallery` com `--no-deps`, sem migrations ou mudança de schema. SHALL NOT recriar workers, banco, Redis ou nginx nem alterar Compose, `.env`, redes, volumes ou recursos de terceiros. Pode recarregar somente o processo nginx da Markina sem editar configuração. Checkout e imagens de recuperação ficam limitados ao projeto Markina.
+### Requirement: Preflight exporta imagem-base e CI produz bundle ARM64
+O preflight SHALL permanecer somente-leitura e exportar por stdout somente o ID da imagem API ativa identificado no inventário; SHALL NOT ler volumes, variáveis ou dados do container. A CI SHALL construir a API ARM64 sobre esse ID-base e copiar exclusivamente `backend/app`, preservando runtime facial e dependências instaladas. A CI SHALL construir web pelo Dockerfile aprovado e vincular ao bundle o SHA de origem, plataforma e IDs imutáveis.
+
+#### Scenario: Imagem-base corresponde ao inventário
+- **WHEN** o preflight recebe um SHA aprovado e encontra a imagem API ativa registrada no inventário
+- **THEN** ele exporta somente essa imagem por stdout, sem ler dados do container ou escrever no host
+
+#### Scenario: Bundle ARM64 do SHA candidato
+- **WHEN** o job de artefato roda em runner ARM64 com a imagem-base e o SHA do mesmo run
+- **THEN** a CI constrói API/web, valida plataforma e IDs e cria o bundle vinculado a esse SHA
+
+### Requirement: Release valida e consome bundle imutável API/web
+Após os gates completos do mesmo run/SHA e aprovação `production`, o release SHALL validar digest, manifesto, IDs, ID-base, arquitetura e SHA de origem antes de carregar imagens. SHALL recriar somente `api` e `web` do projeto `markina-gallery` com `--no-build --no-deps`, sem migrations ou mudança de schema.
 
 #### Scenario: Release sem migration
-- **WHEN** os caminhos de migration e Docker/Compose estão vazios e o fingerprint aprovado continua válido
-- **THEN** somente `api` e `web` são construídos/recriados e a revisão Alembic permanece idêntica
+- **WHEN** os caminhos de migration e Docker/Compose estão vazios, o fingerprint aprovado continua válido, o bundle CI corresponde ao mesmo SHA/run e seu ID-base API ainda está ativo
+- **THEN** somente `api` e `web` são carregadas/recriadas com seus IDs imutáveis e a revisão Alembic permanece idêntica
 
 #### Scenario: Migration ou Compose mudou
 - **WHEN** a diferença contém uma migration, arquivo Docker/Compose ou serviço fora do escopo
 - **THEN** o fluxo termina antes da build ou de qualquer mutação
+
+#### Scenario: Bundle diverge do inventário
+- **WHEN** o hash, manifesto, arquitetura, SHA ou ID-base API do bundle diverge
+- **THEN** a publicação falha sem carregar/recriar serviço e preserva os IDs de rollback
+
+### Requirement: Release limita mudanças aos serviços e ativos Markina
+O release SHALL NOT executar `compose build` no host, recriar workers, banco, Redis ou containers nginx, nem alterar Compose, `.env`, redes, volumes ou recursos de terceiros. Pode recarregar somente o processo nginx da Markina sem editar configuração. Checkout e imagens de recuperação ficam limitados ao projeto Markina.
+
+#### Scenario: Somente API e web são recriados
+- **WHEN** um release autorizado consome o bundle candidato
+- **THEN** somente os containers `api` e `web` são recriados e os demais ativos e projetos permanecem intactos
+
+#### Scenario: Caminho de build no host
+- **WHEN** o release comum tenta executar `compose build` no host
+- **THEN** o contrato do release recusa a operação e exige o bundle CI aprovado
+
+### Requirement: Transferência do bundle usa chave SSH restrita
+Após a aprovação `production`, a transferência SHALL usar chave SSH separada com forced command para wrapper root-owned dedicado. O wrapper SHALL aceitar somente SHA e digest completos, limitar o tamanho, validar o hash e gravar atomicamente em destino fixo; SHALL NOT extrair nem executar o payload. A chave do preflight permanece sem capacidade de escrita.
+
+#### Scenario: Upload autorizado do bundle
+- **WHEN** a aprovação `production` foi concedida e o cliente envia SHA, digest e payload válidos pela chave de upload restrita
+- **THEN** o wrapper valida o hash e grava o bundle atomicamente no destino temporário fixo
+
+#### Scenario: Comando ou payload de upload inválido
+- **WHEN** a chave, comando, SHA, digest ou tamanho não corresponde ao contrato restrito
+- **THEN** a transferência falha sem extrair ou executar o payload
 
 ### Requirement: Release verifica saúde e rollback de API/web
 Após a troca, o sistema SHALL validar saúde de `api` e `web`, endpoints locais/públicos necessários e configuração efetiva dos serviços; SHALL registrar SHA anterior/alvo e imagens preservadas. Diante de falha, SHALL manter o erro visível, não declarar sucesso e disponibilizar inventário de rollback que também aguarda aprovação humana antes de restaurar somente `api` e `web`.

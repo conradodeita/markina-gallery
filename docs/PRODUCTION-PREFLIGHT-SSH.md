@@ -1,6 +1,12 @@
 # Credencial SSH somente-leitura para preflight de produção
 
-O job `production-preflight` não usa o environment `production` e não pode acessar a chave de deploy. Ele usa o environment separado `production-preflight`, sem revisores obrigatórios, com uma chave dedicada cujo único comando aceito é o inventário.
+O job `production-preflight` não usa o environment `production` e não pode acessar a chave de deploy. Ele usa o environment separado `production-preflight`, sem revisores obrigatórios, com uma chave dedicada limitada pelo wrapper a comandos read-only pinados; nenhum modo de release é permitido.
+
+## Export read-only da imagem API e upload do candidato
+
+Para o release API/web, o wrapper de preflight também reconhece somente `MARKINA_APP_BASE_IMAGE_EXPORT_SHA=<40 hex>_IMAGE_ID=sha256:<64 hex>`. Ele baixa `scripts/export_prod_app_api_base_image.sh` pelo SHA candidato, confere seu blob pinado e envia apenas `docker image save` da imagem API ativa que coincidiu com o inventário. Não lê ambiente do container, mounts, volumes ou arquivos de cliente, e não grava nem carrega imagens no host. Atualizar o wrapper versionado não instala sua cópia root-owned.
+
+O bundle CI é enviado depois dos gates completos e da aprovação `production` por um wrapper de upload separado. A chave SSH correspondente deve ser distinta da chave de deploy e usar `restrict,command="/usr/local/sbin/markina-gallery-app-artifact-ssh-wrapper"`; o wrapper aceita apenas SHA e digest completos, limita o payload a 4 GiB e grava atomicamente em `/tmp/markina-gallery-app-artifacts-<uid>`, sem extração ou execução. O executor remove somente o bundle daquele SHA e o archive extraído ao sair, também em caso de falha. Configurar o secret `PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY` no Environment `production` e instalar/conferir o wrapper são pré-requisitos operacionais externos. Não foram feitos por esta change; sem essa preparação, o job protegido falhará fechado antes de tentar o deploy.
 
 ## Preparação no servidor
 

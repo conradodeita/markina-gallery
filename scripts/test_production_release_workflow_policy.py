@@ -22,6 +22,8 @@ WRAPPER = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(
 )
 INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-facial-services.sh").read_bytes()
 APP_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-app-services.sh").read_bytes()
+API_BASE_EXPORT_SCRIPT = (ROOT / "scripts/export_prod_app_api_base_image.sh").read_bytes()
+APP_ARTIFACT_UPLOAD_WRAPPER = (ROOT / "scripts/production-app-artifact-ssh-wrapper.sh").read_text(encoding="utf-8")
 RETIREMENT_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-infinitepay-retirement.sh").read_bytes()
 ORDERS_INVENTORY_SCRIPT = (ROOT / "scripts/orders_pilot_release.py").read_bytes()
 APP_ENV_INVENTORY_SCRIPT = (ROOT / "scripts/app_env_transition_inventory.py").read_bytes()
@@ -88,6 +90,9 @@ def main() -> None:
     app_preflight = WORKFLOW.split("  production-app-preflight:", 1)[1].split(
         "  production-app-release:", 1
     )[0]
+    app_artifact = WORKFLOW.split("  production-app-image-artifact:", 1)[1].split(
+        "  infinitepay-retirement-scope:", 1
+    )[0]
     bridge_workflow = (ROOT / ".github/workflows/production-app-compose-bridge-install.yml").read_text(encoding="utf-8")
     evidence_gate, bridge_install = bridge_workflow.split("  production-app-compose-bridge-install:", 1)
     require("on:\n  workflow_dispatch:\n\npermissions: {}",
@@ -109,6 +114,9 @@ def main() -> None:
             or "production-app-release:" in bridge_workflow):
         raise AssertionError("instalação deve revalidar CI antes de SSH e manter despacho separado do release")
     app_release = WORKFLOW.split("  production-app-release:", 1)[1]
+    release_scope = WORKFLOW.split("  release-scope:", 1)[1].split(
+        "  production-app-image-artifact:", 1
+    )[0]
     compose_reconciliation = WORKFLOW.split("  production-app-compose-reconciliation:", 1)[1].split(
         "  production-app-rollback-preflight:", 1
     )[0]
@@ -159,8 +167,43 @@ def main() -> None:
     require("needs.release-scope.outputs.scope == 'facial'", "fluxo facial isolado", preflight)
     require("needs.release-scope.outputs.scope == 'app'", "preflight API/web condicionado ao classificador", app_preflight)
     require("MARKINA_APP_TARGET_SHA=$GITHUB_SHA", "inventário API/web restrito", app_preflight)
+    require("needs: [release-scope]", "preflight API/web pode começar antes dos gates demorados", app_preflight)
+    require("MARKINA_APP_BASE_IMAGE_EXPORT_SHA=${GITHUB_SHA}_IMAGE_ID=${API_BASE_IMAGE_ID}",
+            "export read-only usa SHA e ID-base exatos", app_preflight)
+    require("production-app-api-base-${{ github.sha }}", "artifact-base pertence ao SHA do run", app_preflight)
+    require("retention-days: 1", "artifact-base tem retenção curta", app_preflight)
+    if any(token in app_preflight.lower() for token in ("docker load", "compose up", "docker image tag", "compose build")):
+        raise AssertionError("preflight de export não pode carregar imagem nem alterar serviços")
+    require("needs: [ci-scope]", "classificador de release executa antes da matriz", release_scope)
+    require("needs: [release-scope, production-app-preflight]", "produtor vincula classificador e imagem-base do preflight", app_artifact)
+    require("runs-on: ubuntu-24.04-arm", "produtor constrói em ARM64 nativo", app_artifact)
+    require("production-app-api-base-${{ github.sha }}", "produtor baixa a base do mesmo run/SHA", app_artifact)
+    require("FROM ${API_BASE_IMAGE}", "overlay API parte da imagem ativa", app_artifact)
+    require("COPY backend/app /app/app", "overlay API copia somente o código da aplicação", app_artifact)
+    require("--pull=false", "build API não substitui a base por outra imagem remota", app_artifact)
+    require("--api-base-image-id \"$API_BASE_IMAGE_ID\"", "manifesto registra o ID-base inventariado", app_artifact)
+    require("production-app-arm64-${{ github.sha }}", "bundle candidato pertence ao SHA do run", app_artifact)
+    require("retention-days: 1", "bundle candidato tem retenção curta", app_artifact)
     require("environment: production", "aprovação protegida para API/web", app_release)
     require("scripts/deploy-prod-app-services.sh", "release API/web dedicado", app_release)
+    require("PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY }}",
+            "upload usa credencial separada e protegida", app_release)
+    require("EXPECTED_API_BASE_IMAGE_ID", "release compara API base com preflight", app_release)
+    require("--api-base-image-id \"$EXPECTED_API_BASE_IMAGE_ID\"", "release valida o manifesto contra o preflight", app_release)
+    require("MARKINA_APP_ARTIFACT_UPLOAD_SHA=${GITHUB_SHA}_BUNDLE_SHA256=${EXPECTED_BUNDLE_SHA256}",
+            "upload limitado por SHA e digest completos", app_release)
+    require("--artifact-sha256 '$EXPECTED_BUNDLE_SHA256'", "deploy consome exatamente o bundle enviado", app_release)
+    require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-image-artifact, production-app-preflight]",
+            "promoção aguarda todos os gates e producer/preflight", app_release)
+    if not (app_release.index("production_app_artifact.py verify")
+            < app_release.index("MARKINA_APP_ARTIFACT_UPLOAD_SHA=")
+            < app_release.index("scripts/deploy-prod-app-services.sh")):
+        raise AssertionError("bundle deve ser verificado antes do upload e do deploy")
+    require("^MARKINA_APP_ARTIFACT_UPLOAD_SHA=([0-9a-f]{40})_BUNDLE_SHA256=([0-9a-f]{64})$",
+            "wrapper de upload aceita somente SHA/digest exatos", APP_ARTIFACT_UPLOAD_WRAPPER)
+    require("os.replace(temporary, final)", "upload substitui atomicamente o bundle", APP_ARTIFACT_UPLOAD_WRAPPER)
+    if any(token in APP_ARTIFACT_UPLOAD_WRAPPER for token in ("docker ", "tarfile", "extractall", "bash -c")):
+        raise AssertionError("wrapper de upload não pode carregar, extrair ou executar o bundle")
     require("- app-compose-reconcile", "operação manual de reconciliação Compose", WORKFLOW)
     require("inputs.operation == 'app-compose-reconcile'", "reconciliação só por dispatch na main", compose_reconciliation)
     require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]",
@@ -383,6 +426,19 @@ def main() -> None:
     app_blob_header = f"blob {len(app_inventory_text)}\0".encode()
     app_blob_sha = hashlib.sha1(app_blob_header + app_inventory_text).hexdigest()
     require(f'APP_SCRIPT_BLOB_SHA="{app_blob_sha}"', "wrapper fixa o script API/web exato", WRAPPER)
+    base_export_text = API_BASE_EXPORT_SCRIPT.replace(b"\r\n", b"\n")
+    base_export_blob_sha = hashlib.sha1(
+        f"blob {len(base_export_text)}\0".encode() + base_export_text
+    ).hexdigest()
+    require(f'APP_BASE_IMAGE_EXPORT_BLOB_SHA="{base_export_blob_sha}"',
+            "wrapper fixa o export read-only da imagem-base", WRAPPER)
+    require('script_name="export_prod_app_api_base_image.sh"',
+            "wrapper seleciona somente o helper de export fixado", WRAPPER)
+    require('inventory_runtime="api-base-export"', "wrapper limita o helper ao export", WRAPPER)
+    require('bash -s -- --mode export --sha "$target_sha" --expected-image-id "$expected_image_id"',
+            "wrapper fixa modo, SHA e ID-base", WRAPPER)
+    require("'{{.Image}}'", "exporter consulta ID da imagem do container", API_BASE_EXPORT_SCRIPT.decode("utf-8"))
+    require('docker image save "$image_id" | gzip -1', "exporter transmite somente imagem comprimida", API_BASE_EXPORT_SCRIPT.decode("utf-8"))
     retirement_inventory_text = RETIREMENT_INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
     retirement_blob_header = f"blob {len(retirement_inventory_text)}\0".encode()
     retirement_blob_sha = hashlib.sha1(retirement_blob_header + retirement_inventory_text).hexdigest()
@@ -477,7 +533,8 @@ def main() -> None:
         raise AssertionError("baseline web diverge do inventário registrado")
     if "emergency_api" in app_manifest:
         raise AssertionError("contrato API emergencial não pode permanecer após a publicação convencional comprovada")
-    require("scripts/prepare_emergency_api_image.py", "homologação de imagem API antes da troca", app_script)
+    if "compose build" in app_script or "docker build" in app_script:
+        raise AssertionError("release de produção não pode reconstruir imagens no host")
     if app_manifest.get("expected_database_revision") != "20261113_0126":
         raise AssertionError("revisão de banco app diverge do inventário registrado")
     require("facial-last-healthy.sha", "marcador da última versão facial saudável", script)
@@ -568,8 +625,18 @@ def main() -> None:
     require('EXPECTED_DATABASE_REVISION="20261113_0126"', "schema atual da aplicação fixado", app_script)
     require('readonly SERVICES=(api web)', "release app inclui somente API e web", app_script)
     require("require_facial_processing_enabled_in_config", "release app preserva FACIAL_PROCESSING_ENABLED=true", app_script)
-    require('compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
+    require('--artifact-sha256', "release exige digest do bundle", app_script)
+    require('compose up -d --no-build --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
             "release app não recria dependências", app_script)
+    app_release_script = app_script.split("release() {", 1)[1].split("rollback() {", 1)[0]
+    require("verify_candidate_artifact", "release verifica digest, SHA e imagem-base", app_release_script)
+    require("load_candidate_artifact", "release carrega somente o bundle verificado", app_release_script)
+    if not (app_release_script.index("verify_candidate_artifact")
+            < app_release_script.index("load_candidate_artifact")
+            < app_release_script.index("compose up")):
+        raise AssertionError("bundle deve ser verificado e carregado antes de recriar API/web")
+    if "compose build" in app_release_script:
+        raise AssertionError("release app não pode construir imagens no host")
     for fragment, label in (
         ("20261113_0126", "schema app documentado"),
         ("bfe511f850224823254b0fc9f51fa7ff60ecfba0", "baseline app documentado"),

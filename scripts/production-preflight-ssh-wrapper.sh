@@ -9,11 +9,12 @@ readonly PROJECT_ROOT="/opt/markina-gallery"
 readonly EXPECTED_REPOSITORY="conradodeita/markina-gallery"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly FACIAL_SCRIPT_BLOB_SHA="515c3c82c30bf76be0ec8f01013225fb71276df3"
-readonly APP_SCRIPT_BLOB_SHA="13089c9f6ce547625257ee1fb31e58e2a25b7e29"
+readonly APP_SCRIPT_BLOB_SHA="cd8288133ce204285f6c6abf0cfda5fcf59ce2d2"
 readonly RETIREMENT_SCRIPT_BLOB_SHA="d8fb13a50b5254e458f19d2c5d4ed8c43fadea1b"
 readonly ORDERS_SCRIPT_BLOB_SHA="f45b16ca2d748172ca617c78e31de6cff2fa4289"
 readonly PREVIEW_MIGRATION_INVENTORY_BLOB_SHA="1296ccb0e0f6295bc07b30837fc5043e7dac4db6"
 readonly APP_ENV_INVENTORY_BLOB_SHA="8a460514b25ee26355e5252815096940b5736083"
+readonly APP_BASE_IMAGE_EXPORT_BLOB_SHA="b94df86a3e51901608ee0d5f33d0fd257200f595"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
@@ -29,6 +30,13 @@ elif [[ "$original_command" =~ ^MARKINA_APP_TARGET_SHA=([0-9a-f]{40})$ ]]; then
   script_name="deploy-prod-app-services.sh"
   script_blob_sha="$APP_SCRIPT_BLOB_SHA"
   inventory_mode="inventory"
+elif [[ "$original_command" =~ ^MARKINA_APP_BASE_IMAGE_EXPORT_SHA=([0-9a-f]{40})_IMAGE_ID=(sha256:[0-9a-f]{64})$ ]]; then
+  target_sha="${BASH_REMATCH[1]}"
+  expected_image_id="${BASH_REMATCH[2]}"
+  script_name="export_prod_app_api_base_image.sh"
+  script_blob_sha="$APP_BASE_IMAGE_EXPORT_BLOB_SHA"
+  inventory_mode="base-image-export"
+  inventory_runtime="api-base-export"
 elif [[ "$original_command" =~ ^MARKINA_APP_ROLLBACK_SHA=([0-9a-f]{40})$ ]]; then
   target_sha="${BASH_REMATCH[1]}"
   script_name="deploy-prod-app-services.sh"
@@ -80,6 +88,9 @@ if [[ "$inventory_runtime" == "python" ]]; then
 elif [[ "$inventory_runtime" == "preview-migration-python" ]]; then
   printf '%s\n' "$script_body" | MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA="$target_sha" \
     PYTHONPATH="$PROJECT_ROOT/scripts" python3 -B -
+elif [[ "$inventory_runtime" == "api-base-export" ]]; then
+  printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
+    bash -s -- --mode export --sha "$target_sha" --expected-image-id "$expected_image_id"
 else
   printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
     MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode "$inventory_mode" --sha "$target_sha"
