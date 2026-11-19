@@ -10,11 +10,23 @@ Amostra de três execuções recentes da CI; não é suficiente para estimar p90
 | [44428285088](https://github.com/conradodeita/markina-gallery/actions/runs/44428285088) | 26m52s | 26m27s | 2m18s |
 | [44433195647](https://github.com/conradodeita/markina-gallery/actions/runs/44433195647) | 31m22s | 30m53s | 2m17s |
 
-A mediana observada da CI nessa amostra é **26m52s**; a mediana do shard mais lento é **26m27s**. `backend-quality` levou entre 1m47s e 2m18s. No run 44433195647, o gate de qualidade falhou em `NoCopy volume check` após 2m17s, mas os três shards continuaram em paralelo e o workflow terminou 29m05s depois. A nova dependência faz os shards esperarem o gate de qualidade; a economia real ainda depende de uma execução após o merge.
+A mediana observada da CI nessa amostra é **26m52s**; a mediana do shard mais lento é **26m27s**. `backend-quality` levou entre 1m47s e 2m18s. No run 44433195647, o gate de qualidade falhou em `NoCopy volume check` após 2m17s, mas os três shards continuaram em paralelo e o workflow terminou 29m05s depois. A nova dependência faz os shards esperarem o gate de qualidade; a primeira medição no PR está registrada abaixo, mas são necessárias mais execuções verdes para avaliar ganho consistente.
 
 Os três shards desse run passaram e produziram JUnit e manifestos compatíveis com SHA `feef56a9702c50bea500a511a7c457cbe4aba46b` (head do PR `9dba58e5e589d815762e663d83f92c2b41ba2103`). A amostra cobre **2.625 itens em 251 módulos**. Os tempos agregados do JUnit por distribuição anterior, em minutos de execução de casos, foram **29,786 / 18,407 / 19,733**.
 
 O arquivo `scripts/backend_ci_durations.json` registra os segundos observados por módulo, o run de origem, os dois SHAs e a mediana de **0,849 s por caso** usada como fallback. Uma projeção LPT offline, mantendo módulos inteiros, estima **22,642 min de casos por shard**. A distribuição atual por quantidade estima **29,786 / 18,407 / 19,733 min** sob os mesmos pesos. Essa é uma projeção de uma única coleta, não uma medição posterior à mudança, nem uma promessa sobre o tempo total de parede.
+
+## Primeira medição da otimização no PR
+
+O primeiro run verde da versão otimizada foi o [44458427627](https://github.com/conradodeita/markina-gallery/actions/runs/44458427627), no SHA `e441a2582e8644de05234f601fd9afce872655ba`, em 19/11/2026.
+
+| Resultado | CI total | Fila API | Shard 0 | Shard 1 | Shard 2 | Cobertura backend |
+|---|---:|---:|---:|---:|---:|---:|
+| sucesso | 26m46s | 0s* | 24m02s | 23m06s | 22m14s | 2.625/2.625, uma vez cada |
+
+`backend-quality` levou 1m49s; frontend, 2m26s; imagem ARM64, 2m31s; imagem AMD64, 2m50s. O run levou 6 segundos menos que a mediana total histórica de 26m52s, diferença pequena demais para indicar ganho. O shard mais lento levou 2m25s menos que a mediana histórica de 26m27s, mas há apenas uma execução verde pós-mudança; p90 e redução estável do tempo total seguem sem amostra suficiente. *`created_at` e `run_started_at` do GitHub têm o mesmo segundo; o primeiro job iniciou 3 segundos depois.*
+
+Os runs [44450998998](https://github.com/conradodeita/markina-gallery/actions/runs/44450998998) (27m02s) e [44454598575](https://github.com/conradodeita/markina-gallery/actions/runs/44454598575) (26m22s) falharam no contrato de política de release, não na suíte de produto: o primeiro expôs a classificação do histórico desde um baseline de produção antigo; a correção inicial passou a aceitar mudanças de app e foi corretamente rejeitada pela regressão de blob não revisado no segundo. A classificação foi então limitada às mudanças posteriores ao snapshot aprovado do manifesto, sem alterar o avaliador fail-closed. Na execução verde, os três shards, o agregado `backend`, `homolog-inventory-policy` e `gemma-runtime` passaram. Não houve cancelamentos; os jobs de release de produção foram ignorados por ser um evento de PR.
 
 ## Seleção e gates
 
