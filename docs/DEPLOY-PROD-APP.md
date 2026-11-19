@@ -1,5 +1,22 @@
 # Release de API e web em produção
 
+## Transição preservada por geração — revisão de 19/11/2026
+
+Este procedimento substitui a primeira recriação direta e a recuperação legada nas instalações com registro de gerações. Implementação/testes locais não autorizam instalação, reconciliação ou deploy no host. Evidências e pendências operacionais ficam em `openspec/changes/add-root-only-compose-release-bridge/validation.md` e `tasks.md`.
+
+1. Concluir os gates de código do SHA integrado e, com autorização própria, instalar os blobs revisados pelo workflow protegido de instalação. A instalação mantém checkout, containers e fontes existentes.
+2. Para a tentativa `850fce24` interrompida antes de recriar qualquer serviço, usar `production-app-handoff-recovery.yml`, operação `diagnose-legacy`. O diagnóstico emite `legacy_recovery_fingerprint` e `witness_fingerprint`, comprovando originais saudáveis, schema atual, fontes privadas, marcador e históricos parados. Divergência bloqueia; não apagar o marcador manualmente.
+3. Após revisão humana dos dois fingerprints, executar `recover-legacy` com `approval_fingerprint` e `witness_fingerprint`. O job protegido registra somente os históricos exatos aprovados, repete a prova sob lock, restaura o checkout compatível com as imagens originais e testa HTTPS. Só então a ponte reconcilia o marcador da tentativa exata com intenção/recibo duráveis. Nenhum container é parado, renomeado ou removido nessa reconciliação.
+4. Repetir somente jobs falhos/dependentes do CI do mesmo SHA, preservando os gates verdes. O preflight inicial prova a base e exporta a imagem API ativa; o runner ARM64 produz um único bundle. O novo `production-app-handoff-preflight`, somente leitura, vincula o fingerprint final ao SHA, digest do bundle, IDs API/web/base, configurações, fontes, checkout e históricos aprovados. A aprovação protegida de deploy usa esse fingerprint final.
+5. O executor `--mode handoff-release` valida o bundle antes dos efeitos, prepara o journal privado e preserva as imagens. Sob lock, a ponte registra intenção, para/renomeia somente o ID antigo comprovado e cria o candidato no nome operacional, em projeto Compose derivado para essa geração. API deve passar saúde/schema/facial antes da web; redes e volumes continuam externos e existentes. Não há build, pull, migration ou alteração de workers.
+6. Após ambos saudáveis, a ponte publica a seleção/base privada por IDs e labels nativos exatos. O executor testa/recarrega somente Nginx Markina, comprova HTTPS, salva recibos e libera apenas o marcador correspondente. Containers antigos permanecem parados para recuperação; não há limpeza automática. Históricos testemunhas nunca recebem start/stop/rename/remove.
+
+Se a nova transição falhar ou for necessário reverter uma geração publicada, usar o mesmo workflow com `diagnose` e depois `recover`, com fingerprint/aprovação próprios. A recuperação pode inventariar API ausente e schema indisponível, mas só admite a restauração mínima dos originais comprovados. O sucesso exige consulta atual de schema, configuração facial, saúde e HTTPS. Candidato conhecido é preservado parado; ocupante desconhecido bloqueia. Uma interrupção da própria recuperação exige novo inventário, sem repetição cega nem rollback automático.
+
+O diagnóstico de recuperação aceita reaproveitar evidência de código somente do SHA atual de main, com todos os gates de código verdes e no máximo uma falha operacional isolada em preflight inicial, preflight final ou deploy. Falha de construção do artifact, gates vermelhos, execução incompleta e falhas múltiplas bloqueiam. Instalação, reconciliação legada e deploy são operações separadas; a autorização da tentativa antiga não cobre stop/rename.
+
+Os ensaios descartáveis usam somente recursos sintéticos identificados por IDs/labels próprios. A limpeza do laboratório remove somente recursos criados por ele. Cópias privadas, journal, imagens e containers de recuperação de produção são evidência preservada, sem política de descarte incluída nesta mudança.
+
 ## Ponte para snapshots protegidos — candidato de 18/11/2026
 
 Esta seção atualiza o procedimento para a configuração real do host; as notas de outubro abaixo são histórico. A change `add-root-only-compose-release-bridge` registra a autorização do proprietário para ponte root-only e prova semântica por serviço. Implementação local e CI não comprovam instalação nem publicação no servidor: consultar as evidências da change.
@@ -16,14 +33,14 @@ Esta seção atualiza o procedimento para a configuração real do host; as nota
 - Em falha, conservar marcadores e cópias. `operation=app-rollback` exige inventário/aprovação próprios, confere cópias e restaura somente API/web. Não restaurar banco, limpar fontes ou executar rollback automático. O Nginx só recebe teste/reload já autorizado.
 - Conclusão exige IDs de imagem e versão corretos, semântica preservada, schema intacto, `APP_ENV=production`, `FACIAL_PROCESSING_ENABLED=true`, saúde e HTTPS. Preservar evidência de invariância dos outros serviços. Não apagar cópias de recuperação sem política própria aprovada.
 
-### Adoção explícita do runtime ativo — planejada, ainda não executada
+### Adoção explícita do runtime ativo
 
 Os snapshots indicados pelos labels podem representar uma execução histórica e divergir do runtime saudável. O preflight normal continua bloqueado nesses casos. O workflow manual **Adotar base privada do runtime API/web** tem duas etapas:
 
 1. `operation=diagnose` (ou `adopt`) executa somente leitura com a chave de `production-preflight`, comprova cada campo via Compose resolvido e Docker inspect, e retorna `adoption_fingerprint`. Nenhum fingerprint de release é emitido nessa etapa.
 2. Revise o fingerprint e execute `operation=adopt`, informando-o em `approval_fingerprint`. O workflow vincula novamente fingerprint e destino SSH, exige a aprovação protegida do Environment `production`, adquire o lock e repete toda a prova antes de gravar a base root-only.
 
-A adoção guarda cópias históricas e a configuração efetiva (incluindo TOTP) somente em `/var/lib/markina-gallery/app-compose-bridge`, como `root:root`, diretórios `0700` e arquivos `0600`. Ela não recria containers, altera `.env`, credenciais ou imagens e não publica a aplicação. Depois da adoção, execute novo preflight de release e siga a aprovação/fingerprint próprios do release. Em troca parcial durante release, somente `app-rollback-inventory`/`app-rollback` pode avaliar a combinação registrada anterior/candidata; essa recuperação exige novo fingerprint e aprovação protegida. Não usar diagnóstico de adoção para contornar falha de código, alteração inesperada do runtime ou gate de release.
+A adoção guarda cópias históricas e a configuração efetiva (incluindo TOTP) somente em `/var/lib/markina-gallery/app-compose-bridge`, como `root:root`, diretórios `0700` e arquivos `0600`. Ela não recria containers, altera `.env`, credenciais ou imagens e não publica a aplicação. Depois da adoção, execute novo preflight de release e siga a aprovação/fingerprint próprios do release. A recuperação por geração segue a seção inicial deste documento, com inventário e aprovação próprios. Não usar diagnóstico de adoção para contornar falha de código, alteração inesperada do runtime ou gate de release.
 
 Este fluxo publica somente `api` e `web` para uma mudança comercial previamente revisada. Ele é separado da manutenção facial: alterações mistas são recusadas pelo classificador e não iniciam nenhum release automaticamente.
 

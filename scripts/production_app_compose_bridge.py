@@ -15,7 +15,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from collections.abc import Iterable
+from contextlib import contextmanager
 from pathlib import Path
 
 PROJECT = "markina-gallery"
@@ -35,6 +37,18 @@ REVISION_RE = re.compile(r"^([0-9]{8}_[0-9]{4})(?:\s+.*)?$")
 MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 MAX_COMMAND_OUTPUT_BYTES = 8 * 1024 * 1024
 SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+HANDOFF_OPERATIONS = {
+    "handoff-witness-inventory": "inventory", "handoff-witness-register": "release",
+    "handoff-inventory": "inventory", "handoff-prepare": "release", "handoff-apply": "release",
+    "handoff-proxy": "release",
+    "handoff-recovery-inventory": "rollback-inventory", "handoff-recovery-prepare": "rollback",
+    "handoff-recovery-apply": "rollback",
+    "handoff-legacy-recovery-inventory": "rollback-inventory",
+    "handoff-legacy-recovery-prepare": "rollback", "handoff-legacy-recovery-finalize": "rollback",
+    "handoff-legacy-recovery-proxy": "rollback",
+}
+HANDOFF_CANDIDATE_OPERATIONS = frozenset({"handoff-inventory", "handoff-prepare", "handoff-apply"})
 
 # Every accepted Compose service field has an explicit comparison or is a
 # build/orchestration field that never participates in a --no-deps recreation.
@@ -426,7 +440,8 @@ def adoption_runtime_binding(containers: dict) -> dict:
 
 
 def _assert_adoption_runtime_unchanged(context: dict) -> None:
-    current = _inspect_api_web()
+    records = context.get("handoff_selection_records")
+    current = handoff_select(_handoff_read_items(records), records) if records is not None else _inspect_api_web()
     if adoption_runtime_binding(current) != adoption_runtime_binding(context["containers"]):
         raise BridgeError("adoption_runtime_changed")
     for item in current.values():
@@ -631,7 +646,8 @@ def _select_recovery_sources(context: dict, mode: str, target_sha: str) -> dict:
     return context
 
 
-def _publish_runtime_base(context: dict, models: dict, proof: dict, approval: str) -> None:
+def _publish_runtime_base(context: dict, models: dict, proof: dict, approval: str,
+                          handoff_records: list[dict] | None = None) -> None:
     if not HASH_RE.fullmatch(approval) or (proof.get("domain") == "app-runtime-adoption-v1" and digest(proof) != approval):
         raise BridgeError("adoption_approval_mismatch")
     _assert_common_lock_held()
@@ -661,6 +677,10 @@ def _publish_runtime_base(context: dict, models: dict, proof: dict, approval: st
         hashes[service] = snapshot_sha256(path)
     manifest = {"version": 1, "runtime": adoption_runtime_binding(context["containers"]), "models": hashes,
                 "historical": historical, **material}
+    if handoff_records is not None:
+        if context.get("handoff_selection_records") != handoff_records:
+            raise BridgeError("handoff_base_records_unproven")
+        manifest["handoff_records"] = copy.deepcopy(handoff_records)
     manifest_path = directory / "manifest.json"
     _write_private_file(manifest_path, json.dumps(manifest, sort_keys=True).encode())
     pointer = {"base": identity, "manifest_sha256": snapshot_sha256(manifest_path)}
@@ -998,6 +1018,9 @@ def _list_service_ids(service: str) -> list[str]:
 
 
 def _inspect_api_web() -> dict[str, dict]:
+    records = _handoff_registered_records()
+    if records is not None:
+        return handoff_select(_handoff_read_items(records), records)
     found: list[dict] = []
     for service in SERVICES:
         ids = _list_service_ids(service)
@@ -1014,16 +1037,22 @@ def _inspect_api_web() -> dict[str, dict]:
     return select_api_web(found)
 
 
-def _discover_context() -> dict:
+def _discover_context(*, selected: dict | None = None, expected_projects: dict | None = None) -> dict:
     if not PROJECT_ROOT.is_dir() or not WORKING_DIR.is_dir() or not STATE_DIR.is_dir():
         raise BridgeError("project_paths_unavailable")
     env_digest = _validate_env_file()
-    selected = _inspect_api_web()
+    if selected is None:
+        selected = _inspect_api_web()
+        records = _handoff_registered_records()
+        expected_projects = ({record["service"]: record["project"] for record in records if not record["retained"]}
+                             if records is not None else {service: PROJECT for service in SERVICES})
+    if expected_projects is None or set(selected) != set(SERVICES) or set(expected_projects) != set(SERVICES):
+        raise BridgeError("handoff_discovery_unproven")
     sources: dict[str, dict] = {}
     for service in SERVICES:
         item = selected[service]
         labels = item["Config"]["Labels"]
-        if labels.get("com.docker.compose.project") != PROJECT:
+        if labels.get("com.docker.compose.project") != expected_projects[service]:
             raise BridgeError("container_project_invalid")
         if labels.get("com.docker.compose.service") != service:
             raise BridgeError("container_service_invalid")
@@ -1047,12 +1076,13 @@ def _discover_context() -> dict:
     return {"containers": selected, "paths": all_paths, "sources": sources,
             "digests": {str(path): _validate_snapshot_source(path) for path in all_paths},
             "environment_digest": env_digest,
-            "config_hashes": {service: sources[service]["config_hash"] for service in SERVICES}}
+            "config_hashes": {service: sources[service]["config_hash"] for service in SERVICES},
+            "projects": dict(expected_projects)}
 
 
 def _compose_prefix(context: dict, service: str = "api") -> list[str]:
     command = ["/usr/bin/docker", "compose", "--project-directory", str(context["sources"][service]["workdir"]),
-               "--env-file", str(context["env_path"]), "-p", PROJECT]
+               "--env-file", str(context["env_path"]), "-p", context.get("projects", {}).get(service, PROJECT)]
     for path in context["compose_paths_by_service"][service]:
         command.extend(("-f", str(path)))
     for profile in resolve_profile_set():
@@ -1495,6 +1525,1227 @@ def _assert_common_lock_held() -> None:
         raise BridgeError("outer_release_lock_unavailable") from None
 
 
+
+def _handoff_registered_records() -> list[dict] | None:
+    pointer = _read_base_pointer()
+    if pointer is None:
+        return None
+    _, manifest = _read_runtime_base(pointer)
+    records = manifest.get("handoff_records")
+    if records is not None and (not isinstance(records, list) or not records):
+        raise BridgeError("handoff_registry_invalid")
+    return records
+
+
+def _handoff_metadata() -> list[dict]:
+    result = []
+    for service in SERVICES:
+        output = _docker(["ps", "-a", "--no-trunc", "--filter", "label=com.docker.compose.service=" + service,
+                          "--format", '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}'])
+        for line in output.splitlines():
+            fields = line.split("|", 2)
+            if len(fields) != 3:
+                raise BridgeError("handoff_metadata_invalid")
+            identity, name, project = fields
+            if project != PROJECT and not project.startswith(PROJECT + "-app-"):
+                continue
+            if not CONTAINER_ID_RE.fullmatch(identity):
+                raise BridgeError("handoff_metadata_invalid")
+            result.append({"id": identity, "name": name, "project": project, "service": service})
+    if len({row["id"] for row in result}) != len(result):
+        raise BridgeError("handoff_duplicate_observation")
+    return result
+
+
+def _handoff_read_items(records: list[dict] | None = None) -> list[dict]:
+    metadata = _handoff_metadata()
+    identities = [row["id"] for row in metadata]
+    if records is not None and set(identities) != {record["id"] for record in records}:
+        raise BridgeError("handoff_unregistered_or_missing_container")
+    if not identities:
+        return []
+    items = json.loads(_docker(["inspect", *identities]))
+    if not isinstance(items, list) or {item.get("Id") for item in items} != set(identities):
+        raise BridgeError("handoff_inspect_invalid")
+    return items
+
+
+def handoff_generation(target_sha: str, bundle_sha256: str, support_sha: str, state_digest: str) -> str:
+    """A namespace is derived from approved identities, never caller names."""
+    if (not SHA_RE.fullmatch(target_sha) or not SHA_RE.fullmatch(support_sha)
+            or not HASH_RE.fullmatch(bundle_sha256) or not HASH_RE.fullmatch(state_digest)):
+        raise BridgeError("handoff_identity_invalid")
+    return PROJECT + "-app-" + digest({"target": target_sha, "bundle": bundle_sha256, "support": support_sha, "state": state_digest})[:32]
+
+
+def handoff_retained_name(service: str, identity: str) -> str:
+    if service not in SERVICES or not CONTAINER_ID_RE.fullmatch(identity):
+        raise BridgeError("handoff_identity_invalid")
+    return PROJECT + "-retained-" + service + "-" + identity
+
+
+def handoff_configuration(item: dict) -> str:
+    # Endpoint addresses/IDs change on stop/start; actual mount/config/security
+    # policy remains exact. Network names and configured aliases remain bound.
+    return digest({"config": item.get("Config"), "host": item.get("HostConfig"), "mounts": item.get("Mounts"),
+                   "networks": {name: {key: values.get(key) for key in ("Aliases", "IPAMConfig", "DriverOpts", "GwPriority")}
+                                for name, values in (item.get("NetworkSettings", {}).get("Networks") or {}).items()}})
+
+
+def handoff_record(service: str, item: dict, project: str, *, retained: bool = False) -> dict:
+    identity = item.get("Id", "")
+    if service not in SERVICES or not CONTAINER_ID_RE.fullmatch(identity) or not IMAGE_ID_RE.fullmatch(item.get("Image", "")):
+        raise BridgeError("handoff_identity_invalid")
+    if project != PROJECT and not re.fullmatch(re.escape(PROJECT) + r"-app-[0-9a-f]{32}", project):
+        raise BridgeError("handoff_project_invalid")
+    expected_name = handoff_retained_name(service, identity) if retained else PROJECT + "-" + service + "-1"
+    labels = item.get("Config", {}).get("Labels") or {}
+    if (item.get("Name") != "/" + expected_name or labels.get("com.docker.compose.project") != project
+            or labels.get("com.docker.compose.service") != service):
+        raise BridgeError("handoff_container_identity_mismatch")
+    if retained and item.get("State", {}).get("Running") is not False:
+        raise BridgeError("handoff_retained_running")
+    return {"id": identity, "image": item["Image"], "name": expected_name, "service": service,
+            "project": project, "retained": retained, "configuration": handoff_configuration(item)}
+
+
+def handoff_witness_record(item: dict) -> dict:
+    """Describe a pre-approved historical object without granting an operation."""
+    identity = item.get("Id", "")
+    labels = item.get("Config", {}).get("Labels") or {}
+    service = labels.get("com.docker.compose.service")
+    name = item.get("Name", "").lstrip("/")
+    if (not CONTAINER_ID_RE.fullmatch(identity) or not IMAGE_ID_RE.fullmatch(item.get("Image", ""))
+            or labels.get("com.docker.compose.project") != PROJECT or service not in SERVICES
+            or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}", name)
+            or name in {PROJECT + "-api-1", PROJECT + "-web-1"} or name.startswith(PROJECT + "-retained-")
+            or item.get("State", {}).get("Running") is not False
+            or item.get("State", {}).get("Status") not in {"created", "exited"}):
+        raise BridgeError("handoff_witness_invalid")
+    return {"id": identity, "image": item["Image"], "name": name, "service": service,
+            "project": PROJECT, "retained": True, "witness": True, "configuration": handoff_configuration(item),
+            "lifecycle": digest({key: item["State"].get(key) for key in ("Status", "StartedAt", "FinishedAt", "ExitCode")})}
+
+
+def _handoff_match_record(record: dict, item: dict) -> dict:
+    if record.get("witness") is True:
+        return handoff_witness_record(item)
+    return handoff_record(record["service"], item, record["project"], retained=record["retained"])
+
+
+def handoff_select(items: list[dict], records: list[dict]) -> dict:
+    """Select exclusively by a previously verified private registry.
+
+    Prefix matches detect unexpected objects; they NEVER authorize selection.
+    """
+    expected = {}
+    for record in records:
+        identity = record.get("id", "")
+        if not CONTAINER_ID_RE.fullmatch(identity) or identity in expected:
+            raise BridgeError("handoff_registry_invalid")
+        expected[identity] = record
+    found, active = set(), {}
+    for item in items:
+        identity = item.get("Id", "")
+        labels = item.get("Config", {}).get("Labels") or {}
+        project = labels.get("com.docker.compose.project", "")
+        if identity not in expected:
+            if ((project == PROJECT or project.startswith(PROJECT + "-app-"))
+                    and labels.get("com.docker.compose.service") in SERVICES):
+                raise BridgeError("handoff_unregistered_container")
+            continue
+        if identity in found:
+            raise BridgeError("handoff_duplicate_observation")
+        record = expected[identity]
+        if _handoff_match_record(record, item) != record:
+            raise BridgeError("handoff_registry_runtime_mismatch")
+        found.add(identity)
+        if not record["retained"]:
+            service = record["service"]
+            if service in active or not item.get("State", {}).get("Running"):
+                raise BridgeError("handoff_active_invalid")
+            active[service] = item
+    if found != set(expected) or set(active) != set(SERVICES):
+        raise BridgeError("handoff_registry_incomplete")
+    return active
+
+
+def handoff_plan(target_sha: str, support_sha: str, bundle_sha256: str, items: list[dict],
+                 active_records: list[dict], models: dict, original_models: dict,
+                 source_digests: dict, environment_digest: str, checkout_sha: str) -> dict:
+    if (not SHA_RE.fullmatch(checkout_sha) or not HASH_RE.fullmatch(environment_digest) or not source_digests
+            or any(not isinstance(path, str) or not HASH_RE.fullmatch(value) for path, value in source_digests.items())
+            or set(original_models) != set(SERVICES)):
+        raise BridgeError("handoff_sources_invalid")
+    active = handoff_select(items, active_records)
+    project = handoff_generation(target_sha, bundle_sha256, support_sha,
+                                 digest({"sources": sorted(active_records, key=lambda record: record["id"]), "models": models,
+                                         "source_digests": source_digests, "environment": environment_digest}))
+    if set(models) != set(SERVICES):
+        raise BridgeError("handoff_models_invalid")
+    candidates, services = {}, {}
+    occupied = {item.get("Name", "").lstrip("/"): item.get("Id") for item in items}
+    for service, item in active.items():
+        if item.get("State", {}).get("Health", {}).get("Status") != "healthy":
+            raise BridgeError("handoff_source_unhealthy")
+        retained = handoff_retained_name(service, item["Id"])
+        if retained in occupied:
+            raise BridgeError("handoff_retained_name_occupied")
+        document = copy.deepcopy(models[service])
+        if set(document.get("services", {})) != {service}:
+            raise BridgeError("handoff_models_invalid")
+        for category in ("networks", "volumes"):
+            for definition in (document.get(category) or {}).values():
+                if not isinstance(definition, dict) or set(definition) != {"name", "external"} or definition["external"] is not True:
+                    raise BridgeError("handoff_resource_not_external")
+        model = document["services"][service]
+        if not IMAGE_ID_RE.fullmatch(model.get("image", "")) or any(key in model for key in ("build", "depends_on", "profiles", "ports")):
+            raise BridgeError("handoff_model_not_closed")
+        if any(key.startswith("com.docker.compose.") for key in (model.get("labels") or {})):
+            raise BridgeError("handoff_fabricated_compose_labels")
+        name = PROJECT + "-" + service + "-1"
+        model["container_name"] = name
+        candidates[service] = document
+        services[service] = {"original_id": item["Id"], "original_name": name, "retained_name": retained,
+                             "candidate_image": model["image"], "candidate_model": digest(document)}
+    return {"version": 1, "domain": "app-first-handoff-v1", "target_sha": target_sha,
+            "support_sha": support_sha, "bundle_sha256": bundle_sha256, "project": project,
+            "sources": copy.deepcopy(sorted(active_records, key=lambda record: record["id"])), "services": services, "models": candidates,
+            "original_models": copy.deepcopy(original_models), "source_digests": copy.deepcopy(source_digests),
+            "environment_digest": environment_digest, "checkout_sha": checkout_sha}
+
+
+def handoff_witness_registry() -> dict | None:
+    path = BRIDGE_STATE / "handoff-witnesses.json"
+    if not os.path.lexists(path):
+        return None
+    _validate_tree_no_symlink(path)
+    _root_metadata(BRIDGE_STATE, directory=True, mode=0o700)
+    validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+    value = json.loads(_read_private_copy_source(path, snapshot_sha256(path)))
+    if (value.get("version") != 1 or value.get("domain") != "app-handoff-witnesses-v1"
+            or not isinstance(value.get("witnesses"), list) or not HASH_RE.fullmatch(value.get("approval", ""))):
+        raise BridgeError("handoff_witness_registry_invalid")
+    if digest({key: item for key, item in value.items() if key != "approval"}) != value["approval"]:
+        raise BridgeError("handoff_witness_registry_changed")
+    return value
+
+
+def handoff_witness_inventory(support_sha: str, items: list[dict], records: list[dict],
+                              source_digests: dict, environment_digest: str) -> dict:
+    if not SHA_RE.fullmatch(support_sha):
+        raise BridgeError("handoff_witness_support_invalid")
+    registry = handoff_witness_registry()
+    active_records = [r for r in records if not r.get("witness")]
+    if registry is None:
+        known = {r["id"] for r in active_records}
+        witnesses = [handoff_witness_record(item) for item in items if item["Id"] not in known]
+    else:
+        witnesses = registry["witnesses"]
+    handoff_select(items, active_records + witnesses)
+    return {"version": 1, "domain": "app-handoff-witnesses-v1", "support_sha": support_sha,
+            "active": copy.deepcopy(active_records), "witnesses": sorted(witnesses, key=lambda r: r["id"]),
+            "source_digests": copy.deepcopy(source_digests), "environment_digest": environment_digest}
+
+
+def handoff_register_witnesses(proof: dict, approval: str) -> None:
+    _assert_common_lock_held()
+    if proof.get("domain") != "app-handoff-witnesses-v1" or digest(proof) != approval:
+        raise BridgeError("handoff_witness_approval_mismatch")
+    _handoff_validate_inputs(proof)
+    _ensure_root_bridge_directory()
+    previous = handoff_witness_registry()
+    if previous is not None and previous["witnesses"] != proof["witnesses"]:
+        raise BridgeError("handoff_witness_set_changed")
+    content = json.dumps({**proof, "approval": approval}, sort_keys=True).encode()
+    path = BRIDGE_STATE / "handoff-witnesses.json"
+    if previous is not None:
+        checksum = snapshot_sha256(path)
+        saved = BRIDGE_STATE / ("witnesses-" + checksum + ".json")
+        if not os.path.lexists(saved):
+            _write_private_file(saved, _read_private_copy_source(path, checksum))
+        else:
+            validate_snapshot_metadata(_root_metadata(saved), allowed_owners={0}, root_only=True)
+            _read_private_copy_source(saved, checksum)
+    staging = BRIDGE_STATE / (".witnesses-" + approval + ".tmp")
+    _write_private_file(staging, content)
+    _handoff_sync_directory(BRIDGE_STATE)
+    os.replace(staging, path)
+    _handoff_sync_directory(BRIDGE_STATE)
+
+
+HANDOFF_PHASES = ("prepared", "stop_intent", "stopped", "rename_intent", "retained", "create_intent", "created", "healthy")
+HANDOFF_RECOVERY_PHASES = ("prepared", "candidate_stop_intent", "candidate_stopped", "candidate_rename_intent",
+                           "candidate_retained", "original_rename_intent", "original_named", "original_start_intent",
+                           "original_started", "healthy")
+
+
+def _handoff_phases(plan: dict) -> tuple:
+    if plan.get("domain") == "app-first-handoff-v1":
+        return HANDOFF_PHASES
+    if plan.get("domain") == "app-first-handoff-recovery-plan-v1":
+        return HANDOFF_RECOVERY_PHASES
+    raise BridgeError("handoff_plan_domain_invalid")
+
+
+def _handoff_journal_directory(identity: str) -> Path:
+    if not HASH_RE.fullmatch(identity):
+        raise BridgeError("handoff_journal_identity_invalid")
+    return BRIDGE_STATE / ("handoff-" + identity)
+
+
+def _handoff_sync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _handoff_activate(directory: Path, state: dict) -> str:
+    content = json.dumps(state, sort_keys=True).encode()
+    checksum = hashlib.sha256(content).hexdigest()
+    name = "state-" + str(state["sequence"]).zfill(6) + ".json"
+    destination = directory / name
+    if os.path.lexists(destination):
+        validate_snapshot_metadata(_root_metadata(destination), allowed_owners={0}, root_only=True)
+        if _read_private_copy_source(destination, checksum) != content:
+            raise BridgeError("handoff_journal_uncommitted_conflict")
+    else:
+        _write_private_file(destination, content)
+    pointer = json.dumps({"state": name, "sha256": checksum}, sort_keys=True).encode()
+    staging = directory / (".active-" + checksum + ".tmp")
+    if os.path.lexists(staging):
+        validate_snapshot_metadata(_root_metadata(staging), allowed_owners={0}, root_only=True)
+        if _read_private_copy_source(staging, hashlib.sha256(pointer).hexdigest()) != pointer:
+            raise BridgeError("handoff_journal_staging_changed")
+    else:
+        _write_private_file(staging, pointer)
+    _handoff_sync_directory(directory)
+    os.replace(staging, directory / "active.json")
+    _handoff_sync_directory(directory)
+    return checksum
+
+
+def handoff_journal_create(plan: dict) -> tuple[str, str]:
+    _assert_common_lock_held()
+    if plan.get("version") != 1 or plan.get("domain") not in {"app-first-handoff-v1", "app-first-handoff-recovery-plan-v1"} or set(plan.get("services", {})) != set(SERVICES):
+        raise BridgeError("handoff_plan_invalid")
+    _ensure_root_bridge_directory()
+    identity = digest(plan)
+    directory = _handoff_journal_directory(identity)
+    if os.path.lexists(directory):
+        raise BridgeError("handoff_journal_already_exists")
+    directory.mkdir(mode=0o700)
+    _root_metadata(directory, directory=True, mode=0o700)
+    _write_private_file(directory / "plan.json", json.dumps(plan, sort_keys=True).encode())
+    state = _handoff_initial_state(plan, identity)
+    revision = _handoff_activate(directory, state)
+    _handoff_sync_directory(BRIDGE_STATE)
+    return identity, revision
+
+
+def _handoff_initial_state(plan: dict, identity: str) -> dict:
+    return {"version": 1, "plan": identity, "sequence": 0, "previous": None,
+             "phases": {service: "prepared" for service in SERVICES},
+             "observations": {record["service"]: {"id": record["id"], "configuration": record["configuration"]}
+                              for record in plan["sources"] if not record["retained"]}, "event": None}
+
+
+def _handoff_prepare_journal(plan: dict) -> tuple[str, str]:
+    """Reconcile only a fresh, fully re-proven plan with no effect intent."""
+    _assert_common_lock_held()
+    identity = digest(plan)
+    directory = _handoff_journal_directory(identity)
+    if not os.path.lexists(directory):
+        return handoff_journal_create(plan)
+    _validate_tree_no_symlink(directory)
+    _root_metadata(directory, directory=True, mode=0o700)
+    content = json.dumps(plan, sort_keys=True).encode()
+    plan_path = directory / "plan.json"
+    if os.path.lexists(plan_path):
+        validate_snapshot_metadata(_root_metadata(plan_path), allowed_owners={0}, root_only=True)
+        _read_private_copy_source(plan_path, hashlib.sha256(content).hexdigest())
+    elif not list(directory.iterdir()):
+        _write_private_file(plan_path, content)
+    else:
+        raise BridgeError("handoff_preparation_unproven")
+    if os.path.lexists(directory / "active.json"):
+        saved, state, revision = handoff_journal_read(identity)
+        if saved != plan or state != _handoff_initial_state(plan, identity):
+            raise BridgeError("handoff_preparation_has_effect_intent")
+        return identity, revision
+    state = _handoff_initial_state(plan, identity)
+    # _handoff_activate hashes the canonical byte representation used below.
+    checksum = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
+    allowed = {"plan.json", "state-000000.json", ".active-" + checksum + ".tmp"}
+    if any(path.name not in allowed for path in directory.iterdir()):
+        raise BridgeError("handoff_preparation_unproven")
+    revision = _handoff_activate(directory, state)
+    _handoff_sync_directory(BRIDGE_STATE)
+    return identity, revision
+
+
+def handoff_journal_read(identity: str) -> tuple[dict, dict, str]:
+    directory = _handoff_journal_directory(identity)
+    _validate_tree_no_symlink(directory)
+    _root_metadata(BRIDGE_STATE, directory=True, mode=0o700)
+    _root_metadata(directory, directory=True, mode=0o700)
+    for name in ("plan.json", "active.json"):
+        validate_snapshot_metadata(_root_metadata(directory / name), allowed_owners={0}, root_only=True)
+    plan = json.loads(_read_private_copy_source(directory / "plan.json", snapshot_sha256(directory / "plan.json")))
+    if digest(plan) != identity:
+        raise BridgeError("handoff_journal_plan_changed")
+    pointer = json.loads(_read_private_copy_source(directory / "active.json", snapshot_sha256(directory / "active.json")))
+    if (set(pointer) != {"state", "sha256"} or not re.fullmatch(r"state-[0-9]{6}\.json", pointer.get("state", ""))
+            or not HASH_RE.fullmatch(pointer.get("sha256", ""))):
+        raise BridgeError("handoff_journal_pointer_invalid")
+    path = directory / pointer["state"]
+    validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+    state = json.loads(_read_private_copy_source(path, pointer["sha256"]))
+    if (state.get("version") != 1 or state.get("plan") != identity
+            or not isinstance(state.get("sequence"), int) or not 0 <= state["sequence"] <= 64
+            or pointer["state"] != "state-" + str(state["sequence"]).zfill(6) + ".json"
+            or set(state.get("phases", {})) != set(SERVICES)
+            or any(phase not in _handoff_phases(plan) for phase in state["phases"].values())):
+        raise BridgeError("handoff_journal_state_invalid")
+    # Verify the entire append-only chain, not only the active state.
+    previous = state.get("previous")
+    for sequence in range(state["sequence"] - 1, -1, -1):
+        if not isinstance(previous, str) or not HASH_RE.fullmatch(previous):
+            raise BridgeError("handoff_journal_chain_invalid")
+        path = directory / ("state-" + str(sequence).zfill(6) + ".json")
+        validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+        saved = json.loads(_read_private_copy_source(path, previous))
+        if saved.get("sequence") != sequence or saved.get("plan") != identity:
+            raise BridgeError("handoff_journal_chain_invalid")
+        previous = saved.get("previous")
+    if previous is not None:
+        raise BridgeError("handoff_journal_chain_invalid")
+    return plan, state, pointer["sha256"]
+
+
+def handoff_journal_advance(identity: str, revision: str, service: str, phase: str, observation: dict) -> str:
+    _assert_common_lock_held()
+    plan, state, current = handoff_journal_read(identity)
+    phases = _handoff_phases(plan)
+    if not HASH_RE.fullmatch(revision) or current != revision:
+        raise BridgeError("handoff_journal_revision_changed")
+    if service not in SERVICES or phase not in phases:
+        raise BridgeError("handoff_journal_phase_invalid")
+    if phases.index(phase) != phases.index(state["phases"][service]) + 1:
+        raise BridgeError("handoff_journal_phase_order")
+    if service == "web" and state["phases"]["api"] != "healthy":
+        raise BridgeError("handoff_api_health_required")
+    if (not isinstance(observation, dict) or set(observation) != {"id", "configuration"}
+            or not CONTAINER_ID_RE.fullmatch(observation.get("id", ""))
+            or not HASH_RE.fullmatch(observation.get("configuration", ""))):
+        raise BridgeError("handoff_journal_observation_invalid")
+    next_state = copy.deepcopy(state)
+    next_state["previous"] = current
+    next_state["sequence"] += 1
+    next_state["phases"][service] = phase
+    next_state["observations"][service] = copy.deepcopy(observation)
+    next_state["event"] = {"service": service, "phase": phase, "observation": observation}
+    return _handoff_activate(_handoff_journal_directory(identity), next_state)
+
+
+def _handoff_inspect(identity: str) -> dict:
+    if not (CONTAINER_ID_RE.fullmatch(identity) or identity in {PROJECT + "-api-1", PROJECT + "-web-1"}):
+        raise BridgeError("handoff_inspect_identity_invalid")
+    result = json.loads(_docker(["inspect", identity]))
+    if not isinstance(result, list) or len(result) != 1 or not isinstance(result[0], dict):
+        raise BridgeError("handoff_inspect_invalid")
+    return result[0]
+
+
+def _handoff_original(plan: dict, service: str, *, retained: bool, running: bool) -> dict:
+    expected = next(record for record in plan["sources"] if record["service"] == service and not record["retained"])
+    item = _handoff_inspect(expected["id"])
+    observed = handoff_record(service, item, expected["project"], retained=retained)
+    compare = dict(expected, retained=retained,
+                   name=handoff_retained_name(service, expected["id"]) if retained else expected["name"])
+    if observed != compare or item.get("State", {}).get("Running") is not running:
+        raise BridgeError("handoff_original_changed")
+    return item
+
+
+def _handoff_observation(item: dict) -> dict:
+    return {"id": item["Id"], "configuration": handoff_configuration(item)}
+
+
+def _handoff_candidate(plan: dict, service: str, *, healthy: bool) -> dict:
+    item = _handoff_inspect(PROJECT + "-" + service + "-1")
+    handoff_record(service, item, plan["project"])
+    document = plan["models"][service]
+    model = document["services"][service]
+    if item.get("Image") != plan["services"][service]["candidate_image"]:
+        raise BridgeError("handoff_candidate_image_changed")
+    image = json.loads(_docker(["image", "inspect", item["Image"]]))[0]
+    prove_service_model(service, model, document, item, image)
+    if healthy and (not item.get("State", {}).get("Running")
+                    or item.get("State", {}).get("Health", {}).get("Status") != "healthy"):
+        raise BridgeError("handoff_candidate_unhealthy")
+    return item
+
+
+def _handoff_validate_inputs(plan: dict) -> None:
+    if _validate_env_file() != plan["environment_digest"]:
+        raise BridgeError("handoff_environment_changed")
+    for raw, checksum in plan["source_digests"].items():
+        if _validate_snapshot_source(Path(raw)) != checksum:
+            raise BridgeError("handoff_source_changed")
+
+
+def _handoff_check_api(item: dict) -> None:
+    env = environment_map(item["Config"].get("Env") or [])
+    if env.get("APP_ENV") != "production" or env.get("FACIAL_PROCESSING_ENABLED") != "true":
+        raise BridgeError("handoff_restored_facial_mismatch")
+    schema = _docker(["exec", "-e", "PYTHONDONTWRITEBYTECODE=1", item["Id"], "python", "-B", "-m", "alembic", "current"], timeout=60)
+    revisions = [match.group(1) for line in schema.splitlines() if (match := REVISION_RE.fullmatch(line.strip()))]
+    if revisions != ["20261113_0126"]:
+        raise BridgeError("handoff_restored_schema_mismatch")
+
+
+def handoff_execute_service(identity: str, revision: str, service: str) -> str:
+    """No implicit resume: an intent left by a failure requires recovery."""
+    _assert_common_lock_held()
+    plan, state, current = handoff_journal_read(identity)
+    if current != revision or service not in SERVICES or state["phases"][service] != "prepared":
+        raise BridgeError("handoff_execution_requires_prepared")
+    if service == "web" and state["phases"]["api"] != "healthy":
+        raise BridgeError("handoff_api_health_required")
+    _handoff_validate_inputs(plan)
+    document = plan["models"][service]
+    if digest(document) != plan["services"][service]["candidate_model"]:
+        raise BridgeError("handoff_candidate_model_changed")
+    original = _handoff_original(plan, service, retained=False, running=True)
+    if original.get("State", {}).get("Health", {}).get("Status") != "healthy":
+        raise BridgeError("handoff_source_unhealthy")
+    _handoff_assert_retained_name_free(plan["services"][service]["retained_name"])
+    if service == "web":
+        api = _handoff_candidate(plan, "api", healthy=True)
+        if _handoff_observation(api) != state["observations"]["api"]:
+            raise BridgeError("handoff_api_changed_before_web")
+    # Validate candidate defaults/configuration BEFORE stopping the original.
+    prospective = copy.deepcopy(original)
+    prospective["Image"] = plan["services"][service]["candidate_image"]
+    prospective["Config"]["Env"] = [key + "=" + value for key, value in document["services"][service]["environment"].items()]
+    image = json.loads(_docker(["image", "inspect", prospective["Image"]]))[0]
+    prove_service_model(service, document["services"][service], document, prospective, image)
+    destination = _handoff_journal_directory(identity) / ("apply-" + service + ".json")
+    _write_private_file(destination, json.dumps(_escape_compose(document), sort_keys=True).encode())
+    revision = handoff_journal_advance(identity, revision, service, "stop_intent", _handoff_observation(original))
+    _handoff_validate_inputs(plan)
+    _docker(["stop", "--time", "30", original["Id"]], timeout=60)
+    stopped = _handoff_original(plan, service, retained=False, running=False)
+    revision = handoff_journal_advance(identity, revision, service, "stopped", _handoff_observation(stopped))
+    revision = handoff_journal_advance(identity, revision, service, "rename_intent", _handoff_observation(stopped))
+    _handoff_validate_inputs(plan)
+    _docker(["rename", original["Id"], plan["services"][service]["retained_name"]])
+    retained = _handoff_original(plan, service, retained=True, running=False)
+    revision = handoff_journal_advance(identity, revision, service, "retained", _handoff_observation(retained))
+    revision = handoff_journal_advance(identity, revision, service, "create_intent", _handoff_observation(retained))
+    _handoff_validate_inputs(plan)
+    _run(["/usr/bin/docker", "compose", "--project-directory", str(WORKING_DIR), "-p", plan["project"],
+          "-f", str(destination), "up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait",
+          "--wait-timeout", "120", service], app_version=plan["target_sha"], timeout=300)
+    candidate = _handoff_candidate(plan, service, healthy=True)
+    revision = handoff_journal_advance(identity, revision, service, "created", _handoff_observation(candidate))
+    if service == "api":
+        _handoff_check_api(candidate)
+    revision = handoff_journal_advance(identity, revision, service, "healthy", _handoff_observation(candidate))
+    return revision
+
+
+def handoff_recovery_inventory(identity: str, items: list[dict], images: dict, schema: str | None,
+                               support_sha: str | None = None) -> dict:
+    """Represent an interrupted handoff without pretending unavailable schema is known."""
+    plan, state, revision = handoff_journal_read(identity)
+    support_sha = support_sha or plan["support_sha"]
+    if not SHA_RE.fullmatch(support_sha):
+        raise BridgeError("handoff_recovery_support_invalid")
+    restoring = plan["domain"] == "app-first-handoff-recovery-plan-v1"
+    if schema is not None and schema != "20261113_0126":
+        raise BridgeError("handoff_recovery_schema_mismatch")
+    by_id = {item["Id"]: item for item in items}
+    if len(by_id) != len(items):
+        raise BridgeError("handoff_duplicate_observation")
+    known, services = set(), {}
+    for record in plan["sources"]:
+        if record["retained"]:
+            item = by_id.get(record["id"])
+            if item is None or _handoff_match_record(record, item) != record:
+                raise BridgeError("handoff_recovery_retained_changed")
+            known.add(item["Id"])
+    for service in SERVICES:
+        record = next(r for r in plan["sources"] if r["service"] == service and not r["retained"])
+        original = by_id.get(record["id"])
+        if original is None:
+            raise BridgeError("handoff_recovery_original_missing")
+        original_name = plan["services"][service]["original_name"]
+        retained_name = plan["services"][service]["retained_name"]
+        name = original.get("Name", "").lstrip("/")
+        if name not in {original_name, retained_name}:
+            raise BridgeError("handoff_recovery_original_name_changed")
+        parked = name == retained_name
+        phase = state["phases"][service]
+        running = original.get("State", {}).get("Running") is True
+        if not restoring and ((phase == "prepared" and (parked or not running))
+                or (phase == "stop_intent" and parked)
+                or (phase == "stopped" and (parked or running))
+                or (phase == "rename_intent" and running)
+                or (phase in {"retained", "create_intent", "created", "healthy"} and (not parked or running))):
+            raise BridgeError("handoff_recovery_phase_mismatch")
+        if restoring:
+            previous = plan["recovery"]["services"][service]
+            if phase in {"prepared", "candidate_stop_intent", "candidate_stopped", "candidate_rename_intent", "candidate_retained"}:
+                if parked != previous["original"]["retained"] or running != previous["original_running"]:
+                    raise BridgeError("handoff_recovery_original_phase_mismatch")
+            elif phase == "original_rename_intent":
+                if running != previous["original_running"]:
+                    raise BridgeError("handoff_recovery_original_phase_mismatch")
+            elif (phase in {"original_named", "original_start_intent", "original_started", "healthy"}
+                  and (parked or (phase in {"original_started", "healthy"} and not running))):
+                raise BridgeError("handoff_recovery_original_phase_mismatch")
+        observed = handoff_record(service, original, record["project"], retained=parked)
+        if observed != dict(record, retained=parked, name=name):
+            raise BridgeError("handoff_recovery_original_changed")
+        known.add(original["Id"])
+        candidates = []
+        for item in items:
+            if item["Id"] == original["Id"]:
+                continue
+            labels = item.get("Config", {}).get("Labels") or {}
+            if labels.get("com.docker.compose.project") != plan["project"] or labels.get("com.docker.compose.service") != service:
+                continue
+            candidates.append(item)
+        if len(candidates) > 1:
+            raise BridgeError("handoff_recovery_candidate_ambiguous")
+        candidate = candidates[0] if candidates else None
+        if not restoring and ((candidate and phase not in {"create_intent", "created", "healthy"}) or (not candidate and phase in {"created", "healthy"})):
+            raise BridgeError("handoff_recovery_candidate_phase_mismatch")
+        if restoring:
+            previous_candidate = plan["recovery"]["services"][service]["candidate"]
+            if bool(candidate) != bool(previous_candidate) or (candidate and candidate["Id"] != previous_candidate["id"]):
+                raise BridgeError("handoff_recovery_candidate_identity_changed")
+        if candidate:
+            candidate_name = candidate.get("Name", "").lstrip("/")
+            parked_candidate = candidate_name == handoff_retained_name(service, candidate["Id"])
+            candidate_record = handoff_record(service, candidate, plan["project"], retained=parked_candidate)
+            if candidate["Image"] != plan["services"][service]["candidate_image"]:
+                raise BridgeError("handoff_recovery_candidate_image_changed")
+            document = plan["models"][service]
+            image = images.get(candidate["Image"])
+            if image is None:
+                raise BridgeError("handoff_recovery_image_missing")
+            prove_service_model(service, document["services"][service], document, candidate, image)
+            if not restoring and state["phases"][service] in {"created", "healthy"} and candidate["Id"] != state["observations"][service]["id"]:
+                raise BridgeError("handoff_recovery_candidate_identity_changed")
+            known.add(candidate["Id"])
+        else:
+            candidate_record = None
+        if original["State"].get("Running") and candidate and candidate["State"].get("Running"):
+            raise BridgeError("handoff_recovery_two_running")
+        services[service] = {"original": observed, "original_running": original["State"].get("Running") is True,
+                             "original_health": original["State"].get("Health", {}).get("Status", "none"),
+                             "candidate": candidate_record,
+                             "candidate_running": bool(candidate and candidate["State"].get("Running")),
+                             "candidate_health": candidate["State"].get("Health", {}).get("Status", "none") if candidate else None}
+    for item in items:
+        if item["Id"] in known:
+            continue
+        labels = item.get("Config", {}).get("Labels") or {}
+        project = labels.get("com.docker.compose.project", "")
+        if (project == PROJECT or project.startswith(PROJECT + "-app-")) and labels.get("com.docker.compose.service") in SERVICES:
+            raise BridgeError("handoff_recovery_unregistered_container")
+        if item.get("Name", "").lstrip("/") in {entry["original_name"] for entry in plan["services"].values()}:
+            raise BridgeError("handoff_recovery_name_occupied")
+    return {"version": 1, "domain": "app-handoff-recovery-v1", "handoff": identity,
+            "revision": revision, "support_sha": support_sha, "interrupted_sha": plan["target_sha"],
+            "schema_status": "unavailable" if schema is None else "verified", "schema": schema,
+            "services": services}
+
+
+def handoff_recovery_prepare(inventory: dict, approval: str) -> tuple[str, str]:
+    _assert_common_lock_held()
+    if inventory.get("domain") != "app-handoff-recovery-v1" or digest(inventory) != approval:
+        raise BridgeError("handoff_recovery_approval_mismatch")
+    original, _, revision = handoff_journal_read(inventory["handoff"])
+    if revision != inventory["revision"]:
+        raise BridgeError("handoff_recovery_revision_changed")
+    plan = copy.deepcopy(original)
+    plan["domain"] = "app-first-handoff-recovery-plan-v1"
+    plan["recovery"] = copy.deepcopy(inventory)
+    plan["approval"] = approval
+    plan["support_sha"] = inventory["support_sha"]
+    return _handoff_prepare_journal(plan)
+
+
+def _handoff_recovery_candidate(plan: dict, service: str, *, parked: bool) -> dict | None:
+    record = plan["recovery"]["services"][service]["candidate"]
+    if record is None:
+        return None
+    item = _handoff_inspect(record["id"])
+    observed = handoff_record(service, item, plan["project"], retained=parked)
+    expected = dict(record, retained=parked,
+                    name=handoff_retained_name(service, record["id"]) if parked else PROJECT + "-" + service + "-1")
+    if observed != expected:
+        raise BridgeError("handoff_recovery_candidate_changed")
+    return item
+
+
+def _handoff_wait_restored(plan: dict, service: str) -> dict:
+    deadline = time.monotonic() + 120
+    while True:
+        item = _handoff_original(plan, service, retained=False, running=True)
+        if item.get("State", {}).get("Health", {}).get("Status") == "healthy":
+            return item
+        if time.monotonic() >= deadline:
+            raise BridgeError("handoff_restored_unhealthy")
+        time.sleep(2)
+
+
+def handoff_recover_service(identity: str, revision: str, service: str) -> str:
+    _assert_common_lock_held()
+    plan, state, current = handoff_journal_read(identity)
+    if (plan["domain"] != "app-first-handoff-recovery-plan-v1" or current != revision
+            or service not in SERVICES or state["phases"][service] != "prepared"):
+        raise BridgeError("handoff_recovery_requires_prepared")
+    if service == "web" and state["phases"]["api"] != "healthy":
+        raise BridgeError("handoff_api_health_required")
+    _handoff_validate_inputs(plan)
+    entry = plan["recovery"]["services"][service]
+    original_parked = entry["original"]["retained"]
+    original = _handoff_original(plan, service, retained=original_parked, running=entry["original_running"])
+    candidate_parked = bool(entry["candidate"] and entry["candidate"]["retained"])
+    candidate = _handoff_recovery_candidate(plan, service, parked=candidate_parked)
+    if (original.get("State", {}).get("Health", {}).get("Status", "none") != entry["original_health"]
+            or (candidate and (candidate.get("State", {}).get("Running") is True) != entry["candidate_running"])
+            or (candidate and candidate.get("State", {}).get("Health", {}).get("Status", "none") != entry["candidate_health"])):
+        raise BridgeError("handoff_recovery_runtime_changed")
+    observation = _handoff_observation(candidate or original)
+    revision = handoff_journal_advance(identity, revision, service, "candidate_stop_intent", observation)
+    if candidate and candidate.get("State", {}).get("Running"):
+        _docker(["stop", "--time", "30", candidate["Id"]], timeout=60)
+    candidate = _handoff_recovery_candidate(plan, service, parked=candidate_parked)
+    if candidate and candidate.get("State", {}).get("Running"):
+        raise BridgeError("handoff_recovery_candidate_still_running")
+    observation = _handoff_observation(candidate or original)
+    revision = handoff_journal_advance(identity, revision, service, "candidate_stopped", observation)
+    revision = handoff_journal_advance(identity, revision, service, "candidate_rename_intent", observation)
+    if candidate and not candidate_parked:
+        name = handoff_retained_name(service, candidate["Id"])
+        if _docker(["ps", "-a", "--filter", "name=^/" + name + "$", "--format", "{{.ID}}"]).strip():
+            raise BridgeError("handoff_retained_name_occupied")
+        _docker(["rename", candidate["Id"], name])
+    candidate = _handoff_recovery_candidate(plan, service, parked=bool(candidate))
+    revision = handoff_journal_advance(identity, revision, service, "candidate_retained", _handoff_observation(candidate or original))
+    revision = handoff_journal_advance(identity, revision, service, "original_rename_intent", _handoff_observation(original))
+    if original_parked:
+        if _docker(["ps", "-a", "--filter", "name=^/" + plan["services"][service]["original_name"] + "$", "--format", "{{.ID}}"]).strip():
+            raise BridgeError("handoff_original_name_occupied")
+        _docker(["rename", original["Id"], plan["services"][service]["original_name"]])
+    named = _handoff_original(plan, service, retained=False, running=entry["original_running"])
+    revision = handoff_journal_advance(identity, revision, service, "original_named", _handoff_observation(named))
+    revision = handoff_journal_advance(identity, revision, service, "original_start_intent", _handoff_observation(named))
+    if not named["State"].get("Running"):
+        _docker(["start", named["Id"]], timeout=60)
+    restored = _handoff_wait_restored(plan, service)
+    revision = handoff_journal_advance(identity, revision, service, "original_started", _handoff_observation(restored))
+    api_source = next(record for record in plan["sources"] if record["service"] == "api" and not record["retained"])
+    _handoff_check_api(_handoff_inspect(api_source["id"]))
+    revision = handoff_journal_advance(identity, revision, service, "healthy", _handoff_observation(restored))
+    return revision
+
+
+def handoff_publish_runtime(identity: str, *, restoring: bool = False) -> dict:
+    _assert_common_lock_held()
+    plan, state, _ = handoff_journal_read(identity)
+    expected_domain = "app-first-handoff-recovery-plan-v1" if restoring else "app-first-handoff-v1"
+    if plan["domain"] != expected_domain or any(phase != "healthy" for phase in state["phases"].values()):
+        raise BridgeError("handoff_publish_requires_healthy")
+    _handoff_validate_inputs(plan)
+    records, selected = [], {}
+    for record in plan["sources"]:
+        if record["retained"]:
+            records.append(copy.deepcopy(record))
+            continue
+        service = record["service"]
+        if restoring:
+            item = _handoff_original(plan, service, retained=False, running=True)
+            records.append(handoff_record(service, item, record["project"]))
+            selected[service] = item
+            candidate = _handoff_recovery_candidate(plan, service, parked=bool(plan["recovery"]["services"][service]["candidate"]))
+            if candidate is not None:
+                records.append(handoff_record(service, candidate, plan["project"], retained=True))
+        else:
+            retained = _handoff_original(plan, service, retained=True, running=False)
+            records.append(handoff_record(service, retained, record["project"], retained=True))
+            item = _handoff_candidate(plan, service, healthy=True)
+            records.append(handoff_record(service, item, plan["project"]))
+            selected[service] = item
+        if _handoff_observation(item) != state["observations"][service]:
+            raise BridgeError("handoff_publish_runtime_changed")
+    records.sort(key=lambda record: record["id"])
+    handoff_select(_handoff_read_items(records), records)
+    _handoff_check_api(selected["api"])
+    web_version = (plan.get("original_web_version", selected["web"]["Config"]["Labels"].get("io.pickyourpic.release", ""))
+                   if restoring else plan["target_sha"])
+    if not SHA_RE.fullmatch(web_version):
+        raise BridgeError("handoff_web_version_unproven")
+    projects = {record["service"]: record["project"] for record in records if not record["retained"]}
+    context = _discover_context(selected=selected, expected_projects=projects)
+    models = plan["original_models"] if restoring else plan["models"]
+    for service in SERVICES:
+        path = _handoff_journal_directory(identity) / ("final-" + service + ".json")
+        content = json.dumps(_escape_compose(models[service]), sort_keys=True).encode()
+        if os.path.lexists(path):
+            validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+            _read_private_copy_source(path, hashlib.sha256(content).hexdigest())
+        else:
+            _write_private_file(path, content)
+        if path not in context["paths"]:
+            context["paths"].append(path)
+        context["digests"][str(path)] = snapshot_sha256(path)
+        context["sources"][service] = {"paths": [path], "workdir": WORKING_DIR, "config_hash": None}
+        context["config_hashes"][service] = None
+    context["handoff_selection_records"] = records
+    pointer = BRIDGE_STATE / "active-base.json"
+    context["base_pointer_digest"] = snapshot_sha256(pointer) if os.path.lexists(pointer) else None
+    with tempfile.TemporaryDirectory(prefix="markina-handoff-final-", dir="/tmp") as directory:
+        context = _prepare_compose_context(context, "inventory", plan["support_sha"], "", Path(directory))
+        _prove_context(context)
+        proof = {"version": 1, "domain": "app-runtime-transition-v1", "handoff": identity,
+                 "support_sha": plan["support_sha"], "target_sha": plan["checkout_sha"] if restoring else plan["target_sha"],
+                 "mode": "rollback" if restoring else "release", "runtime": adoption_runtime_binding(selected),
+                 "models": {service: digest(model) for service, model in context["models"].items()},
+                 "records": digest(records), "schema": "20261113_0126"}
+        approval = plan["approval"] if restoring else identity
+        _publish_runtime_base(context, context["models"], proof, approval, handoff_records=records)
+    return {"checkout_sha": proof["target_sha"], "api_image_id": selected["api"]["Image"],
+            "web_image_id": selected["web"]["Image"], "web_semantic_hash": context["semantic_hashes"]["web"],
+            "web_version": web_version,
+            "api_version": environment_map(selected["api"]["Config"].get("Env") or []).get("APP_VERSION", "")}
+
+
+@contextmanager
+def _handoff_proven_context(support_sha: str):
+    if _git("rev-parse", "origin/main") != support_sha or _git("status", "--porcelain"):
+        raise BridgeError("handoff_support_checkout_invalid")
+    if _read_base_pointer() is None:
+        raise BridgeError("handoff_adopted_base_required")
+    context = _select_adopted_sources(_discover_context())
+    with tempfile.TemporaryDirectory(prefix="markina-handoff-proof-", dir="/tmp") as directory:
+        context = _prepare_compose_context(context, "inventory", support_sha, "", Path(directory))
+        _prove_context(context)
+        _handoff_check_api(context["containers"]["api"])
+        version = environment_map(context["containers"]["api"]["Config"].get("Env") or []).get("APP_VERSION", "")
+        if not SHA_RE.fullmatch(version):
+            raise BridgeError("handoff_source_version_invalid")
+        _git("merge-base", "--is-ancestor", version, support_sha)
+        context["checkout_sha"] = _git("rev-parse", "HEAD")
+        if not SHA_RE.fullmatch(context["checkout_sha"]):
+            raise BridgeError("handoff_checkout_invalid")
+        _git("merge-base", "--is-ancestor", context["checkout_sha"], support_sha)
+        yield context
+        _assert_sources_unchanged(context)
+
+
+def _handoff_context_records(context: dict, *, require_witnesses: bool) -> list[dict]:
+    records = _handoff_registered_records()
+    if records is None:
+        records = [handoff_record(service, item, context["projects"][service])
+                   for service, item in context["containers"].items()]
+    registry = handoff_witness_registry()
+    if registry is None:
+        if require_witnesses:
+            raise BridgeError("handoff_witness_registration_required")
+        return records
+    cached = [record for record in records if record.get("witness")]
+    if cached and sorted(cached, key=lambda r: r["id"]) != registry["witnesses"]:
+        raise BridgeError("handoff_witness_set_changed")
+    return [record for record in records if not record.get("witness")] + registry["witnesses"]
+
+
+def _handoff_active_id() -> str | None:
+    path = BRIDGE_STATE / "active-handoff.json"
+    if not os.path.lexists(path):
+        return None
+    _validate_tree_no_symlink(path)
+    _root_metadata(BRIDGE_STATE, directory=True, mode=0o700)
+    validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+    value = json.loads(_read_private_copy_source(path, snapshot_sha256(path)))
+    if set(value) != {"version", "identity"} or value.get("version") != 1 or not HASH_RE.fullmatch(value.get("identity", "")):
+        raise BridgeError("handoff_active_pointer_invalid")
+    handoff_journal_read(value["identity"])
+    return value["identity"]
+
+
+def _handoff_set_active(identity: str) -> None:
+    _assert_common_lock_held()
+    handoff_journal_read(identity)
+    path = BRIDGE_STATE / "active-handoff.json"
+    if os.path.lexists(path):
+        _handoff_active_id()
+        old = _read_private_copy_source(path, snapshot_sha256(path))
+        _write_private_file(_handoff_journal_directory(identity) / "previous-active.json", old)
+    staging = BRIDGE_STATE / (".active-handoff-" + identity + ".tmp")
+    _write_private_file(staging, json.dumps({"version": 1, "identity": identity}, sort_keys=True).encode())
+    _handoff_sync_directory(BRIDGE_STATE)
+    os.replace(staging, path)
+    _handoff_sync_directory(BRIDGE_STATE)
+
+
+def _handoff_candidate_plan(args) -> dict:
+    for name in ("app-in-flight.sha", "app-rollback-in-flight.sha", "web-in-flight.sha", "web-pending.identity"):
+        if os.path.lexists(STATE_DIR / name):
+            raise BridgeError("handoff_interrupted_operation_requires_recovery")
+    with _handoff_proven_context(args.sha) as context:
+        records = _handoff_context_records(context, require_witnesses=True)
+        items = _handoff_read_items(records)
+        if context["containers"]["api"]["Image"] != args.api_base_image_id:
+            raise BridgeError("handoff_artifact_base_changed")
+        for service in SERVICES:
+            _handoff_assert_retained_name_free(handoff_retained_name(service, context["containers"][service]["Id"]))
+        models = {service: replacement_document(service, context["models"][service], context["containers"][service],
+                                                args.candidate_api_id if service == "api" else args.candidate_web_id,
+                                                args.sha) for service in SERVICES}
+        sources = dict(context["digests"])
+        sources[str(BRIDGE_STATE / "handoff-witnesses.json")] = snapshot_sha256(BRIDGE_STATE / "handoff-witnesses.json")
+        plan = handoff_plan(args.sha, args.sha, args.artifact_sha256, items, records, models,
+                            context["models"], sources, context["environment_digest"], context["checkout_sha"])
+        plan["original_web_version"] = _web_identity(context, args.sha).split()[0]
+        plan["previous_handoff"] = _handoff_active_id()
+        return plan
+
+
+def _handoff_assert_retained_name_free(name: str) -> None:
+    if not re.fullmatch(re.escape(PROJECT) + r"-retained-(api|web)-[0-9a-f]{64}", name):
+        raise BridgeError("handoff_retained_name_invalid")
+    if _docker(["ps", "-a", "--filter", "name=^/" + name + "$", "--format", "{{.ID}}"]).strip():
+        raise BridgeError("handoff_retained_name_occupied")
+
+
+def _handoff_archive_inputs(identity: str, plan: dict) -> None:
+    directory = _handoff_journal_directory(identity)
+    for index, (raw, checksum) in enumerate(sorted(plan["source_digests"].items())):
+        content = _read_private_copy_source(Path(raw), checksum)
+        _handoff_archive_file(directory / ("historical-" + str(index).zfill(4) + ".json"), content)
+    _handoff_archive_file(directory / "original.env", _read_private_copy_source(ENV_FILE, plan["environment_digest"], max_size=16 * 1024 * 1024))
+    _handoff_sync_directory(directory)
+
+
+def _handoff_archive_file(path: Path, content: bytes) -> None:
+    if os.path.lexists(path):
+        validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+        _read_private_copy_source(path, hashlib.sha256(content).hexdigest(), max_size=16 * 1024 * 1024)
+    else:
+        _write_private_file(path, content)
+
+
+def _handoff_live_recovery_inventory(support_sha: str) -> dict:
+    if _git("rev-parse", "origin/main") != support_sha or _git("status", "--porcelain"):
+        raise BridgeError("handoff_support_checkout_invalid")
+    identity = _handoff_active_id()
+    if identity is None:
+        raise BridgeError("handoff_active_journal_missing")
+    plan, _, _ = handoff_journal_read(identity)
+    items = _handoff_read_items()
+    images = {item["Image"]: json.loads(_docker(["image", "inspect", item["Image"]]))[0] for item in items}
+    schema = None
+    eligible = [item for item in items if item.get("Name") == "/" + PROJECT + "-api-1"
+                and item.get("State", {}).get("Running")
+                and item.get("State", {}).get("Health", {}).get("Status") == "healthy"]
+    if len(eligible) > 1:
+        raise BridgeError("handoff_recovery_api_ambiguous")
+    if eligible:
+        item = eligible[0]
+        permitted = {record["id"] for record in plan["sources"] if record["service"] == "api" and not record["retained"]}
+        labels = item["Config"].get("Labels") or {}
+        if item["Id"] not in permitted and (labels.get("com.docker.compose.project") != plan["project"] or labels.get("com.docker.compose.service") != "api"):
+            raise BridgeError("handoff_recovery_api_unproven")
+        _handoff_check_api(item)
+        schema = "20261113_0126"
+    return handoff_recovery_inventory(identity, items, images, schema, support_sha=support_sha)
+
+
+def _handoff_legacy_proof(support_sha: str, *, allow_marker_absent: bool = False) -> dict:
+    if _handoff_active_id() is not None:
+        raise BridgeError("handoff_legacy_recovery_not_applicable")
+    for name in ("app-rollback-in-flight.sha", "web-in-flight.sha", "web-pending.identity"):
+        if os.path.lexists(STATE_DIR / name):
+            raise BridgeError("handoff_conflicting_operation")
+    pointer_path = BRIDGE_STATE / "active-transition.json"
+    _validate_tree_no_symlink(pointer_path)
+    validate_snapshot_metadata(_root_metadata(pointer_path), allowed_owners={0}, root_only=True)
+    pointer_hash = snapshot_sha256(pointer_path)
+    pointer = json.loads(_read_private_copy_source(pointer_path, pointer_hash))
+    if pointer.get("mode") != "release":
+        raise BridgeError("handoff_legacy_transition_invalid")
+    directory = _operation_directory("release", pointer["target_sha"], pointer["approval"])
+    transition_path = directory / "transition.json"
+    validate_snapshot_metadata(_root_metadata(transition_path), allowed_owners={0}, root_only=True)
+    transition = json.loads(_read_private_copy_source(transition_path, pointer["sha256"]))
+    if (transition.get("version") != 1 or transition.get("mode") != "release"
+            or transition.get("target_sha") != pointer["target_sha"] or transition.get("approval") != pointer["approval"]
+            or set(transition.get("candidates", {})) != set(SERVICES)):
+        raise BridgeError("handoff_legacy_transition_invalid")
+    manifest_path = directory / "manifest.json"
+    _read_private_copy_source(manifest_path, transition["manifest_sha256"])
+    saved = _read_manifest(directory)
+    if saved.get("target_sha") != pointer["target_sha"] or saved.get("fingerprint") != pointer["approval"]:
+        raise BridgeError("handoff_legacy_manifest_invalid")
+    marker_present = os.path.lexists(STATE_DIR / "app-in-flight.sha")
+    if marker_present:
+        if _state_value("app-in-flight.sha") != pointer["target_sha"]:
+            raise BridgeError("handoff_legacy_marker_changed")
+    elif not allow_marker_absent:
+        raise BridgeError("handoff_legacy_marker_required")
+    with _handoff_proven_context(support_sha) as context:
+        if adoption_runtime_binding(saved["containers"]) != adoption_runtime_binding(context["containers"]):
+            raise BridgeError("handoff_legacy_originals_not_intact")
+        if any(item["State"].get("Health", {}).get("Status") != "healthy" for item in context["containers"].values()):
+            raise BridgeError("handoff_legacy_originals_unhealthy")
+        api_version = environment_map(context["containers"]["api"]["Config"].get("Env") or []).get("APP_VERSION", "")
+        web_version = context["containers"]["web"]["Config"]["Labels"].get("io.pickyourpic.release", "")
+        if not SHA_RE.fullmatch(api_version) or api_version != web_version:
+            raise BridgeError("handoff_legacy_checkout_unproven")
+        _git("merge-base", "--is-ancestor", api_version, pointer["target_sha"])
+        if context["checkout_sha"] not in {pointer["target_sha"], api_version}:
+            raise BridgeError("handoff_legacy_checkout_changed")
+        records = _handoff_context_records(context, require_witnesses=False)
+        witnesses = handoff_witness_inventory(support_sha, _handoff_read_items(), records,
+                                              context["digests"], context["environment_digest"])
+        sources = dict(context["digests"])
+        sources.update({str(pointer_path): pointer_hash, str(transition_path): pointer["sha256"],
+                        str(manifest_path): transition["manifest_sha256"]})
+        for service in SERVICES:
+            path = directory / ("apply-" + service + ".compose.json")
+            validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+            _read_private_copy_source(path, transition["candidates"][service])
+            sources[str(path)] = transition["candidates"][service]
+        return {"version": 1, "domain": "app-legacy-handoff-recovery-v1", "support_sha": support_sha,
+                "interrupted_sha": pointer["target_sha"], "checkout_sha": context["checkout_sha"],
+                "restore_checkout": api_version, "marker_present": marker_present,
+                "runtime": adoption_runtime_binding(context["containers"]), "witnesses": witnesses["witnesses"],
+                "source_digests": sources, "environment_digest": context["environment_digest"],
+                "schema": "20261113_0126"}
+
+
+def _handoff_legacy_ticket(approval: str) -> tuple[Path, dict | None]:
+    if not HASH_RE.fullmatch(approval):
+        raise BridgeError("handoff_legacy_approval_invalid")
+    directory = BRIDGE_STATE / ("legacy-recovery-" + approval)
+    if not os.path.lexists(directory):
+        return directory, None
+    _validate_tree_no_symlink(directory)
+    _root_metadata(directory, directory=True, mode=0o700)
+    path = directory / "prepared.json"
+    validate_snapshot_metadata(_root_metadata(path), allowed_owners={0}, root_only=True)
+    proof = json.loads(_read_private_copy_source(path, snapshot_sha256(path)))
+    if digest(proof) != approval or proof.get("domain") != "app-legacy-handoff-recovery-v1":
+        raise BridgeError("handoff_legacy_ticket_changed")
+    return directory, proof
+
+
+def _handoff_legacy_validate_prepared(args, directory: Path, proof: dict) -> None:
+    if proof["support_sha"] != args.sha:
+        raise BridgeError("handoff_legacy_support_changed")
+    intent = directory / "marker-clear-intent.json"
+    allow_absent = False
+    if os.path.lexists(intent):
+        validate_snapshot_metadata(_root_metadata(intent), allowed_owners={0}, root_only=True)
+        saved = json.loads(_read_private_copy_source(intent, snapshot_sha256(intent)))
+        if saved != {"approval": args.approval_fingerprint, "interrupted_sha": proof["interrupted_sha"], "checkout_sha": proof["restore_checkout"]}:
+            raise BridgeError("handoff_legacy_intent_changed")
+        allow_absent = True
+    current = _handoff_legacy_proof(args.sha, allow_marker_absent=allow_absent)
+    if current["checkout_sha"] not in {proof["checkout_sha"], proof["restore_checkout"]}:
+        raise BridgeError("handoff_legacy_checkout_changed")
+    current["checkout_sha"] = proof["checkout_sha"]
+    current["marker_present"] = proof["marker_present"]
+    if current != proof:
+        raise BridgeError("handoff_legacy_runtime_changed")
+
+
+def _handoff_legacy_cli(args) -> int:
+    if args.operation == "handoff-legacy-recovery-inventory":
+        proof = _handoff_legacy_proof(args.sha)
+        print("legacy_recovery_fingerprint=" + digest(proof))
+        print("checkout_sha=" + proof["restore_checkout"])
+        print("interrupted_sha=" + proof["interrupted_sha"])
+        return 0
+    _assert_common_lock_held()
+    directory, proof = _handoff_legacy_ticket(args.approval_fingerprint)
+    if args.operation == "handoff-legacy-recovery-prepare":
+        registry = handoff_witness_registry()
+        if registry is None:
+            raise BridgeError("handoff_witness_registration_required")
+        if proof is None:
+            proof = _handoff_legacy_proof(args.sha)
+            if digest(proof) != args.approval_fingerprint or registry["witnesses"] != proof["witnesses"]:
+                raise BridgeError("handoff_legacy_approval_mismatch")
+            _ensure_root_bridge_directory()
+            directory.mkdir(mode=0o700)
+            _write_private_file(directory / "prepared.json", json.dumps(proof, sort_keys=True).encode())
+            _handoff_sync_directory(directory)
+        else:
+            _handoff_legacy_validate_prepared(args, directory, proof)
+        print("checkout_sha=" + proof["restore_checkout"])
+        return 0
+    if args.operation not in {"handoff-legacy-recovery-finalize", "handoff-legacy-recovery-proxy"} or proof is None:
+        raise BridgeError("handoff_legacy_ticket_required")
+    _handoff_legacy_validate_prepared(args, directory, proof)
+    if _git("rev-parse", "HEAD") != proof["restore_checkout"]:
+        raise BridgeError("handoff_legacy_checkout_not_restored")
+    if args.operation == "handoff-legacy-recovery-proxy":
+        _handoff_nginx()
+        print("nginx_status=reloaded")
+        return 0
+    intent = directory / "marker-clear-intent.json"
+    if not os.path.lexists(intent):
+        _write_private_file(intent, json.dumps({"approval": args.approval_fingerprint,
+                            "interrupted_sha": proof["interrupted_sha"], "checkout_sha": proof["restore_checkout"]}, sort_keys=True).encode())
+        _handoff_sync_directory(directory)
+    marker = STATE_DIR / "app-in-flight.sha"
+    if os.path.lexists(marker):
+        if _state_value("app-in-flight.sha") != proof["interrupted_sha"]:
+            raise BridgeError("handoff_legacy_marker_changed")
+        descriptor = os.open(STATE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.unlink("app-in-flight.sha", dir_fd=descriptor)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    committed = directory / "committed.json"
+    if not os.path.lexists(committed):
+        _write_private_file(committed, json.dumps({"approval": args.approval_fingerprint,
+                            "checkout_sha": proof["restore_checkout"], "schema": "20261113_0126"}, sort_keys=True).encode())
+        _handoff_sync_directory(directory)
+    print("legacy_recovery_status=healthy")
+    print("checkout_sha=" + proof["restore_checkout"])
+    return 0
+
+
+def _handoff_nginx() -> None:
+    """Test/reload only the same running Markina proxy with the approved bind."""
+    _assert_common_lock_held()
+    ids = _list_service_ids("nginx")
+    if len(ids) != 1:
+        raise BridgeError("nginx_container_count_invalid")
+    item = json.loads(_docker(["inspect", ids[0]]))[0]
+    labels = item.get("Config", {}).get("Labels") or {}
+    if (item.get("Id") != ids[0] or labels.get("com.docker.compose.project") != PROJECT
+            or labels.get("com.docker.compose.service") != "nginx" or not item.get("State", {}).get("Running")
+            or item.get("NetworkSettings", {}).get("Ports") != {"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]}):
+        raise BridgeError("handoff_nginx_identity_invalid")
+    _docker(["exec", ids[0], "nginx", "-t"], timeout=30, max_output=65536)
+    current = json.loads(_docker(["inspect", ids[0]]))[0]
+    if (handoff_configuration(current) != handoff_configuration(item)
+            or current.get("State", {}).get("StartedAt") != item.get("State", {}).get("StartedAt")
+            or not current.get("State", {}).get("Running")
+            or current.get("NetworkSettings", {}).get("Ports") != item["NetworkSettings"]["Ports"]):
+        raise BridgeError("handoff_nginx_changed")
+    _docker(["exec", ids[0], "nginx", "-s", "reload"], timeout=30, max_output=65536)
+
+
+def _handoff_cli(args) -> int:
+    operation = args.operation
+    if operation.startswith("handoff-legacy-recovery-"):
+        return _handoff_legacy_cli(args)
+    if operation in {"handoff-witness-register", "handoff-prepare", "handoff-apply", "handoff-proxy", "handoff-recovery-prepare", "handoff-recovery-apply"}:
+        _assert_common_lock_held()
+    if _git("rev-parse", "origin/main") != args.sha or _git("status", "--porcelain"):
+        raise BridgeError("handoff_support_checkout_invalid")
+    if operation == "handoff-proxy":
+        identity = _handoff_active_id()
+        if identity is None:
+            raise BridgeError("handoff_active_journal_missing")
+        plan, state, _ = handoff_journal_read(identity)
+        recovering = plan["domain"] == "app-first-handoff-recovery-plan-v1"
+        approval = plan["approval"] if recovering else identity
+        checkout = plan["checkout_sha"] if recovering else plan["target_sha"]
+        marker = "app-rollback-in-flight.sha" if recovering else "app-in-flight.sha"
+        if (approval != args.approval_fingerprint or plan["support_sha"] != args.sha
+                or state["phases"] != {service: "healthy" for service in SERVICES}
+                or _git("rev-parse", "HEAD") != checkout or _state_value(marker) != plan["target_sha"]):
+            raise BridgeError("handoff_proxy_context_invalid")
+        with _handoff_proven_context(args.sha) as context:
+            if any(_handoff_observation(context["containers"][service]) != state["observations"][service] for service in SERVICES):
+                raise BridgeError("handoff_proxy_runtime_changed")
+            _handoff_nginx()
+        print("nginx_status=reloaded")
+        return 0
+    if operation in {"handoff-witness-inventory", "handoff-witness-register"}:
+        with _handoff_proven_context(args.sha) as context:
+            records = _handoff_context_records(context, require_witnesses=False)
+            proof = handoff_witness_inventory(args.sha, _handoff_read_items(), records, context["digests"], context["environment_digest"])
+            if operation == "handoff-witness-register":
+                handoff_register_witnesses(proof, args.approval_fingerprint)
+            print("witness_fingerprint=" + digest(proof))
+            print("witness_count=" + str(len(proof["witnesses"])))
+            for record in proof["witnesses"]:
+                print("witness=" + record["id"] + "|" + record["name"] + "|" + record["image"])
+        return 0
+    if operation in {"handoff-inventory", "handoff-prepare"}:
+        plan = _handoff_candidate_plan(args)
+        identity = digest(plan)
+        if operation == "handoff-prepare":
+            if identity != args.approval_fingerprint:
+                raise BridgeError("handoff_approval_mismatch")
+            identity, _ = _handoff_prepare_journal(plan)
+            _handoff_archive_inputs(identity, plan)
+            if plan["previous_handoff"] != _handoff_active_id():
+                raise BridgeError("handoff_previous_operation_changed")
+            _handoff_set_active(identity)
+        print("handoff_fingerprint=" + identity)
+        print("handoff_project=" + plan["project"])
+        print("checkout_sha=" + plan["checkout_sha"])
+        return 0
+    if operation == "handoff-apply":
+        identity = _handoff_active_id()
+        if identity is None or identity != args.approval_fingerprint:
+            raise BridgeError("handoff_active_approval_mismatch")
+        plan, _, revision = handoff_journal_read(identity)
+        if (plan["support_sha"] != args.sha or plan["target_sha"] != args.sha
+                or plan["bundle_sha256"] != args.artifact_sha256
+                or plan["original_models"]["api"]["services"]["api"]["image"] != args.api_base_image_id
+                or plan["services"]["api"]["candidate_image"] != args.candidate_api_id
+                or plan["services"]["web"]["candidate_image"] != args.candidate_web_id):
+            raise BridgeError("handoff_candidate_binding_changed")
+        _ensure_mutation_context("release", args.sha)
+        revision = handoff_execute_service(identity, revision, "api")
+        handoff_execute_service(identity, revision, "web")
+        receipt = handoff_publish_runtime(identity)
+    elif operation in {"handoff-recovery-inventory", "handoff-recovery-prepare"}:
+        proof = _handoff_live_recovery_inventory(args.sha)
+        if operation == "handoff-recovery-prepare":
+            identity, _ = handoff_recovery_prepare(proof, args.approval_fingerprint)
+            _handoff_set_active(identity)
+        print("recovery_fingerprint=" + digest(proof))
+        print("schema_status=" + proof["schema_status"])
+        print("interrupted_sha=" + proof["interrupted_sha"])
+        return 0
+    elif operation == "handoff-recovery-apply":
+        identity = _handoff_active_id()
+        if identity is None:
+            raise BridgeError("handoff_active_journal_missing")
+        plan, _, revision = handoff_journal_read(identity)
+        if (plan.get("approval") != args.approval_fingerprint or plan["support_sha"] != args.sha
+                or plan["domain"] != "app-first-handoff-recovery-plan-v1"):
+            raise BridgeError("handoff_recovery_approval_mismatch")
+        revision = handoff_recover_service(identity, revision, "api")
+        handoff_recover_service(identity, revision, "web")
+        receipt = handoff_publish_runtime(identity, restoring=True)
+    else:
+        raise BridgeError("handoff_operation_not_allowed")
+    for key, value in receipt.items():
+        print(key + "=" + value)
+    print("handoff_status=healthy")
+    return 0
+
+
 def _apply_models(context: dict, mode: str, target_sha: str, app_version: str, fingerprint: str) -> None:
     _assert_common_lock_held()
     directory = _operation_directory(mode, target_sha, fingerprint)
@@ -1687,7 +2938,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--app-version", default="")
     parser.add_argument("--approval-fingerprint", default="")
     parser.add_argument("--source-fingerprint", default="")
-    parser.add_argument("operation", choices=("compose", "hashes", "service-hash", "web-identity", "sources-fingerprint", "assert-facial", "snapshot", "adoption-inventory", "adopt"))
+    parser.add_argument("--artifact-sha256", default="")
+    parser.add_argument("--api-base-image-id", default="")
+    parser.add_argument("--candidate-api-id", default="")
+    parser.add_argument("--candidate-web-id", default="")
+    parser.add_argument("operation", choices=("compose", "hashes", "service-hash", "service-project", "web-identity", "sources-fingerprint", "assert-facial", "snapshot", "adoption-inventory", "adopt", *HANDOFF_OPERATIONS))
     parser.add_argument("args", nargs=argparse.REMAINDER)
     try:
         parsed = parser.parse_args(argv)
@@ -1706,10 +2961,23 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     if ((parsed.mode == "adopt") != (parsed.operation == "adopt")
             or parsed.operation == "adoption-inventory" and parsed.mode != "inventory"):
         raise BridgeError("adoption_mode_invalid")
+    candidate_values = (parsed.artifact_sha256, parsed.api_base_image_id, parsed.candidate_api_id, parsed.candidate_web_id)
+    if parsed.operation in HANDOFF_OPERATIONS:
+        if parsed.mode != HANDOFF_OPERATIONS[parsed.operation] or parsed.app_version or parsed.source_fingerprint:
+            raise BridgeError("handoff_mode_invalid")
+        if parsed.operation in HANDOFF_CANDIDATE_OPERATIONS:
+            if (not HASH_RE.fullmatch(parsed.artifact_sha256)
+                    or any(not IMAGE_ID_RE.fullmatch(value) for value in candidate_values[1:])
+                    or parsed.candidate_api_id == parsed.candidate_web_id):
+                raise BridgeError("handoff_artifact_identity_invalid")
+        elif any(candidate_values):
+            raise BridgeError("handoff_artifact_arguments_not_allowed")
+    elif any(candidate_values):
+        raise BridgeError("handoff_artifact_arguments_not_allowed")
     parsed.args = parsed.args[1:] if parsed.args[:1] == ["--"] else parsed.args
     if parsed.operation == "compose":
         _classify_compose_args(parsed.args, parsed.mode)
-    elif parsed.operation == "service-hash":
+    elif parsed.operation in {"service-hash", "service-project"}:
         if parsed.args not in (["api"], ["web"]):
             raise BridgeError("service_not_allowed")
     elif parsed.args:
@@ -1723,6 +2991,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         require_root()
         args = _parse_args(list(sys.argv[1:] if argv is None else argv))
+        if args.operation in HANDOFF_OPERATIONS:
+            return _handoff_cli(args)
+        if args.mode in {"rollback-inventory", "rollback"} and _handoff_registered_records() is not None:
+            raise BridgeError("handoff_recovery_interface_required")
         if args.operation == "adopt":
             _assert_common_lock_held()
         context = _discover_context()
@@ -1754,6 +3026,8 @@ def main(argv: list[str] | None = None) -> int:
                 result = _hashes(context, args.app_version, verify_active=True)
             elif args.operation == "service-hash":
                 result = context["semantic_hashes"][args.args[0]] + "\n"
+            elif args.operation == "service-project":
+                result = context.get("projects", {}).get(args.args[0], PROJECT) + "\n"
             elif args.operation == "web-identity":
                 result = _web_identity(context, args.sha)
             elif args.operation == "sources-fingerprint":

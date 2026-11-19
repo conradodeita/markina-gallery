@@ -10,6 +10,7 @@ from scripts.verify_main_ci_evidence import (
     paginate,
     request_json,
     select_run,
+    verify_app_handoff_failure,
     verify_jobs,
     verify_remote,
 )
@@ -29,6 +30,36 @@ def jobs():
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_recovery_reuses_only_exact_operational_failure_with_all_code_gates_green(self):
+        pipeline = ['production-app-preflight', 'production-app-image-artifact',
+                    'production-app-handoff-preflight', 'production-app-release']
+        for failed in (0, 2, 3):
+            operational = [{'name': 'release-scope', 'status': 'completed', 'conclusion': 'success'}] + [
+                {'name': name, 'status': 'completed',
+                 'conclusion': 'success' if index < failed else 'failure' if index == failed else 'skipped'}
+                for index, name in enumerate(pipeline)]
+            with self.subTest(failed=failed), \
+                    patch('scripts.verify_main_ci_evidence.request_json', return_value={'sha': SHA}), \
+                    patch('scripts.verify_main_ci_evidence.paginate', side_effect=[[run(conclusion='failure')], jobs() + operational]):
+                self.assertEqual(verify_remote(SHA, 'synthetic', app_handoff_recovery=True)['sha'], SHA)
+            for mutation in (
+                lambda values: values.pop(),
+                lambda values, failed=failed: values.append(dict(values[failed + 1])),
+                lambda values, failed=failed: values[failed + 1].update(status='in_progress'),
+                lambda values: values.append({'name': 'unrelated', 'status': 'completed', 'conclusion': 'failure'}),
+                lambda values, failed=failed: values[-1].update(conclusion='success' if failed != 3 else 'cancelled'),
+            ):
+                values = [dict(value) for value in operational]
+                mutation(values)
+                with self.assertRaises(EvidenceError):
+                    verify_app_handoff_failure(jobs() + values)
+            broken_code = [dict(job) for job in jobs()]
+            broken_code[0]['conclusion'] = 'failure'
+            with patch('scripts.verify_main_ci_evidence.request_json', return_value={'sha': SHA}), \
+                    patch('scripts.verify_main_ci_evidence.paginate', side_effect=[[run(conclusion='failure')], broken_code + operational]), \
+                    self.assertRaisesRegex(EvidenceError, 'job_obrigatorio_nao_verde'):
+                verify_remote(SHA, 'synthetic', app_handoff_recovery=True)
+
     def test_exact_success_and_newest_attempt(self):
         self.assertEqual(select_run([run(), run(run_attempt=2, id=2)], SHA)['id'], 2)
         verify_jobs(jobs())

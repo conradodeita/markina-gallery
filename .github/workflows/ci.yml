@@ -479,6 +479,7 @@ jobs:
           python -B scripts/test_production_app_artifact_ssh_wrapper.py
           python -m unittest discover -s scripts -p test_production_app_compose_bridge.py -v
           python -m unittest discover -s scripts -p test_production_app_runtime_adoption.py -v
+          sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -B -m unittest discover -s scripts -p 'test_production_app_handoff_*.py' -v
           bash scripts/test_deploy_prod_app_services.sh
           python scripts/test_prod_facial_release_gates.py
           python scripts/test_prod_app_release_scope.py
@@ -550,6 +551,8 @@ jobs:
       contents: read
     outputs:
       bundle_sha256: ${{ steps.package.outputs.bundle_sha256 }}
+      api_image_id: ${{ steps.package.outputs.api_image_id }}
+      web_image_id: ${{ steps.package.outputs.web_image_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -632,6 +635,8 @@ jobs:
           grep -Fqx "api_base_image_id=$API_BASE_IMAGE_ID" <<< "$verify_output" \
             || { echo 'Bundle diverge da imagem API base inventariada' >&2; exit 1; }
           echo "bundle_sha256=$digest" >> "$GITHUB_OUTPUT"
+          echo "api_image_id=$api_id" >> "$GITHUB_OUTPUT"
+          echo "web_image_id=$web_id" >> "$GITHUB_OUTPUT"
       - name: Publicar artifact Actions imutável do SHA exato
         uses: actions/upload-artifact@v4
         with:
@@ -1135,9 +1140,58 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+  production-app-handoff-preflight:
+    if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && needs.production-app-preflight.outputs.release_ready == 'true' }}"
+    needs: [release-scope, production-app-preflight, production-app-image-artifact]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    outputs:
+      approval_fingerprint: ${{ steps.inventory.outputs.approval_fingerprint }}
+    steps:
+      - name: Vincular aprovação final ao bundle e aos IDs do mesmo run
+        id: inventory
+        shell: bash
+        env:
+          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+          PREFLIGHT_CONNECTION_BINDING: ${{ needs.production-app-preflight.outputs.connection_binding }}
+          BUNDLE_SHA256: ${{ needs.production-app-image-artifact.outputs.bundle_sha256 }}
+          API_BASE_IMAGE_ID: ${{ needs.production-app-preflight.outputs.api_base_image_id }}
+          API_IMAGE_ID: ${{ needs.production-app-image-artifact.outputs.api_image_id }}
+          WEB_IMAGE_ID: ${{ needs.production-app-image-artifact.outputs.web_image_id }}
+        run: |
+          set -Eeuo pipefail
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ \
+            && "$BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ && "$API_BASE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+            && "$API_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$WEB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+            && "$API_IMAGE_ID" != "$WEB_IMAGE_ID" ]] || { echo 'Identidades de handoff inválidas' >&2; exit 1; }
+          binding="$(printf '%s\0' "$PRODUCTION_SSH_HOST" "$PRODUCTION_SSH_PORT" "$PRODUCTION_SSH_USER" | sha256sum | awk '{print $1}')"
+          [[ "$binding" == "$PREFLIGHT_CONNECTION_BINDING" ]] || { echo 'Destino SSH mudou desde o inventário inicial' >&2; exit 1; }
+          key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          output_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts_file" "$output_file"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "MARKINA_APP_HANDOFF_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_BASE=${API_BASE_IMAGE_ID}_API=${API_IMAGE_ID}_WEB=${WEB_IMAGE_ID}" </dev/null \
+            | tee "$output_file" | tee -a "$GITHUB_STEP_SUMMARY"
+          fingerprint="$(sed -nE 's/^handoff_fingerprint=([0-9a-f]{64})$/\1/p' "$output_file")"
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || { echo 'Fingerprint final ausente/ambíguo' >&2; exit 1; }
+          echo "approval_fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
   production-app-release:
     if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && needs.production-app-preflight.outputs.release_ready == 'true' && ((github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
-    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-image-artifact, production-app-preflight]
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-image-artifact, production-app-preflight, production-app-handoff-preflight]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -1161,10 +1215,12 @@ jobs:
           PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
           PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY }}
           PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
-          APPROVAL_FINGERPRINT: ${{ needs.production-app-preflight.outputs.approval_fingerprint }}
+          APPROVAL_FINGERPRINT: ${{ needs.production-app-handoff-preflight.outputs.approval_fingerprint }}
           EXPECTED_API_BASE_IMAGE_ID: ${{ needs.production-app-preflight.outputs.api_base_image_id }}
           PREFLIGHT_CONNECTION_BINDING: ${{ needs.production-app-preflight.outputs.connection_binding }}
           EXPECTED_BUNDLE_SHA256: ${{ needs.production-app-image-artifact.outputs.bundle_sha256 }}
+          EXPECTED_API_IMAGE_ID: ${{ needs.production-app-image-artifact.outputs.api_image_id }}
+          EXPECTED_WEB_IMAGE_ID: ${{ needs.production-app-image-artifact.outputs.web_image_id }}
         run: |
           set -Eeuo pipefail
           deploy_key_file="$(mktemp)"
@@ -1190,6 +1246,11 @@ jobs:
             || { echo 'Artifact baixado diverge do digest produzido nesta execução' >&2; exit 1; }
           grep -Fqx "api_base_image_id=$EXPECTED_API_BASE_IMAGE_ID" <<< "$verify_output" \
             || { echo 'Artifact baixado diverge da imagem API base inventariada' >&2; exit 1; }
+          [[ "$EXPECTED_API_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$EXPECTED_WEB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo 'IDs candidatos inválidos' >&2; exit 1; }
+          grep -Fqx "api_image_id=$EXPECTED_API_IMAGE_ID" <<< "$verify_output" \
+            && grep -Fqx "web_image_id=$EXPECTED_WEB_IMAGE_ID" <<< "$verify_output" \
+            || { echo 'Artifact diverge dos IDs do inventário final' >&2; exit 1; }
           printf '%s\n' "$verify_output" >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$deploy_key_file"
           printf '%s\n' "$PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY" > "$artifact_key_file"
@@ -1201,7 +1262,7 @@ jobs:
             || { echo 'Recebedor SSH não confirmou o bundle aprovado' >&2; exit 1; }
           printf '%s\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
           ssh -i "$deploy_key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
-            "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode release --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT' --artifact-sha256 '$EXPECTED_BUNDLE_SHA256'" \
+            "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode handoff-release --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT' --artifact-sha256 '$EXPECTED_BUNDLE_SHA256' --api-base-image-id '$EXPECTED_API_BASE_IMAGE_ID' --candidate-api-id '$EXPECTED_API_IMAGE_ID' --candidate-web-id '$EXPECTED_WEB_IMAGE_ID'" \
             < scripts/deploy-prod-app-services.sh
 
   production-app-compose-reconciliation:
