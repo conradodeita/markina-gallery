@@ -209,8 +209,9 @@ describe("Galeria pública da cliente", () => {
     render(<PublicGalleryPage />);
     await chooseUpload();
     fireEvent.click(await screen.findByRole("button", { name: "Conferir envio" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const heading = await screen.findByRole("heading", { name: "Possibilidades encontradas" });
-    expect(document.activeElement).toBe(heading);
+    await waitFor(() => expect(document.activeElement).toBe(heading));
     expect(scroll).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });

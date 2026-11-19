@@ -34,6 +34,19 @@ Os runs [44433195647](https://github.com/conradodeita/markina-gallery/actions/ru
 
 As correlações entre as médias por módulo nas três amostras são **0,957 / 0,977 / 0,958**. O perfil combina os três JUnit: `items` soma **7.875 observações** (três por caso), enquanto `source.collected_items` mantém os **2.625 casos únicos**. O fallback conjunto é **0,78 s/caso**. Com módulos indivisíveis, a carga LPT projetada com o perfil recalibrado fica em **16,12 min por shard**; a retroprojeção sobre o terceiro run estima **16,83 min** para o mais lento. Na distribuição de quatro shards realmente executada em 445022, os JUnit mediram **15,95 / 16,45 / 15,20 / 18,52 min**; os jobs duraram **16m55s / 17m23s / 16m13s / 19m37s**. Todos começaram juntos, com cerca de **2 s entre a criação e o start** de cada job. O workflow completo levou **22m06s**, mas ficou vermelho nos dois gates finais descritos acima. O maior job observado foi **5m17s mais rápido** que o último CI verde de três shards (24m54s); a redução ainda precisa ser confirmada em um workflow verde com o perfil recalibrado.
 
+## Revalidação de quatro shards no SHA recalibrado
+
+O run [44507005441](https://github.com/conradodeita/markina-gallery/actions/runs/44507005441), no SHA `cbba03ee718510ca89bcd9ec0135e6fab5c3eb49`, executou os quatro shards em paralelo. Os manifestos e JUnit vinculados ao mesmo SHA confirmam 2.625 casos selecionados e executados exatamente uma vez: 651, 663, 704 e 607 por shard, sem falhas. O agregado `backend` passou.
+
+| Tentativa | Resultado | Tempo observado | Shards 0 / 1 / 2 / 3 |
+|---|---|---:|---:|
+| 1 | Falha no teste de foco frontend; os gates finais propagaram a falha; backend e imagens passaram | 21m14s | 16m41s / 18m24s / 16m50s / 15m38s |
+| 2 | Workflow verde no mesmo SHA | 2m38s após o rerun | Reutilizados os resultados verdes da tentativa 1 |
+
+Na primeira tentativa, o teste `revela o resultado de envio incerto confirmado nesta página sem reenviar` encontrou `document.activeElement` no `body` com `overflow: hidden`: o diálogo ainda estava montado. O teste consultava o título antes de aguardar o fechamento do diálogo, ao contrário de outro teste equivalente. Corrigi a ordem: esperar o diálogo desaparecer e depois aguardar o foco no título. O arquivo `frontend/app/public-galleries/public-gallery.test.tsx` passou 36/36 em três execuções locais consecutivas; a correção altera somente a sincronização do teste, não o código de produto. O rerun de CI do SHA `cbba03ee` repetiu frontend e os dois gates finais, preservou os shards aprovados e terminou verde às 11:07:14 UTC. Uma falha seguida de rerun verde ainda não permite estimar taxa de instabilidade.
+
+Entre as duas distribuições de quatro shards, o maior job caiu de 19m37s em 44502252441 para 18m24s em 44507005441, uma redução de 1m13s. O job mais lento ainda ficou 2m12s acima da projeção LPT de 16m12s; overhead de inicialização e execução não está incluído na projeção. É uma amostra curta e não sustenta p90 nem ganho estável.
+
 ## Seleção e gates
 
 - Todos os eventos que não sejam `pull_request`, incluindo push e `workflow_dispatch`, usam `--full`.

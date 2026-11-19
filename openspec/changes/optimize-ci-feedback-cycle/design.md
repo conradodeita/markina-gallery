@@ -12,7 +12,7 @@ O worktree principal tem alterações locais extensas e está atrás de `origin/
 
 **Goals:** reduzir espera e desperdício com regras testadas; preservar cobertura completa por padrão, status obrigatório `backend`, execução completa em push/dispatch e proteção contra cancelamento de release; medir o efeito por job e shard.
 
-**Non-Goals:** reduzir assertions, remover testes, executar testes contra produção, cancelar releases, modificar permissões externas, secrets, dados, migrations ou fluxo mutável de produção; reconstruir uma arquitetura paralela de agentes. A promoção do mesmo artefato CI não está implementada nos fluxos atuais e permanece fora desta change até a decisão de arquitetura registrada na seção de limites.
+**Non-Goals:** reduzir assertions, remover testes, executar testes contra produção, cancelar releases, modificar permissões externas, secrets, dados, migrations ou fluxo mutável de produção; reconstruir uma arquitetura paralela de agentes. A promoção do mesmo artefato CI é requisito explícito desta missão; sua implementação depende da reconciliação arquitetural registrada abaixo e não autoriza mudanças em credenciais ou operação de produção.
 
 ## Decisions
 
@@ -31,7 +31,7 @@ O worktree principal tem alterações locais extensas e está atrás de `origin/
 ## Limites encontrados antes de reduzir cobertura ou alterar publicação
 
 - Não há mapa de impacto backend comprovado. `backend/tests/conftest.py` instala fixture `autouse` que restaura regras DDL em `Base.metadata` compartilhado; `test_derived_galleries.py` recria o schema global por teste e importa `app.main` e vários domínios; `test_unified_checkout.py` importa fixture de `test_derived_galleries.py`. `backend/pyproject.toml` configura somente `testpaths`, sem mapa de impacto. Selecionar testes apenas por nome/import direto não prova ausência de contratos transversais; `backend_tests` permanece completo até um mapa ser validado contra a suíte integral.
-- O job `runtime-images` valida builds com `--load`, mas não publica/retém artefato para promoção. Os fluxos protegidos de API/web (`production-app-release` e `deploy-prod-web.sh`) reconstroem no host após aprovação e validam o ID Docker que executam. Isso preserva identidade local de build/deploy, mas não é reutilização do mesmo artefato construído pelo CI. A change não muda esse contrato: transportar digest imutável exige decisão e gates próprios para registry/transferência, arquitetura nativa do host e acesso de produção; não alterar secrets nem operação de servidor nesta change.
+- O job `runtime-images` valida builds com `--load`, mas não publica/retém artefato para promoção. O design ativo de `add-production-app-release-workflow` e a task 2.2 mandam construir/recriar `api` e `web` no host após aprovação. Isso conflita com o requisito vigente de promover exatamente o digest construído e validado pelo CI. Não há configuração de registry no repositório; a consulta ao inventário GitHub Packages foi negada por falta de `read:packages`. A tarefa 5.3 fica bloqueada até o proprietário escolher o transporte/registry, visibilidade e modelo de acesso temporário, e os artefatos ativos serem reconciliados. Não solicitar novos escopos, alterar credenciais ou publicar imagens como parte desta investigação.
 
 ## Risks / Trade-offs
 
