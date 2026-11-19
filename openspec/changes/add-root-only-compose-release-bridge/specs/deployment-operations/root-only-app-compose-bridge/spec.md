@@ -36,7 +36,7 @@ A operação de inventário SHALL comprovar uma API e um web, fontes próprias p
 - **THEN** o inventário publica um resumo minimizado e fingerprint reproduzível
 
 #### Scenario: Inventário incompleto
-- **WHEN** API/web estão ausentes ou duplicados, Compose não reproduz o label, ou qualquer pré-condição diverge
+- **WHEN** API/web estão ausentes ou apresentam IDs extras não explicados pelo registro privado de retidos, Compose não reproduz o label, ou qualquer pré-condição diverge
 - **THEN** nenhum fingerprint aprovável é emitido e nenhum estado de produção é alterado
 
 ### Requirement: Release root-only exige aprovação vinculada e preserva runtime
@@ -178,3 +178,62 @@ O rollback SHALL exigir inventário somente-leitura e aprovação protegida pró
 #### Scenario: Artefato de recuperação inválido
 - **WHEN** snapshot, imagem, recibo ou fingerprint diverge
 - **THEN** o rollback recusa antes de alterar containers e mantém o diagnóstico minimizado
+
+
+### Requirement: Primeira troca preserva os containers anteriores por identidade
+A primeira troca SHALL exigir lock, SHA/bundle e novo fingerprint dos IDs, nomes, imagens, modelos e fases. A ponte SHALL parar e renomear somente o ID anterior comprovado, preservando-o, antes de criar o candidato no nome original. Nomes retidos SHALL ser derivados internamente. MUST NOT fabricar config-hash, remover antigos, executar dois containers do mesmo papel ou aceitar IDs/nomes arbitrários.
+
+#### Scenario: Primeira troca aprovada
+- **WHEN** o inventário e a aprovação do novo protocolo correspondem ao estado atual, nomes estão livres e modelos/imagens foram provados
+- **THEN** a ponte registra a intenção, para e renomeia somente o ID aprovado de API, cria e prova a API candidata e só então avança ao web
+- **AND** containers anteriores ficam preservados/parados e todos os recursos fora do escopo permanecem intactos
+
+#### Scenario: Nome ocupado ou estado divergente
+- **WHEN** um nome pertence a ID inesperado, configuração/imagem diverge ou o lock/aprovação não corresponde
+- **THEN** a operação recusa a ação afetada, preserva recibos e não remove nem renomeia o container inesperado
+
+### Requirement: Registro de fases torna interrupções inventariáveis
+A ponte SHALL persistir intenção antes de stop/rename/create e confirmar resultados por inspect independente, com hashes e metadados root-only. Falha/crash SHALL conservar marcador e transição. Uma nova invocação MUST NOT repetir efeitos cegamente, apagar marcador ou presumir sucesso a partir de dry-run.
+
+#### Scenario: Processo interrompe entre efeito e recibo
+- **WHEN** a operação termina depois de stop ou rename e antes de confirmar a fase
+- **THEN** o inventário explícito reconcilia o efeito real com IDs/nomes/modelos preservados e exige fingerprint/aprovação de recuperação próprios
+
+### Requirement: Seleção operacional distingue ativos de retidos comprovados
+A seleção SHALL excluir somente IDs retidos registrados, no nome/estado parado e configuração/imagem esperados. Essa regra SHALL funcionar durante transição e após sucesso sem relaxar a unicidade de API/web ativos. Containers extras não registrados MUST NOT ser ignorados por nome, label ou estado parado.
+
+#### Scenario: Antigo preservado e novo ativo
+- **WHEN** o registro comprova o ID antigo parado no nome retido e o candidato ativo no nome original
+- **THEN** o inventário seleciona o candidato e mantém a verificação do retido sem confundir seus labels com duplicata autorizada genérica
+
+#### Scenario: ID extra ou retido foi iniciado fora da operação
+- **WHEN** há container adicional não explicado ou o retido está running inesperadamente
+- **THEN** o inventário bloqueia aprovação e mutação até reconciliação explícita
+
+### Requirement: Recuperação da primeira troca é separada e limitada
+A interface fixa de recuperação SHALL inventariar somente fases e IDs comprovados pela transição preservada, incluindo serviço temporariamente ausente após stop/rename. O fingerprint SHALL ter domínio próprio e vincular SHA da tentativa, suporte revisado, fases, nomes, imagens e modelos. Execução SHALL exigir aprovação protegida própria e lock; nenhuma falha inicia rollback automático.
+
+#### Scenario: Container original retido e candidato ausente
+- **WHEN** o registro prova que o original foi parado/renomeado e não existe candidato no nome original
+- **THEN** o inventário de recuperação pode representar essa fase e o original preservado sem emitir fingerprint normal de release
+
+#### Scenario: API indisponível impede consultar schema
+- **WHEN** o inventário da recuperação não pode consultar a revisão atual por falta de API saudável, mas comprova integralmente o container original
+- **THEN** distingue schema indisponível de revisão anterior e admite somente aprovação separada da restauração mínima do original por ID/nome, sem migration nem alteração de configuração
+- **AND** exige saúde, consulta atual de schema, flag facial e HTTPS antes de declarar recuperação saudável ou permitir novo release
+
+#### Scenario: Candidato conhecido ocupa o nome a restaurar
+- **WHEN** a recuperação foi aprovada e o ocupante corresponde integralmente ao ID/modelo candidato registrado
+- **THEN** pode parar e preservar esse candidato sob nome derivado antes de devolver o nome original ao container retido e iniciá-lo
+- **AND** não remove containers nem toca em ocupante desconhecido
+
+### Requirement: Primeira troca exige ensaio real de substituição e recuperação
+A validação SHALL executar o ciclo de stop/rename/create e recuperação em Engine/Compose compatíveis com o host usando dados, redes e volumes sintéticos isolados. SHALL cobrir interrupções por fase, preservação de configuração/dados, aliases/DNS, seleção dos retidos e ausência de efeitos no container testemunha vizinho. Resolver config, mockar comandos ou executar dry-run MUST NOT substituir esse gate.
+
+#### Scenario: Config passa mas primeira troca conflita
+- **WHEN** um container com nome padrão e labels project/service não tem config-hash
+- **THEN** o teste de regressão reproduz o conflito do up direto e a implementação só passa quando a transição real comprovada preserva o antigo e publica o candidato saudável
+
+#### Scenario: Falha em fase intermediária
+- **WHEN** a suíte interrompe após stop, rename, create, saúde ou antes do recibo final
+- **THEN** o ensaio comprova inventário/aprovação próprios e recuperação dos IDs/configurações anteriores sem perda de dados sintéticos nem alteração de recursos testemunhas
