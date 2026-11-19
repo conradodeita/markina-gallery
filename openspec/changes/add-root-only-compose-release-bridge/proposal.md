@@ -6,6 +6,8 @@ O inventário API/web usa um conjunto canônico de arquivos Compose, mas os cont
 
 ## What Changes
 
+- Refinamento aprovado após ensaio: cada nova tentativa usa projeto Compose derivado internamente por geração e nomes operacionais fixos dos containers. Validar labels nativos esperados por geração e IDs registrados; redes/volumes continuam externos e existentes. Isso impede que o Compose remova um candidato retido de outra geração. Não acrescentar ambiente/servidor nem aceitar projetos arbitrários.
+
 - Revisão do plano aprovada em 19/11/2026 após falha da primeira troca: distinguir adoção da configuração de transferência do controle operacional ao Compose. Preparar transição explícita por IDs, sob lock e novo fingerprint, parando/renomeando somente API/web comprovados para nomes fixos de recuperação e preservando os containers anteriores. Aprovação documental não executa nem autoriza uma nova operação de produção.
 - Cobrir interrupções em cada fronteira, inclusive serviço ausente após stop/rename, seleção inequívoca entre ativos e retidos e recuperação explicitamente inventariada/aprovada. Não fabricar config-hash, remover containers antigos ou apagar marcadores para contornar o bloqueio. Resolver configuração e executar dry-run não bastam para declarar a primeira troca validada.
 

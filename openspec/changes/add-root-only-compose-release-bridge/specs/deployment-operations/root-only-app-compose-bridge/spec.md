@@ -237,3 +237,15 @@ A validação SHALL executar o ciclo de stop/rename/create e recuperação em En
 #### Scenario: Falha em fase intermediária
 - **WHEN** a suíte interrompe após stop, rename, create, saúde ou antes do recibo final
 - **THEN** o ensaio comprova inventário/aprovação próprios e recuperação dos IDs/configurações anteriores sem perda de dados sintéticos nem alteração de recursos testemunhas
+
+
+### Requirement: Cada tentativa isola o controle Compose por geração comprovada
+Cada tentativa criadora de containers SHALL usar projeto Compose derivado internamente do namespace Markina, SHA e fingerprint, com nomes operacionais originais explícitos. Projeto/labels nativos esperados SHALL entrar no registro e na prova por ID. MUST NOT aceitar projeto arbitrário, reescrever labels antigos ou criar redes/volumes por geração; somente os externos já comprovados podem ser usados.
+
+#### Scenario: Candidato de tentativa anterior está preservado
+- **WHEN** a nova tentativa cria API/web enquanto um candidato gerenciado anterior está parado/renomeado para recuperação
+- **THEN** usa geração distinta e comprova que o up não remove, inicia ou altera o retido anterior
+
+#### Scenario: Label de geração diverge
+- **WHEN** o ID selecionado tem project/service diferente do registrado ou pertence a geração não comprovada
+- **THEN** o helper recusa seleção/aprovação sem aceitar outros projetos por prefixo genérico
