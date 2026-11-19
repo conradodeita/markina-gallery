@@ -1,6 +1,7 @@
 """Contracts for the local fast-feedback command."""
 
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,7 +57,8 @@ class LocalCIFeedbackTests(unittest.TestCase):
             "frontend/app/gallery/page.tsx", "backend/app/payments/provider.py",
         ])
         commands = [check.command for check in checks]
-        self.assertIn(("npm", "run", "lint", "--prefix", "frontend"), commands)
+        npm = "npm.cmd" if sys.platform == "win32" else "npm"
+        self.assertIn((npm, "run", "lint", "--prefix", "frontend"), commands)
         self.assertIn(("ruff", "check", "backend/app", "backend/tests"), commands)
         self.assertTrue(any("suíte completa backend" in item for item in pending))
         self.assertTrue(any("testes e build do frontend" in item for item in pending))
@@ -67,6 +69,8 @@ class LocalCIFeedbackTests(unittest.TestCase):
         self.assertIn("validate", checks[0].command)
         self.assertIn("optimize-ci-feedback-cycle", checks[0].command)
         self.assertIn("--strict", checks[0].command)
+        npx = "npx.cmd" if sys.platform == "win32" else "npx"
+        self.assertEqual(npx, checks[0].command[0])
 
     def test_unknown_top_level_path_fails_open_to_full_ci(self):
         _checks, pending = plan_checks(["new-worker/runtime.py"])

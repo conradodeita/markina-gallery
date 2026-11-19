@@ -39,6 +39,11 @@ def _git_paths(root: Path, *args: str) -> set[str]:
     return {line.replace("\\", "/") for line in result.stdout.splitlines() if line}
 
 
+def _node_command(name: str) -> str:
+    """Resolve npm/npx command shims when subprocess runs on Windows."""
+    return f"{name}.cmd" if sys.platform == "win32" else name
+
+
 def changed_paths(base: str, root: Path = ROOT) -> list[str]:
     """Include the base-to-HEAD diff plus staged, unstaged, and untracked files."""
     if not base.strip():
@@ -83,9 +88,12 @@ def plan_checks(paths: list[str]) -> tuple[list[Check], list[str]]:
     if scopes["backend"] and any(path.startswith("backend/") for path in paths):
         checks.append(Check("Ruff do backend", ("ruff", "check", "backend/app", "backend/tests")))
     if scopes["frontend"]:
-        checks.append(Check("lint do frontend", ("npm", "run", "lint", "--prefix", "frontend")))
+        checks.append(Check(
+            "lint do frontend",
+            (_node_command("npm"), "run", "lint", "--prefix", "frontend"),
+        ))
     if has_openspec:
-        cli = ("npx", "-y", "@fission-ai/openspec@1.14.0", "validate")
+        cli = (_node_command("npx"), "-y", "@fission-ai/openspec@1.14.0", "validate")
         if changes:
             checks.extend(Check(
                 f"OpenSpec estrito: {change}",
