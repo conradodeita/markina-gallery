@@ -14,7 +14,7 @@ from pathlib import Path
 import production_app_compose_bridge as bridge
 
 BASE_IMAGE = "docker.io/library/python:3.8.20-slim-bookworm@sha256:1d52838af602b4b5a831beb13a0e4d073280665ea7be7f69ce2382f29c5a613f"
-OLD_REVISION = "1" * 40
+OLD_REVISION = bridge.ENGINE_BOOTSTRAP_SHA
 RECEIPT_HASH = hashlib.sha256(b"synthetic-engine-receipt").hexdigest()
 SERVER_PROGRAM = (
     "import os; from http.server import BaseHTTPRequestHandler,HTTPServer; "

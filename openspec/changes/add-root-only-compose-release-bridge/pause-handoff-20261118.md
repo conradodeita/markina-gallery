@@ -1,24 +1,24 @@
-# Checkpoint do PR #384 após a terceira CI
+# Checkpoint do PR #384 após a quarta CI
 
-Atualizado em 18/11/2026. Nenhuma prova Docker está ativa localmente. O CI `44424649626` terminou; uma segunda causa no harness foi corrigida localmente e passou os gates focados, ainda sem commit/push.
+Atualizado em 18/11/2026. Nenhuma prova Docker está ativa localmente. O CI `44428285088` terminou; a revisão do baseline sintético foi corrigida localmente e passou os gates focados, ainda sem commit/push.
 
 ## Estado do repositório
 
 - Worktree: `C:\codex-data\worktrees\saas-release-candidate\Photo Delivery`.
-- Branch `fix/prove-received-app-engine-runtime`, HEAD remoto/local `25fc7f7ef829e66034af7077c97667144bbc7dee`; PR #384: https://github.com/conradodeita/markina-gallery/pull/384.
-- Alterações locais: `scripts/prove_app_engine_promotion.py` adapta `cwd` implícito e o default de projeto do seletor somente após `require_ci_runner()`; testes cobrem `cwd` implícito/explicito, projeto sintético corrente, argumento explícito e adaptador do CLI; design, tasks e validação registram diagnósticos/evidências.
++ Branch `fix/prove-received-app-engine-runtime`, HEAD remoto/local `b36c38087cacd087d768527938a6d44d87b18235`; PR #384: https://github.com/conradodeita/markina-gallery/pull/384.
++ Alterações locais: `scripts/prove_app_engine_promotion.py` adapta `cwd` implícito, seletor de projeto e revisão antiga do fixture; testes cobrem esses contratos, `cwd` explícito, projeto explícito e CLI. Design, tasks e validação registram diagnósticos/evidências.
 - `output` já existia sem rastreamento e fica fora do stage/commit.
 - Não rebasear nem usar force push.
 
 ## CI do PR
 
-- Run `44424649626` no SHA `25fc7f7ef829e66034af7077c97667144bbc7dee` falhou no passo da prova Engine com `api_web_container_count_invalid`; os três shards do backend passaram. OpenSpec, escopo, Gitleaks, frontend e imagens AMD64/ARM64 também passaram. Agregados/políticas dependentes falharam e jobs mutáveis de produção/homologação ficaram pulados.
-- A adaptação de `cwd` eliminou o erro anterior e a prova avançou até `select_api_web`. Causa confirmada: `project=PROJECT` capturado no import permaneceu `markina-gallery` enquanto fixtures usam nome sintético por cenário.
-- A correção local preserva os defaults de produção e mantém as chamadas sob o mesmo `_run` limitado. A prova Docker real só deve rodar no runner GitHub-hosted descartável dentro do job existente.
++ Run `44428285088` no SHA `b36c38087cacd087d768527938a6d44d87b18235` falhou na prova Engine com `engine_original_pair_mismatch`. Os três shards do backend passaram, assim como OpenSpec, escopo, Gitleaks, frontend e imagens AMD64/ARM64; agregados/gates dependentes falharam e os jobs mutáveis ficaram pulados.
++ As adaptações de `cwd` e do seletor permitiram à prova chegar à comparação do par inicial. Causa confirmada: o `OLD_REVISION` sintético `"1"*40` não correspondia a `ENGINE_BOOTSTRAP_SHA` fixo do helper. A correção local deriva a revisão do fixture desse valor fixo.
++ O helper de produção permanece intacto; a prova Docker real só deve rodar no runner GitHub-hosted descartável dentro do job existente.
 
 ## Validação local
 
-- `python -m unittest discover -s scripts -p test_production_app_compose_bridge.py`: 59 testes; 58 passaram e 1 skip de symlink real indisponível no Windows.
++ `python -m unittest discover -s scripts -p test_production_app_compose_bridge.py`: 60 testes; 59 passaram e 1 skip de symlink real indisponível no Windows.
 - Ruff, `py_compile`, OpenSpec estrito e `git diff --check` passaram.
 - Não executar `scripts/prove_app_engine_promotion.py` nesta máquina; Docker é compartilhado com Oracle/outros projetos.
 

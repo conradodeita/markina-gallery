@@ -62,6 +62,9 @@ class RunnerDockerAdapterTests(unittest.TestCase):
         self.addCleanup(setattr, bridge, "PROJECT", self.original_project)
         self.addCleanup(setattr, bridge, "select_api_web", self.original_selector)
 
+    def test_synthetic_original_revision_matches_pinned_bootstrap_revision(self):
+        self.assertEqual(engine_proof.OLD_REVISION, bridge.ENGINE_BOOTSTRAP_SHA)
+
     def test_prefers_fixed_production_cli_when_executable(self):
         with patch.object(engine_proof.Path, "is_file", return_value=True), \
                 patch.object(engine_proof.os, "access", return_value=True), \
