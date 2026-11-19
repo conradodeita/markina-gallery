@@ -88,6 +88,9 @@ def main() -> None:
     )[0]
     release = WORKFLOW.split("  production-release:", 1)[1]
     app_preflight = WORKFLOW.split("  production-app-preflight:", 1)[1].split(
+        "  production-app-handoff-preflight:", 1
+    )[0]
+    handoff_preflight = WORKFLOW.split("  production-app-handoff-preflight:", 1)[1].split(
         "  production-app-release:", 1
     )[0]
     app_artifact = WORKFLOW.split("  production-app-image-artifact:", 1)[1].split(
@@ -201,8 +204,28 @@ def main() -> None:
     require("MARKINA_APP_ARTIFACT_UPLOAD_SHA=${GITHUB_SHA}_BUNDLE_SHA256=${EXPECTED_BUNDLE_SHA256}",
             "upload limitado por SHA e digest completos", app_release)
     require("--artifact-sha256 '$EXPECTED_BUNDLE_SHA256'", "deploy consome exatamente o bundle enviado", app_release)
-    require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-image-artifact, production-app-preflight]",
+    require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-image-artifact, production-app-preflight, production-app-handoff-preflight]",
             "promoção aguarda todos os gates e producer/preflight", app_release)
+    require("environment: production-preflight", "inventário final permanece read-only", handoff_preflight)
+    require("needs: [release-scope, production-app-preflight, production-app-image-artifact]",
+            "inventário final aguarda os IDs e bundle imutáveis", handoff_preflight)
+    require("MARKINA_APP_HANDOFF_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_BASE=${API_BASE_IMAGE_ID}_API=${API_IMAGE_ID}_WEB=${WEB_IMAGE_ID}",
+            "comando fixo vincula o mesmo SHA/bundle/IDs", handoff_preflight)
+    require("APPROVAL_FINGERPRINT: ${{ needs.production-app-handoff-preflight.outputs.approval_fingerprint }}",
+            "aprovação usa fingerprint final", app_release)
+    require("--mode handoff-release", "deploy usa protocolo de preservação por geração", app_release)
+    recovery_workflow = (ROOT / '.github/workflows/production-app-handoff-recovery.yml').read_text(encoding='utf-8')
+    recovery_readonly, recovery_mutation = recovery_workflow.split('\n  recover:\n', 1)
+    require('environment: production-preflight', 'diagnóstico separado sem chave de deploy', recovery_readonly)
+    require('environment: production\n', 'recuperação exige aprovação protegida própria', recovery_mutation)
+    require('needs: [code-evidence, recovery-inventory]', 'recuperação aguarda prova atual e CI', recovery_mutation)
+    for block in (recovery_readonly, recovery_mutation):
+        require('--app-handoff-recovery', 'revalidação explícita dos gates de código', block)
+    require('"$REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT"', 'fingerprint próprio conferido', recovery_mutation)
+    require('"$REQUESTED_WITNESSES" == "$INVENTORY_WITNESSES"', 'testemunhas exigem registro aprovado próprio', recovery_mutation)
+    require('"$binding" == "$PREFLIGHT_CONNECTION_BINDING"', 'recuperação no mesmo endpoint inventariado', recovery_mutation)
+    if 'secrets.PRODUCTION_SSH_PRIVATE_KEY' in recovery_readonly or '${{ inputs.' in recovery_mutation.split('run: |', 1)[1]:
+        raise AssertionError('chave de deploy deve ser protegida e inputs não podem ser interpolados no shell')
     if not (app_release.index("\"$release_connection_binding\" == \"$PREFLIGHT_CONNECTION_BINDING\"")
             < app_release.index("production_app_artifact.py verify")
             < app_release.index("MARKINA_APP_ARTIFACT_UPLOAD_SHA=")
@@ -637,7 +660,13 @@ def main() -> None:
     require('--artifact-sha256', "release exige digest do bundle", app_script)
     require('compose up -d --no-build --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
             "release app não recria dependências", app_script)
-    app_release_script = app_script.split("release() {", 1)[1].split("rollback() {", 1)[0]
+    app_release_script = app_script.split("\nrelease() {", 1)[1].split("\nrollback() {", 1)[0]
+    handoff_release_script = app_script.split('\nhandoff_release() {', 1)[1].split('\nhandoff_recover() {', 1)[0]
+    ordered = ('verify_candidate_artifact', 'handoff_bridge handoff-prepare', 'load_candidate_artifact',
+               'handoff_bridge handoff-apply', 'handoff_https', 'handoff_save_receipt', 'handoff_clear_markers')
+    positions = [handoff_release_script.index(token) for token in ordered]
+    if positions != sorted(positions):
+        raise AssertionError('handoff deve validar antes dos efeitos e liberar marcador só após HTTPS/recibo')
     require("verify_candidate_artifact", "release verifica digest, SHA e imagem-base", app_release_script)
     require("load_candidate_artifact", "release carrega somente o bundle verificado", app_release_script)
     if not (app_release_script.index("verify_candidate_artifact")

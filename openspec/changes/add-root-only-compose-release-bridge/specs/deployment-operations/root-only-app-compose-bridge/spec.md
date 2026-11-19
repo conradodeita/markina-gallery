@@ -249,3 +249,15 @@ Cada tentativa criadora de containers SHALL usar projeto Compose derivado intern
 #### Scenario: Label de geração diverge
 - **WHEN** o ID selecionado tem project/service diferente do registrado ou pertence a geração não comprovada
 - **THEN** o helper recusa seleção/aprovação sem aceitar outros projetos por prefixo genérico
+
+
+### Requirement: Históricos testemunhas exigem registro privado exato
+Históricos já parados SHALL ser reconhecidos somente por registro privado aprovado de ID completo, nome, imagem e digest de configuração/labels/mounts/redes. O registro SHALL entrar no fingerprint. Testemunhas MUST NOT ser selecionadas como ativos/candidatos, nem receber stop/start/rename/remove. Extras novos ou alteração de identidade/estado SHALL bloquear o gate; nomes operacionais e de retenção da tentativa não podem ser testemunhas.
+
+#### Scenario: Histórico aprovado permanece parado e intacto
+- **WHEN** o ID histórico corresponde integralmente ao registro privado e ao estado parado aprovado
+- **THEN** o inventário comprova sua preservação sem contá-lo como ativo nem permitir ações sobre ele
+
+#### Scenario: Histórico mudou ou surgiu extra não registrado
+- **WHEN** identidade/configuração/estado diverge ou há container adicional sem registro aprovado
+- **THEN** a transição bloqueia aprovação, sem ignorar o extra genericamente ou alterar containers para passar o gate

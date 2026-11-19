@@ -13,7 +13,7 @@ readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
 readonly ARTIFACT_DIR="/tmp/markina-gallery-app-artifacts-${UID}"
 readonly APP_COMPOSE_BRIDGE="/usr/local/sbin/markina-gallery-app-compose-bridge"
-readonly APP_COMPOSE_BRIDGE_BLOB="7fc38475272e26719c0c3d0d032d56056848ee3e"
+readonly APP_COMPOSE_BRIDGE_BLOB="cfef0a8d798842e2e5b237472cb00f8348229be8"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly SERVICES=(api web)
 readonly EXPECTED_DATABASE_REVISION="20261113_0126"
@@ -33,6 +33,7 @@ DATABASE_REVISION=""
 CANDIDATE_API_IMAGE_ID=""
 CANDIDATE_WEB_IMAGE_ID=""
 CANDIDATE_IMAGE_ARCHIVE=""
+API_BASE_IMAGE_ID=""
 production_deploy_lock_fd=9
 
 fail() { echo "deploy-prod-app-services: $*" >&2; exit 1; }
@@ -61,19 +62,32 @@ parse_arguments() {
       --sha) TARGET_SHA="${2:-}"; shift 2 ;;
       --approval-fingerprint) APPROVAL_FINGERPRINT="${2:-}"; shift 2 ;;
       --artifact-sha256) ARTIFACT_SHA256="${2:-}"; shift 2 ;;
+      --api-base-image-id) API_BASE_IMAGE_ID="${2:-}"; shift 2 ;;
+      --candidate-api-id) CANDIDATE_API_IMAGE_ID="${2:-}"; shift 2 ;;
+      --candidate-web-id) CANDIDATE_WEB_IMAGE_ID="${2:-}"; shift 2 ;;
       *) fail "argumento não permitido: $1" ;;
     esac
   done
-  [[ "$MODE" == "inventory" || "$MODE" == "adoption-inventory" || "$MODE" == "adopt" || "$MODE" == "release" || "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]] \
-    || fail "modo inválido"
+  case "$MODE" in
+    inventory|adoption-inventory|adopt|release|rollback-inventory|rollback|handoff-inventory|handoff-release|handoff-witness-inventory|handoff-witness-register|handoff-legacy-recovery-inventory|handoff-legacy-recover|handoff-recovery-inventory|handoff-recover) ;;
+    *) fail "modo inválido" ;;
+  esac
   [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "SHA alvo inválido"
-  if [[ "$MODE" == "release" || "$MODE" == "rollback" || "$MODE" == "adopt" ]]; then
+  if [[ "$MODE" == "release" || "$MODE" == "rollback" || "$MODE" == "adopt" || "$MODE" == handoff-release || "$MODE" == handoff-witness-register || "$MODE" == handoff-*-recover || "$MODE" == handoff-recover ]]; then
     [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint obrigatório"
   fi
-  if [[ "$MODE" == release ]]; then
+  if [[ "$MODE" == release || "$MODE" == handoff-release || "$MODE" == handoff-inventory ]]; then
     [[ "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail "digest do bundle obrigatório para release"
   elif [[ -n "$ARTIFACT_SHA256" ]]; then
-    fail "digest do bundle só é permitido no modo release"
+    fail "digest do bundle fora dos modos de candidato"
+  fi
+  if [[ "$MODE" == handoff-inventory || "$MODE" == handoff-release ]]; then
+    [[ "$API_BASE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+      && "$CANDIDATE_API_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+      && "$CANDIDATE_WEB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+      && "$CANDIDATE_API_IMAGE_ID" != "$CANDIDATE_WEB_IMAGE_ID" ]] || fail "identidade do artifact obrigatória"
+  elif [[ -n "$API_BASE_IMAGE_ID$CANDIDATE_API_IMAGE_ID$CANDIDATE_WEB_IMAGE_ID" ]]; then
+    fail "IDs do artifact fora dos modos de candidato"
   fi
 }
 
@@ -87,13 +101,36 @@ adopt_runtime_base() {
 }
 
 bridge_call() {
-  local operation="$1"
+  local operation="$1" bridge_mode="$MODE" bridge_approval="$APPROVAL_FINGERPRINT"
   shift
+  # Ordinary reads keep their original closed vocabulary during a handoff.
+  if [[ "$MODE" == handoff-* ]]; then bridge_mode=inventory; bridge_approval=""; fi
   [[ "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$APP_COMPOSE_BRIDGE_BLOB" ]] || fail "ponte root-only diverge do blob revisado"
-  sudo -n "$APP_COMPOSE_BRIDGE" --mode "$MODE" --sha "$TARGET_SHA" \
-    --app-version "$COMPOSE_APP_VERSION" --approval-fingerprint "$APPROVAL_FINGERPRINT" \
+  sudo -n "$APP_COMPOSE_BRIDGE" --mode "$bridge_mode" --sha "$TARGET_SHA" \
+    --app-version "$COMPOSE_APP_VERSION" --approval-fingerprint "$bridge_approval" \
     --source-fingerprint "$BRIDGE_SOURCE_FINGERPRINT" \
     "$operation" -- "$@"
+}
+
+handoff_bridge() {
+  local operation="$1" bridge_mode
+  local -a arguments=()
+  case "$operation" in
+    handoff-inventory|handoff-witness-inventory) bridge_mode=inventory ;;
+    handoff-prepare|handoff-apply|handoff-proxy|handoff-witness-register) bridge_mode=release ;;
+    handoff-recovery-inventory|handoff-legacy-recovery-inventory) bridge_mode=rollback-inventory ;;
+    handoff-recovery-prepare|handoff-recovery-apply|handoff-legacy-recovery-prepare|handoff-legacy-recovery-finalize|handoff-legacy-recovery-proxy) bridge_mode=rollback ;;
+    *) fail "operação handoff não permitida" ;;
+  esac
+  [[ "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$APP_COMPOSE_BRIDGE_BLOB" ]] || fail "ponte root-only diverge do blob revisado"
+  if [[ "$bridge_mode" == release || "$bridge_mode" == rollback ]]; then
+    arguments+=(--approval-fingerprint "$APPROVAL_FINGERPRINT")
+  fi
+  if [[ "$operation" == handoff-inventory || "$operation" == handoff-prepare || "$operation" == handoff-apply ]]; then
+    arguments+=(--artifact-sha256 "$ARTIFACT_SHA256" --api-base-image-id "$API_BASE_IMAGE_ID"
+      --candidate-api-id "$CANDIDATE_API_IMAGE_ID" --candidate-web-id "$CANDIDATE_WEB_IMAGE_ID")
+  fi
+  sudo -n "$APP_COMPOSE_BRIDGE" --mode "$bridge_mode" --sha "$TARGET_SHA" "${arguments[@]}" "$operation"
 }
 
 compose() {
@@ -140,10 +177,10 @@ verify_repository() {
       fi
     done
   fi
-  if [[ "$MODE" == inventory || "$MODE" == release ]]; then
+  if [[ "$MODE" == inventory || "$MODE" == release || "$MODE" == handoff-inventory || "$MODE" == handoff-release ]]; then
     release_assert_no_pending || fail "tentativa interrompida; investigar/recuperar"
   fi
-  if [[ "$MODE" == "release" ]]; then
+  if [[ "$MODE" == "release" || "$MODE" == handoff-release || "$MODE" == handoff-inventory ]]; then
     git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- backend/migrations/ \
       || fail "migrations fora do escopo"
     # Verificador/manifesto do alvo por memória/pipe: sem arquivos temporários.
@@ -224,7 +261,7 @@ verify_repository() {
     APP_WEB_IDENTITY="$(bridge_call web-identity)" || fail "identidade web não comprovada"
     [[ "$APP_WEB_IDENTITY" == *" $web_image $web_hash "* ]] || fail "recibo web semântico diverge"
   fi
-  if [[ "$MODE" == release ]]; then
+  if [[ "$MODE" == release || "$MODE" == handoff-release ]]; then
     local current_image current_tag tag_id ref
     for service in "${SERVICES[@]}"; do
       ref="$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q "$service")")"
@@ -258,7 +295,7 @@ runtime_snapshot() {
     health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id")"
     image="$(docker inspect --format '{{.Image}}' "$id")"
     hash="$(bridge_call service-hash "$service")" || fail "prova semântica do serviço falhou"
-    [[ "$project" == "$PROJECT_NAME" && "$actual_service" == "$service" ]] \
+    [[ "$project" == "$(bridge_call service-project "$service")" && "$actual_service" == "$service" ]] \
       || fail "identidade do container $service diverge"
     expected="$(awk -v service="$service" '$1 == service {print $2}' <<<"$hashes")"
     expected="${expected#sha256:}"
@@ -364,7 +401,7 @@ verify_candidate_artifact() {
   bundle="$ARTIFACT_DIR/$TARGET_SHA.bundle"
   [[ -f "$bundle" && ! -L "$bundle" && "$(stat -c '%u' -- "$bundle")" == "$UID" \
     && "$(stat -c '%a' -- "$bundle")" == 600 ]] || fail "bundle ausente ou permissões inválidas"
-  verify_output="$(python3 scripts/production_app_artifact.py verify --bundle "$bundle" \
+  verify_output="$(candidate_artifact_tool verify --bundle "$bundle" \
     --target-sha "$TARGET_SHA" --bundle-sha256 "$ARTIFACT_SHA256" \
     --api-base-image-id "$expected_api_base" --extract-dir "$ARTIFACT_DIR")" \
     || fail "bundle não corresponde ao SHA, digest ou imagem API base inventariada"
@@ -378,6 +415,16 @@ verify_candidate_artifact() {
     && -f "$candidate_archive" && ! -L "$candidate_archive" ]] \
     || fail "manifesto do bundle não contém imagens API/web válidas"
   CANDIDATE_IMAGE_ARCHIVE="$candidate_archive"
+}
+
+candidate_artifact_tool() {
+  # Before the checkout change, use only the reviewed target's verifier.
+  if [[ "$MODE" == handoff-release ]]; then
+    python3 -c 'import sys; p=sys.argv.pop(1); code=sys.argv.pop(1); exec(compile(code,p,"exec"),{"__file__":p,"__name__":"__main__"})' \
+      "$PROJECT_ROOT/scripts/production_app_artifact.py" "$(git show "$TARGET_SHA:scripts/production_app_artifact.py")" "$@"
+  else
+    python3 scripts/production_app_artifact.py "$@"
+  fi
 }
 
 load_candidate_artifact() {
@@ -400,6 +447,153 @@ load_candidate_artifact() {
 cleanup_candidate_artifact() {
   rm -f -- "$ARTIFACT_DIR/$TARGET_SHA.bundle"
   [[ -z "$CANDIDATE_IMAGE_ARCHIVE" ]] || rm -f -- "$CANDIDATE_IMAGE_ARCHIVE"
+}
+
+handoff_host_guard() {
+  [[ "$(hostname)" == "$EXPECTED_HOST" && "$(pwd -P)" == "$PROJECT_ROOT" ]] || fail "alvo handoff diverge"
+  [[ -d "$STATE_DIR" && -f "$ENV_FILE" && -z "$(git status --porcelain)" ]] || fail "checkout/estado inválido"
+  [[ "$(git rev-parse origin/main)" == "$TARGET_SHA" \
+    && "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$TARGET_SHA" ]] || fail "main mudou"
+}
+
+handoff_https() {
+  if [[ "$MODE" == handoff-legacy-recover ]]; then
+    handoff_bridge handoff-legacy-recovery-proxy || fail "prova/reload nginx Markina falhou"
+  else
+    handoff_bridge handoff-proxy || fail "prova/reload nginx Markina falhou"
+  fi
+  local path
+  for path in /healthz /api/health /; do
+    curl -fsS --retry 5 --retry-delay 2 --retry-max-time 40 --max-time 5 "$EXPECTED_URL$path" -o /dev/null \
+      || fail "smoke HTTPS falhou em $path"
+  done
+}
+
+handoff_receipt_value() {
+  local receipt="$1" key="$2" value
+  value="$(sed -n "s/^$key=//p" <<<"$receipt")"
+  [[ -n "$value" && "$value" != *$'\n'* ]] || fail "recibo handoff ausente/duplicado"
+  printf '%s\n' "$value"
+}
+
+handoff_save_receipt() {
+  local receipt="$1" checkout api_version web_version web_image web_hash
+  checkout="$(handoff_receipt_value "$receipt" checkout_sha)"
+  api_version="$(handoff_receipt_value "$receipt" api_version)"
+  web_version="$(handoff_receipt_value "$receipt" web_version)"
+  web_image="$(handoff_receipt_value "$receipt" web_image_id)"
+  web_hash="$(handoff_receipt_value "$receipt" web_semantic_hash)"
+  [[ "$checkout" =~ ^[0-9a-f]{40}$ && "$api_version" =~ ^[0-9a-f]{40}$ && "$web_version" =~ ^[0-9a-f]{40}$ \
+    && "$web_image" =~ ^sha256:[0-9a-f]{64}$ && "$web_hash" =~ ^[0-9a-f]{64}$ ]] || fail "recibo handoff inválido"
+  [[ "$(git rev-parse HEAD)" == "$checkout" ]] || fail "checkout diverge do recibo"
+  release_write_file web-current.identity "$web_version $web_image $web_hash $checkout" || fail "recibo web não salvo"
+  release_write_file app-last-healthy.sha "$checkout" || fail "recibo saudável não salvo"
+  # Preserve old receipts as historical evidence; they cannot authorize an app rollback.
+}
+
+handoff_clear_markers() {
+  local interrupted="$1" marker
+  [[ "$interrupted" =~ ^[0-9a-f]{40}$ ]] || fail "SHA da tentativa inválido"
+  for marker in app-in-flight.sha app-rollback-in-flight.sha; do
+    if [[ -e "$STATE_DIR/$marker" ]]; then
+      [[ ! -L "$STATE_DIR/$marker" && "$(cat "$STATE_DIR/$marker")" == "$interrupted" ]] || fail "marcador de outra tentativa"
+    fi
+  done
+  for marker in app-in-flight.sha app-rollback-in-flight.sha; do
+    [[ ! -e "$STATE_DIR/$marker" ]] || rm -- "$STATE_DIR/$marker"
+  done
+}
+
+handoff_inventory() {
+  verify_repository
+  runtime_snapshot
+  handoff_bridge handoff-inventory
+  echo 'serviços=api,web; impacto=breve interrupção HTTP; migrations=nenhuma; workers=preservados'
+}
+
+handoff_release() {
+  local declared_api="$CANDIDATE_API_IMAGE_ID" declared_web="$CANDIDATE_WEB_IMAGE_ID" service id image tag receipt
+  trap cleanup_candidate_artifact EXIT
+  verify_repository
+  runtime_snapshot
+  [[ "$(docker inspect --format '{{.Image}}' "$(compose ps -q api)")" == "$API_BASE_IMAGE_ID" ]] || fail "base API mudou"
+  verify_candidate_artifact "$API_BASE_IMAGE_ID"
+  [[ "$CANDIDATE_API_IMAGE_ID" == "$declared_api" && "$CANDIDATE_WEB_IMAGE_ID" == "$declared_web" ]] || fail "IDs divergem do inventário final"
+  # Recompute the approved fingerprint and persist the private journal before effects.
+  handoff_bridge handoff-prepare
+  release_write_file app-web-rollback.identity "$APP_WEB_IDENTITY" || fail "recibo anterior não salvo"
+  release_write_file app-api-rollback.version "$COMPOSE_APP_VERSION" || fail "versão anterior não salva"
+  for service in "${SERVICES[@]}"; do
+    id="$(compose ps -q "$service")"
+    image="$(docker inspect --format '{{.Image}}' "$id")"
+    tag="$PROJECT_NAME-app-rollback-$service-${image#sha256:}"
+    if release_image_id "$tag" >/dev/null; then
+      [[ "$(release_image_id "$tag")" == "$image" ]] || fail "tag de recuperação em conflito"
+    fi
+    docker image tag "$image" "$tag"
+    [[ "$(release_image_id "$tag")" == "$image" ]] || fail "preservação de imagem não confirmada"
+    release_write_file "app-$service-rollback-id" "$image" || fail "ID anterior não salvo"
+    release_write_file "app-$service-rollback-image" "$tag" || fail "imagem anterior não salva"
+  done
+  release_write_file app-previous.sha "$CHECKOUT_SHA" || fail "checkout anterior não salvo"
+  release_write_file app-api-target-id "$CANDIDATE_API_IMAGE_ID" || fail "ID candidato não salvo"
+  release_write_file app-web-target-id "$CANDIDATE_WEB_IMAGE_ID" || fail "ID candidato não salvo"
+  release_write_file app-in-flight.sha "$TARGET_SHA" || fail "marcador não salvo"
+  git switch --detach "$TARGET_SHA" >/dev/null
+  load_candidate_artifact
+  receipt="$(handoff_bridge handoff-apply)" || fail "troca interrompida; inventário próprio de recuperação necessário"
+  [[ "$(handoff_receipt_value "$receipt" handoff_status)" == healthy ]] || fail "troca sem recibo saudável"
+  COMPOSE_APP_VERSION="$TARGET_SHA"
+  runtime_snapshot
+  handoff_https
+  handoff_save_receipt "$receipt"
+  handoff_clear_markers "$TARGET_SHA"
+  printf '%s %s handoff-app-services %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CHECKOUT_SHA" "$TARGET_SHA" >> "$STATE_DIR/app-history.log"
+  echo "release saudável: $TARGET_SHA; serviços=api,web; anteriores preservados"
+}
+
+handoff_recover() {
+  local preparation receipt checkout interrupted
+  handoff_host_guard
+  preparation="$(handoff_bridge handoff-recovery-prepare)" || fail "inventário de recuperação mudou"
+  interrupted="$(handoff_receipt_value "$preparation" interrupted_sha)"
+  [[ "$interrupted" =~ ^[0-9a-f]{40}$ ]] || fail "tentativa interrompida inválida"
+  local marker
+  for marker in app-in-flight.sha app-rollback-in-flight.sha; do
+    [[ ! -e "$STATE_DIR/$marker" || ( ! -L "$STATE_DIR/$marker" && "$(cat "$STATE_DIR/$marker")" == "$interrupted" ) ]] || fail "marcador de outra tentativa"
+  done
+  release_write_file app-rollback-in-flight.sha "$interrupted" || fail "marcador de recuperação não salvo"
+  receipt="$(handoff_bridge handoff-recovery-apply)" || fail "recuperação interrompida; novo inventário necessário"
+  [[ "$(handoff_receipt_value "$receipt" handoff_status)" == healthy ]] || fail "recuperação sem recibo saudável"
+  checkout="$(handoff_receipt_value "$receipt" checkout_sha)"
+  [[ "$checkout" =~ ^[0-9a-f]{40}$ ]] || fail "checkout de recuperação inválido"
+  git switch --detach "$checkout" >/dev/null
+  COMPOSE_APP_VERSION="$(handoff_receipt_value "$receipt" api_version)"
+  runtime_snapshot
+  handoff_https
+  handoff_save_receipt "$receipt"
+  handoff_clear_markers "$interrupted"
+  printf '%s %s recover-app-handoff %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$interrupted" "$checkout" >> "$STATE_DIR/app-history.log"
+  echo "recuperação saudável: $checkout; candidatos preservados"
+}
+
+handoff_legacy_recover() {
+  local preparation checkout marker receipt
+  handoff_host_guard
+  preparation="$(handoff_bridge handoff-legacy-recovery-prepare)" || fail "inventário legado mudou"
+  checkout="$(handoff_receipt_value "$preparation" checkout_sha)"
+  [[ "$checkout" =~ ^[0-9a-f]{40}$ ]] || fail "checkout legado inválido"
+  marker="$(cat "$STATE_DIR/app-in-flight.sha")"
+  [[ "$marker" =~ ^[0-9a-f]{40}$ ]] || fail "marcador legado inválido"
+  git switch --detach "$checkout" >/dev/null
+  runtime_snapshot
+  handoff_https
+  # Root re-proves all originals and sources before clearing this exact marker.
+  receipt="$(handoff_bridge handoff-legacy-recovery-finalize)" || fail "reconciliação não comprovada"
+  [[ "$(handoff_receipt_value "$receipt" legacy_recovery_status)" == healthy ]] || fail "recibo legado inválido"
+  release_write_file app-last-healthy.sha "$checkout" || fail "recibo saudável não salvo"
+  printf '%s %s recover-legacy-handoff %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$marker" "$checkout" >> "$STATE_DIR/app-history.log"
+  echo "tentativa legada reconciliada: $checkout; containers intactos"
 }
 
 release() {
@@ -618,7 +812,7 @@ main() {
   parse_arguments "$@"
   [[ "$EXPECTED_URL" == "$PUBLIC_URL" ]] || fail "domínio diverge do alvo"
   release_load_support || fail "suporte não verificável; preparação autorizada necessária"
-  if [[ "$MODE" == release || "$MODE" == rollback ]]; then acquire_app_deploy_lock; fi
+  if [[ "$MODE" == release || "$MODE" == rollback || "$MODE" == handoff-release || "$MODE" == handoff-witness-register || "$MODE" == handoff-legacy-recover || "$MODE" == handoff-recover ]]; then acquire_app_deploy_lock; fi
   case "$MODE" in
     inventory) inventory ;;
     adoption-inventory) adoption_inventory ;;
@@ -626,6 +820,14 @@ main() {
     release) release ;;
     rollback-inventory) rollback_inventory ;;
     rollback) rollback ;;
+    handoff-inventory) handoff_inventory ;;
+    handoff-release) handoff_release ;;
+    handoff-recover) handoff_recover ;;
+    handoff-legacy-recover) handoff_legacy_recover ;;
+    handoff-witness-inventory|handoff-witness-register|handoff-legacy-recovery-inventory|handoff-recovery-inventory)
+      handoff_host_guard
+      handoff_bridge "$MODE"
+      ;;
   esac
 }
 

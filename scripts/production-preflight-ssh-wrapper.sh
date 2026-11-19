@@ -9,17 +9,18 @@ readonly PROJECT_ROOT="/opt/markina-gallery"
 readonly EXPECTED_REPOSITORY="conradodeita/markina-gallery"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly FACIAL_SCRIPT_BLOB_SHA="515c3c82c30bf76be0ec8f01013225fb71276df3"
-readonly APP_SCRIPT_BLOB_SHA="2c486faf53bfb5cb8d345789c7701d372766974d"
+readonly APP_SCRIPT_BLOB_SHA="b076007af1ad41210b3678ab168129c1828045bd"
 readonly RETIREMENT_SCRIPT_BLOB_SHA="d8fb13a50b5254e458f19d2c5d4ed8c43fadea1b"
 readonly ORDERS_SCRIPT_BLOB_SHA="f45b16ca2d748172ca617c78e31de6cff2fa4289"
 readonly PREVIEW_MIGRATION_INVENTORY_BLOB_SHA="1296ccb0e0f6295bc07b30837fc5043e7dac4db6"
 readonly APP_ENV_INVENTORY_BLOB_SHA="8a460514b25ee26355e5252815096940b5736083"
-readonly APP_BASE_IMAGE_EXPORT_BLOB_SHA="b94df86a3e51901608ee0d5f33d0fd257200f595"
+readonly APP_BASE_IMAGE_EXPORT_BLOB_SHA="988ca208646836ecb965b80ec91c2ada9a38dc37"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
 original_command="${SSH_ORIGINAL_COMMAND:-}"
 inventory_runtime="bash"
+inventory_arguments=()
 if [[ "$original_command" =~ ^MARKINA_TARGET_SHA=([0-9a-f]{40})$ ]]; then
   target_sha="${BASH_REMATCH[1]}"
   script_name="deploy-prod-facial-services.sh"
@@ -36,6 +37,23 @@ elif [[ "$original_command" =~ ^MARKINA_APP_ADOPTION_TARGET_SHA=([0-9a-f]{40})$ 
   script_blob_sha="$APP_SCRIPT_BLOB_SHA"
   inventory_mode="adoption-inventory"
   inventory_runtime="app-adoption"
+elif [[ "$original_command" =~ ^MARKINA_APP_HANDOFF_SHA=([0-9a-f]{40})_BUNDLE=([0-9a-f]{64})_BASE=(sha256:[0-9a-f]{64})_API=(sha256:[0-9a-f]{64})_WEB=(sha256:[0-9a-f]{64})$ ]]; then
+  target_sha="${BASH_REMATCH[1]}"
+  inventory_arguments=(--artifact-sha256 "${BASH_REMATCH[2]}" --api-base-image-id "${BASH_REMATCH[3]}"
+    --candidate-api-id "${BASH_REMATCH[4]}" --candidate-web-id "${BASH_REMATCH[5]}")
+  script_name="deploy-prod-app-services.sh"
+  script_blob_sha="$APP_SCRIPT_BLOB_SHA"
+  inventory_mode="handoff-inventory"
+elif [[ "$original_command" =~ ^MARKINA_APP_HANDOFF_(WITNESSES|LEGACY_RECOVERY|RECOVERY)_SHA=([0-9a-f]{40})$ ]]; then
+  selection="${BASH_REMATCH[1]}"
+  target_sha="${BASH_REMATCH[2]}"
+  script_name="deploy-prod-app-services.sh"
+  script_blob_sha="$APP_SCRIPT_BLOB_SHA"
+  case "$selection" in
+    WITNESSES) inventory_mode="handoff-witness-inventory" ;;
+    LEGACY_RECOVERY) inventory_mode="handoff-legacy-recovery-inventory" ;;
+    RECOVERY) inventory_mode="handoff-recovery-inventory" ;;
+  esac
 elif [[ "$original_command" =~ ^MARKINA_APP_BASE_IMAGE_EXPORT_SHA=([0-9a-f]{40})_IMAGE_ID=(sha256:[0-9a-f]{64})$ ]]; then
   target_sha="${BASH_REMATCH[1]}"
   expected_image_id="${BASH_REMATCH[2]}"
@@ -102,5 +120,5 @@ elif [[ "$inventory_runtime" == "app-adoption" ]]; then
     MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode adoption-inventory --sha "$target_sha"
 else
   printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
-    MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode "$inventory_mode" --sha "$target_sha"
+    MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode "$inventory_mode" --sha "$target_sha" "${inventory_arguments[@]}"
 fi

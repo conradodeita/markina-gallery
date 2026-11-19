@@ -56,6 +56,25 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest), (True, "somente_api_web"))
 
+    def test_handoff_support_is_exactly_allowlisted_without_worker_or_workflow_wildcard(self):
+        names = {'.github/workflows/production-app-handoff-recovery.yml'} | {
+            'scripts/test_production_app_handoff_' + suffix + '.py'
+            for suffix in ('inventory', 'journal', 'execution', 'recovery', 'engine', 'cli', 'legacy', 'shell')
+        } | {'scripts/test_production_app_first_handoff.py'}
+        for name in names:
+            self.assertIn(name, policy.ALLOWED_OPERATIONS)
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('reviewed operational support\n', encoding='utf-8')
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest), (True, 'somente_api_web'))
+        for name in ('.github/workflows/production-app-handoff-arbitrary.yml',
+                     'scripts/test_production_app_handoff_unreviewed.py'):
+            path = self.root / name
+            path.write_text('unreviewed behavior\n', encoding='utf-8')
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest), (False, 'arquivo_fora_do_escopo'))
+
     def test_platform_backup_runtime_requires_exact_reviewed_blob_and_worker_scope(self):
         name = "backend/app/platform_backup/runtime_worker.py"
         path = self.root / name

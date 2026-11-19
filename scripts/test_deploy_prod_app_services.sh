@@ -6,7 +6,7 @@ for required in 'readonly SERVICES=(api web)' 'readonly EXPECTED_DATABASE_REVISI
   'git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- backend/migrations/' \
   'require_facial_processing_enabled_in_config' 'FACIAL_PROCESSING_ENABLED=true' \
   'readonly APP_COMPOSE_BRIDGE="/usr/local/sbin/markina-gallery-app-compose-bridge"' \
-  '--artifact-sha256' 'verify_candidate_artifact' 'production_app_artifact.py verify' \
+  '--artifact-sha256' 'verify_candidate_artifact' 'candidate_artifact_tool verify' \
   'docker load --input "$CANDIDATE_IMAGE_ARCHIVE"' '--api-base-image-id' \
   'linux/arm64' '--no-build --no-deps' \
   'sudo -n "$APP_COMPOSE_BRIDGE"' 'bridge_call snapshot' 'bridge_call sources-fingerprint' \

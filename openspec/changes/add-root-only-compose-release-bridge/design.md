@@ -92,3 +92,8 @@ Refinamento aprovado em 19/11: o ensaio da primeira troca passou, mas up no mesm
 | Extra/desconhecido | qualquer | ID/projeto/nome inesperado | bloqueado | bloquear efeitos até decisão, sem tocar no desconhecido |
 
 O teste estrutural da task 7.1 cobre conflitos e preservação de IDs no Engine. Ele não conclui os gates de journal, fingerprint, DNS/aliases, dados persistentes, schema indisponível ou recuperação de todas as fronteiras; esses pertencem às tasks 7.2–7.7.
+
+
+### Históricos anteriores são testemunhas privadas — aprovado em 19/11/2026
+
+A consulta read-only encontrou 7 APIs e 5 webs históricos parados, além dos ativos. O registro de testemunhas tem proveniência/aprovação próprias e liga ID completo, nome, imagem, labels e digest de configuração/mounts/redes. Só pode reconhecer o conjunto previamente inventariado e aprovado; um extra novo não vira testemunha automaticamente. Testemunhas ficam fora das listas de candidatos/ativos/retidos desta tentativa e nunca recebem stop/start/rename/remove. A seleção valida cada identidade e estado parado contra o registro e inclui seu digest no fingerprint. Esse registro resolve o inventário do legado sem reduzir a unicidade dos ativos nem autorizar limpeza. Uma testemunha com nome operacional API/web ou nome derivado de retenção deve ser recusada para não encobrir tentativa interrompida.

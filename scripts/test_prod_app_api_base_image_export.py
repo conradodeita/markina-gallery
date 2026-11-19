@@ -42,6 +42,15 @@ class ApiBaseImageExportTests(unittest.TestCase):
         self.install_command("hostname", "printf 'preflight-test\\n'\n")
         self.install_command("git", self.git_shim())
         self.install_command("docker", self.docker_shim())
+        self.install_command("sudo", r'''
+if [[ "$*" == *" compose -- ps -q api" ]]; then
+  printf '%s\n' "$TEST_CONTAINER_IDS"
+elif [[ "$*" == *" service-project -- api" ]]; then
+  printf '%s\n' "${TEST_EXPECTED_PROJECT:-markina-gallery}"
+else
+  exit 96
+fi
+''')
 
     def install_command(self, name: str, body: str) -> None:
         command = self.bin / name
@@ -56,6 +65,9 @@ case "$*" in
   "status --porcelain") : ;;
   "remote get-url origin") printf '%s\n' 'https://github.com/conradodeita/markina-gallery.git' ;;
   "rev-parse HEAD") printf '%s\n' "$TEST_CHECKOUT_SHA" ;;
+  "rev-parse origin/main") printf '%s\n' "$TEST_TARGET_SHA" ;;
+  "rev-parse "*":scripts/production_app_compose_bridge.py") printf '%s\n' 'bridge-blob' ;;
+  "hash-object -- "*) printf '%s\n' "${TEST_BRIDGE_BLOB:-bridge-blob}" ;;
   "merge-base --is-ancestor "*) : ;;
   "ls-remote origin refs/heads/main") printf '%s refs/heads/main\n' "$TEST_TARGET_SHA" ;;
   *) echo "unexpected git command: $*" >&2; exit 97 ;;
@@ -107,7 +119,7 @@ fi
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
         self.assertEqual(gzip.decompress(result.stdout), b"synthetic-docker-image-archive\x00\n")
         calls = self.docker_log.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(len(calls), 6)
+        self.assertEqual(len(calls), 5)
         self.assertIn("image save " + IMAGE_ID, calls[-1])
         self.assertEqual(list(self.project.iterdir()), [])
 
@@ -130,8 +142,17 @@ fi
                 self.docker_log.unlink(missing_ok=True)
                 result = self.run_export(**overrides)
                 self.assertNotEqual(result.returncode, 0)
-                calls = self.docker_log.read_text(encoding="utf-8").splitlines()
+                calls = self.docker_log.read_text(encoding="utf-8").splitlines() if self.docker_log.exists() else []
                 self.assertFalse(any(call.startswith("image save ") for call in calls))
+
+    def test_registered_generation_is_selected_without_project_prefix_fallback(self):
+        project = 'markina-gallery-app-' + 'a' * 32
+        result = self.run_export(TEST_PROJECT=project, TEST_EXPECTED_PROJECT=project)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        result = self.run_export(TEST_PROJECT=project)
+        self.assertNotEqual(result.returncode, 0)
+        result = self.run_export(TEST_BRIDGE_BLOB='unreviewed')
+        self.assertNotEqual(result.returncode, 0)
 
     def test_rejects_invalid_arguments_before_docker_access(self):
         result = subprocess.run(

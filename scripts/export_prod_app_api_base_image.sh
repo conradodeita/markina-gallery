@@ -5,6 +5,7 @@ umask 077
 
 readonly PROJECT_ROOT="/opt/markina-gallery"
 readonly EXPECTED_HOST="clearbudget-vnic"
+readonly APP_COMPOSE_BRIDGE="/usr/local/sbin/markina-gallery-app-compose-bridge"
 EXPECTED_REPOSITORY="${MARKINA_EXPECTED_REPOSITORY:-}"
 MODE=""
 TARGET_SHA=""
@@ -45,8 +46,11 @@ export_api_base_image() {
   remote_sha="$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')"
   [[ "$remote_sha" == "$TARGET_SHA" ]] || fail "SHA alvo não é HEAD atual de origin/main"
 
-  container_ids="$(docker ps --quiet --filter 'label=com.docker.compose.project=markina-gallery' \
-    --filter 'label=com.docker.compose.service=api')" || fail "consulta de container API falhou"
+  [[ "$(git rev-parse origin/main)" == "$TARGET_SHA" \
+    && "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$(git rev-parse "$TARGET_SHA:scripts/production_app_compose_bridge.py")" ]] \
+    || fail "ponte root-only diverge da main revisada"
+  container_ids="$(sudo -n "$APP_COMPOSE_BRIDGE" --mode inventory --sha "$TARGET_SHA" compose -- ps -q api)" \
+    || fail "seleção comprovada de API indisponível"
   [[ -n "$container_ids" && "$(wc -l <<< "$container_ids" | tr -d ' ')" == 1 ]] \
     || fail "container API ausente ou duplicado"
   container_id="$container_ids"
@@ -55,14 +59,17 @@ export_api_base_image() {
   service="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.service" }}' "$container_id")" \
     || fail "serviço API indisponível"
   image_id="$(docker inspect --format '{{.Image}}' "$container_id")" || fail "imagem API indisponível"
-  [[ "$project" == markina-gallery && "$service" == api && "$image_id" == "$EXPECTED_IMAGE_ID" ]] \
+  local expected_project
+  expected_project="$(sudo -n "$APP_COMPOSE_BRIDGE" --mode inventory --sha "$TARGET_SHA" service-project -- api)" \
+    || fail "projeto API comprovado indisponível"
+  [[ -n "$expected_project" && "$project" == "$expected_project" && "$service" == api && "$image_id" == "$EXPECTED_IMAGE_ID" ]] \
     || fail "imagem API mudou desde o inventário"
   platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image_id")" \
     || fail "arquitetura da imagem API indisponível"
   [[ "$platform" == linux/arm64 ]] || fail "imagem-base API não é linux/arm64"
 
-  # Output is a compressed Docker image archive only. No container data, env,
-  # volume, filesystem mount, service mutation, or local host file is read/written.
+  # The bridge proves the registered runtime privately. Output contains only
+  # the compressed image archive; no env, container data or volume is exported.
   docker image save "$image_id" | gzip -1
 }
 

@@ -83,6 +83,7 @@ elif kind=="app-bridge":
         print("web "+s["web_hash"])
     elif operation=="sources-fingerprint": print(hashlib.sha256(Path(s["overlay_native"]).read_bytes()).hexdigest())
     elif operation=="service-hash": print(s["services"][a[1]]["hash"])
+    elif operation=="service-project": print("markina-gallery")
     elif operation=="web-identity": print(s["checkout"]+" "+s["services"]["web"]["image"]+" "+s["web_hash"]+" "+s["checkout"])
     elif operation=="assert-facial":
         facial=s.get("target_facial_config","true") if version==s["main"] else s.get("facial_runtime","true")
@@ -352,7 +353,7 @@ sudo() {{
       --app-version) version="$2"; shift 2 ;;
       --approval-fingerprint) fingerprint="$2"; shift 2 ;;
       --source-fingerprint) source_fingerprint="$2"; shift 2 ;;
-      compose|hashes|service-hash|web-identity|sources-fingerprint|assert-facial|snapshot) operation="$1"; shift ;;
+      compose|hashes|service-hash|service-project|web-identity|sources-fingerprint|assert-facial|snapshot) operation="$1"; shift ;;
       --) after_separator=true; shift ;;
       *) if [[ "$after_separator" == true ]]; then forwarded+=("$1"); shift; else return 81; fi ;;
     esac
