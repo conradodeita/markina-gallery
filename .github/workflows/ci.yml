@@ -30,11 +30,16 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ci-scope:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
+      backend_tests: ${{ steps.classify.outputs.backend_tests }}
       frontend: ${{ steps.classify.outputs.frontend }}
       backend_image: ${{ steps.classify.outputs.backend_image }}
       frontend_image: ${{ steps.classify.outputs.frontend_image }}
@@ -44,7 +49,10 @@ jobs:
         with:
           fetch-depth: 0
       - name: Testar classificação de escopo e gate agregado
-        run: python -m unittest scripts.test_classify_ci_scope scripts.test_check_ci_results -q
+        run: >-
+          python -m unittest scripts.test_classify_ci_scope scripts.test_check_ci_results
+          scripts.test_check_backend_ci_results scripts.test_ci_feedback
+          scripts.test_ci_workflow_policy scripts.test_ci_local -q
       - name: Classificar validações necessárias
         id: classify
         shell: bash
@@ -83,6 +91,8 @@ jobs:
         run: ruff check backend/app backend/tests
       - name: Lint do inventário APP_ENV
         run: ruff check scripts/app_env_transition_inventory.py scripts/app_env_transition_inventory_report.py scripts/test_app_env_transition_inventory.py scripts/test_production_release_workflow_policy.py scripts/test_prod_release_state.py
+      - name: Lint do bundle de release API/web
+        run: ruff check scripts/production_app_artifact.py scripts/test_production_app_artifact.py scripts/test_prod_app_api_base_image_export.py scripts/test_production_app_artifact_ssh_wrapper.py scripts/check_prod_app_release_scope.py scripts/test_prod_app_release_scope.py scripts/test_production_release_workflow_policy.py
       - name: Preparação local do pacote TOTP compatível
         run: |
           ruff check scripts/prepare_admin_totp_compatibility.py scripts/test_prepare_admin_totp_compatibility.py
@@ -112,15 +122,11 @@ jobs:
           PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_inventory -v
           PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_release_flow -v
           PYTHONPATH=scripts python -m unittest scripts.test_preview_adjustment_migration_release -v
-          bash scripts/test_deploy_homolog.sh
           bash scripts/test_deploy_prod_web.sh
           bash -n scripts/deploy-prod-infinitepay-retirement.sh
           bash scripts/test_deploy_prod_infinitepay_retirement.sh
           bash -n scripts/deploy-prod-facial-services.sh
-          bash scripts/test_reset_homolog_owner.sh
-          python scripts/test_owner_reset_policy.py
           python scripts/check_prod_facial_release_gates.py
-          ruff check scripts/reset_homolog_owner.py
       - name: Contratos POSIX do operador de restauração facial
         run: |
           ruff check scripts/facial_runtime_restoration*.py scripts/test_facial_runtime_restoration*.py scripts/test_facial_runtime_general_restore.py
@@ -202,12 +208,12 @@ jobs:
           python -m pytest scripts/test_facial_runtime_restoration.py scripts/test_facial_runtime_restoration_cli.py scripts/test_facial_runtime_restoration_host.py scripts/test_facial_runtime_general_restore.py -q
 
   backend-tests:
-    needs: [ci-scope]
-    if: ${{ needs.ci-scope.outputs.backend == 'true' }}
+    needs: [ci-scope, backend-quality]
+    if: ${{ needs.ci-scope.outputs.backend_tests == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
     runs-on: ubuntu-latest
     services:
       tenant-postgres:
@@ -278,7 +284,7 @@ jobs:
           PY
       - name: Suíte completa distribuída por módulos
         run: >-
-          python scripts/backend_ci.py run --index ${{ matrix.shard }} --count 3
+          python scripts/backend_ci.py run --index ${{ matrix.shard }} --count 4
           --output "$RUNNER_TEMP/backend-reports/shard-${{ matrix.shard }}.json"
       - name: Variante PostgreSQL do inventário de exclusão
         if: ${{ matrix.shard == 0 }}
@@ -300,22 +306,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Exigir sucesso da qualidade e de todas as partes
+      - name: Exigir os gates de backend selecionados
         env:
-          SCOPE_RESULT: ${{ needs.ci-scope.result }}
+          CI_SCOPE_RESULT: ${{ needs.ci-scope.result }}
+          TESTS_REQUIRED: ${{ needs.ci-scope.outputs.backend_tests }}
           QUALITY_RESULT: ${{ needs.backend-quality.result }}
           TESTS_RESULT: ${{ needs.backend-tests.result }}
-        run: |
-          test "$SCOPE_RESULT" = success
-          test "$QUALITY_RESULT" = success
-          test "$TESTS_RESULT" = success
+        run: python scripts/check_backend_ci_results.py
       - uses: actions/download-artifact@v4
+        if: ${{ needs.ci-scope.outputs.backend_tests == 'true' }}
         with:
           pattern: backend-shard-*
           path: ${{ runner.temp }}/backend-reports/
           merge-multiple: true
       - name: Confirmar coleção completa sem omissões ou sobreposição
-        run: python scripts/backend_ci.py verify --count 3 --artifacts "$RUNNER_TEMP/backend-reports"
+        if: ${{ needs.ci-scope.outputs.backend_tests == 'true' }}
+        run: python scripts/backend_ci.py verify --count 4 --artifacts "$RUNNER_TEMP/backend-reports"
 
   frontend:
     needs: [ci-scope]
@@ -419,6 +425,7 @@ jobs:
       - name: Testar reconciliação delimitada do overlay Gemma aposentado
         run: python3 openspec/changes/fix-app-release-compose-preflight/operations/reconcile_retired_gemma_stub.py --self-test
 
+# Preserve this legacy required-check ID; it now aggregates current CI and release policies.
   homolog-inventory-policy:
     needs: [ci-scope, backend, frontend, runtime-images, openspec, gitleaks]
     if: ${{ always() }}
@@ -440,17 +447,15 @@ jobs:
           OPENSPEC_RESULT: ${{ needs.openspec.result }}
           GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
         run: python scripts/check_ci_results.py
-      - name: Validar sintaxe Bash do inventário
-        run: bash -n scripts/inventory-homolog-readonly.sh
-      - name: Testar política de escopo e SHA
-        run: python scripts/test_readonly_homolog_inventory_policy.py
+      - name: Impedir regressão de workflows para ambiente removido
+        run: python scripts/test_ci_workflow_policy.py
       - name: Contrato técnico de candidato e recusa de publicação protegida
         run: python -m unittest discover -s scripts -p test_release_candidate_policy.py
       - name: Contratos de dependências por imagem e isolamento web
         run: python scripts/test_dependency_release.py
       - name: Contratos da atualização Orders e recuperação sem perda financeira
         run: python scripts/test_orders_pilot_release.py
-      - name: Regressões do gate restrito facial em homologação
+      - name: Regressões do release facial protegido
         if: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
@@ -463,10 +468,15 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}
         run: |
           bash -n scripts/production-preflight-ssh-wrapper.sh
+          bash -n scripts/export_prod_app_api_base_image.sh
+          bash -n scripts/production-app-artifact-ssh-wrapper.sh
           bash -n scripts/install-prod-preview-migration-wrapper.sh
           bash scripts/test_deploy_prod_facial_services.sh
           bash -n scripts/deploy-prod-app-services.sh
           bash -n scripts/install-prod-app-compose-bridge.sh
+          python -B scripts/test_production_app_artifact.py
+          python -B scripts/test_prod_app_api_base_image_export.py
+          python -B scripts/test_production_app_artifact_ssh_wrapper.py
           python -m unittest discover -s scripts -p test_production_app_compose_bridge.py -v
           bash scripts/test_deploy_prod_app_services.sh
           python scripts/test_prod_facial_release_gates.py
@@ -506,79 +516,12 @@ jobs:
       - name: Executar varredura de segredos (histórico completo)
         run: /tmp/gitleaks git -v
 
-  deploy-homolog:
-    if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
-    needs: [backend, frontend, runtime-images, openspec, homolog-inventory-policy, gitleaks]
-    runs-on: ubuntu-latest
-    environment: homolog
-    permissions:
-      contents: read
-    env:
-      HOMOLOG_SSH_HOST: ${{ secrets.HOMOLOG_SSH_HOST }}
-      HOMOLOG_SSH_PORT: ${{ secrets.HOMOLOG_SSH_PORT }}
-      HOMOLOG_SSH_USER: ${{ secrets.HOMOLOG_SSH_USER }}
-      HOMOLOG_SSH_PRIVATE_KEY: ${{ secrets.HOMOLOG_SSH_PRIVATE_KEY }}
-      HOMOLOG_SSH_KNOWN_HOSTS: ${{ secrets.HOMOLOG_SSH_KNOWN_HOSTS }}
-      HOMOLOG_PUBLIC_BASE_URL: ${{ secrets.HOMOLOG_PUBLIC_BASE_URL }}
-      HOMOLOG_FACIAL_MAX_REFERENCE_BYTES: "31457280"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Validar automação de entrega
-        run: bash scripts/test_deploy_homolog.sh
-      - name: Publicar SHA aprovado em homologação
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          for required in HOMOLOG_SSH_HOST HOMOLOG_SSH_PORT HOMOLOG_SSH_USER HOMOLOG_SSH_PRIVATE_KEY HOMOLOG_SSH_KNOWN_HOSTS HOMOLOG_PUBLIC_BASE_URL; do
-            if [[ -z "${!required}" ]]; then
-              echo "Secret obrigatório ausente: $required" >&2
-              exit 1
-            fi
-          done
-          key_file="$(mktemp)"
-          known_hosts_file="$(mktemp)"
-          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
-          printf '%s\n' "$HOMOLOG_SSH_PRIVATE_KEY" > "$key_file"
-          printf '%s\n' "$HOMOLOG_SSH_KNOWN_HOSTS" > "$known_hosts_file"
-          chmod 600 "$key_file" "$known_hosts_file"
-          maintenance_mode="inventory"
-          maintenance_confirmation=""
-          maintenance_without_backup=""
-          if git log -1 --pretty=%B | grep -Fxq 'Homolog-Cleanup: galleries-and-clients-without-backup'; then
-            maintenance_mode="execute"
-            maintenance_confirmation="DELETE_HOMOLOG_GALLERIES_AND_CLIENTS_WITHOUT_BACKUP"
-            maintenance_without_backup="--without-backup"
-          elif git log -1 --pretty=%B | grep -Fxq 'Homolog-Cleanup: galleries-and-clients'; then
-            maintenance_mode="execute"
-            maintenance_confirmation="DELETE_HOMOLOG_GALLERIES_AND_CLIENTS"
-          fi
-          if [[ "$maintenance_without_backup" == "--without-backup" ]]; then
-            expected_sha="$(git log -1 --pretty=%B | sed -nE 's/^Homolog-Cleanup-Expected-SHA: ([0-9a-f]{40})$/\1/p')"
-            [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'SHA inventariado ausente ou inválido' >&2; exit 1; }
-            git merge-base --is-ancestor "$expected_sha" "$GITHUB_SHA"
-            if ! git diff --quiet "$expected_sha" "$GITHUB_SHA" -- backend frontend docker scripts ':(exclude)scripts/test_maintain_homolog_policy.py'; then
-              echo 'Código operacional mudou desde o SHA inventariado; limpeza cancelada' >&2
-              exit 1
-            fi
-            remote_command="$(printf 'cd /opt/markina-gallery && test "$(git rev-parse HEAD)" = %q && curl -fsS http://127.0.0.1:8080/healthz >/dev/null && curl -fsS http://127.0.0.1:8080/api/health >/dev/null' "$expected_sha")"
-            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" </dev/null
-          else
-            remote_command="$(printf 'cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=%q MARKINA_PUBLIC_BASE_URL=%q FACIAL_MAX_REFERENCE_BYTES=%q bash -s -- --sha %q' "$GITHUB_REPOSITORY" "$HOMOLOG_PUBLIC_BASE_URL" "$HOMOLOG_FACIAL_MAX_REFERENCE_BYTES" "$GITHUB_SHA")"
-            ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$remote_command" < scripts/deploy-homolog.sh
-          fi
-          maintenance_command="$(printf 'cd /opt/markina-gallery && bash -s -- --mode %q --confirmation %q' "$maintenance_mode" "$maintenance_confirmation")"
-          if [[ -n "$maintenance_without_backup" ]]; then
-            maintenance_command+=" --without-backup"
-          fi
-          ssh -i "$key_file" -p "$HOMOLOG_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$HOMOLOG_SSH_USER@$HOMOLOG_SSH_HOST" "$maintenance_command" < scripts/maintain-homolog-data.sh
-
   release-scope:
     if: "${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
-    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]
+    needs: [ci-scope]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       scope: ${{ steps.classify.outputs.release_scope }}
       base_sha: ${{ steps.classify.outputs.base_sha }}
@@ -597,6 +540,105 @@ jobs:
             event_base_sha="$(git rev-parse "$GITHUB_SHA^")"
           fi
           python scripts/classify_prod_release.py --base "$event_base_sha" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  production-app-image-artifact:
+    if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
+    needs: [release-scope, production-app-preflight]
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    outputs:
+      bundle_sha256: ${{ steps.package.outputs.bundle_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Baixar imagem API base do mesmo run
+        uses: actions/download-artifact@v4
+        with:
+          name: production-app-api-base-${{ github.sha }}
+          path: ${{ runner.temp }}/production-app-api-base
+      - name: Confirmar runner ARM64 nativo
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            aarch64) ;;
+            *) echo 'Runner ARM64 nativo obrigatório para artefato de produção' >&2; exit 1 ;;
+          esac
+      - name: Construir API e web do SHA candidato
+        shell: bash
+        env:
+          API_BASE_IMAGE_ID: ${{ needs.production-app-preflight.outputs.api_base_image_id }}
+          API_BASE_ARCHIVE_SHA256: ${{ needs.production-app-preflight.outputs.api_base_archive_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          api_ref='markina-gallery-api:latest'
+          web_ref='markina-gallery-web:latest'
+          base_archive="$RUNNER_TEMP/production-app-api-base/production-app-api-base.tar.gz"
+          [[ "$API_BASE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$API_BASE_ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo 'Identidade ou digest da imagem API base inválido' >&2; exit 1; }
+          [[ "$(sha256sum "$base_archive" | awk '{print $1}')" == "$API_BASE_ARCHIVE_SHA256" ]] \
+            || { echo 'Artifact da imagem API base diverge do preflight' >&2; exit 1; }
+          gzip -dc "$base_archive" | docker load
+          [[ "$(docker image inspect --format '{{.Id}}' "$API_BASE_IMAGE_ID")" == "$API_BASE_IMAGE_ID" \
+            && "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$API_BASE_IMAGE_ID")" == linux/arm64 ]] \
+            || { echo 'Imagem API base carregada diverge do inventário ARM64' >&2; exit 1; }
+          docker image tag "$API_BASE_IMAGE_ID" markina-gallery-api:production-base
+          cat > "$RUNNER_TEMP/Dockerfile.api-overlay" <<'EOF'
+          ARG API_BASE_IMAGE
+          FROM ${API_BASE_IMAGE}
+          COPY backend/app /app/app
+          EOF
+          docker build --platform linux/arm64 --pull=false --tag "$api_ref" \
+            --build-arg API_BASE_IMAGE=markina-gallery-api:production-base \
+            --file "$RUNNER_TEMP/Dockerfile.api-overlay" .
+          docker buildx build --platform linux/arm64 --load --tag "$web_ref" --file frontend/Dockerfile frontend
+          for image in "$api_ref" "$web_ref"; do
+            platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")"
+            [[ "$platform" == linux/arm64 ]] \
+              || { echo "Identidade ARM64 diverge: $image" >&2; exit 1; }
+          done
+      - name: Verificar pacote frontend e criar bundle imutável
+        id: package
+        shell: bash
+        env:
+          API_BASE_IMAGE_ID: ${{ needs.production-app-preflight.outputs.api_base_image_id }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$API_BASE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo 'ID-base API ausente no empacotamento' >&2; exit 1; }
+          expected="$(python -c 'import json; p=json.load(open("frontend/package-lock.json"))["packages"]; print(json.dumps({n:p["node_modules/"+n]["version"] for n in ("next","react","react-dom")}))')"
+          docker run --rm --network none --platform linux/arm64 -e EXPECTED_PACKAGES="$expected" \
+            --entrypoint node markina-gallery-web:latest -e '
+              const fs=require("fs"), assert=require("assert");
+              const actual=Object.fromEntries(["next","react","react-dom"].map(n=>[n,JSON.parse(fs.readFileSync("/app/node_modules/"+n+"/package.json","utf8")).version]));
+              assert.deepStrictEqual(actual, JSON.parse(process.env.EXPECTED_PACKAGES)); console.log(actual);'
+          api_id="$(docker image inspect --format '{{.Id}}' markina-gallery-api:latest)"
+          web_id="$(docker image inspect --format '{{.Id}}' markina-gallery-web:latest)"
+          [[ "$api_id" =~ ^sha256:[0-9a-f]{64}$ && "$web_id" =~ ^sha256:[0-9a-f]{64}$ && "$api_id" != "$web_id" ]] \
+            || { echo 'IDs imutáveis das imagens inválidos' >&2; exit 1; }
+          docker save markina-gallery-api:latest markina-gallery-web:latest | gzip -1 > "$RUNNER_TEMP/images.tar.gz"
+          python scripts/production_app_artifact.py create \
+            --images "$RUNNER_TEMP/images.tar.gz" --output "$RUNNER_TEMP/production-app.bundle" \
+            --target-sha "$GITHUB_SHA" --api-base-image-id "$API_BASE_IMAGE_ID" \
+            --api-image-id "$api_id" --web-image-id "$web_id" \
+            | tee "$RUNNER_TEMP/production-app-bundle.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+          digest="$(sed -n 's/^bundle_sha256=//p' "$RUNNER_TEMP/production-app-bundle.txt")"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo 'SHA-256 de bundle inválido' >&2; exit 1; }
+          verify_output="$(python scripts/production_app_artifact.py verify \
+            --bundle "$RUNNER_TEMP/production-app.bundle" --target-sha "$GITHUB_SHA" \
+            --bundle-sha256 "$digest" --api-base-image-id "$API_BASE_IMAGE_ID")"
+          grep -Fqx "api_base_image_id=$API_BASE_IMAGE_ID" <<< "$verify_output" \
+            || { echo 'Bundle diverge da imagem API base inventariada' >&2; exit 1; }
+          echo "bundle_sha256=$digest" >> "$GITHUB_OUTPUT"
+      - name: Publicar artifact Actions imutável do SHA exato
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-app-arm64-${{ github.sha }}
+          path: ${{ runner.temp }}/production-app.bundle
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   infinitepay-retirement-scope:
     if: "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.operation == 'infinitepay-retirement-preflight' || inputs.operation == 'infinitepay-retirement-release') }}"
@@ -993,7 +1035,7 @@ jobs:
 
   production-app-preflight:
     if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && ((github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
-    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope]
+    needs: [release-scope]
     runs-on: ubuntu-latest
     environment: production-preflight
     permissions:
@@ -1001,14 +1043,9 @@ jobs:
     outputs:
       release_ready: ${{ steps.gates.outputs.release_ready }}
       approval_fingerprint: ${{ steps.inventory.outputs.approval_fingerprint }}
-    env:
-      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
-      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
-      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
-      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
-      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
-      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
-      APP_SCOPE_BASE_SHA: ${{ needs.release-scope.outputs.base_sha }}
+      api_base_image_id: ${{ steps.inventory.outputs.api_base_image_id }}
+      connection_binding: ${{ steps.inventory.outputs.connection_binding }}
+      api_base_archive_sha256: ${{ steps.base-image-export.outputs.api_base_archive_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1016,6 +1053,8 @@ jobs:
           fetch-depth: 0
       - name: Validar escopo e blobs revisados
         id: gates
+        env:
+          APP_SCOPE_BASE_SHA: ${{ needs.release-scope.outputs.base_sha }}
         run: |
           set -Eeuo pipefail
           python scripts/check_prod_app_release_scope.py --base "$APP_SCOPE_BASE_SHA" --target "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -1023,6 +1062,13 @@ jobs:
       - name: Inventário remoto API/web somente leitura
         id: inventory
         shell: bash
+        env:
+          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+          PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PREFLIGHT_PUBLIC_BASE_URL }}
         run: |
           set -Eeuo pipefail
           for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_PUBLIC_BASE_URL; do
@@ -1040,40 +1086,121 @@ jobs:
             "MARKINA_APP_TARGET_SHA=$GITHUB_SHA" </dev/null | tee "$output_file" | tee -a "$GITHUB_STEP_SUMMARY"
           fingerprint="$(sed -nE 's/^approval_fingerprint=([0-9a-f]{64})$/\1/p' "$output_file" | tail -n1)"
           [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || { echo 'Fingerprint inválido' >&2; exit 1; }
+          api_base_image_id="$(awk -F'|' '$1 == "api" && NF == 5 {print $3}' "$output_file")"
+          [[ "$(wc -l <<< "$api_base_image_id" | tr -d ' ')" == 1 && "$api_base_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo 'ID da imagem API base ausente/ambíguo' >&2; exit 1; }
+          connection_binding="$(printf '%s\0' "$PRODUCTION_SSH_HOST" "$PRODUCTION_SSH_PORT" "$PRODUCTION_SSH_USER" | sha256sum | awk '{print $1}')"
+          [[ "$connection_binding" =~ ^[0-9a-f]{64}$ ]] || { echo 'Vínculo do destino SSH inválido' >&2; exit 1; }
           echo "approval_fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
-
-  production-app-release:
-    if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && needs.production-app-preflight.outputs.release_ready == 'true' && ((github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
-    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-preflight]
-    runs-on: ubuntu-latest
-    environment: production
-    permissions:
-      contents: read
-    env:
-      PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
-      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
-      PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
-      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
-      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
-      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Publicar somente API e web aprovados
+          echo "api_base_image_id=$api_base_image_id" >> "$GITHUB_OUTPUT"
+          echo "connection_binding=$connection_binding" >> "$GITHUB_OUTPUT"
+      - name: Exportar somente a imagem API ativa pela chave read-only
+        id: base-image-export
         shell: bash
         env:
-          APPROVAL_FINGERPRINT: ${{ needs.production-app-preflight.outputs.approval_fingerprint }}
+          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+          API_BASE_IMAGE_ID: ${{ steps.inventory.outputs.api_base_image_id }}
         run: |
           set -Eeuo pipefail
+          [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ && "$API_BASE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo 'Configuração de exportação base inválida' >&2; exit 1; }
           key_file="$(mktemp)"
           known_hosts_file="$(mktemp)"
+          archive="$RUNNER_TEMP/production-app-api-base.tar.gz"
           trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
           printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
           printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
           chmod 600 "$key_file" "$known_hosts_file"
-          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
-            "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode release --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
+          ssh -i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" \
+            "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "MARKINA_APP_BASE_IMAGE_EXPORT_SHA=${GITHUB_SHA}_IMAGE_ID=${API_BASE_IMAGE_ID}" </dev/null > "$archive"
+          archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          archive_bytes="$(stat -c '%s' "$archive")"
+          [[ "$archive_sha256" =~ ^[0-9a-f]{64}$ && "$archive_bytes" -gt 0 && "$archive_bytes" -le 4294967296 ]] \
+            || { echo 'Archive base ausente ou acima do limite' >&2; exit 1; }
+          echo "api_base_archive_sha256=$archive_sha256" >> "$GITHUB_OUTPUT"
+          printf 'api_base_image_id=%s\napi_base_archive_sha256=%s\napi_base_archive_bytes=%s\n' \
+            "$API_BASE_IMAGE_ID" "$archive_sha256" "$archive_bytes" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Guardar temporariamente a imagem API base no mesmo run
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-app-api-base-${{ github.sha }}
+          path: ${{ runner.temp }}/production-app-api-base.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  production-app-release:
+    if: "${{ github.ref == 'refs/heads/main' && needs.release-scope.outputs.scope == 'app' && needs.production-app-preflight.outputs.release_ready == 'true' && ((github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.operation == 'app-release')) }}"
+    needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-image-artifact, production-app-preflight]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Baixar artifact ARM64 do mesmo run e SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: production-app-arm64-${{ github.sha }}
+          path: ${{ runner.temp }}/production-app-artifact
+      - name: Publicar somente API e web aprovados
+        shell: bash
+        env:
+          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+          PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY }}
+          PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
+          APPROVAL_FINGERPRINT: ${{ needs.production-app-preflight.outputs.approval_fingerprint }}
+          EXPECTED_API_BASE_IMAGE_ID: ${{ needs.production-app-preflight.outputs.api_base_image_id }}
+          PREFLIGHT_CONNECTION_BINDING: ${{ needs.production-app-preflight.outputs.connection_binding }}
+          EXPECTED_BUNDLE_SHA256: ${{ needs.production-app-image-artifact.outputs.bundle_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          deploy_key_file="$(mktemp)"
+          artifact_key_file="$(mktemp)"
+          known_hosts_file="$(mktemp)"
+          bundle="$RUNNER_TEMP/production-app-artifact/production-app.bundle"
+          trap 'rm -f "$deploy_key_file" "$artifact_key_file" "$known_hosts_file"' EXIT
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY PRODUCTION_PUBLIC_BASE_URL APPROVAL_FINGERPRINT EXPECTED_API_BASE_IMAGE_ID PREFLIGHT_CONNECTION_BINDING EXPECTED_BUNDLE_SHA256; do
+            [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
+          done
+          [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ && "$PRODUCTION_PUBLIC_BASE_URL" == "https://markina.pickyourpic.com.br" ]] \
+            || { echo 'Alvo de produção inválido' >&2; exit 1; }
+          release_connection_binding="$(printf '%s\0' "$PRODUCTION_SSH_HOST" "$PRODUCTION_SSH_PORT" "$PRODUCTION_SSH_USER" | sha256sum | awk '{print $1}')"
+          [[ "$PREFLIGHT_CONNECTION_BINDING" =~ ^[0-9a-f]{64}$ && "$release_connection_binding" == "$PREFLIGHT_CONNECTION_BINDING" ]] \
+            || { echo 'Destino SSH diverge do preflight; bundle não será transferido' >&2; exit 1; }
+          [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$EXPECTED_API_BASE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+            && "$EXPECTED_BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo 'Fingerprint ou digest de artifact inválido' >&2; exit 1; }
+          verify_output="$(python scripts/production_app_artifact.py verify --bundle "$bundle" \
+            --target-sha "$GITHUB_SHA" --bundle-sha256 "$EXPECTED_BUNDLE_SHA256" \
+            --api-base-image-id "$EXPECTED_API_BASE_IMAGE_ID")"
+          grep -Fqx "bundle_sha256=$EXPECTED_BUNDLE_SHA256" <<< "$verify_output" \
+            || { echo 'Artifact baixado diverge do digest produzido nesta execução' >&2; exit 1; }
+          grep -Fqx "api_base_image_id=$EXPECTED_API_BASE_IMAGE_ID" <<< "$verify_output" \
+            || { echo 'Artifact baixado diverge da imagem API base inventariada' >&2; exit 1; }
+          printf '%s\n' "$verify_output" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$deploy_key_file"
+          printf '%s\n' "$PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY" > "$artifact_key_file"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$deploy_key_file" "$artifact_key_file" "$known_hosts_file"
+          receipt="$(ssh -i "$artifact_key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "MARKINA_APP_ARTIFACT_UPLOAD_SHA=${GITHUB_SHA}_BUNDLE_SHA256=${EXPECTED_BUNDLE_SHA256}" < "$bundle")"
+          grep -Fq "bundle_received=$GITHUB_SHA sha256=$EXPECTED_BUNDLE_SHA256 bytes=" <<< "$receipt" \
+            || { echo 'Recebedor SSH não confirmou o bundle aprovado' >&2; exit 1; }
+          printf '%s\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          ssh -i "$deploy_key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file" "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='$PRODUCTION_PUBLIC_BASE_URL' bash -s -- --mode release --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT' --artifact-sha256 '$EXPECTED_BUNDLE_SHA256'" \
             < scripts/deploy-prod-app-services.sh
 
   production-app-compose-reconciliation:

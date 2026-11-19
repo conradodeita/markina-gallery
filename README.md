@@ -4,7 +4,7 @@ Nome atual do produto. Os identificadores técnicos `markina-gallery`, domínio,
 
 Plataforma self-hosted de gestão, prova, venda e acompanhamento de fotografias escolares e de eventos. Experiência mobile-first para responsáveis, painel administrativo rápido para um único fotógrafo, galerias privadas importadas do DigiKam e eventos coletivos com liberação individual de resultados.
 
-> **Status:** aplicação em evolução e validação em homologação. Consulte as changes ativas para distinguir implementação local, revisão humana e publicação.
+> **Status:** aplicação em evolução e produção em uso. Alterações passam por CI e revisão humana antes de publicação; não existe ambiente de homologação.
 
 ## Documentos do proprietário
 
@@ -84,6 +84,6 @@ gitleaks git -v            # histórico completo
 
 O scan de diretório (`gitleaks detect --no-git`) gera falsos positivos em `frontend/.next/` — use sempre o scan Git, que respeita o `.gitignore`. A CI usa o gitleaks-action com o histórico completo.
 
-## Deploy
+## Produção
 
-Ver `DEPLOY.md` (homologação e produção) e `docs/CHECKLIST-DEPLOY-ROLLBACK.md`.
+Ver `DEPLOY.md` e `docs/CHECKLIST-DEPLOY-ROLLBACK.md` para o fluxo protegido de produção. CI não publica a partir de `develop`.

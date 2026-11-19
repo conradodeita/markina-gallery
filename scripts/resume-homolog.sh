@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Retoma somente os contêineres existentes da aplicação Markina em homologação.
+# Nome legado: retoma somente contêineres existentes da aplicação Markina em produção.
 # Migration, reconstrução, recreação e infraestrutura externa ficam fora deste fluxo.
 
 set -Eeuo pipefail
@@ -146,7 +146,7 @@ wait_for_health() {
 
 main() {
   [[ "$PWD" == "$PROJECT_ROOT" ]] || fail "execute somente em $PROJECT_ROOT"
-  [[ -f "$ENV_FILE" ]] || fail "arquivo Compose de homologação ausente"
+  [[ -f "$ENV_FILE" ]] || fail "configuração externa da produção ausente"
 
   while (($#)); do
     case "$1" in

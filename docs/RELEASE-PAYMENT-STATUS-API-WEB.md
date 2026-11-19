@@ -1,6 +1,6 @@
 # Publicação pontual — situações financeiras em Vendas e pagamentos
 
-Procedimento específico da change `release-payment-status-api-web`. O fluxo `deploy-prod-web.sh` continua restrito a web. Não executar `deploy-homolog.sh` nem publicar em `develop` para acionar CI de deploy.
+Procedimento específico da change `release-payment-status-api-web`. O fluxo antigo `deploy-homolog.sh` foi aposentado; não publicar em `develop` para acionar deploy. Esta change permanece restrita ao fluxo web-only protegido descrito abaixo.
 
 ## Alvo e impacto
 

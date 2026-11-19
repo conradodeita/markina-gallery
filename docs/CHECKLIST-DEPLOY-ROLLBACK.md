@@ -2,55 +2,48 @@
 
 Limitado à Pick-your-Pic. Nunca afeta containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados de outros projetos.
 
-## 0. Gate obrigatório (antes de qualquer ação em homologação/produção)
+## 0. Gate obrigatório antes de qualquer ação em produção
 
-- [ ] Inspeções seguras concluídas: `docker ps`, `docker compose ls`, redes, volumes, serviços systemd, portas ocupadas
-- [ ] Inventário encontrado apresentado ao proprietário
-- [ ] Portas e subdomínio escolhidos apresentados ao proprietário
-- [ ] Plano de impacto zero apresentado e **aprovação explícita** recebida
+- [ ] Consultar o workflow protegido e o runbook OpenSpec vigentes para o tipo de release; não usar comandos de snapshots históricos.
+- [ ] Confirmar PR aprovado e todos os checks obrigatórios verdes no SHA exato da operação.
+- [ ] Concluir o inventário somente leitura de serviços, schema, portas, domínio, saúde, artefato ativo e recuperação.
+- [ ] Apresentar ao proprietário o alvo, SHA/digest, impacto, smoke tests, janela e rollback aplicável.
+- [ ] Receber aprovação humana explícita para operação e escopo apresentados, incluindo o gate `production` quando aplicável.
 
-## 1. Preparação (uma vez por servidor)
+## 1. Preparação do release
 
-- [ ] Diretório próprio da Pick-your-Pic criado (ex.: `/opt/markina-gallery`)
-- [ ] Usuário/serviço próprio da Pick-your-Pic, quando aplicável
-- [ ] `docker/.env.<ambiente>` criado fora do Git, com permissões restritas e segredos fortes gerados (`secrets.token_urlsafe`)
-- [ ] Subdomínio próprio apontado no proxy reverso existente, sem alterar rotas de outros projetos
-- [ ] Diretórios próprios de backups e logs criados
+- [ ] Confirmar compatibilidade da aplicação e das migrations sem executar mudanças em produção.
+- [ ] Confirmar a proveniência do SHA e o ID da imagem de rollback. Os fluxos atuais constroem no host de produção após aprovação e fixam o ID local antes da recriação; isso não equivale à promoção do artefato validado pelo CI.
+- [ ] Confirmar backup e procedimento de recuperação aplicáveis, sem expor conteúdo ou credenciais.
+- [ ] Usar somente a configuração externa prevista no contrato atual de produção. O caminho histórico `docker/.env.homolog` é usado pelo release web-only como configuração da produção; seu nome não cria um alvo de homologação e não deve ser renomeado nesta mudança.
+- [ ] Manter indisponível o acesso de tenants externos até a autorização expressa de lançamento.
 
-## 2. Deploy (por ambiente, homolog antes de prod)
+## 2. Publicação protegida direta em produção
 
-- [ ] Código na branch correta (release/`main` após PR aprovado)
-- [ ] `docker compose -p markina-gallery -f docker/docker-compose.yml config` válido
-- [ ] Imagens construídas: `docker compose -p markina-gallery -f docker/docker-compose.yml build`
-- [ ] Stack sobe: `docker compose -p markina-gallery -f docker/docker-compose.yml up -d`
-- [ ] Healthchecks verdes: `docker compose -p markina-gallery -f docker/docker-compose.yml ps`
-- [ ] Smoke test: `curl https://<subdominio>/healthz` e `curl https://<subdominio>/api/health`
-- [ ] Nenhum segredo em logs (revisar saída dos containers)
-- [ ] Validação OpenSpec da mudança: `openspec validate --strict`
-- [ ] Varredura de segredos: gitleaks sem achados
-- [ ] Backups do banco confirmados (manuais até a mudança `media-storage`)
+- [ ] Disparar somente o workflow de produção correspondente e autorizado; `develop` não publica automaticamente.
+- [ ] Revalidar SHA, digest, inventário e fingerprint sob os gates do próprio workflow.
+- [ ] Obter aprovação humana no environment protegido antes de qualquer etapa mutável.
+- [ ] Alterar somente os serviços previstos no runbook daquele release; não executar `docker compose up` genérico como atalho.
+- [ ] Executar smoke tests não destrutivos e conferir saúde, identidade do artefato e recursos fora do escopo.
+- [ ] Registrar a execução e os resultados sem segredos ou dados de clientes.
 
-### 2.1 Gate adicional do subsistema facial
+### Gate do subsistema facial
 
-- [ ] Primeiro deploy de produção mantém `FACIAL_PROCESSING_ENABLED=false`
-- [ ] SHA integral, inventário imediatamente anterior e backup restrito registrados por referências opacas
-- [ ] Migrations aditivas, manifesto/modelos, chave ativa e ambiente das credenciais verificados sem imprimir valores
-- [ ] PostgreSQL, Redis e workers faciais sem portas públicas; somente Nginx da Markina publicado
-- [ ] Segurança, privacidade, base legal, calibração, capacidade, recuperação e aprovação humana registrados
-- [ ] Allowlist e etapa `dark|canary|limited|general` aprovadas; operação protegida confirmada explicitamente
-- [ ] Fluxo infantil permanece desligado até representação, consentimento e aprovação jurídica/humana vigentes
+- [ ] Preservar `FACIAL_PROCESSING_ENABLED=true`, conforme instrução vigente do proprietário; interromper se o artefato ou a configuração alvo exigir desabilitá-lo.
+- [ ] Confirmar os gates próprios de segurança, privacidade, capacidade, acesso e recuperação previstos para o release.
+- [ ] Manter o fluxo infantil sujeito à autorização e aos controles aplicáveis; esta checklist não concede autorização para ampliá-lo.
 
-## 3. Rollback (somente a Pick-your-Pic)
+## 3. Rollback
 
-- [ ] Identificar versão anterior saudável (imagem/tag ou commit)
-- [ ] `docker compose -p markina-gallery -f docker/docker-compose.yml up -d` com a versão anterior
-- [ ] Healthchecks verdes e smoke test repetidos
-- [ ] Se necessário, restaurar banco a partir do backup do dia (procedimento de restauração testado em homologação)
-- [ ] Registrar incidente e causa no relatório do proprietário
-- [ ] Se facial estiver ativo, suspender o escopo, bloquear novas admissões e manter `maintenance` até comprovar purge agregado
+- [ ] Usar apenas o modo de recuperação/rollback do workflow e runbook correspondentes, com nova validação de identidade e inventário.
+- [ ] Confirmar que a imagem restaurada corresponde ao recibo saudável registrado; não inferir identidade por tag móvel.
+- [ ] Repetir os smoke tests e verificações de saúde do release.
+- [ ] Tratar restauração de banco separadamente: exige autorização própria e procedimento validado em CI efêmera com dados sintéticos. Rollback de container não recupera dados.
+- [ ] Se o subsistema facial estiver afetado, seguir o plano aprovado para suspender admissões, preservar auditoria e comprovar o lifecycle de dados.
+- [ ] Registrar incidente, causa e evidências para o proprietário.
 
 ## 4. Pós-deploy
 
-- [ ] Sincronizar/arquivar a mudança OpenSpec correspondente (somente specs implementadas)
-- [ ] Atualizar `docs/DECISOES-TECNICAS.md` se houver decisão nova
-- [ ] Confirmar que nenhum artefato do outro projeto foi alterado
+- [ ] Confirmar que nenhum serviço, dado ou recurso de outro projeto foi alterado.
+- [ ] Atualizar a change OpenSpec de release somente com evidência observada; sincronizar specs e arquivar após revisão humana.
+- [ ] Atualizar `docs/DECISOES-TECNICAS.md` quando houver decisão nova.

@@ -14,7 +14,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 SHA = re.compile(r'^[0-9a-f]{40}$')
 REQUIRED_JOBS = frozenset({
     'ci-scope', 'backend-quality', 'backend-tests (0)', 'backend-tests (1)',
-    'backend-tests (2)', 'backend', 'frontend', 'runtime-images (ubuntu-latest, amd64)',
+    'backend-tests (2)', 'backend-tests (3)', 'backend', 'frontend', 'runtime-images (ubuntu-latest, amd64)',
     'runtime-images (ubuntu-24.04-arm, arm64)', 'openspec', 'gitleaks',
     'homolog-inventory-policy', 'gemma-runtime',
 })

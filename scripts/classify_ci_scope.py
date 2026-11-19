@@ -4,12 +4,22 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import PurePosixPath
 import sys
-from typing import Iterable
+from collections.abc import Iterable
+from pathlib import PurePosixPath
 
+SCOPES = (
+    "backend",
+    "backend_tests",
+    "frontend",
+    "backend_image",
+    "frontend_image",
+    "preview",
+)
 
-SCOPES = ("backend", "frontend", "backend_image", "frontend_image", "preview")
+# This read-only CI diagnostic tool and its focused test run in the early scope
+# gate; they cannot alter application, deployment, infrastructure, or security.
+BACKEND_QUALITY_ONLY_PATHS = {"scripts/ci_feedback.py", "scripts/test_ci_feedback.py"}
 
 
 def classify(paths: Iterable[str], *, full: bool = False) -> dict[str, bool]:
@@ -25,12 +35,13 @@ def classify(paths: Iterable[str], *, full: bool = False) -> dict[str, bool]:
         path = PurePosixPath(normalized)
         name = path.as_posix()
 
+        if name in BACKEND_QUALITY_ONLY_PATHS:
+            result["backend"] = True
+            continue
+
         if (
-            name.startswith(".github/workflows/")
+            name.startswith((".github/workflows/", "scripts/", "docker/"))
             or name == ".github/dependabot.yml"
-            or name == "scripts/classify_ci_scope.py"
-            or name.startswith("scripts/")
-            or name.startswith("docker/")
             or name in {"pyproject.toml", "package.json", "package-lock.json"}
         ):
             return {scope: True for scope in SCOPES}
@@ -49,6 +60,7 @@ def classify(paths: Iterable[str], *, full: bool = False) -> dict[str, bool]:
 
         if name.startswith("backend/"):
             result["backend"] = True
+            result["backend_tests"] = True
 
             if name == "backend/Dockerfile.preview-adjustment":
                 result["preview"] = True
@@ -84,8 +96,7 @@ def main() -> int:
 
     if args.output:
         with open(args.output, "a", encoding="utf-8") as output:
-            for scope, required in result.items():
-                output.write(f"{scope}={'true' if required else 'false'}\n")
+            output.writelines(f"{scope}={'true' if required else 'false'}\n" for scope, required in result.items())
     print(json.dumps(result, sort_keys=True))
     return 0
 
