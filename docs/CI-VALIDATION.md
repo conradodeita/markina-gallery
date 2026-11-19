@@ -60,6 +60,14 @@ No head da PR `1504daaa2ef45d956802d07bf34662668867256f`, o run [44514194173](ht
 
 O run completo ficou dentro da meta inicial de 16–22 minutos e o shard mais lento foi 1m35s menor que a medição de 19m37s em `44502252441`. O shard dominante ainda excedeu a projeção em 1m50s. A fila do runner não foi medida separadamente. Esta execução valida a correção do teste de foco, mas uma amostra isolada não permite afirmar ganho sustentado nem p90.
 
+### Run 44537159256 — confirmação após promoção por artifact CI
+
+O run [44537159256](https://github.com/conradodeita/markina-gallery/actions/runs/44537159256) terminou verde em 19/11/2026 no head `947dc458a1bfa03627f26d867da695441e4ab27e`. O tempo de parede entre criação e conclusão foi **20m59s**; `backend-quality` levou 1m57s, frontend 1m50s e as imagens ARM64/AMD64 2m38s/2m50s. Os quatro shards levaram **15m15s / 17m32s / 17m58s / 15m10s**.
+
+Os quatro manifestos e JUnit do mesmo run, verificados com `scripts/backend_ci.py verify`, cobrem **2.625/2.625 testes** (651/663/704/607), sem omissões, sobreposições ou falhas. Os manifestos registram a revisão de merge do PR `67d95b8e710c50373acd4e14c4755cec80fff487`, cujo segundo pai é o head `947dc458`; os quatro shards também usam o mesmo hash do perfil de duração. O gate `homolog-inventory-policy` executou com sucesso os testes POSIX do exportador read-only e do wrapper de upload restrito. Os jobs de produção foram ignorados por ser um evento de PR; não houve transferência nem publicação.
+
+Em comparação com o run verde `44514194173` (20m56s; shard dominante 18m02s), este run ficou 3 segundos mais longo no total e 4 segundos mais rápido no shard dominante. A diferença não demonstra ganho novo nem regressão mensurável; as duas observações mantêm a execução perto de 21 minutos. Fila não isolada, p90 e ganho sustentado continuam sem evidência suficiente.
+
 ## Seleção e gates
 
 - Todos os eventos que não sejam `pull_request`, incluindo push e `workflow_dispatch`, usam `--full`.
