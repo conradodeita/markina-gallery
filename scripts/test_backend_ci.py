@@ -26,10 +26,10 @@ IDS = [f"tests/test_{module}.py::test_case[{case}]"
 
 def reports(profile=None):
     profile = load_duration_profile() if profile is None else profile
-    return [{"version": 2, "revision": "synthetic", "count": 3, "index": index,
+    return [{"version": 2, "revision": "synthetic", "count": 4, "index": index,
              "duration_profile_sha256": duration_profile_sha256(profile),
              "exit_code": 0, "collected": IDS, "selected": items}
-            for index, items in enumerate(partition(IDS, 3, profile))]
+            for index, items in enumerate(partition(IDS, 4, profile))]
 
 
 def profile_for(modules, fallback=1.0):
@@ -62,6 +62,12 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(1, profile["schema_version"])
         self.assertEqual(2625, profile["source"]["collected_items"])
         self.assertEqual(251, profile["source"]["module_count"])
+        self.assertEqual(2, profile["source"]["sample_count"])
+        self.assertEqual(5250, sum(item["items"] for item in profile["modules"].values()))
+        self.assertEqual(
+            profile["source"]["collected_items"] * profile["source"]["sample_count"],
+            sum(item["items"] for item in profile["modules"].values()),
+        )
         self.assertEqual(64, len(duration_profile_sha256(profile)))
         for invalid in (
             {"schema_version": 2, "fallback_seconds_per_case": 1,
@@ -115,13 +121,13 @@ class PartitionTests(unittest.TestCase):
                                     for part in weighted_parts))
 
     def test_complete_reports_pass(self):
-        self.assertEqual(len(IDS), verify(reports(), 3, "synthetic"))
+        self.assertEqual(len(IDS), verify(reports(), 4, "synthetic"))
 
     def test_missing_extra_or_duplicate_shard_fails(self):
         data = reports()
         for invalid in (data[:2], data + [data[0]], [data[0], data[0], data[2]]):
             with self.assertRaises(ValueError):
-                verify(invalid, 3, "synthetic")
+                verify(invalid, 4, "synthetic")
 
     def test_bad_metadata_or_failed_pytest_cannot_pass(self):
         for field, value in (("revision", "other-sha"), ("count", 2), ("version", 1),
@@ -131,7 +137,7 @@ class PartitionTests(unittest.TestCase):
             data = reports()
             data[0][field] = value
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):
-                verify(data, 3, "synthetic")
+                verify(data, 4, "synthetic")
 
     def test_different_collection_omission_and_overlap_fail(self):
         original = reports()
@@ -150,11 +156,11 @@ class PartitionTests(unittest.TestCase):
         variants.append(data)
         for invalid in variants:
             with self.assertRaises(ValueError):
-                verify(invalid, 3, "synthetic")
+                verify(invalid, 4, "synthetic")
 
 
 class PytestIntegrationTests(unittest.TestCase):
-    def run_shard(self, root, index, *, count=3):
+    def run_shard(self, root, index, *, count=4):
         env = dict(os.environ, PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
         env.pop("PYTEST_ADDOPTS", None)
         output = root / "reports" / f"shard-{index}.json"
@@ -170,7 +176,7 @@ class PytestIntegrationTests(unittest.TestCase):
             root = Path(directory)
             tests = root / "tests"
             tests.mkdir()
-            for module in ("a", "b", "c"):
+            for module in ("a", "b", "c", "d"):
                 (tests / f"test_{module}.py").write_text(
                     "import pytest\n"
                     "@pytest.fixture(scope='module')\n"
@@ -182,12 +188,12 @@ class PytestIntegrationTests(unittest.TestCase):
                     "@pytest.mark.skip(reason='synthetic existing skip')\n"
                     "def test_skipped(): pass\n", encoding="utf-8")
             data = []
-            for index in range(3):
+            for index in range(4):
                 result, output = self.run_shard(root, index)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                 self.assertTrue(output.with_suffix(".xml").is_file())
                 data.append(json.loads(output.read_text(encoding="utf-8")))
-            self.assertEqual(12, verify(data, 3, "synthetic"))
+            self.assertEqual(16, verify(data, 4, "synthetic"))
 
     def test_real_pytest_failure_replaces_old_success_report(self):
         with tempfile.TemporaryDirectory() as directory:

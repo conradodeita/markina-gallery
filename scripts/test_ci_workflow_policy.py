@@ -4,6 +4,8 @@ import re
 import unittest
 from pathlib import Path
 
+from scripts.verify_main_ci_evidence import REQUIRED_JOBS
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 CI = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -22,6 +24,13 @@ class CIWorkflowPolicyTests(unittest.TestCase):
         scope = CI.split("  ci-scope:\n", 1)[1].split("\n  backend-quality:\n", 1)[0]
         self.assertIn("if [[ \"$EVENT_NAME\" == \"pull_request\" ]]", scope)
         self.assertIn("python scripts/classify_ci_scope.py --full", scope)
+
+    def test_backend_matrix_and_aggregation_use_four_shards(self):
+        shards = CI.split("  backend-tests:\n", 1)[1].split("\n  backend:\n", 1)[0]
+        self.assertIn("shard: [0, 1, 2, 3]", shards)
+        self.assertIn("--count 4", shards)
+        self.assertIn("backend_ci.py verify --count 4", CI)
+        self.assertIn("backend-tests (3)", REQUIRED_JOBS)
 
     def test_required_aggregate_contexts_and_production_environments_remain(self):
         for job in ("backend", "frontend", "openspec", "homolog-inventory-policy",

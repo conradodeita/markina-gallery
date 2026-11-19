@@ -211,7 +211,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
     runs-on: ubuntu-latest
     services:
       tenant-postgres:
@@ -282,7 +282,7 @@ jobs:
           PY
       - name: Suíte completa distribuída por módulos
         run: >-
-          python scripts/backend_ci.py run --index ${{ matrix.shard }} --count 3
+          python scripts/backend_ci.py run --index ${{ matrix.shard }} --count 4
           --output "$RUNNER_TEMP/backend-reports/shard-${{ matrix.shard }}.json"
       - name: Variante PostgreSQL do inventário de exclusão
         if: ${{ matrix.shard == 0 }}
@@ -319,7 +319,7 @@ jobs:
           merge-multiple: true
       - name: Confirmar coleção completa sem omissões ou sobreposição
         if: ${{ needs.ci-scope.outputs.backend_tests == 'true' }}
-        run: python scripts/backend_ci.py verify --count 3 --artifacts "$RUNNER_TEMP/backend-reports"
+        run: python scripts/backend_ci.py verify --count 4 --artifacts "$RUNNER_TEMP/backend-reports"
 
   frontend:
     needs: [ci-scope]
