@@ -5,7 +5,13 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from scripts.verify_main_ci_evidence import (
-    REQUIRED_JOBS, EvidenceError, paginate, request_json, select_run, verify_jobs, verify_remote,
+    REQUIRED_JOBS,
+    EvidenceError,
+    paginate,
+    request_json,
+    select_run,
+    verify_jobs,
+    verify_remote,
 )
 
 SHA = 'a' * 40
@@ -83,19 +89,34 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(EvidenceError, 'nao_verde'):
             select_run([run(status='in_progress', conclusion=None)], SHA, app_bridge_install=True)
 
+    def test_runtime_adoption_accepts_only_the_existing_readonly_preflight_failure(self):
+        release_jobs = jobs() + [
+            {'name': 'release-scope', 'status': 'completed', 'conclusion': 'success'},
+            {'name': 'production-app-preflight', 'status': 'completed', 'conclusion': 'failure'},
+            {'name': 'production-app-release', 'status': 'completed', 'conclusion': 'skipped'},
+        ]
+        with patch('scripts.verify_main_ci_evidence.request_json', return_value={'sha': SHA}), \
+             patch('scripts.verify_main_ci_evidence.paginate', side_effect=[[run(conclusion='failure')], release_jobs]):
+            self.assertEqual(verify_remote(SHA, 'synthetic', app_runtime_adoption=True)['sha'], SHA)
+        for variant in (release_jobs[:-1], release_jobs + [{'name': 'production-app-release', 'status': 'completed', 'conclusion': 'success'}]):
+            with patch('scripts.verify_main_ci_evidence.request_json', return_value={'sha': SHA}), \
+                 patch('scripts.verify_main_ci_evidence.paginate', side_effect=[[run(conclusion='failure')], variant]), \
+                 self.assertRaises(EvidenceError):
+                verify_remote(SHA, 'synthetic', app_runtime_adoption=True)
+
     def test_pagination_complete_and_incomplete(self):
         with patch('scripts.verify_main_ci_evidence.request_json', side_effect=[
                 {'total_count': 2, 'jobs': [{'id': 1}]}, {'total_count': 2, 'jobs': [{'id': 2}]}]):
             self.assertEqual(len(paginate('x', 'jobs', 'synthetic')), 2)
         for response in ({'total_count': 2, 'jobs': []}, {'total_count': '2', 'jobs': []},
                          {'total_count': 0, 'jobs': [{'id': 1}]}):
-            with patch('scripts.verify_main_ci_evidence.request_json', return_value=response):
-                with self.assertRaises(EvidenceError):
-                    paginate('x', 'jobs', 'synthetic')
-        with patch('scripts.verify_main_ci_evidence.request_json', side_effect=[
-                {'total_count': 2, 'jobs': [{'id': 1}]}, {'total_count': 3, 'jobs': [{'id': 2}]}]):
-            with self.assertRaisesRegex(EvidenceError, 'paginacao_mudou'):
+            with patch('scripts.verify_main_ci_evidence.request_json', return_value=response), \
+                 self.assertRaises(EvidenceError):
                 paginate('x', 'jobs', 'synthetic')
+        with patch('scripts.verify_main_ci_evidence.request_json', side_effect=[
+                {'total_count': 2, 'jobs': [{'id': 1}]}, {'total_count': 3, 'jobs': [{'id': 2}]}]), \
+             self.assertRaisesRegex(EvidenceError, 'paginacao_mudou'):
+            paginate('x', 'jobs', 'synthetic')
 
     def test_api_failure_is_sanitized_and_url_is_bounded(self):
         with patch('scripts.verify_main_ci_evidence.build_opener') as opener:
@@ -111,12 +132,12 @@ class EvidenceTests(unittest.TestCase):
              patch('scripts.verify_main_ci_evidence.paginate', side_effect=[[run()], jobs()]):
             self.assertEqual(verify_remote(SHA, 'synthetic')['run_id'], 1)
         with patch('scripts.verify_main_ci_evidence.request_json', side_effect=[{'sha': SHA}, {'sha': 'b' * 40}]), \
-             patch('scripts.verify_main_ci_evidence.paginate', side_effect=[[run()], jobs()]):
-            with self.assertRaisesRegex(EvidenceError, 'main_mudou'):
-                verify_remote(SHA, 'synthetic')
-        with patch('scripts.verify_main_ci_evidence.request_json', return_value={'sha': 'b' * 40}):
-            with self.assertRaisesRegex(EvidenceError, 'nao_e_main'):
-                verify_remote(SHA, 'synthetic')
+             patch('scripts.verify_main_ci_evidence.paginate', side_effect=[[run()], jobs()]), \
+             self.assertRaisesRegex(EvidenceError, 'main_mudou'):
+            verify_remote(SHA, 'synthetic')
+        with patch('scripts.verify_main_ci_evidence.request_json', return_value={'sha': 'b' * 40}), \
+             self.assertRaisesRegex(EvidenceError, 'nao_e_main'):
+            verify_remote(SHA, 'synthetic')
 
 
 if __name__ == '__main__':

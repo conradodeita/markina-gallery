@@ -16,6 +16,15 @@ Esta seção atualiza o procedimento para a configuração real do host; as nota
 - Em falha, conservar marcadores e cópias. `operation=app-rollback` exige inventário/aprovação próprios, confere cópias e restaura somente API/web. Não restaurar banco, limpar fontes ou executar rollback automático. O Nginx só recebe teste/reload já autorizado.
 - Conclusão exige IDs de imagem e versão corretos, semântica preservada, schema intacto, `APP_ENV=production`, `FACIAL_PROCESSING_ENABLED=true`, saúde e HTTPS. Preservar evidência de invariância dos outros serviços. Não apagar cópias de recuperação sem política própria aprovada.
 
+### Adoção explícita do runtime ativo — planejada, ainda não executada
+
+Os snapshots indicados pelos labels podem representar uma execução histórica e divergir do runtime saudável. O preflight normal continua bloqueado nesses casos. O workflow manual **Adotar base privada do runtime API/web** tem duas etapas:
+
+1. `operation=diagnose` (ou `adopt`) executa somente leitura com a chave de `production-preflight`, comprova cada campo via Compose resolvido e Docker inspect, e retorna `adoption_fingerprint`. Nenhum fingerprint de release é emitido nessa etapa.
+2. Revise o fingerprint e execute `operation=adopt`, informando-o em `approval_fingerprint`. O workflow vincula novamente fingerprint e destino SSH, exige a aprovação protegida do Environment `production`, adquire o lock e repete toda a prova antes de gravar a base root-only.
+
+A adoção guarda cópias históricas e a configuração efetiva (incluindo TOTP) somente em `/var/lib/markina-gallery/app-compose-bridge`, como `root:root`, diretórios `0700` e arquivos `0600`. Ela não recria containers, altera `.env`, credenciais ou imagens e não publica a aplicação. Depois da adoção, execute novo preflight de release e siga a aprovação/fingerprint próprios do release. Em troca parcial durante release, somente `app-rollback-inventory`/`app-rollback` pode avaliar a combinação registrada anterior/candidata; essa recuperação exige novo fingerprint e aprovação protegida. Não usar diagnóstico de adoção para contornar falha de código, alteração inesperada do runtime ou gate de release.
+
 Este fluxo publica somente `api` e `web` para uma mudança comercial previamente revisada. Ele é separado da manutenção facial: alterações mistas são recusadas pelo classificador e não iniciam nenhum release automaticamente.
 
 ## Alvo e impacto

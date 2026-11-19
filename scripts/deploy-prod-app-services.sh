@@ -13,7 +13,7 @@ readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
 readonly ARTIFACT_DIR="/tmp/markina-gallery-app-artifacts-${UID}"
 readonly APP_COMPOSE_BRIDGE="/usr/local/sbin/markina-gallery-app-compose-bridge"
-readonly APP_COMPOSE_BRIDGE_BLOB="7d63838e2eae5ba65d70e50a7c500af395c675ba"
+readonly APP_COMPOSE_BRIDGE_BLOB="7fc38475272e26719c0c3d0d032d56056848ee3e"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly SERVICES=(api web)
 readonly EXPECTED_DATABASE_REVISION="20261113_0126"
@@ -64,10 +64,10 @@ parse_arguments() {
       *) fail "argumento não permitido: $1" ;;
     esac
   done
-  [[ "$MODE" == "inventory" || "$MODE" == "release" || "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]] \
-    || fail "modo deve ser inventory, release, rollback-inventory ou rollback"
+  [[ "$MODE" == "inventory" || "$MODE" == "adoption-inventory" || "$MODE" == "adopt" || "$MODE" == "release" || "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]] \
+    || fail "modo inválido"
   [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "SHA alvo inválido"
-  if [[ "$MODE" == "release" || "$MODE" == "rollback" ]]; then
+  if [[ "$MODE" == "release" || "$MODE" == "rollback" || "$MODE" == "adopt" ]]; then
     [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint obrigatório"
   fi
   if [[ "$MODE" == release ]]; then
@@ -75,6 +75,15 @@ parse_arguments() {
   elif [[ -n "$ARTIFACT_SHA256" ]]; then
     fail "digest do bundle só é permitido no modo release"
   fi
+}
+
+adopt_runtime_base() {
+  [[ "$(hostname)" == "$EXPECTED_HOST" && "$(pwd -P)" == "$PROJECT_ROOT" ]] || fail "alvo de adoção diverge"
+  [[ -z "$(git status --porcelain)" && "$(git rev-parse origin/main)" == "$TARGET_SHA" ]] || fail "main/checkout diverge"
+  [[ "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$TARGET_SHA" ]] || fail "main mudou"
+  acquire_app_deploy_lock
+  bridge_call adopt || fail "fingerprint de adoção divergiu; base anterior preservada"
+  echo "base privada do runtime API/web adotada; serviços sem alterações"
 }
 
 bridge_call() {
@@ -318,6 +327,16 @@ inventory() {
   echo "impacto=api,web; sem migrations; breve interrupção da API pode afetar temporariamente todas as rotas, inclusive o Monitor; implementação e dados do Monitor permanecem intocados"
   echo "rollback=imagens anteriores e SHA ativo preservados; novo inventário e aprovação antes de qualquer restauração"
   echo "nenhum comando mutável foi executado"
+}
+
+adoption_inventory() {
+  [[ "$(hostname)" == "$EXPECTED_HOST" && "$(pwd -P)" == "$PROJECT_ROOT" ]] || fail "alvo de adoção diverge"
+  [[ -z "$(git status --porcelain)" ]] || fail "checkout contém alterações locais"
+  [[ "$(git rev-parse origin/main)" == "$TARGET_SHA" ]] || fail "SHA de adoção não é main local"
+  [[ "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$TARGET_SHA" ]] || fail "main mudou"
+  [[ "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$APP_COMPOSE_BRIDGE_BLOB" ]] || fail "ponte diverge"
+  sudo -n "$APP_COMPOSE_BRIDGE" --mode inventory --sha "$TARGET_SHA" adoption-inventory
+  echo "impacto=read-only; nenhum serviço ou arquivo persistente alterado"
 }
 
 rollback_inventory() {
@@ -602,6 +621,8 @@ main() {
   if [[ "$MODE" == release || "$MODE" == rollback ]]; then acquire_app_deploy_lock; fi
   case "$MODE" in
     inventory) inventory ;;
+    adoption-inventory) adoption_inventory ;;
+    adopt) adopt_runtime_base ;;
     release) release ;;
     rollback-inventory) rollback_inventory ;;
     rollback) rollback ;;

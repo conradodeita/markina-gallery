@@ -102,6 +102,7 @@ class AppReleaseScopeTests(unittest.TestCase):
 
     def test_exact_release_coordination_scripts_are_allowed(self):
         names = (
+            ".github/workflows/production-app-runtime-adoption.yml",
             ".github/workflows/production-app-compose-bridge-install.yml",
             "scripts/verify_main_ci_evidence.py",
             "scripts/test_verify_main_ci_evidence.py",
