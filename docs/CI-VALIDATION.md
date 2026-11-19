@@ -47,6 +47,19 @@ Na primeira tentativa, o teste `revela o resultado de envio incerto confirmado n
 
 Entre as duas distribuições de quatro shards, o maior job caiu de 19m37s em 44502252441 para 18m24s em 44507005441, uma redução de 1m13s. O job mais lento ainda ficou 2m12s acima da projeção LPT de 16m12s; overhead de inicialização e execução não está incluído na projeção. É uma amostra curta e não sustenta p90 nem ganho estável.
 
+### Run 44514194173 — confirmação posterior
+
+No head da PR `1504daaa2ef45d956802d07bf34662668867256f`, o run [44514194173](https://github.com/conradodeita/markina-gallery/actions/runs/44514194173) terminou verde. Os quatro shards, `backend`, backend quality, frontend, runtime-images AMD64/ARM64, OpenSpec, Gitleaks, `homolog-inventory-policy` e `gemma-runtime` passaram; jobs de produção foram ignorados por ser evento de pull request. Os artefatos do próprio run têm a mesma revisão do workflow e foram conferidos localmente com `scripts/backend_ci.py verify`: 2.625 testes únicos, distribuídos em 651/663/704/607, sem falha, omissão ou sobreposição.
+
+| Medição | Resultado |
+|---|---:|
+| Run completo (criação a conclusão) | 20m56s |
+| Shards 0 / 1 / 2 / 3 | 12m44s / 16m16s / 18m02s / 15m02s |
+| Shard mais lento | 18m02s |
+| Projeção LPT atual | 16m12s |
+
+O run completo ficou dentro da meta inicial de 16–22 minutos e o shard mais lento foi 1m35s menor que a medição de 19m37s em `44502252441`. O shard dominante ainda excedeu a projeção em 1m50s. A fila do runner não foi medida separadamente. Esta execução valida a correção do teste de foco, mas uma amostra isolada não permite afirmar ganho sustentado nem p90.
+
 ## Seleção e gates
 
 - Todos os eventos que não sejam `pull_request`, incluindo push e `workflow_dispatch`, usam `--full`.

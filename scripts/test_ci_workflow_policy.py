@@ -53,6 +53,38 @@ class CIWorkflowPolicyTests(unittest.TestCase):
                 self.assertNotIn("secrets.HOMOLOG_SSH_", text)
         self.assertNotRegex(CI, r"(?m)^  deploy-homolog:")
 
+    def test_retired_homologation_docs_cannot_reintroduce_an_environment(self):
+        docs = {
+            "resume": (ROOT / "docs" / "DEPLOY-CONTINUO-HOMOLOGACAO.md").read_text(encoding="utf-8"),
+            "authentication": (ROOT / "docs" / "HOMOLOGACAO-AUTH-EXECUCAO.md").read_text(encoding="utf-8"),
+            "dependencies": (ROOT / "docs" / "RELEASE-DEPENDENCIES.md").read_text(encoding="utf-8"),
+            "decisions": (ROOT / "docs" / "DECISOES-TECNICAS.md").read_text(encoding="utf-8"),
+            "payment_release": (ROOT / "docs" / "RELEASE-PAYMENT-STATUS-API-WEB.md").read_text(encoding="utf-8"),
+        }
+        normalized = {name: content.casefold() for name, content in docs.items()}
+
+        self.assertIn("não existe ambiente operacional de homologação", normalized["resume"])
+        self.assertNotIn("o workflow `ci` publica em homologação", normalized["resume"])
+        self.assertNotIn("homolog_ssh_private_key", normalized["resume"])
+
+        self.assertIn("não executar nem usar como roteiro", normalized["authentication"])
+        for obsolete in (
+            "app_env=staging",
+            "crie `/opt/markina-gallery/docker/.env.homolog`",
+            "docker compose --env-file docker/.env.homolog",
+            "aponte para `markina-homolog-nginx:80`",
+        ):
+            with self.subTest(obsolete=obsolete):
+                self.assertNotIn(obsolete, normalized["authentication"])
+
+        self.assertIn("não se deve provisionar um ambiente equivalente", normalized["dependencies"])
+        self.assertIn("mantenha o subgrupo bloqueado em vez de criar homologação ou testar em produção",
+                      normalized["dependencies"])
+        self.assertIn("fluxo antigo `deploy-homolog`", normalized["dependencies"])
+        self.assertIn("foi aposentado", normalized["payment_release"])
+        self.assertNotIn("não executar `deploy-homolog.sh`", normalized["payment_release"])
+        self.assertIn("decisão histórica supersedida em 2026-11-18", normalized["decisions"])
+
 
 if __name__ == "__main__":
     unittest.main()
