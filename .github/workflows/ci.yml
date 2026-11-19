@@ -1044,6 +1044,7 @@ jobs:
       release_ready: ${{ steps.gates.outputs.release_ready }}
       approval_fingerprint: ${{ steps.inventory.outputs.approval_fingerprint }}
       api_base_image_id: ${{ steps.inventory.outputs.api_base_image_id }}
+      connection_binding: ${{ steps.inventory.outputs.connection_binding }}
       api_base_archive_sha256: ${{ steps.base-image-export.outputs.api_base_archive_sha256 }}
     steps:
       - uses: actions/checkout@v4
@@ -1088,8 +1089,11 @@ jobs:
           api_base_image_id="$(awk -F'|' '$1 == "api" && NF == 5 {print $3}' "$output_file")"
           [[ "$(wc -l <<< "$api_base_image_id" | tr -d ' ')" == 1 && "$api_base_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
             || { echo 'ID da imagem API base ausente/ambíguo' >&2; exit 1; }
+          connection_binding="$(printf '%s\0' "$PRODUCTION_SSH_HOST" "$PRODUCTION_SSH_PORT" "$PRODUCTION_SSH_USER" | sha256sum | awk '{print $1}')"
+          [[ "$connection_binding" =~ ^[0-9a-f]{64}$ ]] || { echo 'Vínculo do destino SSH inválido' >&2; exit 1; }
           echo "approval_fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
           echo "api_base_image_id=$api_base_image_id" >> "$GITHUB_OUTPUT"
+          echo "connection_binding=$connection_binding" >> "$GITHUB_OUTPUT"
       - name: Exportar somente a imagem API ativa pela chave read-only
         id: base-image-export
         shell: bash
@@ -1158,6 +1162,7 @@ jobs:
           PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
           APPROVAL_FINGERPRINT: ${{ needs.production-app-preflight.outputs.approval_fingerprint }}
           EXPECTED_API_BASE_IMAGE_ID: ${{ needs.production-app-preflight.outputs.api_base_image_id }}
+          PREFLIGHT_CONNECTION_BINDING: ${{ needs.production-app-preflight.outputs.connection_binding }}
           EXPECTED_BUNDLE_SHA256: ${{ needs.production-app-image-artifact.outputs.bundle_sha256 }}
         run: |
           set -Eeuo pipefail
@@ -1166,11 +1171,14 @@ jobs:
           known_hosts_file="$(mktemp)"
           bundle="$RUNNER_TEMP/production-app-artifact/production-app.bundle"
           trap 'rm -f "$deploy_key_file" "$artifact_key_file" "$known_hosts_file"' EXIT
-          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY PRODUCTION_PUBLIC_BASE_URL APPROVAL_FINGERPRINT EXPECTED_API_BASE_IMAGE_ID EXPECTED_BUNDLE_SHA256; do
+          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY PRODUCTION_PUBLIC_BASE_URL APPROVAL_FINGERPRINT EXPECTED_API_BASE_IMAGE_ID PREFLIGHT_CONNECTION_BINDING EXPECTED_BUNDLE_SHA256; do
             [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
           done
           [[ "$PRODUCTION_SSH_PORT" =~ ^[0-9]{1,5}$ && "$PRODUCTION_PUBLIC_BASE_URL" == "https://markina.pickyourpic.com.br" ]] \
             || { echo 'Alvo de produção inválido' >&2; exit 1; }
+          release_connection_binding="$(printf '%s\0' "$PRODUCTION_SSH_HOST" "$PRODUCTION_SSH_PORT" "$PRODUCTION_SSH_USER" | sha256sum | awk '{print $1}')"
+          [[ "$PREFLIGHT_CONNECTION_BINDING" =~ ^[0-9a-f]{64}$ && "$release_connection_binding" == "$PREFLIGHT_CONNECTION_BINDING" ]] \
+            || { echo 'Destino SSH diverge do preflight; bundle não será transferido' >&2; exit 1; }
           [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$EXPECTED_API_BASE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
             && "$EXPECTED_BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
             || { echo 'Fingerprint ou digest de artifact inválido' >&2; exit 1; }

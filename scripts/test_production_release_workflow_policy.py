@@ -184,18 +184,27 @@ def main() -> None:
     require("--api-base-image-id \"$API_BASE_IMAGE_ID\"", "manifesto registra o ID-base inventariado", app_artifact)
     require("production-app-arm64-${{ github.sha }}", "bundle candidato pertence ao SHA do run", app_artifact)
     require("retention-days: 1", "bundle candidato tem retenção curta", app_artifact)
+    require("connection_binding: ${{ steps.inventory.outputs.connection_binding }}",
+            "preflight expõe somente o digest não sensível do destino SSH", app_preflight)
+    require("printf '%s\\0' \"$PRODUCTION_SSH_HOST\" \"$PRODUCTION_SSH_PORT\" \"$PRODUCTION_SSH_USER\" | sha256sum",
+            "preflight vincula host, porta e usuário sem expor valores", app_preflight)
     require("environment: production", "aprovação protegida para API/web", app_release)
     require("scripts/deploy-prod-app-services.sh", "release API/web dedicado", app_release)
     require("PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY }}",
             "upload usa credencial separada e protegida", app_release)
     require("EXPECTED_API_BASE_IMAGE_ID", "release compara API base com preflight", app_release)
+    require("PREFLIGHT_CONNECTION_BINDING: ${{ needs.production-app-preflight.outputs.connection_binding }}",
+            "release recebe o digest do endpoint inventariado", app_release)
+    require("\"$release_connection_binding\" == \"$PREFLIGHT_CONNECTION_BINDING\"",
+            "release falha fechado se o endpoint divergir do preflight", app_release)
     require("--api-base-image-id \"$EXPECTED_API_BASE_IMAGE_ID\"", "release valida o manifesto contra o preflight", app_release)
     require("MARKINA_APP_ARTIFACT_UPLOAD_SHA=${GITHUB_SHA}_BUNDLE_SHA256=${EXPECTED_BUNDLE_SHA256}",
             "upload limitado por SHA e digest completos", app_release)
     require("--artifact-sha256 '$EXPECTED_BUNDLE_SHA256'", "deploy consome exatamente o bundle enviado", app_release)
     require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-image-artifact, production-app-preflight]",
             "promoção aguarda todos os gates e producer/preflight", app_release)
-    if not (app_release.index("production_app_artifact.py verify")
+    if not (app_release.index("\"$release_connection_binding\" == \"$PREFLIGHT_CONNECTION_BINDING\"")
+            < app_release.index("production_app_artifact.py verify")
             < app_release.index("MARKINA_APP_ARTIFACT_UPLOAD_SHA=")
             < app_release.index("scripts/deploy-prod-app-services.sh")):
         raise AssertionError("bundle deve ser verificado antes do upload e do deploy")

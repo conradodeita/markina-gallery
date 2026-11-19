@@ -35,6 +35,13 @@ O inventário SHALL validar CI verde, SHA completo alcançável em `main`, check
 - **WHEN** o checkout, configuração resolvida, versão da API, revisão do banco, saúde, portas ou domínio divergem entre inventário e aprovação
 - **THEN** o release é recusado antes de trocar qualquer container
 
+### Requirement: Destino SSH de release permanece vinculado ao preflight
+O preflight SHALL registrar um digest não sensível do host, porta e usuário SSH efetivamente usados. A publicação SHALL comparar o destino SSH do environment `production` com esse digest e falhar antes do upload se houver divergência.
+
+#### Scenario: Destino SSH diverge do preflight
+- **WHEN** host, porta ou usuário do environment `production` diferem do destino registrado pelo preflight do mesmo run
+- **THEN** o release MUST falhar antes de transferir o bundle ou iniciar a conexão de deploy, sem imprimir valores secretos
+
 ### Requirement: Preflight exporta imagem-base e CI produz bundle ARM64
 O preflight SHALL permanecer somente-leitura e exportar por stdout somente o ID da imagem API ativa identificado no inventário; SHALL NOT ler volumes, variáveis ou dados do container. A CI SHALL construir a API ARM64 sobre esse ID-base e copiar exclusivamente `backend/app`, preservando runtime facial e dependências instaladas. A CI SHALL construir web pelo Dockerfile aprovado e vincular ao bundle o SHA de origem, plataforma e IDs imutáveis.
 

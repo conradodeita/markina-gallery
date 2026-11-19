@@ -8,6 +8,7 @@ O release facial protegido publica um conjunto específico de serviços e fixa b
 
 - Criar um fluxo protegido e independente para inventariar e publicar somente `api` e `web` em produção.
 - Exigir CI completo, SHA presente em `main`, inventário somente-leitura, configuração Compose efetiva correspondente e aprovação humana vinculada ao fingerprint do SHA e do estado observado.
+- Vincular o endpoint SSH de host/porta/usuário usado no upload e deploy ao endpoint registrado pelo preflight, falhando antes da transferência se houver divergência.
 - Proibir migrations, alterações de Docker/Compose, workers, banco, proxy compartilhado, segredos e serviços de terceiros neste fluxo.
 - Preservar o fluxo especializado da manutenção facial e não modificar a implementação do Monitor do sistema.
 - Documentar impacto potencial de reinício da API, rollback limitado a `api` e `web`, estado de wrapper SSH e pré-requisitos operacionais.
