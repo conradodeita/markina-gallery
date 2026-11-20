@@ -13,9 +13,13 @@
 
 ## Extensão aprovada do gate 3.2
 
+- [x] 3.2f Inicializar a versão ativa da API no executor Picker a partir do container semanticamente comprovado, recusar versão inválida/divergente antes de preparar journal e cobrir a chamada com variável inicialmente vazia. Reconciliar pin do wrapper e repetir canal protegido após CI.
+
 - [x] 3.2e Corrigir a visibilidade do seletor no console a partir do contrato de monitoramento `platform_owner`, preservar reautenticação e validação OAuth backend e comprovar a regressão com a fixture correspondente ao endpoint real. Regressão falhou antes e passou depois; 9 testes UI, ESLint, typecheck e build padrão passaram localmente. Evidência em `validation-picker-visibility.md`. Publicação do frontend mantém gate próprio.
 
 - [x] 3.2a Implementar operação fixa de Picker API-only na ponte e recuperação, preservando versão/imagem/web; validar contratos e falhas por fase em laboratório isolado.
 - [x] 3.2b Revisar diff, pins e segredos; publicar suporte em PR com CI do SHA exato e aguardar revisão/merge antes de instalação protegida. PR #390 integrada em `3c6cf8f3a235282af3ae37db50d3d80836765783`, após CI `44659413721` verde no SHA `422338808483c7dface13bf94d84db2dd534fccb` e autorização do proprietário para prosseguir no gate de integração. A CI de push `44717212955` identificou omissão da lista de escopo antes do acesso remoto; instalação permanece pendente e a correção é tratada em 3.2d.
 - [ ] 3.2c Instalar suporte pelo canal protegido, inventariar fingerprint atual, recriar somente API com a autorização operacional registrada e comprovar saúde, schema, flag facial, HTTPS, mount e invariância das testemunhas.
 - [x] 3.2d Reconciliar a lista nominal do gate API/web com o workflow e teste Picker aprovados e a base publicada atestada; reproduzir a recusa do run 44717212955, cobrir aceitação restrita e preservar recusas de arquivos não revisados. Regressão falhou antes e passou depois; suítes de escopo com 28 testes e classificação com 16 testes aprovadas, Ruff e OpenSpec estrito aprovados. Histórico real retorna escopo none desde f18db9f2 e aceita os blobs de runtime. Evidência em `validation-picker-scope.md`; publicação e CI do commit corretivo continuam gates operacionais.
+
+Evidência 3.2f: regressão Linux falhou antes e passou após a correção; 11 contratos shell passaram em 1,294 s. OpenSpec estrito e diff check passaram. Apply 44730943735 abortou antes do journal/stop; nenhum container recriado. Publicação/CI e instalação do wrapper corrigido continuam pendentes.

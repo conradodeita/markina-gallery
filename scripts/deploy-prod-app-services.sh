@@ -516,7 +516,10 @@ picker_release() {
   local receipt version checkout
   handoff_host_guard
   runtime_snapshot
-  version="$COMPOSE_APP_VERSION"
+  version="$(docker inspect --format '{{json .Config.Env}}' "$(compose ps -q api)" \
+    | python3 -c 'import json,sys; values=[v.split("=",1)[1] for v in json.load(sys.stdin) if v.startswith("APP_VERSION=")]; print(values[0] if len(values)==1 else "")')"
+  [[ "$version" =~ ^[0-9a-f]{40}$ ]] || fail "APP_VERSION ativa inválida para Picker"
+  COMPOSE_APP_VERSION="$version"
   checkout="$(git rev-parse HEAD)"
   [[ "$checkout" == "$version" ]] || fail "checkout diverge da API; reconciliar antes do Picker"
   handoff_bridge picker-prepare
