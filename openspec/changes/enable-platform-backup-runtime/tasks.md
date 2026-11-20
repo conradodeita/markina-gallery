@@ -9,3 +9,10 @@
 - [ ] 3.1 Revisar o [inventário e o plano](release-preflight.md) com SHA final e evidência de CI; medir limites de espaço/carga e conferir a recuperação independente da chave. Publicar o código com serviço e timer desativados e revalidar saúde da aplicação; não gerar backup real nesta etapa.
 - [ ] 3.2 Habilitar a Picker API, provisionar chave de navegador restrita aos referers/APIs aprovados e montar o arquivo root-only somente na API. Com o app publicado, selecionar `Oracle-Production-Backups/Pick-your-Pic Global`, confirmar o vínculo protegido ainda desativado e executar ensaio sintético de envio, leitura, SHA-256 e limpeza somente dos itens criados. Confirmar que `Pick-your-Pic Tenants` permanece vazio e reservado; não usar tenant ou dados de produção.
 - [ ] 3.3 Após aprovação específica da primeira cópia real, executar manualmente o backup global, comprovar recuperação isolada fora do host de origem e só então habilitar o timer diário; registrar saúde, recibo, rollback e cópias preservadas.
+
+
+## Extensão aprovada do gate 3.2
+
+- [x] 3.2a Implementar operação fixa de Picker API-only na ponte e recuperação, preservando versão/imagem/web; validar contratos e falhas por fase em laboratório isolado.
+- [ ] 3.2b Revisar diff, pins e segredos; publicar suporte em PR com CI do SHA exato e aguardar revisão/merge antes de instalação protegida.
+- [ ] 3.2c Instalar suporte pelo canal protegido, inventariar fingerprint atual, recriar somente API com a autorização operacional registrada e comprovar saúde, schema, flag facial, HTTPS, mount e invariância das testemunhas.

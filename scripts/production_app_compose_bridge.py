@@ -39,6 +39,7 @@ MAX_COMMAND_OUTPUT_BYTES = 8 * 1024 * 1024
 SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 HANDOFF_OPERATIONS = {
+    "picker-inventory": "inventory", "picker-prepare": "release", "picker-apply": "release",
     "handoff-witness-inventory": "inventory", "handoff-witness-register": "release",
     "handoff-inventory": "inventory", "handoff-prepare": "release", "handoff-apply": "release",
     "handoff-proxy": "release",
@@ -1847,7 +1848,7 @@ def handoff_journal_create(plan: dict) -> tuple[str, str]:
 
 def _handoff_initial_state(plan: dict, identity: str) -> dict:
     return {"version": 1, "plan": identity, "sequence": 0, "previous": None,
-             "phases": {service: "prepared" for service in SERVICES},
+             "phases": {service: ("healthy" if service == "web" and "picker_binding" in plan else "prepared") for service in SERVICES},
              "observations": {record["service"]: {"id": record["id"], "configuration": record["configuration"]}
                               for record in plan["sources"] if not record["retained"]}, "event": None}
 
@@ -1975,6 +1976,8 @@ def _handoff_observation(item: dict) -> dict:
 
 
 def _handoff_candidate(plan: dict, service: str, *, healthy: bool) -> dict:
+    if service == "web" and "picker_binding" in plan:
+        return _picker_assert_web(plan)
     item = _handoff_inspect(PROJECT + "-" + service + "-1")
     handoff_record(service, item, plan["project"])
     document = plan["models"][service]
@@ -1990,6 +1993,10 @@ def _handoff_candidate(plan: dict, service: str, *, healthy: bool) -> dict:
 
 
 def _handoff_validate_inputs(plan: dict) -> None:
+    if "picker_binding" in plan:
+        _picker_assert_web(plan)
+        if plan["domain"] != "app-first-handoff-recovery-plan-v1" and picker_config_binding() != plan["picker_binding"]:
+            raise BridgeError("picker_config_changed")
     if _validate_env_file() != plan["environment_digest"]:
         raise BridgeError("handoff_environment_changed")
     for raw, checksum in plan["source_digests"].items():
@@ -2027,10 +2034,15 @@ def handoff_execute_service(identity: str, revision: str, service: str) -> str:
         api = _handoff_candidate(plan, "api", healthy=True)
         if _handoff_observation(api) != state["observations"]["api"]:
             raise BridgeError("handoff_api_changed_before_web")
+    if "picker_binding" in plan and service != "api":
+        raise BridgeError("picker_api_only")
     # Validate candidate defaults/configuration BEFORE stopping the original.
     prospective = copy.deepcopy(original)
     prospective["Image"] = plan["services"][service]["candidate_image"]
     prospective["Config"]["Env"] = [key + "=" + value for key, value in document["services"][service]["environment"].items()]
+    if "picker_binding" in plan:
+        prospective.setdefault("Mounts", []).append({"Type": "bind", "Source": PICKER_CONFIG.as_posix(),
+            "Destination": PICKER_TARGET, "RW": False, "Propagation": "rprivate"})
     image = json.loads(_docker(["image", "inspect", prospective["Image"]]))[0]
     prove_service_model(service, document["services"][service], document, prospective, image)
     destination = _handoff_journal_directory(identity) / ("apply-" + service + ".json")
@@ -2054,6 +2066,10 @@ def handoff_execute_service(identity: str, revision: str, service: str) -> str:
     revision = handoff_journal_advance(identity, revision, service, "created", _handoff_observation(candidate))
     if service == "api":
         _handoff_check_api(candidate)
+        if "picker_binding" in plan:
+            _docker(["exec", "-e", "PYTHONDONTWRITEBYTECODE=1", candidate["Id"], "python", "-B", "-c",
+                     "from app.google_drive_picker import _picker_config; _picker_config(); print('picker_config=valid')"],
+                    timeout=30, max_output=1024)
     revision = handoff_journal_advance(identity, revision, service, "healthy", _handoff_observation(candidate))
     return revision
 
@@ -2079,6 +2095,16 @@ def handoff_recovery_inventory(identity: str, items: list[dict], images: dict, s
                 raise BridgeError("handoff_recovery_retained_changed")
             known.add(item["Id"])
     for service in SERVICES:
+        if service == "web" and "picker_binding" in plan:
+            item = _picker_assert_web(plan)
+            if (item["Id"] not in by_id or _handoff_observation(by_id[item["Id"]]) != _handoff_observation(item)
+                    or by_id[item["Id"]]["State"].get("StartedAt") != plan["web_started_at"]):
+                raise BridgeError("picker_web_changed")
+            known.add(item["Id"])
+            services[service] = {"original": next(r for r in plan["sources"] if r["service"] == service and not r["retained"]),
+                "original_running": True, "original_health": "healthy", "candidate": None,
+                "candidate_running": False, "candidate_health": None}
+            continue
         record = next(r for r in plan["sources"] if r["service"] == service and not r["retained"])
         original = by_id.get(record["id"])
         if original is None:
@@ -2209,6 +2235,11 @@ def _handoff_wait_restored(plan: dict, service: str) -> dict:
 def handoff_recover_service(identity: str, revision: str, service: str) -> str:
     _assert_common_lock_held()
     plan, state, current = handoff_journal_read(identity)
+    if "picker_binding" in plan and service == "web":
+        if current != revision or state["phases"]["web"] != "healthy":
+            raise BridgeError("picker_web_changed")
+        _picker_assert_web(plan)
+        return revision
     if (plan["domain"] != "app-first-handoff-recovery-plan-v1" or current != revision
             or service not in SERVICES or state["phases"][service] != "prepared"):
         raise BridgeError("handoff_recovery_requires_prepared")
@@ -2272,7 +2303,11 @@ def handoff_publish_runtime(identity: str, *, restoring: bool = False) -> dict:
             records.append(copy.deepcopy(record))
             continue
         service = record["service"]
-        if restoring:
+        if service == "web" and "picker_binding" in plan:
+            item = _picker_assert_web(plan)
+            records.append(copy.deepcopy(record))
+            selected[service] = item
+        elif restoring:
             item = _handoff_original(plan, service, retained=False, running=True)
             records.append(handoff_record(service, item, record["project"]))
             selected[service] = item
@@ -2291,7 +2326,7 @@ def handoff_publish_runtime(identity: str, *, restoring: bool = False) -> dict:
     handoff_select(_handoff_read_items(records), records)
     _handoff_check_api(selected["api"])
     web_version = (plan.get("original_web_version", selected["web"]["Config"]["Labels"].get("io.pickyourpic.release", ""))
-                   if restoring else plan["target_sha"])
+                   if restoring or "picker_binding" in plan else plan["target_sha"])
     if not SHA_RE.fullmatch(web_version):
         raise BridgeError("handoff_web_version_unproven")
     projects = {record["service"]: record["project"] for record in records if not record["retained"]}
@@ -2395,6 +2430,84 @@ def _handoff_set_active(identity: str) -> None:
     _handoff_sync_directory(BRIDGE_STATE)
     os.replace(staging, path)
     _handoff_sync_directory(BRIDGE_STATE)
+
+
+PICKER_CONFIG = Path("/etc/pyp-google-drive/picker-config.json")
+PICKER_TARGET = "/run/secrets/google-drive-picker-config.json"
+
+
+def picker_config_binding() -> dict:
+    """Private journal binding only; never print the content or its digest."""
+    _validate_tree_no_symlink(PICKER_CONFIG)
+    directory = _root_metadata(PICKER_CONFIG.parent, directory=True, mode=0o700)
+    metadata = _root_metadata(PICKER_CONFIG, mode=0o400)
+    if directory.st_gid != 0 or metadata.st_gid != 0 or metadata.st_nlink != 1:
+        raise BridgeError("picker_config_metadata_invalid")
+    content = _read_private_copy_source(PICKER_CONFIG, snapshot_sha256(PICKER_CONFIG), max_size=2048)
+    try:
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError()
+                result[key] = value
+            return result
+        value = json.loads(content, object_pairs_hook=unique)
+        if (set(value) != {"developer_key", "project_number", "expected_parent_folder_id"}
+                or not re.fullmatch(r"[A-Za-z0-9_-]{20,256}", value["developer_key"])
+                or not re.fullmatch(r"[1-9][0-9]{0,23}", value["project_number"])
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value["expected_parent_folder_id"])):
+            raise ValueError()
+    except (ValueError, TypeError, KeyError):
+        raise BridgeError("picker_config_invalid") from None
+    return {"sha256": hashlib.sha256(content).hexdigest(), "device": metadata.st_dev,
+            "inode": metadata.st_ino, "size": metadata.st_size}
+
+
+def picker_document(document: dict) -> dict:
+    result = copy.deepcopy(document)
+    if set(result.get("services", {})) != {"api"}:
+        raise BridgeError("picker_api_model_required")
+    mounts = result["services"]["api"].setdefault("volumes", [])
+    if any(m.get("target") == PICKER_TARGET or m.get("source") == PICKER_CONFIG.as_posix() for m in mounts):
+        raise BridgeError("picker_mount_already_present")
+    mounts.append({"type": "bind", "source": PICKER_CONFIG.as_posix(), "target": PICKER_TARGET,
+                   "read_only": True, "bind": {"create_host_path": False, "propagation": "rprivate"}})
+    return result
+
+
+def _picker_plan(args) -> dict:
+    for name in ("app-in-flight.sha", "app-rollback-in-flight.sha", "web-in-flight.sha", "web-pending.identity"):
+        if os.path.lexists(STATE_DIR / name):
+            raise BridgeError("handoff_interrupted_operation_requires_recovery")
+    with _handoff_proven_context(args.sha) as context:
+        records = _handoff_context_records(context, require_witnesses=True)
+        binding = picker_config_binding()
+        version = environment_map(context["containers"]["api"]["Config"]["Env"])["APP_VERSION"]
+        models = {service: replacement_document(service, context["models"][service],
+                   context["containers"][service], context["containers"][service]["Image"], version)
+                  for service in SERVICES}
+        models["api"] = picker_document(models["api"])
+        sources = dict(context["digests"])
+        sources[str(BRIDGE_STATE / "handoff-witnesses.json")] = snapshot_sha256(BRIDGE_STATE / "handoff-witnesses.json")
+        plan = handoff_plan(version, args.sha, digest({"domain": "picker-api-config-v1", "binding": binding}),
+                            _handoff_read_items(records), records, models, context["models"], sources,
+                            context["environment_digest"], context["checkout_sha"])
+        plan["picker_binding"] = binding
+        plan["models"]["web"] = copy.deepcopy(context["models"]["web"])
+        plan["services"]["web"]["candidate_model"] = digest(plan["models"]["web"])
+        plan["original_web_version"] = _web_identity(context, args.sha).split()[0]
+        plan["previous_handoff"] = _handoff_active_id()
+        plan["web_started_at"] = context["containers"]["web"]["State"]["StartedAt"]
+        return plan
+
+
+def _picker_assert_web(plan: dict) -> dict:
+    item = _handoff_original(plan, "web", retained=False, running=True)
+    if (item["State"].get("StartedAt") != plan["web_started_at"]
+            or item["State"].get("Health", {}).get("Status") != "healthy"):
+        raise BridgeError("picker_web_changed")
+    return item
 
 
 def _handoff_candidate_plan(args) -> dict:
@@ -2654,10 +2767,35 @@ def _handoff_cli(args) -> int:
     operation = args.operation
     if operation.startswith("handoff-legacy-recovery-"):
         return _handoff_legacy_cli(args)
-    if operation in {"handoff-witness-register", "handoff-prepare", "handoff-apply", "handoff-proxy", "handoff-recovery-prepare", "handoff-recovery-apply"}:
+    if operation in {"picker-prepare", "picker-apply", "handoff-witness-register", "handoff-prepare", "handoff-apply", "handoff-proxy", "handoff-recovery-prepare", "handoff-recovery-apply"}:
         _assert_common_lock_held()
     if _git("rev-parse", "origin/main") != args.sha or _git("status", "--porcelain"):
         raise BridgeError("handoff_support_checkout_invalid")
+    if operation in {"picker-inventory", "picker-prepare"}:
+        plan = _picker_plan(args)
+        identity = digest(plan)
+        if operation == "picker-prepare":
+            if identity != args.approval_fingerprint:
+                raise BridgeError("picker_approval_mismatch")
+            identity, _ = _handoff_prepare_journal(plan)
+            _handoff_archive_inputs(identity, plan)
+            _handoff_set_active(identity)
+        print("picker_fingerprint=" + identity)
+        return 0
+    if operation == "picker-apply":
+        identity = _handoff_active_id()
+        if identity != args.approval_fingerprint:
+            raise BridgeError("picker_approval_mismatch")
+        plan, _, revision = handoff_journal_read(identity)
+        if "picker_binding" not in plan or plan["support_sha"] != args.sha:
+            raise BridgeError("picker_plan_invalid")
+        _ensure_mutation_context("release", plan["target_sha"])
+        handoff_execute_service(identity, revision, "api")
+        receipt = handoff_publish_runtime(identity)
+        for key, value in receipt.items():
+            print(key + "=" + value)
+        print("picker_status=healthy")
+        return 0
     if operation == "handoff-proxy":
         identity = _handoff_active_id()
         if identity is None:
