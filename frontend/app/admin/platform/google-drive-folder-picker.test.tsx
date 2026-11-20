@@ -47,7 +47,7 @@ function installPickerMock() {
     build = vi.fn(() => dialog);
   }
   const api = {
-    Action: { PICKED: "picked" },
+    Action: { PICKED: "picked", CANCEL: "cancel" },
     Response: { ACTION: "action", DOCUMENTS: "docs" },
     Document: { ID: "id", NAME: "name", MIME_TYPE: "mimeType" },
     ViewId: { DOCS: "docs" },
@@ -100,12 +100,18 @@ it("uses only drive.file, lets the owner select the global folder, and requires 
   expect(picker.calls.accessTokens).toEqual([pickerSession.access_token]);
   expect(document.body.textContent).not.toContain("synthetic-short-token");
 
+  act(() => picker.select({ action: "loaded" }));
+  expect(picker.dialog.setVisible.mock.calls).toEqual([[true]]);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText(/Confirme com a senha e um novo código/)).toBeNull();
+
   act(() => picker.select?.({
     action: "picked",
     docs: [{ id: "synthetic-folder-id", name: "Pick-your-Pic Global",
       mimeType: "application/vnd.google-apps.folder" }],
   }));
   expect(await screen.findByText(/Confirme com a senha e um novo código/)).toBeTruthy();
+  expect(picker.dialog.setVisible.mock.calls).toEqual([[true], [false]]);
   fireEvent.change(screen.getByLabelText("Senha atual do proprietário"), {
     target: { value: "synthetic-password" },
   });

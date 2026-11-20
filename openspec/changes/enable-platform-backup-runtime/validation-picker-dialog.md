@@ -1,0 +1,11 @@
+# Correção do fechamento imediato do seletor — 20/11/2026
+
+O proprietário relatou que, após preencher senha/TOTP, a janela quase abria e fechava imediatamente. O callback executava `setVisible(false)` antes de verificar `Response.ACTION`, portanto qualquer notificação intermediária ocultava o seletor. O teste envia `action=loaded` depois da abertura e antes de `picked`: falhou antes da correção com chamadas `[true, false]` em vez de `[true]`. Não foi capturado o evento do navegador real; o defeito local reproduz o sintoma informado.
+
+A correção verifica a ação primeiro: somente `PICKED` e `CANCEL` ocultam a janela; os demais eventos não autorizam pasta nem fazem nova chamada backend. Mantém os controles de senha/TOTP, OAuth `drive.file` e segunda confirmação da pasta. Contrato Google: https://developers.google.com/workspace/drive/picker/reference/picker.action e exemplo de callback https://developers.google.com/workspace/drive/picker/guides/web-picker.
+
+Validação local: 9 testes UI (Picker e console), ESLint dos dois arquivos, `tsc --noEmit`, build padrão e OpenSpec estrito passaram. A primeira build terminou com `SecurityFatalError` após gerar as rotas, pelo aviso da versão Next.js 16.4.2; repetição padrão concluiu exit 0 mantendo o alerta de vulnerabilidade. Nenhuma dependência foi atualizada. Regressão falhou antes e passou depois. A revisão do diff não identificou limpeza/refatoração adicional segura dentro do escopo.
+
+Os 28 testes de escopo passaram em 223,251 s em processo sintético sem variáveis `GIT_CONFIG_*` herdadas. A execução inicial apresentou 22 falhas, e a repetição instrumentada delimitou a causa: `patch.dict(os.environ)` do teste de maintenance perde o valor vazio `GIT_CONFIG_VALUE_0` ao restaurar o ambiente Windows; os subprocessos Git seguintes recusam a configuração incompleta. Um teste isolado passou, e a suíte completa passou após isolar somente o ambiente do processo sintético. Nenhum código de política/teste de escopo ou configuração persistente de Git foi alterado.
+
+Produção ainda usa o frontend anterior; validação autenticada final depende de revisão, CI e publicação autorizada. O mount Picker aplicado em `44744551569` não precisa ser repetido para esta correção de UI. Backup real e timer continuam fora desta correção.
