@@ -50,6 +50,8 @@ O texto `Backup, arquivo e restauração: sem fonte integrada; estado desconheci
 
 ## Continuidade solicitada pelo proprietário
 
+Reteste autenticado após #397: o proprietário confirmou que `Pasta selecionada` e `Autorizar esta pasta` apareceram. Após a segunda reautenticação, confirmou a mensagem `Pasta autorizada: Pick-your-Pic Global. O vínculo protegido e o ensaio sintético ainda precisam ser concluídos com a rotina desativada.` O fluxo visual de seleção/autorização está comprovado por observação humana; vínculo root-only e ensaio sintético permanecem pendentes em 3.2. O helper de vínculo aceita somente auditoria dos últimos 15 minutos; revalidar esse prazo ao executar, sem ampliar a janela por conveniência.
+
 O [guia de reuso para arquivo/recuperação de mídia](../../../docs/saas-evolution/backup-global-reuso-arquivo-midia.md) reúne provas externas concluídas, componentes de Drive reutilizáveis, núcleo de mídia já implementado, lições operacionais e sequência para conectar o adaptador real. Foram conferidas 32 referências locais, todas existentes. O guia fica ligado ao índice SaaS e ao checklist pós-deploy; não inicia a implementação da etapa de mídia nem substitui seus gates.
 - Manutenção proporcional: a chave `revision` por foco foi substituída pelo estado de revalidação. Os únicos consumidores do hook são shell e link do console; ambos foram reconciliados. Nenhuma limpeza independente ou alteração de backend era necessária.
 
