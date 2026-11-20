@@ -32,6 +32,7 @@ class HandoffShellContracts(unittest.TestCase):
         harness = r'''
 source "$EXECUTOR"
 source "$STATE_HELPER"
+eval "$(declare -f runtime_snapshot | sed '1s/runtime_snapshot/real_runtime_snapshot/')"
 eval "$(declare -f handoff_https | sed '1s/handoff_https/real_handoff_https/')"
 MODE=handoff-release
 TARGET_SHA="$TEST_TARGET"
@@ -116,6 +117,36 @@ curl() { log curl; }
         result = self.run_shell('handoff_clear_markers "$TEST_TARGET"')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(marker.read_text(), self.baseline)
+
+    def test_legacy_snapshot_does_not_require_normal_repository_verification(self):
+        body = r'''
+MODE=handoff-legacy-recover
+compose() { if [[ "$1" == ps ]]; then printf 'synthetic-%s\n' "$3"; fi; }
+require_facial_processing_enabled_in_config() { :; }
+resolved_hashes() { printf 'api %s\nweb %s\n' "$(printf '1%.0s' {1..64})" "$(printf '1%.0s' {1..64})"; }
+bridge_call() {
+  case "$1" in
+    service-hash) printf '1%.0s' {1..64} ;;
+    service-project) printf 'markina-gallery\n' ;;
+    sources-fingerprint) printf '2%.0s' {1..64} ;;
+    *) return 98 ;;
+  esac
+}
+docker() {
+  case "$3" in
+    *com.docker.compose.project*) printf 'markina-gallery\n' ;;
+    *com.docker.compose.service*) printf '%s\n' "${4#synthetic-}" ;;
+    *State.Health*) printf 'healthy\n' ;;
+    '{{.Image}}') printf '%s\n' "$TEST_API" ;;
+    *NetworkSettings.Ports*) printf '%s\n' '{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"8080"}]}' ;;
+    *) return 99 ;;
+  esac
+}
+real_runtime_snapshot
+'''
+        result = self.run_shell(body)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('compose_sources=' + '2' * 64, result.stdout)
 
     def test_proxy_uses_approved_handoff_interface_and_tests_three_https_routes(self):
         for mode, expected in (('handoff-release', 'handoff-proxy'), ('handoff-recover', 'handoff-proxy'),

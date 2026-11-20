@@ -143,6 +143,7 @@ class FullHandoffEngineContracts(unittest.TestCase):
         return plan, identity, revision
 
     def test_real_first_handoff_and_recovery_preserve_data_and_neighbor(self):
+        self.assertEqual(bridge._list_service_ids('api'), [self.originals['api']['Id']])
         plan, identity, revision = self.prepare()
         revision = bridge.handoff_execute_service(identity, revision, 'api')
         bridge.handoff_execute_service(identity, revision, 'web')
