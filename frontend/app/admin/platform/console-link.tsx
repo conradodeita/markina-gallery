@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useConsoleAccess } from "./use-console-access";
 
 export function ConsoleLink() {
-  const { access } = useConsoleAccess();
+  const { access, revalidating } = useConsoleAccess();
   const pathname = usePathname();
-  return access === true ? <Link href="/admin/platform" aria-current={pathname.startsWith("/admin/platform") ? "page" : undefined}>Plataforma</Link> : null;
+  return access === true && !revalidating ? <Link href="/admin/platform" aria-current={pathname.startsWith("/admin/platform") ? "page" : undefined}>Plataforma</Link> : null;
 }

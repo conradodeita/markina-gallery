@@ -56,6 +56,20 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest), (True, "somente_api_web"))
 
+    def test_picker_focus_helpers_require_reviewed_blobs(self):
+        for name in ("frontend/app/admin/platform/use-console-access.ts",
+                     "frontend/app/admin/platform/console-link.tsx"):
+            with self.subTest(name=name):
+                self.assertIn(name, policy.RUNTIME_FILES)
+                path = self.root / name
+                path.write_text("reviewed focus revalidation\n", encoding="utf-8")
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (False, "runtime_diverge_do_blob_aprovado"))
+                self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (True, "somente_api_web"))
+
     def test_handoff_support_is_exactly_allowlisted_without_worker_or_workflow_wildcard(self):
         names = {'.github/workflows/production-app-handoff-recovery.yml'} | {
             'scripts/test_production_app_handoff_' + suffix + '.py'

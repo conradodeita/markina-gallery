@@ -196,3 +196,19 @@ it("refuses a picker session that expands the OAuth scope", async () => {
   expect((await screen.findByRole("alert")).textContent).toMatch(/Não foi possível abrir o seletor/);
   expect(document.getElementById("google-drive-picker-api")).toBeNull();
 });
+
+it("does not open a dialog when the session response arrives after the console unmounts", async () => {
+  const GoogleDriveBackupFolderPicker = await loadPickerComponent();
+  const picker = installPickerMock();
+  let resolveSession: (response: Response) => void = () => undefined;
+  const fetcher = vi.fn(() => new Promise<Response>((resolve) => { resolveSession = resolve; }));
+  vi.stubGlobal("fetch", fetcher);
+  const rendered = render(<GoogleDriveBackupFolderPicker />);
+  fireEvent.change(screen.getByLabelText("Senha atual do proprietário"), { target: { value: "synthetic-password" } });
+  fireEvent.change(screen.getByLabelText("Código atual do autenticador"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "Selecionar pasta global" }));
+  rendered.unmount();
+  await act(async () => { resolveSession(new Response(JSON.stringify(pickerSession), { status: 200 })); });
+  expect(picker.dialog.setVisible).not.toHaveBeenCalled();
+  expect(document.getElementById("google-drive-picker-api")).toBeNull();
+});

@@ -5,7 +5,7 @@ import { PUSH_LOGOUT_EVENT } from "../../push-device";
 
 export function useConsoleAccess() {
   const [access, setAccess] = useState<boolean | null>(null);
-  const [revision, setRevision] = useState(0);
+  const [revalidating, setRevalidating] = useState(true);
   useEffect(() => {
     let version = 0;
     let controller: AbortController | null = null;
@@ -13,16 +13,20 @@ export function useConsoleAccess() {
       const current = ++version;
       controller?.abort();
       controller = new AbortController();
-      setAccess(null);
-      setRevision((value) => value + 1);
+      setRevalidating(true);
       void fetch("/api/admin/platform/console/capabilities", {
         credentials: "same-origin", cache: "no-store", signal: controller.signal,
       }).then(async (response) => {
         const payload = response.ok ? await response.json() : null;
-        if (version === current) setAccess(payload?.read_console === true);
-      }).catch(() => { if (version === current) setAccess(false); });
+        if (version === current) {
+          setAccess(payload?.read_console === true);
+          setRevalidating(false);
+        }
+      }).catch(() => {
+        if (version === current) { setAccess(false); setRevalidating(false); }
+      });
     };
-    const stop = () => { version++; controller?.abort(); setAccess(false); setRevision((value) => value + 1); };
+    const stop = () => { version++; controller?.abort(); setAccess(false); setRevalidating(false); };
     refresh();
     window.addEventListener("focus", refresh);
     window.addEventListener(PUSH_LOGOUT_EVENT, stop);
@@ -32,5 +36,5 @@ export function useConsoleAccess() {
       window.removeEventListener(PUSH_LOGOUT_EVENT, stop);
     };
   }, []);
-  return { access, revision };
+  return { access, revalidating };
 }

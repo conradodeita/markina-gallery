@@ -15,6 +15,8 @@
 
 ## Extensão aprovada do gate 3.2
 
+- [ ] 3.2i Corrigir a perda da seleção na revalidação de foco do console, com regressão integrada da página e do seletor. Preservar a instância oculta/inativa durante a consulta e retomá-la somente com acesso confirmado; comprovar descarte e fechamento em recusa, falha e logout, inclusive callback/resposta tardios. Validar UI, lint, typecheck, build, OpenSpec e escopo; registrar evidências e manter reteste/release como gates próprios. Não há remoção independente de código elegível; substituir somente o remount por foco e encerrar o diálogo desmontado.
+
 - [x] 3.2f Inicializar a versão ativa da API no executor Picker a partir do container semanticamente comprovado, recusar versão inválida/divergente antes de preparar journal e cobrir a chamada com variável inicialmente vazia. Reconciliar pin do wrapper e repetir canal protegido após CI.
 
 - [x] 3.2e Corrigir a visibilidade do seletor no console a partir do contrato de monitoramento `platform_owner`, preservar reautenticação e validação OAuth backend e comprovar a regressão com a fixture correspondente ao endpoint real. Regressão falhou antes e passou depois; 9 testes UI, ESLint, typecheck e build padrão passaram localmente. Evidência em `validation-picker-visibility.md`. Publicação do frontend mantém gate próprio.

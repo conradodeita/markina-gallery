@@ -46,6 +46,8 @@ RUNTIME_FILES = {
     "frontend/app/admin/galleries/[galleryId]/orders/page.tsx",
     "frontend/app/admin/platform/google-drive-folder-picker.tsx",
     "frontend/app/admin/platform/page.tsx",
+    "frontend/app/admin/platform/use-console-access.ts",
+    "frontend/app/admin/platform/console-link.tsx",
     "frontend/app/library/cart/page.tsx",
     "frontend/app/library/purchase-card.tsx",
     "frontend/app/library/purchases/page.tsx",
