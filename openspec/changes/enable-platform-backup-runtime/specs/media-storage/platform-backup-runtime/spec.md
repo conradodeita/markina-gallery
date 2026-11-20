@@ -15,6 +15,11 @@ O chamador de backup SHALL usar uma chave operacional própria e um vínculo pro
 
 O escopo OAuth SHALL permanecer `drive.file`. A seleção SHALL conceder acesso somente ao item escolhido. O token de acesso SHALL ser curto e ficar somente em memória no navegador; o refresh token MUST NOT ser exposto ao navegador.
 
+#### Scenario: Seletor disponível no console do proprietário
+
+- **WHEN** o console autorizado receber do monitor Drive `availability=authorization_recorded` e `scope=platform_owner`
+- **THEN** SHALL apresentar o formulário do seletor; o campo de escopo operacional do monitor MUST NOT ser interpretado como escopo OAuth, e o endpoint de sessão SHALL continuar validando `drive.file` após reautenticação
+
 #### Scenario: Seleção do destino global
 
 - **WHEN** o proprietário selecionar pelo app a pasta `Pick-your-Pic Global` dentro de `Oracle-Production-Backups`

@@ -13,6 +13,8 @@
 
 ## Extensão aprovada do gate 3.2
 
+- [x] 3.2e Corrigir a visibilidade do seletor no console a partir do contrato de monitoramento `platform_owner`, preservar reautenticação e validação OAuth backend e comprovar a regressão com a fixture correspondente ao endpoint real. Regressão falhou antes e passou depois; 9 testes UI, ESLint, typecheck e build padrão passaram localmente. Evidência em `validation-picker-visibility.md`. Publicação do frontend mantém gate próprio.
+
 - [x] 3.2a Implementar operação fixa de Picker API-only na ponte e recuperação, preservando versão/imagem/web; validar contratos e falhas por fase em laboratório isolado.
 - [x] 3.2b Revisar diff, pins e segredos; publicar suporte em PR com CI do SHA exato e aguardar revisão/merge antes de instalação protegida. PR #390 integrada em `3c6cf8f3a235282af3ae37db50d3d80836765783`, após CI `44659413721` verde no SHA `422338808483c7dface13bf94d84db2dd534fccb` e autorização do proprietário para prosseguir no gate de integração. A CI de push `44717212955` identificou omissão da lista de escopo antes do acesso remoto; instalação permanece pendente e a correção é tratada em 3.2d.
 - [ ] 3.2c Instalar suporte pelo canal protegido, inventariar fingerprint atual, recriar somente API com a autorização operacional registrada e comprovar saúde, schema, flag facial, HTTPS, mount e invariância das testemunhas.
