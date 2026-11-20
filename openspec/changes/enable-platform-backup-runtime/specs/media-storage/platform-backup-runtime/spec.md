@@ -83,6 +83,36 @@ Instalar e ativar o agendamento SHALL exigir inventário, prova sintética e apr
 - **WHEN** o operador desativar o agendamento
 - **THEN** a rotina SHALL deixar de iniciar execuções novas e preservar os artefatos já gerados e o catálogo
 
+### Requirement: Instalação e operação protegidas do runtime
+
+A instalação do runtime SHALL aceitar somente artefato construído para o SHA exato com CI aprovada e dependências fixadas por hash. A operação remota SHALL usar comandos em lista permitida e inventário somente de leitura com impressão digital; MUST NOT aceitar comandos, caminhos ou artefatos arbitrários. A instalação SHALL manter serviço, timer e destino desativados, sem recriar API/web nem alterar serviços compartilhados.
+
+#### Scenario: Instalar runtime sem ativar backup
+
+- **WHEN** o operador aprovar a fingerprint do inventário e o artefato corresponder ao SHA e ao hash aprovados
+- **THEN** o runtime SHALL ser instalado em caminho root-only versionado, preservando a versão anterior e mantendo unidades systemd desativadas e paradas, `destination.enabled=false` e os containers de aplicação inalterados
+
+#### Scenario: Recusar inventário ou artefato divergente
+
+- **WHEN** o SHA/CI, a fingerprint, a identidade do host, o artefato, as permissões ou o estado de produção divergirem do que foi revisado
+- **THEN** a operação MUST abortar antes de qualquer escrita persistente e reportar somente uma falha técnica sanitizada
+
+### Requirement: Ensaio sintético do destino global
+
+Com destino root-only vinculado e `enabled=false`, a operação sintética SHALL usar somente conteúdo sintético próprio, sem snapshot ou leitura do banco de produção, tenant ou mídia de cliente. SHALL conferir releitura integral, tamanho e SHA-256 e remover somente o objeto criado pelo próprio ensaio, confirmando sua ausência. Credenciais, tokens e IDs do Drive MUST NOT aparecer em logs.
+
+#### Scenario: Ensaio sintético aprovado
+
+- **WHEN** o operador autorizado iniciar o ensaio com o runtime e timer desativados e a pasta global validada
+- **THEN** o sistema SHALL enviar um único item sintético identificável por execução, reler e comparar bytes, tamanho e SHA-256, excluir somente o ID criado nessa execução e confirmar a ausência do item
+- **AND** o sistema SHALL preservar `destination.enabled=false`, sem executar `pg_dump`, backup real ou ação na raiz reservada `Pick-your-Pic Tenants`
+
+#### Scenario: Falha ou limpeza incompleta no ensaio
+
+- **WHEN** envio, leitura, soma de verificação, exclusão ou confirmação de ausência falhar
+- **THEN** o sistema MUST NOT declarar o ensaio aprovado, SHALL manter serviço/timer/destino desativados e SHALL tentar remover somente o item criado pelo próprio ensaio
+- **AND** se a remoção não puder ser confirmada, SHALL reportar estado sanitizado que exija reconciliação, sem apagar outros objetos
+
 ### Requirement: Montagem protegida do seletor sem troca da web
 
 A ponte SHALL oferecer operação fixa de configuração somente da API para o mount do Picker. SHALL preservar imagem e versão da API, web e testemunhas, usar lock e journal durável e publicar a base somente após prova de saúde, schema, configuração e flag facial. MUST NOT aceitar paths, mounts ou comandos arbitrários.

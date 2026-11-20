@@ -42,3 +42,27 @@ Sem migration de banco. Preparar o arquivo separado de configuração do Picker.
 O proprietário aprovou estender a ponte existente para uma operação fixa do Picker. O candidato SHALL manter imagem e APP_VERSION ativos e adicionar exclusivamente o bind `/etc/pyp-google-drive/picker-config.json` para `/run/secrets/google-drive-picker-config.json`, read-only, sem criação de origem. O arquivo SHALL ser root:root 0400, regular e link único sob diretório 0700. A prova SHALL vincular metadados e conteúdo sem divulgar chave ou hash da chave em logs.
 
 Inventário, aprovação por fingerprint, lock comum, journal durável, stop/rename/create, provas semânticas, preservação dos anteriores, publicação da base e recuperação por fase SHALL reutilizar o canal protegido. Web SHALL permanecer no mesmo ID, imagem, configuração e StartedAt; os serviços de terceiros SHALL permanecer idênticos. A recuperação SHALL atuar somente na API. A instalação do suporte exige CI do SHA exato e fluxo protegido; aprovação desta extensão não dispensa revisão de PR/merge.
+
+## Complemento proposto: instalação e ensaio pelo canal protegido
+
+Este complemento fecha a lacuna operacional encontrada após a autorização real de `Pick-your-Pic Global`. A implementação permanece pendente de revisão do proprietário. O escopo é executar os requisitos de instalação, vínculo e prova sintética já previstos nesta change. Não autoriza publicação, primeira cópia real, ativação do timer ou uso de dados de tenant.
+
+### Fluxo protegido
+
+- Um workflow `workflow_dispatch` executável somente a partir de `main` confere CI do SHA exato e prepara um inventário somente de leitura. O inventário compara identidade do host, SHA/release, API e PostgreSQL ativos, schema, saúde, espaço disponível, estado das unidades, configuração root-only e hashes de artefatos; expõe somente a impressão digital e os fatos operacionais necessários, sem segredos, tokens, chaves ou IDs do Drive.
+- O comando remoto SHALL constar de uma lista explícita no forced-command SSH wrapper e estar vinculado ao script/artefato do SHA revisado. Nenhuma entrada SHALL aceitar comando, shell, caminho ou nome de serviço arbitrário. A etapa mutável exige impressão digital idêntica, host idêntico ao preflight e aprovação do ambiente protegido `production`; CI ou merge sozinhos não liberam a operação.
+- O pacote SHALL ser montado no CI a partir do código do SHA aprovado e de um repositório de wheels Linux ARM64/Python 3.10 com dependências fixadas por hash. O instalador verifica SHA-256 antes de extrair e instala em diretório root-only versionado, preservando a versão anterior e um recibo de rollback. O processo não lê `.env` nem inclui credenciais no artefato.
+- A instalação poderá colocar os arquivos de serviço e timer no caminho aprovado e executar `daemon-reload`, mas SHALL deixá-los desativados e parados. A operação não altera Compose, API/web, PostgreSQL, Nginx, schema, containers de terceiros, timer compartilhado, DNS ou firewall. `destination.json` permanece com `enabled=false`.
+
+### Vínculo e ensaio sintético
+
+- O vínculo ocorre em operação root-only fixa, depois de um evento owner-only de seleção com no máximo 15 minutos. O operador revalida a pasta via OAuth da aplicação, atualiza atomicamente somente `parent_folder_id`, registra recibo sanitizado e confirma novamente `enabled=false`. Janela expirada ou qualquer divergência aborta sem escrita.
+- Uma operação fixa de ensaio usa conteúdo sintético em memória e um marcador único por execução. Antes de enviar, confirma o vínculo protegido, a validação da pasta e o estado desativado. Depois, relê o mesmo item, compara bytes/tamanho/SHA-256, exclui somente o ID retornado pela criação daquela execução e confirma ausência. O ID fica somente no processo/registro root-only e não vai para logs ou sumário.
+- O ensaio não chama `pg_dump`, não lê tabelas, fotos, filas ou credenciais de clientes, não inicia o serviço/timer e não cria itens em `Pick-your-Pic Tenants`. Uma falha de limpeza mantém o estado do ensaio pendente para reconciliação, sem tentativa de exclusão por nome amplo ou de objetos de outra execução.
+- A seleção owner-only tem validade operacional de 15 minutos; portanto, deve ser renovada pelo proprietário imediatamente antes da etapa de vínculo, após a instalação do runtime. Se a execução expirar, o sistema aborta e solicita nova seleção no console, sem ampliar o prazo.
+
+### Evidência e retorno
+
+- CI prova artefato, lock e scripts no SHA exato. Testes isolados cobrem recusa de impressão digital/host/SHA divergentes, metadados e permissões root-only, instalação com unidades inertes, seleção expirada, atomicidade do vínculo, releitura/soma de verificação, falha de limpeza e preservação de arquivos não criados pelo ensaio.
+- Antes do passo mutável, a revisão humana recebe SHA/digest do artefato, impressão digital, serviços/containers/portas observados, impacto, rollback e estado das cópias. Instalação deixa o runtime pronto e inerte. Vínculo e ensaio ficam em operação distinta e exigem nova aprovação protegida. A primeira cópia real e timer seguem gate próprio.
+- Retorno pré-backup restaura apenas o diretório versionado e arquivos de unidade do Pick-your-Pic após comprovar que não há processo em curso; preserva configuração, catálogo, chave, artefatos Drive e todos os recursos externos ao projeto.
