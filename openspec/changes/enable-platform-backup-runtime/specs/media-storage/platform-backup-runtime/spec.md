@@ -71,6 +71,11 @@ A ponte SHALL oferecer operação fixa de configuração somente da API para o m
 - **WHEN** o gate API/web avaliar o suporte desta operação
 - **THEN** SHALL aceitar nominalmente `.github/workflows/production-google-picker-config.yml` e `scripts/test_production_app_picker.py`, mantendo a recusa de workflows, testes e workers não revisados e a verificação dos blobs de runtime
 
+#### Scenario: Base de produção reconciliada antes da configuração
+
+- **WHEN** o release inerte anterior estiver comprovado por versão ativa, imagens e recibos saudáveis da API/web
+- **THEN** o manifesto SHALL usar esse release como base de classificação, preservando os pins de runtime e sem classificar mudanças exclusivamente de suporte como nova publicação da aplicação
+
 #### Scenario: Recriação autorizada para o Picker
 
 - **WHEN** o operador aprovar o fingerprint atual e o arquivo protegido for válido
