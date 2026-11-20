@@ -18,6 +18,8 @@ A leitura SSH de 20/11/2026 confirmou API `2cd9ce58395d`, imagem `sha256:c3963ca
 
 O manifesto ainda declarava bfe511f como base, anterior à publicação comprovada. Atualizar somente `production_baseline_sha` para f18db9f2 reconcilia a classificação com a produção atestada. Não há diff em backend/app, frontend ou docker entre f18db9f2 e esta correção; os pins de runtime permanecem idênticos. O Picker ainda não está montado. A leitura não modificou recurso remoto.
 
+Os 16 testes de classificação passaram (4,353 s). A execução no histórico real em `0c96770b` retornou `release_baseline_sha=f18db9f2`, `release_scope=none` e `app_release_ready=true`. Os commits seguintes desta PR acrescentam somente evidência documental.
+
 ## Limites operacionais
 
 Nenhuma imagem, versão, permissão, segredo, timer, dado ou recurso remoto é alterado por esta correção. Os pins de runtime e a recusa de arquivos não revisados permanecem. A avaliação de refatoração ficou na lista nominal e no teste: não há remoção ou reorganização necessária.
