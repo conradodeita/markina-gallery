@@ -30,7 +30,7 @@ type PickerBuilder = {
 };
 
 type GooglePicker = {
-  Action: { PICKED: string; CANCEL: string };
+  Action: { PICKED: string; CANCEL: string; ERROR: string };
   Response: { ACTION: string; DOCUMENTS: string };
   Document: { ID: string; NAME: string; MIME_TYPE: string };
   ViewId: { DOCS: string };
@@ -153,6 +153,11 @@ export function GoogleDriveBackupFolderPicker() {
         .setOrigin(window.location.origin)
         .setCallback((data) => {
           const action = data[pickerApi.Response.ACTION];
+          if (action === pickerApi.Action.ERROR) {
+            pickerDialog.current?.setVisible(false);
+            setError("O Google Drive não conseguiu concluir a seleção. Tente novamente.");
+            return;
+          }
           if (action !== pickerApi.Action.PICKED && action !== pickerApi.Action.CANCEL) return;
           pickerDialog.current?.setVisible(false);
           if (action !== pickerApi.Action.PICKED) return;
