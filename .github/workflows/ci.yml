@@ -467,6 +467,7 @@ jobs:
       - name: Validar política de preflight e aprovação única de produção
         if: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}
         run: |
+          python -m pip install 'ruff>=0.9'
           bash -n scripts/production-preflight-ssh-wrapper.sh
           bash -n scripts/export_prod_app_api_base_image.sh
           bash -n scripts/production-app-artifact-ssh-wrapper.sh
