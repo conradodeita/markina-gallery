@@ -66,6 +66,16 @@ Instalar e ativar o agendamento SHALL exigir inventário, prova sintética e apr
 
 A ponte SHALL oferecer operação fixa de configuração somente da API para o mount do Picker. SHALL preservar imagem e versão da API, web e testemunhas, usar lock e journal durável e publicar a base somente após prova de saúde, schema, configuração e flag facial. MUST NOT aceitar paths, mounts ou comandos arbitrários.
 
+#### Scenario: Reconhecimento do suporte aprovado no gate de escopo
+
+- **WHEN** o gate API/web avaliar o suporte desta operação
+- **THEN** SHALL aceitar nominalmente `.github/workflows/production-google-picker-config.yml` e `scripts/test_production_app_picker.py`, mantendo a recusa de workflows, testes e workers não revisados e a verificação dos blobs de runtime
+
+#### Scenario: Base de produção reconciliada antes da configuração
+
+- **WHEN** o release inerte anterior estiver comprovado por versão ativa, imagens e recibos saudáveis da API/web
+- **THEN** o manifesto SHALL usar esse release como base de classificação, preservando os pins de runtime e sem classificar mudanças exclusivamente de suporte como nova publicação da aplicação
+
 #### Scenario: Recriação autorizada para o Picker
 
 - **WHEN** o operador aprovar o fingerprint atual e o arquivo protegido for válido

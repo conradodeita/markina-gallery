@@ -561,7 +561,9 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    if app_manifest.get("production_baseline_sha") != "bfe511f850224823254b0fc9f51fa7ff60ecfba0":
+    # Active API/web release attested by image identities and healthy receipts;
+    # see enable-platform-backup-runtime/validation-picker-scope.md.
+    if app_manifest.get("production_baseline_sha") != "f18db9f22bb75a549e7c4289bff38bf3a880f7f2":
         raise AssertionError("baseline web diverge do inventário registrado")
     if "emergency_api" in app_manifest:
         raise AssertionError("contrato API emergencial não pode permanecer após a publicação convencional comprovada")
