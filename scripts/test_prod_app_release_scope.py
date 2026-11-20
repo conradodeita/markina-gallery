@@ -361,9 +361,10 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "arquivo_fora_do_escopo"))
 
-    def test_exact_gallery_feature_tests_are_allowed(self):
+    def test_exact_gallery_and_platform_feature_tests_are_allowed(self):
         for name in ("frontend/app/admin/galleries/gallery-editor.test.tsx",
-                     "frontend/app/admin/galleries/private-folder-client-overview.test.tsx"):
+                     "frontend/app/admin/galleries/private-folder-client-overview.test.tsx",
+                     "frontend/app/admin/platform/page.test.tsx"):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("test contract\n", encoding="utf-8")

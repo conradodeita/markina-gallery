@@ -34,7 +34,7 @@
     "frontend/app/admin/payments/page.tsx": "eb6e07ab955b3c3d8604b50a92ea59c54d8cb43a",
     "frontend/app/admin/payments/payments.module.css": "aaea7627788aa045697927bb2233e25acca92ab3",
     "frontend/app/admin/platform/google-drive-folder-picker.tsx": "b899354ed74bad54fb00a3106ad931e7c6d0cfcf",
-    "frontend/app/admin/platform/page.tsx": "ab27eb5153d38effdadb0aead6e3baf8a2133d60",
+    "frontend/app/admin/platform/page.tsx": "f45956e5d5809bc20a585d1ac5030a50f1ca4ed4",
     "frontend/app/globals.css": "501ad22099d0b5f8a32b3b350e75b63798830903",
     "frontend/app/library/cart/page.tsx": "257cfae1eda01cfd7a5306233d868a1fd988047e",
     "frontend/app/library/purchase-card.tsx": "ece06b9ee027aa70b0fdd9d8f0f9c99539df655c",

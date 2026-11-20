@@ -169,6 +169,7 @@ ALLOWED_OPERATIONS = {
     "frontend/app/library/library.test.tsx",
     "frontend/app/admin/retirement.test.ts",
     "frontend/app/admin/platform/google-drive-folder-picker.test.tsx",
+    "frontend/app/admin/platform/page.test.tsx",
     "frontend/scripts/payments-visual-qa.cjs",
     "RELATORIO_IMPLEMENTACAO_VENDAS_PAGAMENTOS.md",
     "design-qa.md",

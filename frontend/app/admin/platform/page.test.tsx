@@ -61,10 +61,13 @@ describe("console privado da plataforma", () => {
       ...source, state: "connected", availability: "authorization_recorded", connection_updated_at: observed,
       quota_limit: "109951162777600", quota_usage: "54975581388800", quota_observed_at: observed,
     } : source);
-    mockApi(true, connectedSources);
+    const fetcher = mockApi(true, connectedSources);
     render(<PlatformConsole />);
     expect(await screen.findByText("Autorização registrada")).toBeTruthy();
-    expect(screen.queryByLabelText("Senha atual do proprietário")).toBeNull();
+    expect(screen.getByRole("region", { name: "Destino global de backup" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Selecionar pasta global" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByLabelText("Senha atual do proprietário")).toBeTruthy();
+    expect(fetcher.mock.calls.some(([path]) => String(path).includes("/picker/"))).toBe(false);
     expect(screen.getByText(/A disponibilidade atual do Drive não foi verificada/)).toBeTruthy();
     expect(screen.getByText(/50 TiB usados de 100 TiB/)).toBeTruthy();
     expect(screen.queryByText(/Drive saudável|Drive disponível/i)).toBeNull();
