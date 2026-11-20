@@ -31,3 +31,9 @@ O servidor é compartilhado. Medir espaço e carga e impor limites antes da prim
 ## Migration Plan
 
 Sem migration de banco. Preparar o arquivo separado de configuração do Picker. Publicar o app e o runtime com o agendamento desativado; depois autorizar a pasta pelo app, vincular seu ID pela ferramenta root-only e ensaiar o destino global com arquivo sintético, reler, comparar checksum e remover somente os artefatos criados pelo ensaio. Mostrar inventário, alvos, checksum, limites, método de desligamento e recuperação antes da primeira cópia real. A primeira cópia real e a ativação do timer permanecem uma etapa separada com aprovação específica. O desligamento do agendador preserva as cópias e recibos; não apaga dados.
+
+## Decisão aprovada em 19/11/2026: montagem protegida somente na API
+
+O proprietário aprovou estender a ponte existente para uma operação fixa do Picker. O candidato SHALL manter imagem e APP_VERSION ativos e adicionar exclusivamente o bind `/etc/pyp-google-drive/picker-config.json` para `/run/secrets/google-drive-picker-config.json`, read-only, sem criação de origem. O arquivo SHALL ser root:root 0400, regular e link único sob diretório 0700. A prova SHALL vincular metadados e conteúdo sem divulgar chave ou hash da chave em logs.
+
+Inventário, aprovação por fingerprint, lock comum, journal durável, stop/rename/create, provas semânticas, preservação dos anteriores, publicação da base e recuperação por fase SHALL reutilizar o canal protegido. Web SHALL permanecer no mesmo ID, imagem, configuração e StartedAt; os serviços de terceiros SHALL permanecer idênticos. A recuperação SHALL atuar somente na API. A instalação do suporte exige CI do SHA exato e fluxo protegido; aprovação desta extensão não dispensa revisão de PR/merge.

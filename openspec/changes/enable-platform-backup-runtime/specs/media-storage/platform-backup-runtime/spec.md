@@ -61,3 +61,17 @@ Instalar e ativar o agendamento SHALL exigir inventário, prova sintética e apr
 
 - **WHEN** o operador desativar o agendamento
 - **THEN** a rotina SHALL deixar de iniciar execuções novas e preservar os artefatos já gerados e o catálogo
+
+### Requirement: Montagem protegida do seletor sem troca da web
+
+A ponte SHALL oferecer operação fixa de configuração somente da API para o mount do Picker. SHALL preservar imagem e versão da API, web e testemunhas, usar lock e journal durável e publicar a base somente após prova de saúde, schema, configuração e flag facial. MUST NOT aceitar paths, mounts ou comandos arbitrários.
+
+#### Scenario: Recriação autorizada para o Picker
+
+- **WHEN** o operador aprovar o fingerprint atual e o arquivo protegido for válido
+- **THEN** a ponte SHALL preservar a API anterior parada, criar somente a API com o bind read-only aprovado e manter a web intacta
+
+#### Scenario: Interrupção da troca
+
+- **WHEN** uma fase ficar incompleta ou qualquer identidade divergir
+- **THEN** a ponte MUST bloquear repetição cega e oferecer inventário e recuperação explícitos somente da API, preservando todos os containers
