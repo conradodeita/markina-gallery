@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { MarkinaButton } from "../../ui-kit";
 
 const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -115,10 +115,21 @@ export function GoogleDriveBackupFolderPicker() {
   const [authorized, setAuthorized] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const pickerDialog = useRef<PickerDialog | undefined>(undefined);
+  const selectionGeneration = useRef(0);
+
+  useEffect(() => () => {
+    selectionGeneration.current++;
+    pickerDialog.current?.setVisible(false);
+    pickerDialog.current = undefined;
+  }, []);
 
   async function startSelection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy || !password || !/^[0-9]{6}$/.test(totp)) return;
+    const generation = ++selectionGeneration.current;
+    pickerDialog.current?.setVisible(false);
+    pickerDialog.current = undefined;
     const body = JSON.stringify({ current_password: password, totp_code: totp });
     setPassword("");
     setTotp("");
@@ -133,15 +144,16 @@ export function GoogleDriveBackupFolderPicker() {
       });
       if (!response.ok) throw new Error();
       const session: unknown = await response.json();
+      if (generation !== selectionGeneration.current) return;
       if (!validSession(session)) throw new Error();
       const pickerApi = await loadPickerLibrary();
+      if (generation !== selectionGeneration.current) return;
       const view = new pickerApi.DocsView(pickerApi.ViewId.DOCS)
         .setMimeTypes(FOLDER_MIME_TYPE)
         .setIncludeFolders(true)
         .setSelectFolderEnabled(true)
         .setParent(session.expected_parent_folder_id)
         .setMode(pickerApi.DocsViewMode.LIST);
-      const pickerDialog: { current?: PickerDialog } = {};
       const builtPicker = new pickerApi.PickerBuilder()
         .addView(view)
         .setOAuthToken(session.access_token)
@@ -152,6 +164,7 @@ export function GoogleDriveBackupFolderPicker() {
         .setMaxItems(1)
         .setOrigin(window.location.origin)
         .setCallback((data) => {
+          if (generation !== selectionGeneration.current) return;
           const action = data[pickerApi.Response.ACTION];
           if (action === pickerApi.Action.ERROR) {
             pickerDialog.current?.setVisible(false);

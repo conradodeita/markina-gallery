@@ -57,3 +57,5 @@ d3df5f7bf7b33e8cf44a5b68065aa10a3f6e1df8:openspec/changes/add-production-app-rel
 44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc:openspec/changes/restore-production-facial-runtime/runtime-inventory.json:generic-api-key:1206
 44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc:openspec/changes/restore-production-facial-runtime/runtime-inventory.json:generic-api-key:1220
 44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc:openspec/changes/restore-production-facial-runtime/runtime-inventory.json:generic-api-key:1227
+# Blob Git publicamente verificável de use-console-access.ts, não é credencial.
+44cde9163b29ae70ab9628ae4227bfa3bbe4cdf4:openspec/changes/add-production-app-release-workflow/runtime-gates.json:generic-api-key:38

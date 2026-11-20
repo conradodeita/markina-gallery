@@ -23,7 +23,7 @@ O escopo OAuth SHALL permanecer `drive.file`. A seleção SHALL conceder acesso 
 #### Scenario: Seleção do destino global
 
 - **WHEN** o Picker emitir um evento intermediário de carregamento antes da seleção
-- **THEN** o seletor SHALL continuar visível, sem registrar pasta ou iniciar autorização; somente seleção ou cancelamento SHALL encerrar a janela
+- **THEN** o seletor SHALL continuar visível, sem registrar pasta ou iniciar autorização; somente seleção, cancelamento ou erro terminal SHALL encerrar a janela
 
 #### Scenario: Confirmação da pasta global
 
@@ -34,6 +34,12 @@ O escopo OAuth SHALL permanecer `drive.file`. A seleção SHALL conceder acesso 
 
 - **WHEN** o Google Picker emitir a ação terminal `ERROR` ao confirmar uma seleção
 - **THEN** o app SHALL encerrar o diálogo, mostrar uma mensagem genérica e sanitizada, não criar uma candidata nem enviar pedido de autorização, e MUST NOT registrar ou vincular o ID da pasta; tokens, IDs e detalhes internos do provedor MUST NOT aparecer na mensagem ou nos logs
+
+#### Scenario: Retorno de foco durante a seleção
+
+- **WHEN** o foco retornar do Picker ao console e a interface revalidar a propriedade da sessão
+- **THEN** o console SHALL ocultar e bloquear seus controles durante a consulta, preservar em memória a instância do seletor e apresentar a candidata ou erro somente após confirmar novamente o acesso; a seleção MUST NOT enviar autorização automaticamente
+- **AND** recusa, falha da consulta ou logout SHALL descartar a seleção, fechar o Picker e impedir que callbacks ou respostas antigas restaurem o fluxo; a autorização da pasta SHALL continuar exigindo senha e novo TOTP no backend
 
 #### Scenario: Pasta não autorizada ou fora da raiz
 

@@ -70,10 +70,12 @@ function auditActionLabel(action: string) {
 }
 
 export default function PlatformConsole() {
-  const { access, revision } = useConsoleAccess();
-  if (access === null) return <SystemState tone="loading" title="Verificando acesso" detail="Aguarde a confirmação da sua sessão." />;
-  if (!access) return <SystemState tone="error" title="Console indisponível" detail="É necessário acesso de proprietário da plataforma." />;
-  return <ConsoleContent key={revision} />;
+  const { access, revalidating } = useConsoleAccess();
+  if (access === false) return <SystemState tone="error" title="Console indisponível" detail="É necessário acesso de proprietário da plataforma." />;
+  return <>
+    {access === null || revalidating ? <SystemState tone="loading" title="Verificando acesso" detail="Aguarde a confirmação da sua sessão." /> : null}
+    {access === true ? <div hidden={revalidating} inert={revalidating}><ConsoleContent /></div> : null}
+  </>;
 }
 
 function ConsoleContent() {
