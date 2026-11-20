@@ -80,6 +80,20 @@ curl() { log curl; }
         return subprocess.run(['bash', '-c', harness + '\n' + body], env=env,
                               capture_output=True, text=True, timeout=20, check=False)
 
+    def test_picker_initializes_active_version_before_preparation(self):
+        result = self.run_shell(r'''
+MODE=picker-release
+COMPOSE_APP_VERSION=""
+handoff_host_guard() { :; }
+git() { printf '%s\n' "$TEST_BASELINE"; }
+docker() { printf '["APP_VERSION=%s"]\n' "$TEST_BASELINE"; }
+handoff_bridge() { log "$1"; return 1; }
+picker_release
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('picker-prepare', self.log.read_text())
+        self.assertNotIn('checkout diverge', result.stderr)
+
     def test_success_records_health_only_after_https_and_preserves_historical_receipts(self):
         historical = self.state / 'web-previous.identity'
         historical.write_text('historical evidence')
