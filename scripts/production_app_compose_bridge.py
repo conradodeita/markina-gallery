@@ -1008,7 +1008,7 @@ def _docker(args: list[str], *, input_text: str | None = None, timeout: int = 12
 
 
 def _list_service_ids(service: str) -> list[str]:
-    output = _docker(["ps", "--filter", f"label=com.docker.compose.project={PROJECT}",
+    output = _docker(["ps", "--no-trunc", "--filter", f"label=com.docker.compose.project={PROJECT}",
                       "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}"],
                      max_output=65536)
     ids = [line.strip() for line in output.splitlines() if line.strip()]

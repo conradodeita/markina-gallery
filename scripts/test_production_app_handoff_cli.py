@@ -105,6 +105,24 @@ class HandoffCliContracts(unittest.TestCase):
                     bridge._handoff_nginx()
                     self.assertEqual(docker.call_args_list[-1].args[0], ['exec', item['Id'], 'nginx', '-s', 'reload'])
 
+    def test_proxy_selection_requests_full_engine_ids_before_exact_identity_check(self):
+        identity = '1' * 64
+        item = {'Id': identity, 'Config': {'Labels': {'com.docker.compose.project': bridge.PROJECT,
+                'com.docker.compose.service': 'nginx'}}, 'HostConfig': {}, 'Mounts': [],
+                'State': {'Running': True, 'StartedAt': 'synthetic-start'},
+                'NetworkSettings': {'Ports': {'80/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '8080'}]}, 'Networks': {}}}
+        effects = []
+        def docker(arguments, **kwargs):
+            if arguments[0] == 'ps':
+                return (identity if '--no-trunc' in arguments else identity[:12]) + '\n'
+            if arguments[0] == 'inspect':
+                return json.dumps([item])
+            effects.append(arguments)
+            return ''
+        with patch.object(bridge, '_assert_common_lock_held'), patch.object(bridge, '_docker', side_effect=docker):
+            bridge._handoff_nginx()
+        self.assertEqual(effects, [['exec', identity, 'nginx', '-t'], ['exec', identity, 'nginx', '-s', 'reload']])
+
 
 if __name__ == '__main__':
     unittest.main()
