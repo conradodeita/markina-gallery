@@ -30,6 +30,11 @@ O escopo OAuth SHALL permanecer `drive.file`. A seleção SHALL conceder acesso 
 - **WHEN** o proprietário selecionar pelo app a pasta `Pick-your-Pic Global` dentro de `Oracle-Production-Backups`
 - **THEN** o app SHALL confirmar que o item é uma pasta privada de propriedade do usuário, sob a raiz esperada, autorizada para o app e capaz de receber arquivos; a seleção SHALL ser registrada sem token e a ferramenta root-only SHALL vincular seu ID à configuração protegida mantendo `enabled=false`
 
+#### Scenario: Erro ao confirmar a seleção no Picker
+
+- **WHEN** o Google Picker emitir a ação terminal `ERROR` ao confirmar uma seleção
+- **THEN** o app SHALL encerrar o diálogo, mostrar uma mensagem genérica e sanitizada, não criar uma candidata nem enviar pedido de autorização, e MUST NOT registrar ou vincular o ID da pasta; tokens, IDs e detalhes internos do provedor MUST NOT aparecer na mensagem ou nos logs
+
 #### Scenario: Pasta não autorizada ou fora da raiz
 
 - **WHEN** a pasta não for própria, estiver em drive compartilhado, não tiver autorização do app, estiver fora da raiz esperada ou não aceitar novos itens

@@ -1,6 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { GoogleDriveBackupFolderPicker } from "./google-drive-folder-picker";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -19,6 +18,11 @@ const pickerSession = {
   project_number: "123456789012",
   expected_parent_folder_id: "synthetic-parent",
 };
+
+async function loadPickerComponent() {
+  vi.resetModules();
+  return (await import("./google-drive-folder-picker")).GoogleDriveBackupFolderPicker;
+}
 
 function installPickerMock() {
   let callback: ((data: Record<string, unknown>) => void) | undefined;
@@ -47,7 +51,7 @@ function installPickerMock() {
     build = vi.fn(() => dialog);
   }
   const api = {
-    Action: { PICKED: "picked", CANCEL: "cancel" },
+    Action: { PICKED: "picked", CANCEL: "cancel", ERROR: "error" },
     Response: { ACTION: "action", DOCUMENTS: "docs" },
     Document: { ID: "id", NAME: "name", MIME_TYPE: "mimeType" },
     ViewId: { DOCS: "docs" },
@@ -66,6 +70,7 @@ function installPickerMock() {
 }
 
 it("uses only drive.file, lets the owner select the global folder, and requires a second step-up", async () => {
+  const GoogleDriveBackupFolderPicker = await loadPickerComponent();
   const picker = installPickerMock();
   const fetcher = vi.fn()
     .mockResolvedValueOnce(new Response(JSON.stringify(pickerSession), { status: 200 }))
@@ -83,12 +88,12 @@ it("uses only drive.file, lets the owner select the global folder, and requires 
   });
   fireEvent.click(screen.getByRole("button", { name: "Selecionar pasta global" }));
 
-  const script = await waitFor(() => {
-    const element = document.getElementById("google-drive-picker-api");
-    expect(element).toBeTruthy();
-    return element;
+  await waitFor(() => {
+    expect(document.getElementById("google-drive-picker-api") ||
+      picker.dialog.setVisible.mock.calls.length).toBeTruthy();
   });
-  fireEvent.load(script!);
+  const script = document.getElementById("google-drive-picker-api");
+  if (script && picker.dialog.setVisible.mock.calls.length === 0) fireEvent.load(script);
   await waitFor(() => expect(picker.dialog.setVisible).toHaveBeenCalledWith(true));
   expect(fetcher).toHaveBeenNthCalledWith(1, "/api/admin/platform/drive/picker/session",
     expect.objectContaining({
@@ -133,7 +138,49 @@ it("uses only drive.file, lets the owner select the global folder, and requires 
   );
 });
 
+it("shows a sanitized error when Google Picker fails after selection", async () => {
+  const GoogleDriveBackupFolderPicker = await loadPickerComponent();
+  const picker = installPickerMock();
+  const fetcher = vi.fn().mockResolvedValueOnce(
+    new Response(JSON.stringify(pickerSession), { status: 200 }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  render(<GoogleDriveBackupFolderPicker />);
+
+  fireEvent.change(screen.getByLabelText("Senha atual do proprietário"), {
+    target: { value: "synthetic-password" },
+  });
+  fireEvent.change(screen.getByLabelText("Código atual do autenticador"), {
+    target: { value: "123456" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Selecionar pasta global" }));
+
+  await waitFor(() => {
+    expect(document.getElementById("google-drive-picker-api") ||
+      picker.dialog.setVisible.mock.calls.length).toBeTruthy();
+  });
+  const script = document.getElementById("google-drive-picker-api");
+  if (script && picker.dialog.setVisible.mock.calls.length === 0) fireEvent.load(script);
+  await waitFor(() => expect(picker.dialog.setVisible).toHaveBeenCalledWith(true));
+
+  act(() => picker.select({
+    action: "error", error: "synthetic-private-provider-detail",
+    docs: [{ id: "synthetic-folder-id", name: "Pick-your-Pic Global" }],
+  }));
+
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "O Google Drive não conseguiu concluir a seleção.",
+  );
+  expect(picker.dialog.setVisible.mock.calls).toEqual([[true], [false]]);
+  expect(screen.queryByText(/Pasta selecionada:/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Autorizar esta pasta" })).toBeNull();
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(document.body.textContent).not.toContain("synthetic-private-provider-detail");
+  expect(document.body.textContent).not.toContain("synthetic-folder-id");
+});
+
 it("refuses a picker session that expands the OAuth scope", async () => {
+  const GoogleDriveBackupFolderPicker = await loadPickerComponent();
   const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
     ...pickerSession, scope: "https://www.googleapis.com/auth/drive",
   }), { status: 200 }));
