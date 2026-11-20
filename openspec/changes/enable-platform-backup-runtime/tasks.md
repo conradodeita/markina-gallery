@@ -14,5 +14,6 @@
 ## Extensão aprovada do gate 3.2
 
 - [x] 3.2a Implementar operação fixa de Picker API-only na ponte e recuperação, preservando versão/imagem/web; validar contratos e falhas por fase em laboratório isolado.
-- [ ] 3.2b Revisar diff, pins e segredos; publicar suporte em PR com CI do SHA exato e aguardar revisão/merge antes de instalação protegida.
+- [x] 3.2b Revisar diff, pins e segredos; publicar suporte em PR com CI do SHA exato e aguardar revisão/merge antes de instalação protegida. PR #390 integrada em `3c6cf8f3a235282af3ae37db50d3d80836765783`, após CI `44659413721` verde no SHA `422338808483c7dface13bf94d84db2dd534fccb` e autorização do proprietário para prosseguir no gate de integração. A CI de push `44717212955` identificou omissão da lista de escopo antes do acesso remoto; instalação permanece pendente e a correção é tratada em 3.2d.
 - [ ] 3.2c Instalar suporte pelo canal protegido, inventariar fingerprint atual, recriar somente API com a autorização operacional registrada e comprovar saúde, schema, flag facial, HTTPS, mount e invariância das testemunhas.
+- [x] 3.2d Reconciliar a lista nominal do gate API/web com o workflow e teste Picker aprovados; reproduzir a recusa do run 44717212955, cobrir aceitação restrita e preservar recusas de arquivos não revisados. Regressão falhou antes e passou depois; suíte de escopo com 28 testes aprovada, Ruff e OpenSpec estrito aprovados. Evidência em `validation-picker-scope.md`; publicação e CI do commit corretivo continuam gates operacionais.

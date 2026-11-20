@@ -75,6 +75,27 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest), (False, 'arquivo_fora_do_escopo'))
 
+    def test_picker_support_is_allowed_without_accepting_unreviewed_files(self):
+        for name in ('.github/workflows/production-google-picker-config.yml',
+                     'scripts/test_production_app_picker.py'):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('reviewed Picker support\n', encoding='utf-8')
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest),
+                         (True, 'somente_api_web'))
+        for name in ('.github/workflows/production-google-picker-unreviewed.yml',
+                     'scripts/test_production_app_picker_unreviewed.py',
+                     'backend/app/platform_backup/unreviewed_picker_worker.py'):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.write_text('unreviewed support\n', encoding='utf-8')
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest),
+                                 (False, 'arquivo_fora_do_escopo'))
+                self.run_git('rm', name)
+                self.commit()
+
     def test_platform_backup_runtime_requires_exact_reviewed_blob_and_worker_scope(self):
         name = "backend/app/platform_backup/runtime_worker.py"
         path = self.root / name
