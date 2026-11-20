@@ -22,6 +22,11 @@ O escopo OAuth SHALL permanecer `drive.file`. A seleção SHALL conceder acesso 
 
 #### Scenario: Seleção do destino global
 
+- **WHEN** o Picker emitir um evento intermediário de carregamento antes da seleção
+- **THEN** o seletor SHALL continuar visível, sem registrar pasta ou iniciar autorização; somente seleção ou cancelamento SHALL encerrar a janela
+
+#### Scenario: Confirmação da pasta global
+
 - **WHEN** o proprietário selecionar pelo app a pasta `Pick-your-Pic Global` dentro de `Oracle-Production-Backups`
 - **THEN** o app SHALL confirmar que o item é uma pasta privada de propriedade do usuário, sob a raiz esperada, autorizada para o app e capaz de receber arquivos; a seleção SHALL ser registrada sem token e a ferramenta root-only SHALL vincular seu ID à configuração protegida mantendo `enabled=false`
 

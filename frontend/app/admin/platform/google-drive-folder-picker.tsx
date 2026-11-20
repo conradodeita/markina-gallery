@@ -30,7 +30,7 @@ type PickerBuilder = {
 };
 
 type GooglePicker = {
-  Action: { PICKED: string };
+  Action: { PICKED: string; CANCEL: string };
   Response: { ACTION: string; DOCUMENTS: string };
   Document: { ID: string; NAME: string; MIME_TYPE: string };
   ViewId: { DOCS: string };
@@ -152,8 +152,10 @@ export function GoogleDriveBackupFolderPicker() {
         .setMaxItems(1)
         .setOrigin(window.location.origin)
         .setCallback((data) => {
+          const action = data[pickerApi.Response.ACTION];
+          if (action !== pickerApi.Action.PICKED && action !== pickerApi.Action.CANCEL) return;
           pickerDialog.current?.setVisible(false);
-          if (data[pickerApi.Response.ACTION] !== pickerApi.Action.PICKED) return;
+          if (action !== pickerApi.Action.PICKED) return;
           const items = data[pickerApi.Response.DOCUMENTS];
           const selected = Array.isArray(items) ? items[0] : null;
           if (!selected || typeof selected !== "object") {
