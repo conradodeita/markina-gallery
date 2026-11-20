@@ -15,6 +15,8 @@
 
 ## Extensão aprovada do gate 3.2
 
+- [x] 3.2j Documentar os êxitos do backup global úteis ao arquivo/recuperação de fotos. Guia [backup-global-reuso-arquivo-midia.md](../../../docs/saas-evolution/backup-global-reuso-arquivo-midia.md) identifica código comum, núcleo de mídia implementado, provas/limites, sequência de ligação real e validações a reaproveitar. Vinculado ao checklist e índice SaaS; 32 referências de arquivo conferidas, nenhuma ausente; revisão documental, OpenSpec estrito e diff check passaram. Gates produtivos pendentes permanecem explícitos; nenhuma implementação de mídia iniciada.
+
 - [x] 3.2i Corrigir a perda da seleção na revalidação de foco do console, com regressão integrada da página e do seletor. Preservar a instância oculta/inativa durante a consulta e retomá-la somente com acesso confirmado; comprovar descarte e fechamento em recusa, falha e logout, inclusive callback/resposta tardios. Evidência em [validation-picker-focus.md](validation-picker-focus.md): cinco regressões falharam antes; 38 testes UI, ESLint, typecheck/build isolados, Ruff, OpenSpec, 29 testes de escopo e política integrada passaram. Reteste real/release continuam gates próprios em 3.2h/3.2. A revisão substituiu somente o remount por foco e encerrou o diálogo desmontado, sem limpeza independente.
 
 - [x] 3.2f Inicializar a versão ativa da API no executor Picker a partir do container semanticamente comprovado, recusar versão inválida/divergente antes de preparar journal e cobrir a chamada com variável inicialmente vazia. Reconciliar pin do wrapper e repetir canal protegido após CI.

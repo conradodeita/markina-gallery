@@ -58,6 +58,8 @@ Fontes: [política aprovada](../../openspec/changes/add-platform-backup-recovery
 
 ## 4. Arquivo de fotos e recuperação por tenant no Drive
 
+Antes de implementar a ligação real, consultar o [mapa de reuso do backup global e do núcleo de mídia existente](backup-global-reuso-arquivo-midia.md), com código, provas concluídas e pontos de integração para evitar repetição de trabalho.
+
 - [ ] **Configuração:** provisionar a identidade Workspace e a pasta-raiz dedicadas à mídia, conforme decisão já tomada; verificar permissões, quota e separação em relação ao backup do banco.
 - [ ] **Configuração:** criar/verificar a subpasta do proprietário por UUID de tenant e o vínculo autenticado de cada operação; a hierarquia de pastas não substitui autorização no backend.
 - [ ] **Configuração:** definir staging privado no servidor, fora das raízes servidas; conferir espaço livre, reservas, permissões, tamanhos, timeout e retentativas.
