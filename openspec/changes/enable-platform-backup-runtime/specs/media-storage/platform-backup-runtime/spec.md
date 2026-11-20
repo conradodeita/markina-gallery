@@ -97,6 +97,17 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **WHEN** o SHA/CI, a fingerprint, a identidade do host, o artefato, as permissões ou o estado de produção divergirem do que foi revisado
 - **THEN** a operação MUST abortar antes de qualquer escrita persistente e reportar somente uma falha técnica sanitizada
 
+#### Scenario: Instalar o forced command de backup
+
+- **WHEN** a revisão do wrapper exato passar pelo CI e o instalador protegido confirmar novamente o fingerprint atual do host
+- **THEN** somente o forced command root-owned SHALL ser trocado atomicamente, SHALL preservar uma cópia anterior, SHALL continuar recusando comandos arbitrários e SHALL provar que todos os containers mantiveram identidade, imagem, estado e início
+- **AND** a operação SHALL adquirir o lock comum de release e SHALL NOT recriar containers, alterar portas, proxy, banco ou recursos compartilhados
+
+#### Scenario: O estado de containers compartilhados divergir
+
+- **WHEN** qualquer container mudar entre os inventários estáveis antes e depois da preparação do artefato
+- **THEN** a instalação MUST abortar antes da troca do runtime, sem alterar serviço ou timer, e reportar falha sanitizada
+
 ### Requirement: Ensaio sintético do destino global
 
 Com destino root-only vinculado e `enabled=false`, a operação sintética SHALL usar somente conteúdo sintético próprio, sem snapshot ou leitura do banco de produção, tenant ou mídia de cliente. SHALL conferir releitura integral, tamanho e SHA-256 e remover somente o objeto criado pelo próprio ensaio, confirmando sua ausência. Credenciais, tokens e IDs do Drive MUST NOT aparecer em logs.
@@ -106,6 +117,7 @@ Com destino root-only vinculado e `enabled=false`, a operação sintética SHALL
 - **WHEN** o operador autorizado iniciar o ensaio com o runtime e timer desativados e a pasta global validada
 - **THEN** o sistema SHALL enviar um único item sintético identificável por execução, reler e comparar bytes, tamanho e SHA-256, excluir somente o ID criado nessa execução e confirmar a ausência do item
 - **AND** o sistema SHALL preservar `destination.enabled=false`, sem executar `pg_dump`, backup real ou ação na raiz reservada `Pick-your-Pic Tenants`
+- **AND** o vínculo e o ensaio SHALL ocorrer sob o lock comum de release e somente depois de revalidar o fingerprint aprovado e o recibo do runtime instalado
 
 #### Scenario: Falha ou limpeza incompleta no ensaio
 

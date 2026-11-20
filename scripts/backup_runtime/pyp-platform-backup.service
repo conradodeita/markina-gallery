@@ -9,11 +9,11 @@ ConditionPathExists=/etc/pyp-backup/destination.json
 Type=oneshot
 User=root
 Group=root
-WorkingDirectory=/opt/pyp-backup-runtime
+WorkingDirectory=/opt/pyp-backup-runtime/current
 Environment=APP_ENV=production
-Environment=PYTHONPATH=/opt/pyp-backup-runtime/backend
+Environment=PYTHONPATH=/opt/pyp-backup-runtime/current/backend
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/pyp-backup-runtime/venv/bin/python -m app.platform_backup.production_cli
+ExecStart=/opt/pyp-backup-runtime/current/venv/bin/python -m app.platform_backup.production_cli
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

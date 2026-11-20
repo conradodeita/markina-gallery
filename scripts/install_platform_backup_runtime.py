@@ -1,0 +1,623 @@
+"""Install a verified backup runtime bundle inertly on the fixed production host."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import contextlib
+import hashlib
+import io
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+from collections.abc import Callable, Iterator, Sequence
+from pathlib import Path, PurePosixPath
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows local development only
+    fcntl = None
+
+from platform_backup_runtime_artifact import ArtifactError, verify_bundle
+from platform_backup_runtime_inventory import (
+    InventoryError,
+    collect_inventory,
+    install_preconditions,
+)
+
+INSTALL_ROOT = Path("/opt/pyp-backup-runtime")
+SYSTEMD_ROOT = Path("/etc/systemd/system")
+CONFIG_ROOT = Path("/etc/pyp-backup")
+DEPLOY_STATE = Path("/var/lib/markina-gallery/deploy-state")
+PRODUCTION_RELEASE_LOCK = DEPLOY_STATE / "production-release.lock"
+RELEASES = INSTALL_ROOT / "releases"
+CURRENT = INSTALL_ROOT / "current"
+UNIT_NAMES = {
+    "pyp-platform-backup.service": "scripts/backup_runtime/pyp-platform-backup.service",
+    "pyp-platform-backup.timer": "scripts/backup_runtime/pyp-platform-backup.timer",
+}
+GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+MAX_STDIN_BYTES = 768 * 1024 * 1024
+
+
+class InstallError(ValueError):
+    """Sanitized error that must not include host configuration or secrets."""
+
+
+Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+@contextlib.contextmanager
+def _production_release_lock(
+    lock_path: Path,
+    *,
+    root_only: bool,
+    expected_owner: tuple[int, int] | None = None,
+) -> Iterator[None]:
+    if fcntl is None:
+        _require(not root_only, "production_release_lock_unavailable")
+        yield
+        return
+    _require(lock_path.parent.is_dir() and not lock_path.parent.is_symlink(),
+             "production_release_lock_unavailable")
+    try:
+        parent_info = lock_path.parent.lstat()
+        info = lock_path.lstat()
+    except OSError:
+        raise InstallError("production_release_lock_unavailable") from None
+    if expected_owner is None:
+        try:
+            import grp
+            import pwd
+            expected_owner = (pwd.getpwnam("ubuntu").pw_uid, grp.getgrnam("ubuntu").gr_gid)
+        except (KeyError, ImportError):
+            raise InstallError("production_release_lock_owner_unavailable") from None
+    _require((parent_info.st_uid, parent_info.st_gid) == expected_owner
+             and stat.S_IMODE(parent_info.st_mode) == 0o700
+             and stat.S_ISDIR(parent_info.st_mode) and not stat.S_ISLNK(parent_info.st_mode),
+             "production_release_lock_parent_invalid")
+    _require(stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+             and (info.st_uid, info.st_gid) == expected_owner
+             and stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1,
+             "production_release_lock_metadata_invalid")
+    try:
+        descriptor = os.open(lock_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        raise InstallError("production_release_lock_unavailable") from None
+    try:
+        opened = os.fstat(descriptor)
+        _require(stat.S_ISREG(opened.st_mode) and opened.st_nlink == 1
+                 and (opened.st_uid, opened.st_gid) == expected_owner
+                 and stat.S_IMODE(opened.st_mode) == 0o600,
+                 "production_release_lock_metadata_invalid")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise InstallError("production_release_lock_busy") from None
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise InstallError(message)
+
+
+def _run(argv: Sequence[str], *, env: dict[str, str] | None = None,
+         cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, capture_output=True, check=False, text=True, timeout=900, env=env, cwd=cwd)
+
+
+def _read_bundle_files(bundle: bytes) -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            stream = archive.extractfile(member)
+            if stream is None:
+                raise InstallError("bundle_entry_unreadable")
+            files[member.name] = stream.read(member.size + 1)
+    return files
+
+
+def _destination_is_disabled(config_root: Path) -> bool:
+    path = config_root / "destination.json"
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return True
+    if (not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)
+            or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o400
+            or info.st_nlink != 1 or not 0 < info.st_size <= 16_384):
+        return False
+    try:
+        def unique(items: list[tuple[str, object]]) -> dict[str, object]:
+            seen: set[str] = set()
+            for key, _ in items:
+                if key in seen:
+                    raise ValueError
+                seen.add(key)
+            return dict(items)
+        value = json.loads(path.read_bytes(), object_pairs_hook=unique)
+        return isinstance(value, dict) and value.get("enabled") is False
+    except (OSError, ValueError, UnicodeError, TypeError):
+        return False
+
+
+def _private_mkdir(path: Path, *, mode: int = 0o700, root_only: bool = True) -> None:
+    if path.exists() or path.is_symlink():
+        info = path.lstat()
+        _require(stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode), "install_directory_unsafe")
+        _require((not root_only or info.st_uid == 0 and info.st_gid == 0)
+                 and stat.S_IMODE(info.st_mode) == mode,
+                 "install_directory_permissions_invalid")
+        return
+    path.mkdir(mode=mode)
+    info = path.lstat()
+    _require(stat.S_ISDIR(info.st_mode) and (not root_only or info.st_uid == 0 and info.st_gid == 0)
+             and stat.S_IMODE(info.st_mode) == mode, "install_directory_permissions_invalid")
+
+
+def _write_file(path: Path, data: bytes, *, mode: int = 0o400, root_only: bool = True) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, mode)
+    try:
+        info = os.fstat(descriptor)
+        _require(stat.S_ISREG(info.st_mode) and (not root_only or info.st_uid == 0 and info.st_gid == 0)
+                 and info.st_nlink == 1, "install_file_metadata_invalid")
+        with os.fdopen(descriptor, "wb", closefd=True) as stream:
+            descriptor = -1
+            if stream.write(data) != len(data):
+                raise InstallError("install_short_write")
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), mode)
+            os.fsync(stream.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _write_tree(root: Path, files: dict[str, bytes], *, root_only: bool) -> None:
+    for name, data in sorted(files.items()):
+        if name == "manifest.json" or name.startswith("wheelhouse/"):
+            continue
+        relative = PurePosixPath(name)
+        _require(not relative.is_absolute() and ".." not in relative.parts, "bundle_path_invalid")
+        parent = root
+        for component in relative.parts[:-1]:
+            parent = parent / component
+            if not parent.exists():
+                parent.mkdir(mode=0o700)
+            info = parent.lstat()
+            _require(stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+                     and (not root_only or info.st_uid == 0 and info.st_gid == 0), "install_path_unsafe")
+            os.chmod(parent, 0o700)
+        target = root.joinpath(*relative.parts)
+        _write_file(target, data, root_only=root_only)
+
+
+def _wheel_filename(files: dict[str, bytes], package: str) -> str:
+    from platform_backup_runtime_artifact import _normalize_name, _wheel_identity
+
+    matches = [name.removeprefix("wheelhouse/") for name in files if name.startswith("wheelhouse/")
+               and _normalize_name(_wheel_identity(name.removeprefix("wheelhouse/"))[0]) == package]
+    _require(len(matches) == 1, "wheelhouse_package_missing")
+    return matches[0]
+
+
+def _install_wheels(stage: Path, files: dict[str, bytes], runner: Runner,
+                    python_executable: str) -> None:
+    wheelhouse = stage / "wheelhouse"
+    wheelhouse.mkdir(mode=0o700)
+    for name, data in sorted(files.items()):
+        if name.startswith("wheelhouse/"):
+            target = wheelhouse / name.removeprefix("wheelhouse/")
+            _write_file(target, data)
+    venv = stage / "venv"
+    result = runner([python_executable, "-m", "venv", "--without-pip", "--copies", str(venv)])
+    _require(result.returncode == 0, "venv_create_failed")
+    pip_wheel = _wheel_filename(files, "pip")
+    pip_path = wheelhouse / pip_wheel
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(pip_path)
+    env["PYTHONNOUSERSITE"] = "1"
+    target_python = str(venv / "bin" / "python")
+    result = runner([
+        python_executable, "-m", "pip", "--python", target_python, "install",
+        "--no-index", "--find-links", str(wheelhouse), "--no-deps", "--require-hashes",
+        "-r", str(stage / "scripts/backup_runtime/requirements-py310-arm64.lock"),
+    ], env=env, cwd=stage)
+    _require(result.returncode == 0, "offline_dependency_install_failed")
+    result = runner([
+        target_python, "-B", "-c", "import app.platform_backup.production_cli; print('runtime_import_ok')",
+    ], env={"PYTHONPATH": str(stage / "backend")}, cwd=stage)
+    _require(result.returncode == 0 and result.stdout.strip() == "runtime_import_ok",
+             "runtime_import_failed")
+    shutil.rmtree(wheelhouse)
+
+
+def _current_release(install_root: Path) -> str | None:
+    current = install_root / "current"
+    try:
+        info = current.lstat()
+    except FileNotFoundError:
+        return None
+    _require(stat.S_ISLNK(info.st_mode) and info.st_uid == 0 and info.st_gid == 0 and info.st_nlink == 1,
+             "current_release_not_symlink")
+    target = os.readlink(current)
+    _require(re.fullmatch(r"releases/[0-9a-f]{40}", target) is not None, "current_release_target_invalid")
+    release = install_root / target
+    info = release.lstat()
+    _require(stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+             and info.st_uid == 0 and info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700,
+             "current_release_directory_invalid")
+    return target
+
+
+def _existing_unit(path: Path, expected_previous: bytes | None) -> bytes | None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    _require(stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+             and info.st_uid == 0 and info.st_gid == 0 and info.st_nlink == 1
+             and stat.S_IMODE(info.st_mode) == 0o644 and info.st_size <= 16_384,
+             "existing_unit_metadata_invalid")
+    data = path.read_bytes()
+    _require(expected_previous is not None and data == expected_previous, "existing_unit_unrecognized")
+    return data
+
+
+def _atomic_unit(path: Path, data: bytes, *, root_only: bool) -> None:
+    temporary = path.with_name(path.name + ".pyp-install-tmp")
+    _require(not temporary.exists() and not temporary.is_symlink(), "unit_temp_path_exists")
+    created = False
+    try:
+        _write_file(temporary, data, mode=0o644, root_only=root_only)
+        created = True
+        os.replace(temporary, path)
+    except BaseException:
+        if created and temporary.exists() and not temporary.is_symlink():
+            temporary.unlink()
+        raise
+    directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _restore_unit(path: Path, previous: bytes | None, *, expected_current: bytes,
+                  root_only: bool) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        info = None
+    _require(info is not None and stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+             and info.st_nlink == 1 and (not root_only or info.st_uid == 0 and info.st_gid == 0)
+             and stat.S_IMODE(info.st_mode) == 0o644 and path.read_bytes() == expected_current,
+             "unit_changed_during_rollback")
+    if previous is None:
+        path.unlink()
+    else:
+        temporary = path.with_name(path.name + ".pyp-rollback-tmp")
+        _require(not temporary.exists() and not temporary.is_symlink(), "unit_rollback_temp_exists")
+        _write_file(temporary, previous, mode=0o644, root_only=root_only)
+        os.replace(temporary, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _assert_units_inert(runner: Runner, *, allow_missing: bool = False) -> None:
+    for name in UNIT_NAMES:
+        unit = Path(name).name
+        result = runner([
+            "/usr/bin/systemctl", "show", "--property=LoadState,UnitFileState,ActiveState", "--value", unit,
+        ])
+        _require(result.returncode == 0, "systemd_inert_state_unavailable")
+        fields = result.stdout.rstrip("\n").split("\n")
+        _require(len(fields) == 3, "systemd_inert_state_invalid")
+        load, enabled, active = fields
+        loaded_inert = load == "loaded" and enabled in {"disabled", "static"} and active == "inactive"
+        missing_inert = allow_missing and load == "not-found" and enabled == "unknown" and active == "inactive"
+        _require(loaded_inert or missing_inert, "systemd_unit_not_inert")
+
+
+def _write_receipt(path: Path, document: dict[str, object], *, root_only: bool) -> bytes:
+    data = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    _write_file(path, data, mode=0o600, root_only=root_only)
+    return data
+
+
+def _privatize_tree(root: Path, *, root_only: bool) -> None:
+    for current, directories, filenames in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        for name in directories:
+            path = current_path / name
+            info = path.lstat()
+            _require(stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+                     and (not root_only or info.st_uid == 0 and info.st_gid == 0), "install_tree_unsafe")
+            os.chmod(path, 0o700)
+        for name in filenames:
+            path = current_path / name
+            info = path.lstat()
+            _require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                     and (not root_only or info.st_uid == 0 and info.st_gid == 0), "install_tree_unsafe")
+            os.chmod(path, 0o700 if info.st_mode & 0o111 else 0o600)
+    os.chmod(root, 0o700)
+
+
+def _rebase_shebangs(root: Path, final_root: Path) -> None:
+    old = os.fsencode(root)
+    new = os.fsencode(final_root)
+    bin_dir = root / "venv/bin"
+    for path in bin_dir.iterdir():
+        if path.is_file() and not path.is_symlink():
+            data = path.read_bytes()
+            if data.startswith(b"#!") and old in data.split(b"\n", 1)[0]:
+                path.write_bytes(data.replace(old, new, 1))
+
+
+def _install_verified_bundle_under_lock(
+    bundle: bytes,
+    *,
+    source_sha: str,
+    bundle_sha256: str,
+    approval_fingerprint: str,
+    inventory_provider: Callable[[], dict[str, object]] = collect_inventory,
+    runner: Runner = _run,
+    install_root: Path = INSTALL_ROOT,
+    systemd_root: Path = SYSTEMD_ROOT,
+    config_root: Path = CONFIG_ROOT,
+    python_executable: str = "/usr/bin/python3.10",
+    require_root: bool = True,
+) -> dict[str, object]:
+    if require_root:
+        _require(os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0, "root_required")
+    _require(bool(GIT_SHA.fullmatch(source_sha)) and bool(SHA256.fullmatch(bundle_sha256))
+             and bool(SHA256.fullmatch(approval_fingerprint)), "approval_input_invalid")
+    if not callable(inventory_provider):
+        raise InstallError("inventory_provider_invalid")
+    current_inventory = inventory_provider()
+    _require(current_inventory.get("fingerprint") == approval_fingerprint, "inventory_fingerprint_mismatch")
+    runtime_fingerprint = current_inventory.get("runtime_fingerprint")
+    _require(isinstance(runtime_fingerprint, str) and bool(SHA256.fullmatch(runtime_fingerprint)),
+             "runtime_fingerprint_invalid")
+    inventory = current_inventory.get("inventory")
+    _require(isinstance(inventory, dict) and install_preconditions(inventory), "install_preconditions_failed")
+    manifest = verify_bundle(bundle, source_sha, bundle_sha256)
+    _require(_destination_is_disabled(config_root), "destination_not_disabled")
+    files = _read_bundle_files(bundle)
+    _require(manifest["source_sha"] == source_sha, "source_sha_mismatch")
+
+    parent = install_root.parent
+    _require(parent.is_dir() and not parent.is_symlink(), "install_parent_invalid")
+    parent_info = parent.lstat()
+    _require(stat.S_ISDIR(parent_info.st_mode) and not stat.S_ISLNK(parent_info.st_mode)
+             and (not require_root or parent_info.st_uid == 0 and parent_info.st_gid == 0)
+             and not stat.S_IMODE(parent_info.st_mode) & 0o022, "install_parent_permissions_invalid")
+    try:
+        systemd_info = systemd_root.lstat()
+    except OSError:
+        raise InstallError("systemd_directory_unavailable") from None
+    _require(stat.S_ISDIR(systemd_info.st_mode) and not stat.S_ISLNK(systemd_info.st_mode)
+             and (not require_root or systemd_info.st_uid == 0 and systemd_info.st_gid == 0)
+             and not stat.S_IMODE(systemd_info.st_mode) & 0o022, "systemd_directory_permissions_invalid")
+    created_install_root = not install_root.exists() and not install_root.is_symlink()
+    _private_mkdir(install_root, root_only=require_root)
+    release_root = install_root / "releases"
+    created_release_root = not release_root.exists() and not release_root.is_symlink()
+    if created_release_root:
+        release_root.mkdir(mode=0o700)
+    _private_mkdir(release_root, root_only=require_root)
+    release_path = release_root / source_sha
+    _require(not release_path.exists() and not release_path.is_symlink(), "release_already_exists")
+    previous_current = _current_release(install_root)
+    rollback_root = install_root / "rollback"
+    created_rollback_root = not rollback_root.exists() and not rollback_root.is_symlink()
+    if created_rollback_root:
+        rollback_root.mkdir(mode=0o700)
+    _private_mkdir(rollback_root, root_only=require_root)
+    transaction_path = install_root / "install-journal.json"
+    _require(not transaction_path.exists() and not transaction_path.is_symlink(), "install_reconciliation_required")
+
+    unit_data = {name: files[path] for name, path in UNIT_NAMES.items()}
+    previous_units = {}
+    prior_source = install_root / previous_current / UNIT_NAMES["pyp-platform-backup.service"] if previous_current else None
+    prior_timer = install_root / previous_current / UNIT_NAMES["pyp-platform-backup.timer"] if previous_current else None
+    for unit_name, expected_path in (("pyp-platform-backup.service", prior_source),
+                                     ("pyp-platform-backup.timer", prior_timer)):
+        expected_previous = expected_path.read_bytes() if expected_path is not None and expected_path.is_file() else None
+        previous_units[unit_name] = _existing_unit(systemd_root / unit_name, expected_previous)
+
+    staging = release_root / f".staging-{source_sha}-{os.getpid()}"
+    _require(not staging.exists() and not staging.is_symlink(), "staging_path_exists")
+    staging.mkdir(mode=0o700)
+    release_created = False
+    rollback_receipt_path = rollback_root / f"{source_sha}.json"
+    rollback_receipt_created = False
+    try:
+        _write_tree(staging, files, root_only=require_root)
+        _write_file(staging / "manifest.json", files["manifest.json"], root_only=require_root)
+        _install_wheels(staging, files, runner, python_executable)
+        if (staging / "wheelhouse").exists():
+            raise InstallError("wheelhouse_cleanup_failed")
+        pre_mutation_inventory = inventory_provider()
+        _require(pre_mutation_inventory.get("runtime_fingerprint") == runtime_fingerprint,
+                 "runtime_changed_during_install")
+        pre_mutation_state = pre_mutation_inventory.get("inventory")
+        _require(isinstance(pre_mutation_state, dict) and install_preconditions(pre_mutation_state),
+                 "pre_mutation_preconditions_failed")
+        _require(_destination_is_disabled(config_root), "destination_state_changed")
+        _assert_units_inert(runner, allow_missing=True)
+        _rebase_shebangs(staging, release_path)
+        _privatize_tree(staging, root_only=require_root)
+        os.rename(staging, release_path)
+        release_created = True
+        release_info = release_path.lstat()
+        _require(stat.S_ISDIR(release_info.st_mode)
+                 and (not require_root or release_info.st_uid == 0 and release_info.st_gid == 0)
+                 and stat.S_IMODE(release_info.st_mode) == 0o700, "release_directory_permissions_invalid")
+
+        rollback_document = {
+            "schema_version": 1,
+            "source_sha": source_sha,
+            "bundle_sha256": bundle_sha256,
+            "previous_current": previous_current,
+            "previous_units": {
+                name: (base64.b64encode(data).decode("ascii") if data is not None else None)
+                for name, data in previous_units.items()
+            },
+        }
+        rollback_bytes = _write_receipt(rollback_receipt_path, rollback_document, root_only=require_root)
+        rollback_receipt_created = True
+        journal_document = {"schema_version": 1, "source_sha": source_sha, "phase": "prepared"}
+        _write_receipt(transaction_path, journal_document, root_only=require_root)
+
+        changed_units: list[str] = []
+        current_changed = False
+        temporary_link = install_root / f".current-{source_sha}"
+        try:
+            if not _destination_is_disabled(config_root):
+                raise InstallError("destination_state_changed")
+            _assert_units_inert(runner, allow_missing=True)
+            for unit_name, data in unit_data.items():
+                _atomic_unit(systemd_root / unit_name, data, root_only=require_root)
+                changed_units.append(unit_name)
+            _require(not temporary_link.exists() and not temporary_link.is_symlink(), "current_temp_exists")
+            os.symlink(f"releases/{source_sha}", temporary_link)
+            os.replace(temporary_link, install_root / "current")
+            current_changed = True
+            result = runner(["/usr/bin/systemctl", "daemon-reload"])
+            _require(result.returncode == 0, "systemd_reload_failed")
+            _assert_units_inert(runner)
+            _require(_destination_is_disabled(config_root), "destination_state_changed")
+            verified_inventory = inventory_provider()
+            _require(verified_inventory.get("runtime_fingerprint") == runtime_fingerprint,
+                     "runtime_changed_during_install")
+            verified_state = verified_inventory.get("inventory")
+            _require(isinstance(verified_state, dict) and install_preconditions(verified_state),
+                     "post_install_preconditions_failed")
+            receipt = {
+                "schema_version": 1,
+                "status": "installed_inert",
+                "source_sha": source_sha,
+                "bundle_sha256": bundle_sha256,
+                "approval_fingerprint": approval_fingerprint,
+                "current_release": f"releases/{source_sha}",
+                "previous_release": previous_current,
+                "rollback_receipt_sha256": hashlib.sha256(rollback_bytes).hexdigest(),
+                "service_enabled": False,
+                "service_active": False,
+                "timer_enabled": False,
+                "timer_active": False,
+                "destination_enabled": False,
+            }
+            _write_receipt(release_path / "install-receipt.json", receipt, root_only=require_root)
+            transaction_path.unlink()
+            directory_fd = os.open(install_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except BaseException:
+            if temporary_link.exists() or temporary_link.is_symlink():
+                temporary_link.unlink()
+            if current_changed:
+                current_path = install_root / "current"
+                current_path.unlink()
+                if previous_current:
+                    os.symlink(previous_current, current_path)
+            for unit_name in reversed(changed_units):
+                _restore_unit(systemd_root / unit_name, previous_units[unit_name],
+                              expected_current=unit_data[unit_name], root_only=require_root)
+            runner(["/usr/bin/systemctl", "daemon-reload"])
+            raise
+        return receipt
+    except BaseException:
+        if staging.exists():
+            shutil.rmtree(staging)
+        if release_created and not transaction_path.exists() and not transaction_path.is_symlink():
+            if rollback_receipt_created:
+                rollback_receipt_path.unlink(missing_ok=True)
+            shutil.rmtree(release_path)
+        if not transaction_path.exists() and not transaction_path.is_symlink():
+            if created_rollback_root:
+                rollback_root.rmdir()
+            if created_release_root:
+                release_root.rmdir()
+            if created_install_root:
+                install_root.rmdir()
+        raise
+
+
+def install_verified_bundle(
+    bundle: bytes,
+    *,
+    source_sha: str,
+    bundle_sha256: str,
+    approval_fingerprint: str,
+    inventory_provider: Callable[[], dict[str, object]] = collect_inventory,
+    runner: Runner = _run,
+    install_root: Path = INSTALL_ROOT,
+    systemd_root: Path = SYSTEMD_ROOT,
+    config_root: Path = CONFIG_ROOT,
+    python_executable: str = "/usr/bin/python3.10",
+    require_root: bool = True,
+    lock_path: Path = PRODUCTION_RELEASE_LOCK,
+    lock_owner: tuple[int, int] | None = None,
+) -> dict[str, object]:
+    with _production_release_lock(lock_path, root_only=require_root, expected_owner=lock_owner):
+        return _install_verified_bundle_under_lock(
+            bundle, source_sha=source_sha, bundle_sha256=bundle_sha256,
+            approval_fingerprint=approval_fingerprint, inventory_provider=inventory_provider,
+            runner=runner, install_root=install_root, systemd_root=systemd_root,
+            config_root=config_root, python_executable=python_executable, require_root=require_root,
+        )
+
+
+def _read_stdin(limit: int = MAX_STDIN_BYTES) -> bytes:
+    chunks = bytearray()
+    while True:
+        block = sys.stdin.buffer.read(min(1024 * 1024, limit + 1 - len(chunks)))
+        if not block:
+            break
+        chunks.extend(block)
+        if len(chunks) > limit:
+            raise InstallError("bundle_size_exceeded")
+    return bytes(chunks)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sha", required=True)
+    parser.add_argument("--bundle-sha256", required=True)
+    parser.add_argument("--approval-fingerprint", required=True)
+    args = parser.parse_args(argv)
+    try:
+        receipt = install_verified_bundle(
+            _read_stdin(), source_sha=args.sha, bundle_sha256=args.bundle_sha256,
+            approval_fingerprint=args.approval_fingerprint,
+        )
+        print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
+        return 0
+    except (InstallError, ArtifactError, InventoryError, OSError, subprocess.SubprocessError):
+        print(json.dumps({"status": "failed", "error": "install_rejected"}, sort_keys=True))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
