@@ -4,7 +4,7 @@ Registro de continuidade de 20/11/2026, solicitado pelo proprietário para evita
 
 ## Estado e fontes de verdade
 
-- O transporte Drive e a recuperação global sintética possuem provas externas concluídas. A primeira execução recorrente de backup global no destino novo ainda depende dos gates 3.2–3.3 de [enable-platform-backup-runtime](../../openspec/changes/enable-platform-backup-runtime/tasks.md).
+- O transporte Drive e a recuperação global sintética possuem provas externas concluídas. A primeira cópia real no destino novo, a restauração de aceitação e a ativação do agendamento diário ainda dependem dos gates 3.2–3.3 de [enable-platform-backup-runtime](../../openspec/changes/enable-platform-backup-runtime/tasks.md).
 - O núcleo de arquivo/recuperação de mídia já existe. Sua ligação ao transporte real e o ensaio operacional permanecem na task 1.4 de [add-gallery-media-archive](../../openspec/changes/add-gallery-media-archive/tasks.md), com contratos no [design](../../openspec/changes/add-gallery-media-archive/design.md).
 - O [checklist pós-deploy](post-deploy-configuration-checklist.md) estabelece a sequência: backup comprovado, arquivo/recuperação sintéticos na conta do proprietário e depois liberação de outros fotógrafos.
 - O proprietário confirmou em 20/11 manter a retenção global de 7 diários / 4 semanais / 3 mensais. Ela não define o lifecycle da mídia nem autoriza expurgo de fotos.
@@ -17,7 +17,7 @@ Registro de continuidade de 20/11/2026, solicitado pelo proprietário para evita
 | Recuperação global pelo Drive, 17/11 | Pacote PostgreSQL sintético cifrado, readback idêntico, recusa de adulteração, autenticação GCM e restore em PostgreSQL descartável; dados e ownership conferidos | [Recibo de recuperação](../../openspec/changes/add-platform-backup-recovery/drive-restore-proof.md). Não usou o banco produtivo como origem/destino e não mede seu RTO. |
 | Custódia e configuração operacional, 17/11 | Configuração root-only, cópia offline da chave e desafio autenticado entre os materiais de recuperação | [Tasks 1.1–1.2](../../openspec/changes/enable-platform-backup-runtime/tasks.md). Reutilizar o procedimento de custódia; a chave do pacote global não é automaticamente chave de mídia. |
 | Publicação protegida e mount Picker, 20/11 | Suporte protegido instalado, configuração do Picker read-only somente na API e release API/web saudável de #395 | [Inventário e recibos](../../openspec/changes/enable-platform-backup-runtime/release-preflight.md). Não equivale à seleção/autorização da nova pasta nem ao timer ativo. |
-| Integração Picker/console, 20/11 | Regressão reproduzida na revalidação de foco; seleção preservada com acesso positivo e descarte em recusa/logout; 38 testes UI e CI da PR #397 verdes | [Validação de foco e recibo de publicação](../../openspec/changes/enable-platform-backup-runtime/validation-picker-focus.md). Conferir nesse recibo o resultado do release e do reteste real; não repetir a hipótese de `ERROR` como causa confirmada. |
+| Integração Picker/console, 20/11 | Regressão reproduzida na revalidação de foco; seleção preservada com acesso positivo e descarte em recusa/logout; 38 testes UI, CI e release #397 aprovados, API/web saudáveis e HTTPS 200 | [Validação de foco e recibo de publicação](../../openspec/changes/enable-platform-backup-runtime/validation-picker-focus.md). Reteste real da seleção ainda pendente; não repetir a hipótese de `ERROR` como causa confirmada. |
 
 ## Código comum a reutilizar
 
@@ -57,6 +57,15 @@ Registro de continuidade de 20/11/2026, solicitado pelo proprietário para evita
 - Mídia: [test_media_archive_executor.py](../../backend/tests/test_media_archive_executor.py), [test_media_archive_manifest.py](../../backend/tests/test_media_archive_manifest.py), [test_media_archive_worker.py](../../backend/tests/test_media_archive_worker.py), [test_media_archive_staging.py](../../backend/tests/test_media_archive_staging.py) e [test_media_archive_billing.py](../../backend/tests/test_media_archive_billing.py).
 
 Reutilizar resultados quando código, dependências, configuração e ambiente relevantes permanecerem iguais. Mudança de identidade/pasta, transporte, formatos, limites, volumes ou runtime exige repetir as validações afetadas. A prova de texto/backup sintético fundamenta o transporte; a prova com mídia verifica o contrato adicional de múltiplos objetos e catálogo.
+
+## Lições operacionais para evitar repetição
+
+1. Uma pasta acessível pelo conector Drive pode não estar autorizada pelo OAuth do aplicativo. Conferir a autorização do app e o escopo mínimo antes de investigar o transporte ou criar outra integração Google.
+2. No Picker, eventos intermediários de carregamento preservam a janela; os terminais são tratados explicitamente. Testar o retorno de foco com a página e sua revalidação de sessão, além do componente isolado. Preservar a segunda reautenticação e o descarte em perda de acesso.
+3. Conferir os pins exatos do runtime e a lista nominal do gate antes do push. No caso #397, o hash Git de um helper causou um falso positivo de chave; a conferência do blob permitiu uma exceção por commit/path/regra/linha. Preservar os commits revisados quando o fingerprint depender deles; não generalizar a exceção.
+4. O preflight remoto é somente leitura e não atualiza `origin/main`. Após um novo merge, a ref local desatualizada pode exigir a preparação pelo canal protegido, com CI de código e backups dos helpers. Confirmar invariância dos containers antes de repetir o preflight.
+5. Uma falha operacional isolada não exige repetir testes verdes do mesmo SHA quando as premissas forem preservadas. Usar a repetição dos jobs falhos/dependentes pelo fluxo documentado; conferir novamente fingerprint, artefato e estado vivo antes da publicação.
+6. Registrar a prova externa concluída e seu limite no recibo. Nova pasta, outra identidade ou operação com múltiplos objetos requerem sua própria validação; reaproveitar o código/procedimento comprovado e testar a diferença relevante.
 
 ## O que permanece separado
 
