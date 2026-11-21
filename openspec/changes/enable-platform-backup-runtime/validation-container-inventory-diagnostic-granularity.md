@@ -19,6 +19,7 @@ Executada na branch `codex/backup-inventory-container-diagnostics`, baseada na m
 - `python scripts/test_production_release_workflow_policy.py`: `production release workflow policy: ok`.
 - Ruff nos dois arquivos Python alterados, sintaxe shell por Git Bash, OpenSpec estrito e `git diff --check`: passaram.
 - O pin atualizado do inventariador coincide com o blob `b86f629a7117660334cbe66a86e6eb7aeb315298`.
+- O classificador sobre o commit de código `51fc044b987aa839f8fbbaece71014df359c720e` retornou `release_scope=none`; o gate de API/web retornou `app_release_ready=true` e `criterio=somente_api_web`.
 
 ## Limitações e próximo passo
 
