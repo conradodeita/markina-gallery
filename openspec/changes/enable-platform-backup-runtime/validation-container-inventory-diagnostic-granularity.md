@@ -37,5 +37,17 @@ Executada na branch `codex/backup-inventory-container-diagnostics`, baseada na m
 - `python scripts/test_platform_backup_runtime_inventory.py -v`: 13 testes passaram, 1 teste root-only foi ignorado no Windows. Inclui seleção estrita pelos labels, ausência, duplicidade, ID inválido, falha de listagem, labels divergentes e sanitização.
 - `python scripts/test_platform_backup_runtime_workflow.py -v`: `platform_backup_runtime_workflow=valid`; `python scripts/test_production_release_workflow_policy.py`: `publication_candidate_ready=true / somente_api_web` e `production release workflow policy: ok`.
 - Ruff, sintaxe Bash do wrapper, OpenSpec estrito e `git diff --check` passaram. O pin `BACKUP_INVENTORY_BLOB_SHA` coincide com o blob local `7823d1ef5b318e96fab2ebec0c66c8c66e3f366f`.
-- A PR #404 foi aberta contra `main`, commit `d5f06f7dbf9d54a99cf413eef67e5dd94c7b5eac`. A CI da PR `44946701487` concluiu `success`: quatro shards backend, backend quality, frontend, imagens ARM64/AMD64, OpenSpec, gitleaks e política de inventário passaram; gates de publicação API/web foram ignorados.
-- A PR permanece aberta para revisão humana. O código corrigido ainda não foi instalado no host; inventário protegido em SHA novo requer autorização operacional específica. Não executar vínculo, ensaio, backup real ou ativar timer com base nesta evidência.
+- A PR #404 foi integrada como `8d28e98a26d4363868d123395f7fd20594fcf9b6`; a CI da main `44952234563` concluiu `success`. A correção está na referência aprovada da main.
+
+## Preflight depois da integração — 21/11/2026 UTC
+
+- O despacho protegido `44954108265`, no SHA integrado, passou `code-evidence`, mas falhou no preflight app/host antes de qualquer fingerprint. O log expôs apenas `SHA não é a main local aprovada; preparação necessária` e `deploy-prod-app-services: suporte não verificável; preparação autorizada necessária`; o job de instalação do wrapper foi ignorado.
+- Não houve inventário atual de aplicação/host, instalação da ponte/wrapper ou mutação. A causa específica não está comprovada; a mensagem sugere referência ou suporte remoto desatualizado. Não declarar a base saudável nem inferir estado de `/etc/pyp-backup`, `/opt/pyp-backup-runtime`, destino, vínculo, serviços ou timers.
+- O proprietário autorizou sincronização protegida da ponte/wrapper e a repetição de inventário somente de leitura. A subtask 3.2s segue aberta até o inventário do runtime produzir fatos e fingerprint válidos após essa preparação. Nenhum vínculo, ensaio, backup real ou timer está autorizado por essa evidência.
+
+## Resultado da instalação de suporte e nova leitura — 21/11/2026 UTC
+
+- O workflow protegido `44955421291` concluiu no SHA `8d28e98a26d4363868d123395f7fd20594fcf9b6`. Atualizou `origin/main`, preservou as versões anteriores da ponte/wrapper e reportou `containers_unchanged=true`.
+- O preflight app/host `44955613812` confirmou API/web saudáveis, produção, schema `20261113_0126`, Nginx em `127.0.0.1:8080` e endpoints HTTPS 200; a fingerprint foi aceita pelo workflow e omitida deste registro.
+- O inventory do runtime `44955733001` falhou fechado com `api_container_record_ambiguous`, sem fingerprint ou precondições, e `operate` foi ignorado. O código identifica ambiguidade na consulta de registros API por labels fixos, mas não informa IDs, valores, quantidade ou estado dos registros. Não inspecionar por SSH ad hoc, não remover containers e não selecionar um deles por nome/estado sem decisão e especificação aprovadas.
+- O runtime, destino, vínculo e unidades permanecem não verificados. Nenhuma configuração ou dado foi alterado; não houve escrita no Drive, ensaio, backup real ou ativação de timer.
