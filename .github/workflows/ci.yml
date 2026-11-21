@@ -490,7 +490,7 @@ jobs:
           bash -n scripts/production-preflight-ssh-wrapper.sh
           bash -n scripts/install-prod-platform-backup-wrapper.sh
           python -B scripts/test_platform_backup_runtime_workflow.py
-          scripts/build_platform_backup_runtime.sh "$GITHUB_SHA" "$RUNNER_TEMP/pyp-platform-backup-runtime.tar.gz"
+          bash scripts/build_platform_backup_runtime.sh "$GITHUB_SHA" "$RUNNER_TEMP/pyp-platform-backup-runtime.tar.gz"
           bash scripts/test_deploy_prod_app_services.sh
           python scripts/test_prod_facial_release_gates.py
           python scripts/test_prod_app_release_scope.py
