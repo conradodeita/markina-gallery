@@ -30,9 +30,21 @@ Se o registro trouxer uma pasta, mas não trouxer um escopo reconhecido (`all` o
 **Non-Goals nesta etapa:**
 
 - definir prazo legal de retenção ou política de exclusão de dados além das decisões aprovadas;
-- chamar a Google Drive API, alterar produção, criar diretórios remotos ou remover arquivos;
+- fazer chamadas reais à Google Drive API, configurar credenciais/identidade/raiz de mídia, alterar produção, criar objetos remotos ou remover arquivos; o adaptador pode ser implementado e exercitado somente com transporte HTTP sintético;
 - reutilizar a exclusão de galeria ou a outbox de limpeza física como fluxo de arquivo/restauração;
 - cobrar via Pix/cartão ou exigir aprovação manual do proprietário para cada recuperação automática.
+
+### Adaptador Drive validado sem acesso externo — 20/11/2026 BRT
+
+O contrato `MediaArchiveStorage` já define upload idempotente por chave opaca, leitura de metadados, download com checksum e exclusão idempotente. A implementação local pode adicionar o adaptador Google Drive antes da operação em produção, desde que o runtime continue injetando somente storage sintético e os testes do adaptador usem exclusivamente `DriveTransport` falso. O adaptador recebe `SecretStr`, raiz de mídia dedicada e UUID do tenant por injeção; não descobre credenciais nem lê ambiente para escolher identidade ou pasta.
+
+Cada chave de objeto deve conter os UUIDs canônicos de tenant, galeria, pasta, ciclo e objeto. O adaptador valida o primeiro UUID contra o tenant ao qual está vinculado, mantém os arquivos sob a subpasta do tenant nomeada por UUID na raiz de mídia e falha de modo fechado se a associação pai/tenant divergir ou houver resultados duplicados. A identidade e a raiz de mídia permanecem distintas das do backup global; a verificação e provisionamento reais continuam na task 1.4.
+
+Para buscar retries sem expor IDs de negócio no nome do arquivo ou em metadados públicos, gravar hashes SHA-256 da chave de objeto e do conteúdo em `appProperties` privadas do app, junto do UUID do tenant; consultar pela chave opaca sob o pai tenant. Os nomes/valores devem respeitar o limite documentado pelo Google e a resposta deve ser validada antes de devolver um ID. O comportamento de busca por `appProperties` e o escopo privado estão documentados na [referência oficial de pesquisa do Drive](https://developers.google.com/workspace/drive/api/guides/search-files) e no [limite oficial das propriedades](https://developers.google.com/workspace/drive/api/guides/properties). Mais de um resultado ou conteúdo divergente exige reconciliação e nunca autoriza sobrescrever um objeto existente.
+
+O download valida primeiro o ownership remoto e transmite bytes em streaming para o destino privado, retornando tamanho e SHA-256 calculados no fluxo. A exclusão só pode atingir objeto vinculado ao tenant e ao namespace verificados; resposta de ausência pode ser sucesso idempotente, outras respostas são sanitizadas. Nenhuma operação recebe caminho local do chamador nem devolve URL pública/de preview.
+
+Os testes locais podem colocar `APP_ENV=production` somente para atravessar o gate existente do helper de upload, mas devem injetar um transporte falso que não execute rede e usar valores/arquivos sintéticos. A composição do worker continua no adapter sintético. A classe provider-specific não será ligada ao runtime, configurada com token real, ou chamada contra Google até a etapa protegida da task 1.4.
 
 ### Interface do prazo por pasta
 

@@ -10,7 +10,7 @@ import pytest
 from pydantic import SecretStr
 
 from app import google_drive_storage as storage
-from app.google_drive_oauth import HttpxDriveTransport
+from app.google_drive_client import HttpxDriveTransport
 
 
 class FakeResponse:
