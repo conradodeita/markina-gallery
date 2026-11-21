@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import platform_backup_runtime_inventory as inventory
 
@@ -100,6 +103,38 @@ class InventoryTests(unittest.TestCase):
             return result
         with self.assertRaises(inventory.InventoryError):
             inventory.collect_inventory(wrong, root=self.root)
+
+    def test_inventory_failure_logs_only_allowlisted_code(self) -> None:
+        for code in ("container_inspect_failed", "shared_container_list_empty"):
+            with self.subTest(code=code):
+                output = io.StringIO()
+                error = inventory.InventoryError(code)
+                with (mock.patch.object(inventory, "collect_inventory", side_effect=error),
+                      contextlib.redirect_stdout(output)):
+                    result = inventory.main()
+                self.assertEqual(result, 1)
+                self.assertEqual(output.getvalue(),
+                                 f"platform-backup-runtime: inventory failed ({code})\n")
+
+    def test_inventory_failure_never_logs_untrusted_exception_text(self) -> None:
+        failures = (
+            (inventory.InventoryError("/etc/pyp-backup/source.json: secret"), "inventory_error"),
+            (OSError("/etc/pyp-backup/keyring.json: secret"), "inventory_io_failed"),
+            (subprocess.TimeoutExpired("docker", 20, stderr="private output"),
+             "inventory_command_failed"),
+        )
+        for error, expected in failures:
+            with self.subTest(expected=expected):
+                output = io.StringIO()
+                with (mock.patch.object(inventory, "collect_inventory", side_effect=error),
+                      contextlib.redirect_stdout(output)):
+                    result = inventory.main()
+                self.assertEqual(result, 1)
+                self.assertEqual(output.getvalue(),
+                                 f"platform-backup-runtime: inventory failed ({expected})\n")
+                self.assertNotIn("/etc", output.getvalue())
+                self.assertNotIn("secret", output.getvalue())
+                self.assertNotIn("private output", output.getvalue())
 
     def test_installed_release_requires_matching_root_owned_receipts(self) -> None:
         if os.name != "posix" or os.geteuid() != 0:

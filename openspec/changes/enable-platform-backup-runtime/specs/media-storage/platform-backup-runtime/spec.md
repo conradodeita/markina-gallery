@@ -97,6 +97,12 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **WHEN** o SHA/CI, a fingerprint, a identidade do host, o artefato, as permissões ou o estado de produção divergirem do que foi revisado
 - **THEN** a operação MUST abortar antes de qualquer escrita persistente e reportar somente uma falha técnica sanitizada
 
+#### Scenario: Diagnóstico sanitizado de falha no inventário
+
+- **WHEN** uma consulta fixa do inventário falhar
+- **THEN** o operador SHALL receber somente um código técnico estático permitido ou uma categoria fixa de I/O/comando; nenhuma fingerprint ou precondição aprovada SHALL ser emitida
+- **AND** mensagens de exceção, caminhos, saídas de comandos, dados de configuração, segredos, tokens, chaves e IDs do Drive MUST NOT aparecer no log
+
 #### Scenario: Instalar o forced command de backup
 
 - **WHEN** a revisão do wrapper exato passar pelo CI e o instalador protegido confirmar novamente o fingerprint atual do host
