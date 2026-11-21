@@ -23,6 +23,10 @@ Executada no worktree limpo baseado na main `816ee36371f4a6cdfa5d05b490b6b6071d3
 - `openspec validate enable-platform-backup-runtime --strict`: passou.
 - `git diff --check`: passou.
 
+## CI da mudança
+
+A PR #402 foi validada no SHA `357aa006d9f1246af34e1a1f59a9a6bc8631efa7` pelo run [`44920211887`](https://github.com/conradodeita/markina-gallery/actions/runs/44920211887), concluído com `success`. Passaram os quatro shards da suíte backend, o job agregado, qualidade backend, frontend, imagens AMD64/ARM64, OpenSpec, escopo e gitleaks. Os gates de publicação da aplicação ficaram ignorados, conforme esperado para `release_scope=none`.
+
 ## Limitações e próximo passo
 
-Esta validação comprova somente a saída sanitizada em ambiente local. O motivo da falha remota e o estado atual de `/etc/pyp-backup`, `/opt/pyp-backup-runtime`, unidades, destino e vínculo continuam desconhecidos. Após revisão, merge e CI verde, a nova SHA exige instalação protegida do wrapper atualizado e aprovação operacional própria; só então repetir `operation=inventory`. Nenhuma escrita no Drive, instalação do runtime, vínculo, ensaio, backup real ou ativação de timer está autorizada por esta validação.
+Esta validação comprova a saída sanitizada localmente e a integração da mudança pela CI; não comprova execução do novo código no host. O motivo da falha remota e o estado atual de `/etc/pyp-backup`, `/opt/pyp-backup-runtime`, unidades, destino e vínculo continuam desconhecidos. A PR #402 ainda requer revisão/merge. Depois disso, a nova SHA exige instalação protegida do wrapper atualizado e autorização operacional própria; só então repetir `operation=inventory`. Nenhuma escrita no Drive, instalação do runtime, vínculo, ensaio, backup real ou ativação de timer está autorizada por esta validação.
