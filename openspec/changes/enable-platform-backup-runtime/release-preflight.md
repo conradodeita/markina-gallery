@@ -91,7 +91,7 @@ O proprietário confirmou que a linha `Pick-your-Pic Global` estava selecionada 
 - O diagnóstico não inventariou `/etc/pyp-backup`, `/opt/pyp-backup-runtime`, `source.json` ou unidades systemd. Não presumir o estado atual desses itens a partir de resultados anteriores.
 - No repositório, a CLI root-only e os arquivos de unidade/lock existem, mas não há instalador do runtime nem workflow/canal protegido para invocar a CLI. Também não existe uma operação fixa para o ensaio sintético real do Drive. A task 3.2 fica bloqueada até esses procedimentos serem especificados e revisados em OpenSpec. Manter o destino `enabled=false`; nenhuma escrita no Drive, vínculo, backup real ou timer ocorreu.
 
-## Preflight automático após o merge de #398 — 21/11/2026
+## Preflight automático após o merge de #398 — 20/11/2026 BRT (21/11 UTC)
 
 - A CI de push `44851414814`, no merge `492c141cd998efc87ebde1ee81ea9101effb4f7c`, passou todos os jobs de código e falhou somente em `production-app-preflight`.
 - A etapa usou o comando remoto fixo de inventário somente leitura. O host respondeu `SHA não é a main local aprovada; preparação necessária` e `deploy-prod-app-services: suporte não verificável; preparação autorizada necessária`; não retornou inventário, fingerprint nem ID da imagem base API. Artifact, handoff e release foram ignorados.

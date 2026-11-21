@@ -31,7 +31,7 @@ O ciclo de correção da CI encontrou e resolveu três incompatibilidades: o job
 
 Os jobs de preflight e publicação protegidos ficaram ignorados por se tratar de uma PR. Nenhum inventário do host, SSH, wrapper/runtime, vínculo Drive, ensaio remoto, backup real ou timer foi executado.
 
-## CI de push na main após o merge — 21/11/2026
+## CI de push na main após o merge — 20/11/2026 BRT (21/11 UTC)
 
 A [CI `44851414814`](https://github.com/conradodeita/markina-gallery/actions/runs/44851414814) foi disparada pelo push do merge `492c141cd998efc87ebde1ee81ea9101effb4f7c` da PR #398. Gitleaks, OpenSpec, escopo, frontend, backend-quality, imagens AMD64/ARM64, quatro shards e agregação de testes backend, `homolog-inventory-policy` e `gemma-runtime` concluíram `success`. O único job com falha foi `production-app-preflight`, na etapa remota de inventário somente leitura; a resposta foi `SHA não é a main local aprovada; preparação necessária` e `deploy-prod-app-services: suporte não verificável; preparação autorizada necessária`.
 
