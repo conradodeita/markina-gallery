@@ -22,6 +22,8 @@ def require(condition: bool, reason: str) -> None:
 def main() -> int:
     require('bash scripts/build_platform_backup_runtime.sh "$GITHUB_SHA"' in CI,
             "runtime_builder_not_invoked_through_bash")
+    require('result="$(bash scripts/build_platform_backup_runtime.sh "$GITHUB_SHA" "$output")"' in RUNTIME,
+            "runtime_workflow_builder_not_invoked_through_bash")
     require("on:\n  workflow_dispatch:" in RUNTIME and "on:\n  workflow_dispatch:" in WRAPPER_INSTALL,
             "workflow_dispatch_missing")
     for workflow in (RUNTIME, WRAPPER_INSTALL):

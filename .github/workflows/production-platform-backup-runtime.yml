@@ -62,7 +62,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           output="$RUNNER_TEMP/pyp-platform-backup-runtime.tar.gz"
-          result="$(scripts/build_platform_backup_runtime.sh "$GITHUB_SHA" "$output")"
+          result="$(bash scripts/build_platform_backup_runtime.sh "$GITHUB_SHA" "$output")"
           printf '%s\n' "$result" | tee -a "$GITHUB_STEP_SUMMARY"
           digest="$(sed -nE 's/^bundle_sha256=([0-9a-f]{64})$/\1/p' <<<"$result" | tail -n1)"
           [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
