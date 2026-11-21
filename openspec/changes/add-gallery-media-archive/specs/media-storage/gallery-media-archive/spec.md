@@ -107,6 +107,11 @@ A configuração e os testes reais do Drive SHALL ocorrer somente depois da entr
 - **WHEN** o sistema ainda está em desenvolvimento local, sem entrada autorizada em produção
 - **THEN** usa somente adapters sintéticos e não configura credenciais nem cria/consulta objetos reais do Drive
 
+#### Scenario: Teste local do adaptador provider-specific
+
+- **WHEN** testes unitários exercitam o adaptador Google Drive antes da configuração autorizada em produção
+- **THEN** todas as respostas HTTP vêm de transporte sintético, nenhuma chamada de rede ou credencial real é usada e a composição normal do worker continua selecionando o adapter sintético
+
 #### Scenario: Produção começa apenas com o proprietário
 
 - **WHEN** a versão autorizada entra em produção e o ensaio do proprietário ainda não passou
