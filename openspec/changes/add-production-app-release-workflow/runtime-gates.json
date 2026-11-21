@@ -5,7 +5,7 @@
   "runtime_blobs": {
     "backend/app/auth.py": "0cf2d41a050139dbe96fee925ed3d641967459ed",
     "backend/app/client_lifecycle.py": "a12c03f6bf6766fbc8bf44c0acc64a59a41e5e76",
-    "backend/app/google_drive_client.py": "453c6d95deb4d0d4d2a0f445f96d5fbbc3ba5c45",
+    "backend/app/google_drive_client.py": "7aa66b3cc68c732be7d29ce27f52424063d4b69d",
     "backend/app/google_drive_picker.py": "22f750a3fd87026df963334956b1aa070eb770dd",
     "backend/app/main.py": "53f2830afeb40466061a21120b350e44c1a968ea",
     "backend/app/order_visibility.py": "d1eaefbf6516f428b2d1657d482d021f15a57adb",
@@ -16,7 +16,7 @@
     "backend/app/platform_backup/filesystem.py": "f666f93d7db2e5f60cc1367a0ae811bd0c14ab3d",
     "backend/app/platform_backup/offline_recovery.py": "35fc19de111134b3e7cd1b122aa976327bbbb07a",
     "backend/app/platform_backup/payload.py": "e24a4d00e2ec41c3cb50f3d6342ab6d0257190cf",
-    "backend/app/platform_backup/production_cli.py": "0aaf85107c1ff226c10e3d66bcead662d612279b",
+    "backend/app/platform_backup/production_cli.py": "338f4a7917112c06cc1302eedff92404a6edd14f",
     "backend/app/platform_backup/remote_copy.py": "8e65437e4ff095925aae0983f71fa3b9e8a838c6",
     "backend/app/platform_backup/restore.py": "eb5b64c37af1bde569f7fd29910e3efc391170d4",
     "backend/app/platform_backup/runtime_config.py": "0cb53df50d1886ac1d15c973818dc00e90783afa",
@@ -40,10 +40,11 @@
     "frontend/app/globals.css": "501ad22099d0b5f8a32b3b350e75b63798830903",
     "frontend/app/library/cart/page.tsx": "257cfae1eda01cfd7a5306233d868a1fd988047e",
     "frontend/app/library/purchase-card.tsx": "ece06b9ee027aa70b0fdd9d8f0f9c99539df655c",
-    "frontend/app/library/purchases/page.tsx": "b65d0362a716e496a606bc82588adfd6d79a9645"
+    "frontend/app/library/purchases/page.tsx": "b65d0362a716e496a606bc82588adfd6d79a9645",
+    "backend/app/platform_backup/workspace_store.py": "52d58cec43d32f8005b0275d0a8c0f8cf9e3bd56"
   },
   "support_blobs": {
-    "scripts/backup_runtime/pyp-platform-backup.service": "2ec1115cc558f3b9f23eefb5079a5199f229de2e",
+    "scripts/backup_runtime/pyp-platform-backup.service": "5773dabae5245078213b599ded241d92f938ce4b",
     "scripts/backup_runtime/pyp-platform-backup.timer": "85fd968e68109941ee6ee8245627b327f9c936f1",
     "scripts/backup_runtime/requirements-py310-arm64.lock": "a59635bcd6d1c8f440af4a07b7f0c0f7b5048870"
   }

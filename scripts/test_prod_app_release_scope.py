@@ -15,6 +15,11 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        git_env = {key: value for key, value in os.environ.items()
+                   if not key.upper().startswith("GIT_CONFIG_")}
+        environment = patch.dict(os.environ, git_env, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
         self.run_git("init", "-q")
         # Git recente destaca maintenance em background até em fixtures pequenas.
         # Nenhum processo deve continuar escrevendo depois do cleanup do teste.
@@ -29,7 +34,13 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.manifest = {"runtime_blobs": {name: self.run_git("rev-parse", f"HEAD:{name}") for name in policy.RUNTIME_FILES}}
 
     def run_git(self, *args):
-        env = dict(os.environ, GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
+        # The desktop runner injects numbered GIT_CONFIG_* overrides; one can
+        # become an empty config value after patch.dict restores os.environ on
+        # Windows. Keep these temporary Git repositories isolated from that
+        # external configuration.
+        env = {key: value for key, value in os.environ.items()
+               if not key.upper().startswith("GIT_CONFIG_")}
+        env.update(GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
                    GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.invalid")
         result = subprocess.run(["git", *args], cwd=self.root, env=env, check=True,
                                 capture_output=True, text=True)
@@ -108,6 +119,42 @@ class AppReleaseScopeTests(unittest.TestCase):
                 self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest),
                                  (False, 'arquivo_fora_do_escopo'))
                 self.run_git('rm', name)
+                self.commit()
+
+    def test_platform_backup_runtime_operations_are_exactly_allowlisted(self):
+        names = (
+            ".github/workflows/production-platform-backup-runtime.yml",
+            ".github/workflows/production-platform-backup-wrapper-install.yml",
+            "scripts/build_platform_backup_runtime.sh",
+            "scripts/install-prod-platform-backup-wrapper.sh",
+            "scripts/install_platform_backup_runtime.py",
+            "scripts/platform_backup_runtime_artifact.py",
+            "scripts/platform_backup_runtime_inventory.py",
+            "scripts/test_install_platform_backup_runtime.py",
+            "scripts/test_platform_backup_runtime_artifact.py",
+            "scripts/test_platform_backup_runtime_inventory.py",
+            "scripts/test_platform_backup_runtime_workflow.py",
+        )
+        for name in names:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("reviewed platform backup operation\n", encoding="utf-8")
+        self.commit()
+        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                         (True, "somente_api_web"))
+        for name in (
+            ".github/workflows/production-platform-backup-arbitrary.yml",
+            "scripts/install-prod-unreviewed-backup.sh",
+            "scripts/test_platform_backup_runtime_unreviewed.py",
+        ):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("unreviewed operation\n", encoding="utf-8")
+                self.commit()
+                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
+                                 (False, "arquivo_fora_do_escopo"))
+                self.run_git("rm", name)
                 self.commit()
 
     def test_platform_backup_runtime_requires_exact_reviewed_blob_and_worker_scope(self):

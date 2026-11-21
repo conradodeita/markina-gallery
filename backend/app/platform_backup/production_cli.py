@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+import secrets
 import shutil
+import subprocess
 import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -13,8 +17,9 @@ from pydantic import SecretStr
 
 from app.google_drive_client import HttpxDriveTransport
 
+from . import filesystem as fs
 from .filesystem import BackupStorageError
-from .runtime_config import RuntimeConfig, load_runtime_config
+from .runtime_config import CONFIG_ROOT, RuntimeConfig, load_runtime_config
 from .runtime_config import bind_selected_destination as bind_folder_id
 from .runtime_source import (
     SourceConfig,
@@ -98,6 +103,256 @@ except Exception:
     sys.exit(1)
 """
 
+_REHEARSAL_MARKER = re.compile(r"[0-9a-f]{32}\Z")
+_REHEARSAL_FILE_ID = re.compile(r"[A-Za-z0-9_-]{1,256}\Z")
+_REHEARSAL_JOURNAL = re.compile(r"synthetic-rehearsal-[0-9a-f]{32}\.json\Z")
+
+
+def _assert_backup_units_inert() -> None:
+    for unit in ("pyp-platform-backup.service", "pyp-platform-backup.timer"):
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "show", "--property=LoadState,UnitFileState,ActiveState", "--value", unit],
+            capture_output=True, check=False, text=True, timeout=10,
+        )
+        if result.returncode:
+            raise BackupStorageError("unsafe")
+        fields = result.stdout.rstrip("\n").split("\n")
+        if len(fields) != 3:
+            raise BackupStorageError("unsafe")
+        load_state, enabled_state, active_state = fields
+        if active_state != "inactive":
+            raise BackupStorageError("unsafe")
+        if load_state == "not-found":
+            if enabled_state not in {"", "unknown"}:
+                raise BackupStorageError("unsafe")
+        elif load_state == "loaded":
+            allowed = {"disabled", "static"} if unit.endswith(".service") else {"disabled"}
+            if enabled_state not in allowed:
+                raise BackupStorageError("unsafe")
+        else:
+            raise BackupStorageError("unsafe")
+
+
+def _journal_document(marker: str, *, state: str, content: bytes,
+                      file_id: str | None = None) -> dict[str, object]:
+    if (not _REHEARSAL_MARKER.fullmatch(marker)
+            or state not in {"upload_pending", "created", "verified", "cleanup_pending"}
+            or not isinstance(content, bytes) or not 0 < len(content) <= 4096
+            or (file_id is not None and not _REHEARSAL_FILE_ID.fullmatch(file_id))):
+        raise BackupStorageError("unsafe")
+    document: dict[str, object] = {
+        "schema_version": 1,
+        "marker": marker,
+        "name": f"pyp-backup-rehearsal-{marker}.txt",
+        "state": state,
+        "size": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+    if file_id is not None:
+        document["file_id"] = file_id
+    return document
+
+
+def _journal_bytes(document: dict[str, object]) -> bytes:
+    return (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _pending_rehearsal_journals() -> list[str]:
+    try:
+        with fs._directory(CONFIG_ROOT) as directory:
+            return sorted(name for name in os.listdir(directory) if _REHEARSAL_JOURNAL.fullmatch(name))
+    except BackupStorageError:
+        raise
+    except OSError:
+        raise BackupStorageError("unsafe") from None
+
+
+def _read_rehearsal_journal(name: str) -> dict[str, object]:
+    if not isinstance(name, str) or not _REHEARSAL_JOURNAL.fullmatch(name):
+        raise BackupStorageError("unsafe")
+    try:
+        with fs._directory(CONFIG_ROOT) as directory:
+            descriptor = fs.open_file(directory, name, os.O_RDONLY)
+            with os.fdopen(descriptor, "rb") as stream:
+                raw = stream.read(8193)
+    except (OSError, BackupStorageError):
+        raise BackupStorageError("unsafe") from None
+    if not 0 < len(raw) <= 8192:
+        raise BackupStorageError("unsafe")
+    try:
+        def unique(items: list[tuple[str, object]]) -> dict[str, object]:
+            result = {}
+            for key, value in items:
+                if key in result:
+                    raise ValueError
+                result[key] = value
+            return result
+        document = json.loads(raw, object_pairs_hook=unique)
+        marker = name.removeprefix("synthetic-rehearsal-").removesuffix(".json")
+        if (not isinstance(document, dict)
+                or set(document) not in (
+                    {"schema_version", "marker", "name", "state", "size", "sha256"},
+                    {"schema_version", "marker", "name", "state", "size", "sha256", "file_id"},
+                )
+                or document.get("schema_version") != 1 or document.get("marker") != marker
+                or document.get("name") != f"pyp-backup-rehearsal-{marker}.txt"
+                or document.get("state") not in {"upload_pending", "created", "verified", "cleanup_pending"}
+                or type(document.get("size")) is not int or not 0 < document["size"] <= 4096
+                or not isinstance(document.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", document["sha256"])
+                or ("file_id" in document and (not isinstance(document["file_id"], str)
+                    or not _REHEARSAL_FILE_ID.fullmatch(document["file_id"])) )):
+            raise ValueError
+        return document
+    except (UnicodeError, TypeError, ValueError, RecursionError):
+        raise BackupStorageError("unsafe") from None
+
+
+def _save_rehearsal_journal(document: dict[str, object], *, create: bool) -> str:
+    marker = document.get("marker")
+    if not isinstance(marker, str) or not _REHEARSAL_MARKER.fullmatch(marker):
+        raise BackupStorageError("unsafe")
+    name = f"synthetic-rehearsal-{marker}.json"
+    raw = _journal_bytes(document)
+    try:
+        with fs._directory(CONFIG_ROOT) as directory:
+            if create:
+                descriptor = fs.open_file(directory, name, os.O_WRONLY | os.O_EXCL, create=True)
+                with os.fdopen(descriptor, "wb") as stream:
+                    fs.write_all(stream.fileno(), raw)
+                    os.fsync(stream.fileno())
+            else:
+                existing = _read_rehearsal_journal(name)
+                if existing.get("marker") != marker:
+                    raise BackupStorageError("unsafe")
+                temporary = f"synthetic-rehearsal-tmp-{marker}.json"
+                descriptor = fs.open_file(directory, temporary, os.O_WRONLY | os.O_EXCL, create=True)
+                with os.fdopen(descriptor, "wb") as stream:
+                    fs.write_all(stream.fileno(), raw)
+                    os.fsync(stream.fileno())
+                os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+            os.fsync(directory)
+        return name
+    except BackupStorageError:
+        raise
+    except OSError:
+        raise BackupStorageError("io") from None
+
+
+def _remove_rehearsal_journal(name: str, marker: str) -> None:
+    document = _read_rehearsal_journal(name)
+    if document.get("marker") != marker:
+        raise BackupStorageError("unsafe")
+    try:
+        with fs._directory(CONFIG_ROOT) as directory:
+            os.unlink(name, dir_fd=directory)
+            os.fsync(directory)
+    except (OSError, BackupStorageError):
+        raise BackupStorageError("io") from None
+
+
+def _synthetic_payload(marker: str) -> bytes:
+    if not _REHEARSAL_MARKER.fullmatch(marker):
+        raise BackupStorageError("unsafe")
+    return f"Pick-your-Pic synthetic destination rehearsal\n{marker}\n".encode("ascii")
+
+
+def _reconcile_synthetic_journal(store: WorkspaceDriveBackupStore, name: str,
+                                 document: dict[str, object]) -> bool:
+    marker = document["marker"]
+    content = _synthetic_payload(marker)
+    if len(content) != document["size"] or hashlib.sha256(content).hexdigest() != document["sha256"]:
+        raise BackupStorageError("unsafe")
+    file_id = document.get("file_id")
+    if file_id is None:
+        file_id = store.find_rehearsal_item(name=document["name"])
+        if file_id is None:
+            # A lost upload response is ambiguous. Preserve the marker so a later
+            # operator reconciliation can repeat the exact scoped lookup.
+            raise BackupStorageError("conflict")
+        observed = store.read_rehearsal_item(file_id=file_id, name=document["name"])
+        if observed != content:
+            raise BackupStorageError("conflict")
+        document = _journal_document(marker, state="cleanup_pending", content=content, file_id=file_id)
+        _save_rehearsal_journal(document, create=False)
+    if not store.delete_rehearsal_item(file_id=file_id, name=document["name"]):
+        raise BackupStorageError("io")
+    _remove_rehearsal_journal(name, marker)
+    return True
+
+
+def _run_synthetic_destination_rehearsal() -> RuntimeResult:
+    config = load_runtime_config()
+    if config.enabled:
+        raise BackupStorageError("unsafe")
+    _assert_backup_units_inert()
+    pending = _pending_rehearsal_journals()
+    if pending:
+        raise BackupStorageError("conflict")
+    source = load_source_config()
+    store = _workspace(source, config)
+    _attest_destination(config, store)
+    marker = secrets.token_hex(16)
+    content = _synthetic_payload(marker)
+    document = _journal_document(marker, state="upload_pending", content=content)
+    name = _save_rehearsal_journal(document, create=True)
+    file_id = None
+    try:
+        uploaded = store.upload_rehearsal_item(name=document["name"], content=content)
+        file_id = uploaded.file_id
+        document = _journal_document(marker, state="created", content=content, file_id=file_id)
+        _save_rehearsal_journal(document, create=False)
+        downloaded = store.read_rehearsal_item(file_id=file_id, name=document["name"])
+        if (len(downloaded) != len(content) or hashlib.sha256(downloaded).hexdigest() != document["sha256"]
+                or downloaded != content):
+            raise BackupStorageError("checksum")
+        document = _journal_document(marker, state="verified", content=content, file_id=file_id)
+        _save_rehearsal_journal(document, create=False)
+        if not store.delete_rehearsal_item(file_id=file_id, name=document["name"]):
+            raise BackupStorageError("io")
+        _remove_rehearsal_journal(name, marker)
+        return RuntimeResult("destination_synthetic_verified", artifact_sha256=document["sha256"],
+                             size_bytes=document["size"])
+    except BackupStorageError as error:
+        if file_id is not None:
+            try:
+                if store.delete_rehearsal_item(file_id=file_id, name=document["name"]):
+                    _remove_rehearsal_journal(name, marker)
+                else:
+                    pending_document = _journal_document(marker, state="cleanup_pending", content=content,
+                                                         file_id=file_id)
+                    _save_rehearsal_journal(pending_document, create=False)
+                    return RuntimeResult("failed", error="cleanup")
+            except BackupStorageError:
+                pending_document = _journal_document(marker, state="cleanup_pending", content=content,
+                                                     file_id=file_id)
+                try:
+                    _save_rehearsal_journal(pending_document, create=False)
+                except BackupStorageError:
+                    pass
+                return RuntimeResult("failed", error="cleanup")
+        # With no acknowledged ID, preserve the marker journal: an upload can have
+        # reached Drive even when the client lost the response.
+        return RuntimeResult("failed", error=error.code)
+
+
+def _reconcile_synthetic_destination() -> RuntimeResult:
+    config = load_runtime_config()
+    if config.enabled:
+        raise BackupStorageError("unsafe")
+    _assert_backup_units_inert()
+    pending = _pending_rehearsal_journals()
+    if not pending:
+        return RuntimeResult("destination_synthetic_reconciled")
+    if len(pending) != 1:
+        raise BackupStorageError("conflict")
+    source = load_source_config()
+    store = _workspace(source, config)
+    _attest_destination(config, store)
+    document = _read_rehearsal_journal(pending[0])
+    _reconcile_synthetic_journal(store, pending[0], document)
+    return RuntimeResult("destination_synthetic_reconciled")
+
 
 def _workspace(source: SourceConfig, config: RuntimeConfig) -> WorkspaceDriveBackupStore:
     attest_container(source.api_container, source.api_image, service="api")
@@ -121,6 +376,7 @@ def _bind_selected_destination() -> RuntimeResult:
     config = load_runtime_config()
     if config.enabled:
         raise BackupStorageError("unsafe")
+    _assert_backup_units_inert()
     source = load_source_config()
     attest_container(source.api_container, source.api_image, service="api")
     try:
@@ -150,6 +406,24 @@ def _bind_selected_destination() -> RuntimeResult:
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--synthetic-destination-rehearsal"]:
+        try:
+            report = _run_synthetic_destination_rehearsal()
+        except BackupStorageError as error:
+            report = RuntimeResult("failed", error=error.code)
+        except Exception:  # noqa: BLE001 -- a saída do operador não reflete dados do Drive ou da configuração.
+            report = RuntimeResult("failed", error="io")
+        print(json.dumps(asdict(report), default=str, sort_keys=True))
+        return 0 if report.status == "destination_synthetic_verified" else 1
+    if sys.argv[1:] == ["--reconcile-synthetic-destination"]:
+        try:
+            report = _reconcile_synthetic_destination()
+        except BackupStorageError as error:
+            report = RuntimeResult("failed", error=error.code)
+        except Exception:  # noqa: BLE001 -- a saída do operador não reflete dados do Drive ou da configuração.
+            report = RuntimeResult("failed", error="io")
+        print(json.dumps(asdict(report), default=str, sort_keys=True))
+        return 0 if report.status == "destination_synthetic_reconciled" else 1
     if sys.argv[1:] == ["--bind-selected-destination"]:
         try:
             report = _bind_selected_destination()
