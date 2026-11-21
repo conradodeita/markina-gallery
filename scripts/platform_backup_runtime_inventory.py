@@ -38,6 +38,27 @@ class InventoryError(ValueError):
     """Inventory could not establish a trustworthy fixed host snapshot."""
 
 
+# Only these stable internal codes may appear in operational logs. Command output,
+# exception text, paths and remote configuration contents are never forwarded.
+SAFE_INVENTORY_ERROR_CODES = frozenset({
+    "host_identity_unavailable", "host_identity_invalid",
+    "checkout_identity_unavailable", "checkout_identity_invalid",
+    "shared_container_list_failed", "shared_container_list_empty", "shared_container_list_invalid",
+    "shared_container_inspect_failed", "shared_container_inventory_invalid",
+    "container_inspect_failed", "container_inventory_invalid",
+    "schema_inventory_failed", "schema_inventory_invalid",
+    "disk_inventory_failed", "disk_inventory_invalid",
+    "systemd_inventory_failed", "systemd_inventory_invalid",
+    "installed_release_identity_invalid", "installed_release_root_unsafe",
+    "installed_release_file_unavailable", "installed_release_file_unsafe",
+    "installed_release_file_changed", "installed_release_current_mismatch",
+    "installed_release_directory_unsafe", "installed_release_receipt_invalid",
+    "installed_release_manifest_invalid", "installed_release_receipt_mismatch",
+    "installed_release_rollback_unsafe", "installed_release_rollback_mismatch",
+    "inventory_changed_during_scan",
+})
+
+
 Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
 
@@ -154,6 +175,18 @@ def _path_metadata(paths: dict[str, Path]) -> dict[str, object]:
 def _digest(value: object) -> str:
     payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _safe_failure_code(error: BaseException) -> str:
+    """Return only a fixed category or allowlisted code, never exception details."""
+    if isinstance(error, InventoryError):
+        candidate = str(error)
+        return candidate if candidate in SAFE_INVENTORY_ERROR_CODES else "inventory_error"
+    if isinstance(error, subprocess.SubprocessError):
+        return "inventory_command_failed"
+    if isinstance(error, OSError):
+        return "inventory_io_failed"
+    return "inventory_failed"
 
 
 def _read_root_file(path: Path, *, mode: int, max_size: int) -> bytes:
@@ -422,8 +455,8 @@ def main() -> int:
         print(f"backup_runtime_fingerprint={result['fingerprint']}")
         print(f"backup_runtime_install_preconditions={'pass' if install_preconditions(result['inventory']) else 'fail'}")
         return 0
-    except (InventoryError, OSError, subprocess.SubprocessError):
-        print("platform-backup-runtime: inventory failed")
+    except (InventoryError, OSError, subprocess.SubprocessError) as exc:
+        print(f"platform-backup-runtime: inventory failed ({_safe_failure_code(exc)})")
         return 1
 
 
