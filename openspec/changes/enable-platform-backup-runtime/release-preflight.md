@@ -90,3 +90,9 @@ O proprietário confirmou que a linha `Pick-your-Pic Global` estava selecionada 
 - Diagnóstico read-only `44796009869` no SHA `77cf2788e3d9be4e2628bcdd9d508dc59916847e` confirmou `APP_ENV=production`, API e web saudáveis, Nginx em `127.0.0.1:8080` e mount do Picker presente. A ponte encerrou com `picker_mount_already_present` porque o diagnóstico tenta preparar um mount já instalado; não houve fingerprint final nem escrita no servidor.
 - O diagnóstico não inventariou `/etc/pyp-backup`, `/opt/pyp-backup-runtime`, `source.json` ou unidades systemd. Não presumir o estado atual desses itens a partir de resultados anteriores.
 - No repositório, a CLI root-only e os arquivos de unidade/lock existem, mas não há instalador do runtime nem workflow/canal protegido para invocar a CLI. Também não existe uma operação fixa para o ensaio sintético real do Drive. A task 3.2 fica bloqueada até esses procedimentos serem especificados e revisados em OpenSpec. Manter o destino `enabled=false`; nenhuma escrita no Drive, vínculo, backup real ou timer ocorreu.
+
+## Preflight automático após o merge de #398 — 21/11/2026
+
+- A CI de push `44851414814`, no merge `492c141cd998efc87ebde1ee81ea9101effb4f7c`, passou todos os jobs de código e falhou somente em `production-app-preflight`.
+- A etapa usou o comando remoto fixo de inventário somente leitura. O host respondeu `SHA não é a main local aprovada; preparação necessária` e `deploy-prod-app-services: suporte não verificável; preparação autorizada necessária`; não retornou inventário, fingerprint nem ID da imagem base API. Artifact, handoff e release foram ignorados.
+- Esta tentativa não instalou ou alterou wrapper/runtime, API/web, banco, configuração, destino Drive, serviço ou timer. Não houve escrita no Drive nem backup real. O último inventário completo permanece o registro anterior datado acima e precisa ser revalidado após a preparação autorizada; esta falha não o atualiza nem autoriza qualquer mutação.
