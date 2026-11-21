@@ -72,3 +72,9 @@ O proprietário aprovou este complemento em 20/11/2026, após revisão do design
 - CI prova artefato, lock e scripts no SHA exato. Testes isolados cobrem recusa de impressão digital/host/SHA divergentes, metadados e permissões root-only, instalação com unidades inertes, seleção expirada, atomicidade do vínculo, releitura/soma de verificação, falha de limpeza e preservação de arquivos não criados pelo ensaio.
 - Antes do passo mutável, a revisão humana recebe SHA/digest do artefato, impressão digital, serviços/containers/portas observados, impacto, rollback e estado das cópias. Instalação deixa o runtime pronto e inerte. Vínculo e ensaio ficam em operação distinta e exigem nova aprovação protegida. A primeira cópia real e timer seguem gate próprio.
 - Retorno pré-backup restaura apenas o diretório versionado e arquivos de unidade do Pick-your-Pic após comprovar que não há processo em curso; preserva configuração, catálogo, chave, artefatos Drive e todos os recursos externos ao projeto.
+
+### Reconciliação do baseline de publicação
+
+- `production_baseline_sha` SHALL identificar o SHA exato da última publicação API/web confirmada e saudável, não apenas a última base usada para revisar os blobs.
+- O baseline SHALL avançar somente após `production-app-release` concluir com sucesso e as evidências pós-release confirmarem as imagens e a saúde. Um preflight, CI verde ou release ignorado/falho não basta.
+- A atualização do manifesto é uma mudança revisável em PR. O workflow subsequente deve classificar somente o delta após o SHA já publicado; uma mudança operacional sem arquivos de runtime SHALL resultar em `release_scope=none` e não iniciar novo preflight de API/web.

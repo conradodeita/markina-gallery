@@ -581,8 +581,8 @@ def main() -> None:
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
     # Active API/web release attested by image identities and healthy receipts;
     # see enable-platform-backup-runtime/validation-picker-scope.md.
-    if app_manifest.get("production_baseline_sha") != "f18db9f22bb75a549e7c4289bff38bf3a880f7f2":
-        raise AssertionError("baseline web diverge do inventário registrado")
+    if app_manifest.get("production_baseline_sha") != "492c141cd998efc87ebde1ee81ea9101effb4f7c":
+        raise AssertionError("baseline API/web diverge da publicação comprovada")
     if "emergency_api" in app_manifest:
         raise AssertionError("contrato API emergencial não pode permanecer após a publicação convencional comprovada")
     if "compose build" in app_script or "docker build" in app_script:
