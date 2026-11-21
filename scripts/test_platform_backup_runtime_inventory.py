@@ -29,9 +29,17 @@ class InventoryTests(unittest.TestCase):
         return subprocess.CompletedProcess(argv, returncode, stdout, "synthetic stderr")
 
     def _runner(self, *, timer_enabled: str = "unknown", third_party_image: str = "8"):
+        service_ids = {"api": "c" * 64, "web": "e" * 64, "db": "d" * 64}
+        service_by_id = {identifier: service for service, identifier in service_ids.items()}
         def run(argv):
             if argv[0] == "/usr/bin/git" and argv[1] == "-C" and list(argv[-2:]) == ["rev-parse", "HEAD"]:
                 return self._result(list(argv), "a" * 40 + "\n")
+            if "container" in argv and "ls" in argv:
+                if "--filter" in argv:
+                    service_filter = next(value for value in argv if value.startswith("label=com.docker.compose.service="))
+                    service = service_filter.rsplit("=", 1)[-1]
+                    return self._result(list(argv), service_ids[service] + "\n")
+                return self._result(list(argv), "\n".join([*service_ids.values(), "9" * 64]) + "\n")
             if "container" in argv and "inspect" in argv:
                 template = argv[argv.index("--format") + 1]
                 if template == inventory.SHARED_CONTAINER_INSPECT:
@@ -42,16 +50,12 @@ class InventoryTests(unittest.TestCase):
                         "9" * 64: "sha256:" + third_party_image * 64 + "|exited|2026-11-19T00:00:00Z",
                     }
                     return self._result(list(argv), "".join(f"{key}|{value}\n" for key, value in shared.items()))
-                name = argv[-1]
-                service = {"markina-gallery-api-1": "api", "markina-gallery-web-1": "web",
-                           "markina-gallery-db-1": "db"}[name]
+                service = service_by_id[argv[-1]]
                 health = "none" if service == "db" else "healthy"
-                container_id = {"api": "c" * 64, "web": "e" * 64, "db": "d" * 64}[service]
+                container_id = service_ids[service]
                 image_id = {"api": "a" * 64, "web": "b" * 64, "db": "f" * 64}[service]
                 value = f"{container_id}|sha256:{image_id}|running|true|2026-11-20T00:00:00Z|markina-gallery|{service}|{health}\n"
                 return self._result(list(argv), value)
-            if "container" in argv and "ls" in argv:
-                return self._result(list(argv), "\n".join(["c" * 64, "e" * 64, "d" * 64, "9" * 64]) + "\n")
             if " exec " in " ".join(argv):
                 return self._result(list(argv), "20261113_0126\n")
             if argv[:3] == ["/usr/bin/df", "-P", "-k"]:
@@ -95,8 +99,8 @@ class InventoryTests(unittest.TestCase):
         base = self._runner()
         def wrong(argv):
             result = base(argv)
-            if "container" in argv and argv[-1] == "markina-gallery-api-1":
-                return self._result(list(argv), "f" * 64 + "|sha256:" + "a" * 64 +
+            if "container" in argv and "inspect" in argv and argv[-1] == "c" * 64:
+                return self._result(list(argv), "c" * 64 + "|sha256:" + "a" * 64 +
                                     "|running|true|now|other-project|api|healthy\n")
             if "exec" in argv:
                 return self._result(list(argv), "unknown schema\n")
@@ -105,11 +109,7 @@ class InventoryTests(unittest.TestCase):
             inventory.collect_inventory(wrong, root=self.root)
 
     def test_container_record_failures_identify_only_fixed_role_and_field(self) -> None:
-        roles = {
-            "api": "markina-gallery-api-1",
-            "web": "markina-gallery-web-1",
-            "db": "markina-gallery-db-1",
-        }
+        roles = ("api", "web", "db")
         cases = (
             ("record_shape", "container_record_shape_invalid", None),
             ("container_id", "container_id_invalid", "not-a-container-id"),
@@ -121,7 +121,7 @@ class InventoryTests(unittest.TestCase):
             ("health_state", "container_health_state_invalid", "private-health"),
             ("started_at", "container_started_at_invalid", "x" * 65),
         )
-        for role, name in roles.items():
+        for role in roles:
             for field, code_suffix, invalid_value in cases:
                 with self.subTest(role=role, field=field):
                     health = "none" if role == "db" else "healthy"
@@ -144,23 +144,77 @@ class InventoryTests(unittest.TestCase):
                         output = "|".join(row) + "\n"
 
                     def runner(argv, captured_output=output):
+                        if "container" in argv and "ls" in argv:
+                            return self._result(list(argv), "a" * 64 + "\n")
                         return self._result(list(argv), captured_output)
 
                     expected = f"{role}_{code_suffix}"
                     with self.assertRaises(inventory.InventoryError) as raised:
-                        inventory._container(name, role, runner)
+                        inventory._container(role, runner)
                     self.assertEqual(str(raised.exception), expected)
                     self.assertIn(expected, inventory.SAFE_INVENTORY_ERROR_CODES)
                     self.assertNotIn("secret", str(raised.exception))
+
+    def test_container_selection_uses_only_fixed_project_and_service_labels(self) -> None:
+        base = self._runner()
+        commands: list[list[str]] = []
+
+        def recording_runner(argv):
+            commands.append(list(argv))
+            return base(argv)
+
+        result = inventory._container("api", recording_runner)
+        selection = next(command for command in commands if "ls" in command)
+        self.assertIn("label=com.docker.compose.project=markina-gallery", selection)
+        self.assertIn("label=com.docker.compose.service=api", selection)
+        self.assertNotIn("markina-gallery-api-1", selection)
+        self.assertEqual(result["id"], "c" * 64)
+
+    def test_container_selection_requires_exactly_one_matching_service(self) -> None:
+        for output, expected in (
+            ("", "api_container_record_missing"),
+            (("a" * 64) + "\n" + ("b" * 64) + "\n", "api_container_record_ambiguous"),
+            ("not-a-container-id\n", "api_container_id_invalid"),
+        ):
+            with self.subTest(expected=expected):
+                def runner(argv, selected=output):
+                    if "container" in argv and "ls" in argv:
+                        return self._result(list(argv), selected)
+                    raise AssertionError("an invalid service selection must fail before inspect")
+
+                with self.assertRaises(inventory.InventoryError) as raised:
+                    inventory._container("api", runner)
+                self.assertEqual(str(raised.exception), expected)
+                self.assertIn(expected, inventory.SAFE_INVENTORY_ERROR_CODES)
+
+    def test_container_selection_command_failure_is_sanitized(self) -> None:
+        def runner(argv):
+            if "container" in argv and "ls" in argv:
+                return self._result(list(argv), "private-container-output", returncode=1)
+            raise AssertionError("failed service listing must stop before inspect")
+
+        with self.assertRaises(inventory.InventoryError) as raised:
+            inventory._container("api", runner)
+        self.assertEqual(str(raised.exception), "container_service_list_failed")
+        self.assertIn(str(raised.exception), inventory.SAFE_INVENTORY_ERROR_CODES)
 
     def test_unknown_container_role_or_validation_class_uses_generic_safe_code(self) -> None:
         error = inventory._container_inventory_error("private-role", "untrusted-value")
         self.assertEqual(str(error), "container_inventory_invalid")
         self.assertIn(str(error), inventory.SAFE_INVENTORY_ERROR_CODES)
 
+        def unexpected_runner(_argv):
+            raise AssertionError("unknown roles must be rejected before invoking Docker")
+
+        with self.assertRaisesRegex(inventory.InventoryError, "container_inventory_invalid"):
+            inventory._container("private-role", unexpected_runner)
+
     def test_inventory_failure_logs_only_allowlisted_code(self) -> None:
         for code in (
+            "container_service_list_failed",
             "container_inspect_failed",
+            "api_container_record_missing",
+            "api_container_record_ambiguous",
             "shared_container_list_empty",
             "api_container_project_label_mismatch",
         ):
