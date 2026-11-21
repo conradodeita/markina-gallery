@@ -1,8 +1,12 @@
 """Guard the fixed SSH and protected environment contract for backup operations."""
 
 import ast
+import json
 import re
 import subprocess
+import sys
+import tempfile
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,10 +51,90 @@ def main() -> int:
             and "MARKINA_PLATFORM_BACKUP_DIAGNOSE_SHA=$GITHUB_SHA" in diagnose_job,
             "backup_diagnostic_not_protected_or_sha_bound")
     require("backup_runtime_container_diagnostics=" in diagnose_job
+            and "umask 077" in diagnose_job
             and "fingerprint" not in diagnose_job and "runtime-artifact" not in diagnose_job
             and "operate" not in diagnose_job
+            and "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$GITHUB_SHA" in diagnose_job
+            and "backup_runtime_normal_inventory=api_container_record_ambiguous" in diagnose_job
+            and "platform-backup-runtime: inventory failed (api_container_record_ambiguous)" in diagnose_job
+            and ' </dev/null >"$normal_output" 2>"$normal_error"' in diagnose_job
+            and 'tee "$normal_output"' not in diagnose_job
             and RUNTIME.count("inputs.operation != 'diagnose'") >= 3,
             "backup_diagnostic_uses_normal_inventory_or_operate_path")
+    workflow_parsers = [textwrap.dedent(source) for source in re.findall(
+        r"<<'PY'[^\n]*\n(.*?)\n[ \t]*PY(?:[ \t]*\|[^\n]*)?(?:\n|$)",
+        diagnose_job,
+        re.DOTALL,
+    )]
+    require(len(workflow_parsers) == 3, "backup_diagnostic_workflow_python_parsers_missing")
+    for source in workflow_parsers:
+        ast.parse(source)
+    with tempfile.TemporaryDirectory(prefix="backup-diagnostic-workflow-test-") as directory:
+        output_file = Path(directory) / "ssh-output"
+        error_parser, aggregate_parser, inventory_parser = workflow_parsers
+
+        def run_parser(source: str, content: str) -> subprocess.CompletedProcess[str]:
+            output_file.write_text(content, encoding="utf-8")
+            return subprocess.run(
+                [sys.executable, "-c", source, str(output_file)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        safe_error = run_parser(
+            error_parser,
+            "platform-backup-runtime: container diagnostics failed (diagnostic_container_list_failed)\n",
+        )
+        require(safe_error.returncode == 0
+                and safe_error.stdout == "backup_runtime_diagnostic_failed=diagnostic_container_list_failed\n",
+                "backup_diagnostic_workflow_did_not_allowlist_error")
+        unsafe_error = run_parser(
+            error_parser,
+            "Traceback: private host path and secret\n",
+        )
+        require(unsafe_error.returncode == 0
+                and unsafe_error.stdout == "backup_runtime_diagnostic_failed=transport_or_output_error\n"
+                and "secret" not in unsafe_error.stdout,
+                "backup_diagnostic_workflow_leaked_error_details")
+
+        roles = {
+            "api": {"records": 2, "running": 1, "stopped": 1, "unknown": 0},
+            "web": {"records": 0, "running": 0, "stopped": 0, "unknown": 0},
+            "db": {"records": 1, "running": 1, "stopped": 0, "unknown": 0},
+        }
+        valid_aggregate = "backup_runtime_container_diagnostics=" + json.dumps(
+            {"schema_version": 1, "roles": roles}, sort_keys=True, separators=(",", ":"),
+        ) + "\n"
+        aggregate_ok = run_parser(aggregate_parser, valid_aggregate)
+        require(aggregate_ok.returncode == 0 and aggregate_ok.stdout == valid_aggregate,
+                "backup_diagnostic_workflow_rejected_valid_aggregate")
+        invalid_aggregate = run_parser(
+            aggregate_parser,
+            "backup_runtime_container_diagnostics=" + json.dumps({
+                "schema_version": 1,
+                "roles": {**roles, "api": {**roles["api"], "container_id": "private"}},
+            }) + "\n",
+        )
+        require(invalid_aggregate.returncode != 0 and "private" not in invalid_aggregate.stdout,
+                "backup_diagnostic_workflow_leaked_or_accepted_invalid_aggregate")
+
+        expected_inventory = run_parser(
+            inventory_parser,
+            "platform-backup-runtime: inventory failed (api_container_record_ambiguous)\n",
+        )
+        require(expected_inventory.returncode == 0
+                and expected_inventory.stdout == "backup_runtime_normal_inventory=api_container_record_ambiguous\n",
+                "backup_diagnostic_workflow_did_not_confirm_expected_inventory_refusal")
+        unexpected_inventory = run_parser(
+            inventory_parser,
+            "platform-backup-runtime: inventory failed (host-secret-private-path)\n",
+        )
+        require(unexpected_inventory.returncode != 0
+                and unexpected_inventory.stdout == "backup_runtime_normal_inventory=unexpected_failure\n"
+                and "host-secret" not in unexpected_inventory.stdout,
+                "backup_diagnostic_workflow_leaked_unexpected_inventory_failure")
     require("inputs.approval_fingerprint" in RUNTIME and "inputs.approval_bundle_sha256" in RUNTIME,
             "runtime_approval_inputs_missing")
     require("REQUESTED_FINGERPRINT\" == \"$INVENTORY_FINGERPRINT" in RUNTIME
@@ -119,8 +203,79 @@ def main() -> int:
     require("flock -n \"$release_lock\"" in INSTALL_WRAPPER
             and "application_and_shared_containers_unchanged=true" in INSTALL_WRAPPER,
             "wrapper_bootstrap_does_not_preserve_shared_host_state")
+    require("restore_previous_wrapper() {" in INSTALL_WRAPPER
+            and INSTALL_WRAPPER.count("restore_previous_wrapper") >= 9
+            and "inventário pós-instalação falhou; wrapper anterior restaurado" in INSTALL_WRAPPER
+            and "snapshot pós-instalação falhou; wrapper anterior restaurado" in INSTALL_WRAPPER,
+            "wrapper_install_lacks_rollback_on_diagnostic_or_invariance_failure")
     require("SSH_ORIGINAL_COMMAND=\"id\"" in INSTALL_WRAPPER and "\"$BASH\" -n \"$temporary\"" in INSTALL_WRAPPER,
             "wrapper_bootstrap_arbitrary_command_probe_missing")
+    require('git rev-parse "$support_sha:scripts/platform_backup_runtime_inventory.py"' in INSTALL_WRAPPER
+            and 'git hash-object -- "$inventory_source"' in INSTALL_WRAPPER
+            and "module.diagnostic_main()" in INSTALL_WRAPPER
+            and "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$support_sha" not in INSTALL_WRAPPER
+            and "backup_runtime_fingerprint=" not in INSTALL_WRAPPER,
+            "wrapper_install_still_requires_ambiguous_backup_fingerprint")
+    bootstrap = re.search(
+        r"diagnostic_bootstrap=\"\$\(cat <<'PY'\n(.*?)\nPY\n\)\"",
+        INSTALL_WRAPPER,
+        re.DOTALL,
+    )
+    require(bootstrap is not None, "wrapper_install_diagnostic_bootstrap_missing")
+    ast.parse(bootstrap.group(1))
+    validator = re.search(
+        r'if ! /usr/bin/python3\.10 - "\$backup_diagnostic" <<\'PY\' >/dev/null\n(.*?)\nPY\nthen',
+        INSTALL_WRAPPER,
+        re.DOTALL,
+    )
+    require(validator is not None, "wrapper_install_diagnostic_schema_validator_missing")
+    validator_source = validator.group(1)
+    ast.parse(validator_source)
+    roles = {
+        "api": {"records": 2, "running": 1, "stopped": 1, "unknown": 0},
+        "web": {"records": 0, "running": 0, "stopped": 0, "unknown": 0},
+        "db": {"records": 1, "running": 1, "stopped": 0, "unknown": 0},
+    }
+    valid_report = "backup_runtime_container_diagnostics=" + json.dumps(
+        {"schema_version": 1, "roles": roles}, separators=(",", ":"),
+    )
+    valid = subprocess.run(
+        [sys.executable, "-c", validator_source, valid_report],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    require(valid.returncode == 0, "wrapper_install_rejects_valid_aggregate_diagnostic")
+    invalid_reports = (
+        "backup_runtime_container_diagnostics={}",
+        "backup_runtime_container_diagnostics={invalid-json}",
+        valid_report + "\nextra",
+        "backup_runtime_container_diagnostics=" + json.dumps({
+            "schema_version": 1, "roles": {**roles, "unexpected": roles["api"]},
+        }),
+        "backup_runtime_container_diagnostics=" + json.dumps({
+            "schema_version": 1, "roles": {**roles, "api": {**roles["api"], "id": "not-allowed"}},
+        }),
+        "backup_runtime_container_diagnostics=" + json.dumps({
+            "schema_version": 1, "roles": {**roles, "api": {**roles["api"], "records": True}},
+        }),
+        "backup_runtime_container_diagnostics=" + json.dumps({
+            "schema_version": 1, "roles": {**roles, "api": {"records": 513, "running": 513, "stopped": 0, "unknown": 0}},
+        }),
+        "backup_runtime_container_diagnostics=" + json.dumps({
+            "schema_version": 1, "roles": {**roles, "api": {**roles["api"], "records": 3}},
+        }),
+    )
+    for report in invalid_reports:
+        result = subprocess.run(
+            [sys.executable, "-c", validator_source, report],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        require(result.returncode != 0, "wrapper_install_accepts_invalid_aggregate_diagnostic")
     print("platform_backup_runtime_workflow=valid")
     return 0
 

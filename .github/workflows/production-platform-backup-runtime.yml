@@ -145,6 +145,7 @@ jobs:
           SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
         run: |
           set -Eeuo pipefail
+          umask 077
           for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS; do
             [[ -n "${!name}" ]] || { echo "Configuração protegida ausente: $name" >&2; exit 1; }
           done
@@ -152,7 +153,9 @@ jobs:
           known_file="$RUNNER_TEMP/backup-diagnostic-known-hosts"
           output="$RUNNER_TEMP/backup-diagnostic-output"
           transport_error="$RUNNER_TEMP/backup-diagnostic-transport-error"
-          trap 'rm -f "$key_file" "$known_file" "$output" "$transport_error"' EXIT
+          normal_output="$RUNNER_TEMP/backup-normal-inventory-output"
+          normal_error="$RUNNER_TEMP/backup-normal-inventory-error"
+          trap 'rm -f "$key_file" "$known_file" "$output" "$transport_error" "$normal_output" "$normal_error"' EXIT
           printf '%s\n' "$SSH_KEY" > "$key_file"
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
           chmod 600 "$key_file" "$known_file"
@@ -198,6 +201,20 @@ jobs:
               if role["records"] != role["running"] + role["stopped"] + role["unknown"]:
                   raise SystemExit("backup_runtime_diagnostic_output_invalid")
           print(prefix + json.dumps(data, sort_keys=True, separators=(",", ":")))
+          PY
+          if ssh "${options[@]}" "$target" "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$GITHUB_SHA" </dev/null >"$normal_output" 2>"$normal_error"; then
+            echo "backup_runtime_normal_inventory=unexpectedly_succeeded" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          python - "$normal_output" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import sys
+          from pathlib import Path
+          expected = "platform-backup-runtime: inventory failed (api_container_record_ambiguous)"
+          lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+          if lines != [expected]:
+              print("backup_runtime_normal_inventory=unexpected_failure")
+              raise SystemExit(1)
+          print("backup_runtime_normal_inventory=api_container_record_ambiguous")
           PY
 
   operate:
