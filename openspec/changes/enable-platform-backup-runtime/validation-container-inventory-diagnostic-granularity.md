@@ -21,6 +21,20 @@ Executada na branch `codex/backup-inventory-container-diagnostics`, baseada na m
 - O pin atualizado do inventariador coincide com o blob `b86f629a7117660334cbe66a86e6eb7aeb315298`.
 - O classificador sobre o commit de código `51fc044b987aa839f8fbbaece71014df359c720e` retornou `release_scope=none`; o gate de API/web retornou `app_release_ready=true` e `criterio=somente_api_web`.
 
-## Limitações e próximo passo
+## Instalação protegida e inventory após #403 — 21/11/2026 UTC
 
-A CI da PR #403 passou no SHA `d1e393dd02f14ed89eb16b90bc21a3b7ccf9f31b` pelo run `44936977824`. A revisão/merge e a instalação protegida do wrapper para a nova SHA ainda são gates pendentes. Após autorização específica para essa nova SHA, repetir somente `operation=inventory` e usar o código estático para restringir a investigação. Não executar SSH ad hoc, instalar o runtime, vincular a pasta, fazer ensaio, iniciar backup real ou ativar timer com base nesta validação.
+- A PR #403 foi integrada na main em `e935cbc36c13466af9c93dbfb4246997ddaa47fa`; a CI completa da main `44941683466` concluiu success nesse SHA. A classificação de release permaneceu fora de publicação de API/web.
+- O primeiro preflight do canal de backup `44943687719` falhou antes da instalação porque `origin/main` no checkout do host ainda estava desatualizado; não emitiu fingerprint e não alterou o host.
+- Com autorização operacional, a instalação protegida da ponte/wrapper `44944029651` concluiu success, preservou as versões anteriores e confirmou `containers_unchanged=true`. A ponte ficou `root:root 0755`, SHA-256 `76f78aa72c47ea4c4ba9a807ac75d12e25551b2d16b341654f702bc76f803177`; o wrapper ficou `root:root 0755`, SHA-256 `34d5ff1e474c64aa8c7acd371dd1d043a4364e8eaea4a9a83bb745b60fb6fb28`. A operação atualizou somente o suporte root-only e a referência `origin/main`; não trocou o checkout ativo nem recriou serviços.
+- O inventário app/host protegido `44944231035` concluiu success e confirmou `APP_ENV=production`, `FACIAL_PROCESSING_ENABLED=true`, API/web saudáveis e Nginx somente em `127.0.0.1:8080`. A impressão digital foi mantida no fluxo de aprovação e não foi copiada para este artefato.
+- O inventory do runtime `44944398862` concluiu a construção do artefato ARM64, mas a etapa read-only de preflight retornou somente `api_container_project_label_mismatch`. Não emitiu fingerprint nem precondições; `operate` ficou `skipped`. A aplicação não foi alterada. Um segundo inventory app/host (`44945024206`) também concluiu success com API/web saudáveis.
+- Essa combinação localiza a divergência na resolução do serviço API pelo inventariador do runtime, que usava um nome gerado fixo, embora a leitura protegida baseada no Compose continuasse validando o serviço. O valor observado do label, IDs, saída Docker e fingerprint não foram persistidos ou divulgados.
+- Nenhum runtime de backup foi instalado; nenhuma configuração/destino foi lida ou alterada; não houve escrita no Drive, vínculo, ensaio, cópia real ou ativação de serviço/timer. O estado atual do destino e das unidades permanece não atestado por inventário válido.
+
+## Correção local do seletor de containers — subtask 3.2s
+
+- O inventariador deixou de escolher API/web/db por nome gerado. Ele consulta exclusivamente os labels Compose fixos `project=markina-gallery` e `service=api|web|db`, exige exatamente um ID completo por serviço, inspeciona por esse ID e revalida os labels. Ausência, duplicidade e falha de listagem retornam códigos estáticos allowlisted; nenhuma fingerprint é emitida após falha.
+- `python scripts/test_platform_backup_runtime_inventory.py -v`: 13 testes passaram, 1 teste root-only foi ignorado no Windows. Inclui seleção estrita pelos labels, ausência, duplicidade, ID inválido, falha de listagem, labels divergentes e sanitização.
+- `python scripts/test_platform_backup_runtime_workflow.py -v`: `platform_backup_runtime_workflow=valid`; `python scripts/test_production_release_workflow_policy.py`: `publication_candidate_ready=true / somente_api_web` e `production release workflow policy: ok`.
+- Ruff, sintaxe Bash do wrapper, OpenSpec estrito e `git diff --check` passaram. O pin `BACKUP_INVENTORY_BLOB_SHA` coincide com o blob local `7823d1ef5b318e96fab2ebec0c66c8c66e3f366f`.
+- A correção está somente na branch local `codex/backup-inventory-compose-identity`; revisão/merge, CI de main e autorização para instalação/inventory em SHA futuro permanecem pendentes. Não executar vínculo, ensaio, backup real ou ativar timer com base nesta evidência.

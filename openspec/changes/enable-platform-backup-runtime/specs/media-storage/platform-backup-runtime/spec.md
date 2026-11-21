@@ -110,6 +110,12 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **AND** valores retornados, nomes e IDs de containers, argumentos/saída do comando, exceções, caminhos e dados de configuração MUST NOT aparecer no log
 - **AND** nenhuma fingerprint ou precondição aprovada SHALL ser emitida
 
+#### Scenario: Resolver containers fixos por identidade Compose
+
+- **WHEN** o inventário resolver API, web e banco para compor a impressão digital
+- **THEN** SHALL localizar cada serviço pela combinação exata dos labels Compose do projeto `markina-gallery` e do serviço fixo, exigir exatamente um ID completo e revalidar os labels após a inspeção
+- **AND** MUST NOT selecionar containers por nome gerado; ausência, duplicidade ou falha de listagem SHALL abortar com código estático allowlisted, sem fingerprint ou precondição
+
 #### Scenario: Instalar o forced command de backup
 
 - **WHEN** a revisão do wrapper exato passar pelo CI e o instalador protegido confirmar novamente o fingerprint atual do host

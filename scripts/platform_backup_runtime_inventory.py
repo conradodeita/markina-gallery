@@ -16,11 +16,7 @@ PROJECT_ROOT = Path("/opt/markina-gallery")
 INSTALL_ROOT = Path("/opt/pyp-backup-runtime")
 CONFIG_ROOT = Path("/etc/pyp-backup")
 PICKER_CONFIG = Path("/etc/pyp-google-drive/picker-config.json")
-CONTAINER_NAMES = {
-    "api": "markina-gallery-api-1",
-    "web": "markina-gallery-web-1",
-    "db": "markina-gallery-db-1",
-}
+CONTAINER_ROLES = ("api", "web", "db")
 CONTAINER_INSPECT = (
     "{{.Id}}|{{.Image}}|{{.State.Status}}|{{.State.Running}}|{{.State.StartedAt}}|"
     "{{index .Config.Labels \"com.docker.compose.project\"}}|"
@@ -33,6 +29,8 @@ CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SCHEMA_REVISION = re.compile(r"[A-Za-z0-9_]{1,64}\Z")
 CONTAINER_VALIDATION_ERROR_KINDS = frozenset({
+    "container_record_missing",
+    "container_record_ambiguous",
     "container_record_shape_invalid",
     "container_id_invalid",
     "container_image_id_invalid",
@@ -44,7 +42,7 @@ CONTAINER_VALIDATION_ERROR_KINDS = frozenset({
     "container_started_at_invalid",
 })
 CONTAINER_VALIDATION_ERROR_CODES = frozenset(
-    f"{role}_{kind}" for role in CONTAINER_NAMES for kind in CONTAINER_VALIDATION_ERROR_KINDS
+    f"{role}_{kind}" for role in CONTAINER_ROLES for kind in CONTAINER_VALIDATION_ERROR_KINDS
 )
 
 
@@ -59,7 +57,7 @@ SAFE_INVENTORY_ERROR_CODES = frozenset({
     "checkout_identity_unavailable", "checkout_identity_invalid",
     "shared_container_list_failed", "shared_container_list_empty", "shared_container_list_invalid",
     "shared_container_inspect_failed", "shared_container_inventory_invalid",
-    "container_inspect_failed", "container_inventory_invalid",
+    "container_service_list_failed", "container_inspect_failed", "container_inventory_invalid",
     "schema_inventory_failed", "schema_inventory_invalid",
     "disk_inventory_failed", "disk_inventory_invalid",
     "systemd_inventory_failed", "systemd_inventory_invalid",
@@ -87,21 +85,37 @@ def _output(result: subprocess.CompletedProcess[str], code: str) -> str:
 
 
 def _container_inventory_error(role: str, kind: str) -> InventoryError:
-    if role not in CONTAINER_NAMES or kind not in CONTAINER_VALIDATION_ERROR_KINDS:
+    if role not in CONTAINER_ROLES or kind not in CONTAINER_VALIDATION_ERROR_KINDS:
         return InventoryError("container_inventory_invalid")
     return InventoryError(f"{role}_{kind}")
 
 
-def _container(name: str, service: str, runner: Runner) -> dict[str, object]:
+def _container(service: str, runner: Runner) -> dict[str, object]:
+    if service not in CONTAINER_ROLES:
+        raise InventoryError("container_inventory_invalid")
+    raw_ids = _output(runner([
+        "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "ls",
+        "--all", "--no-trunc", "--quiet",
+        "--filter", "label=com.docker.compose.project=markina-gallery",
+        "--filter", f"label=com.docker.compose.service={service}",
+    ]), "container_service_list_failed")
+    ids = raw_ids.splitlines() if raw_ids else []
+    if not ids:
+        raise _container_inventory_error(service, "container_record_missing")
+    if len(ids) != 1:
+        raise _container_inventory_error(service, "container_record_ambiguous")
+    identifier = ids[0]
+    if not CONTAINER_ID.fullmatch(identifier):
+        raise _container_inventory_error(service, "container_id_invalid")
     raw = _output(runner([
         "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "inspect",
-        "--format", CONTAINER_INSPECT, name,
+        "--format", CONTAINER_INSPECT, identifier,
     ]), "container_inspect_failed")
     parts = raw.split("|")
     if len(parts) != 8:
         raise _container_inventory_error(service, "container_record_shape_invalid")
-    identifier, image, state, running, started_at, project, actual_service, health = parts
-    if not CONTAINER_ID.fullmatch(identifier):
+    inspected_identifier, image, state, running, started_at, project, actual_service, health = parts
+    if not CONTAINER_ID.fullmatch(inspected_identifier) or inspected_identifier != identifier:
         raise _container_inventory_error(service, "container_id_invalid")
     if not IMAGE_ID.fullmatch(image):
         raise _container_inventory_error(service, "container_image_id_invalid")
@@ -363,11 +377,11 @@ def collect_inventory(runner: Runner = _run, *, root: Path = Path("/")) -> dict[
         raise InventoryError("checkout_identity_invalid")
 
     shared_containers = _shared_container_snapshot(runner)
-    containers = {service: _container(name, service, runner) for service, name in CONTAINER_NAMES.items()}
+    containers = {service: _container(service, runner) for service in CONTAINER_ROLES}
     schema = _output(runner([
         "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "exec", "--env",
         "PGOPTIONS=-c default_transaction_read_only=on -c lock_timeout=2000 -c statement_timeout=10000",
-        CONTAINER_NAMES["db"], "sh", "-ceu",
+        str(containers["db"]["id"]), "sh", "-ceu",
         ('exec psql -X -Atq -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
          '-c "SELECT version_num FROM public.alembic_version"'),
     ]), "schema_inventory_failed")
