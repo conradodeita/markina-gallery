@@ -146,3 +146,8 @@ O proprietário confirmou que a linha `Pick-your-Pic Global` estava selecionada 
 - O preflight app/host `44944231035` e sua repetição `44945024206` concluíram `success`, confirmando `APP_ENV=production`, `FACIAL_PROCESSING_ENABLED=true`, API/web saudáveis e Nginx restrito a `127.0.0.1:8080`. A impressão digital desses preflights não foi copiada para este arquivo.
 - O inventory do runtime `44944398862` construiu o artefato ARM64, mas o preflight read-only retornou `api_container_project_label_mismatch`. Não emitiu fingerprint ou precondições e `operate` ficou `skipped`. Não houve alteração de runtime, configuração de backup, Drive, banco, serviços ou timers.
 - O código local usava nomes gerados fixos para escolher API/web/db, enquanto o preflight da aplicação identifica os serviços Compose pela composição autorizada. A validação local da subtask 3.2s troca essa seleção para labels fixos de projeto/serviço e exige exatamente um ID. Até CI, merge e novo inventário válido, o estado atual do destino e das unidades não é verificável; `enabled=false`/timer inativo seguem apenas como último estado conhecido em 20/11.
+
+## PR #404 — correção do seletor Compose — 21/11/2026 UTC
+
+- A PR #404 contém a correção no SHA `d5f06f7dbf9d54a99cf413eef67e5dd94c7b5eac`; a CI `44946701487` concluiu `success` com quatro shards backend, backend quality, frontend, builds ARM64/AMD64, OpenSpec, gitleaks e política de inventário. Os gates de publicação da aplicação foram ignorados.
+- A PR está aberta para revisão humana. O SHA ainda não foi instalado no host e não houve novo inventory após a correção. Nenhuma alteração de runtime, destino/vínculo Drive, banco, serviço ou timer ocorreu. O estado do destino e das unidades permanece não verificado até um inventory válido.
