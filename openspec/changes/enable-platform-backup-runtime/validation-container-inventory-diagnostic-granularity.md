@@ -23,4 +23,4 @@ Executada na branch `codex/backup-inventory-container-diagnostics`, baseada na m
 
 ## Limitações e próximo passo
 
-CI da PR, merge e instalação protegida para a nova SHA ainda são gates pendentes. Após a instalação autorizada, repetir somente `operation=inventory` e usar o código estático para restringir a investigação. Não executar SSH ad hoc, instalar o runtime, vincular a pasta, fazer ensaio, iniciar backup real ou ativar timer com base nesta validação.
+A CI da PR #403 passou no SHA `d1e393dd02f14ed89eb16b90bc21a3b7ccf9f31b` pelo run `44936977824`. A revisão/merge e a instalação protegida do wrapper para a nova SHA ainda são gates pendentes. Após autorização específica para essa nova SHA, repetir somente `operation=inventory` e usar o código estático para restringir a investigação. Não executar SSH ad hoc, instalar o runtime, vincular a pasta, fazer ensaio, iniciar backup real ou ativar timer com base nesta validação.
