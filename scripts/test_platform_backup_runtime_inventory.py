@@ -101,11 +101,69 @@ class InventoryTests(unittest.TestCase):
             if "exec" in argv:
                 return self._result(list(argv), "unknown schema\n")
             return result
-        with self.assertRaises(inventory.InventoryError):
+        with self.assertRaisesRegex(inventory.InventoryError, "api_container_project_label_mismatch"):
             inventory.collect_inventory(wrong, root=self.root)
 
+    def test_container_record_failures_identify_only_fixed_role_and_field(self) -> None:
+        roles = {
+            "api": "markina-gallery-api-1",
+            "web": "markina-gallery-web-1",
+            "db": "markina-gallery-db-1",
+        }
+        cases = (
+            ("record_shape", "container_record_shape_invalid", None),
+            ("container_id", "container_id_invalid", "not-a-container-id"),
+            ("image_id", "container_image_id_invalid", "not-an-image-id"),
+            ("project_label", "container_project_label_mismatch", "other-project-secret"),
+            ("service_label", "container_service_label_mismatch", "unexpected-service-secret"),
+            ("running_flag", "container_running_flag_invalid", "sometimes"),
+            ("state", "container_state_invalid", "migrating"),
+            ("health_state", "container_health_state_invalid", "private-health"),
+            ("started_at", "container_started_at_invalid", "x" * 65),
+        )
+        for role, name in roles.items():
+            for field, code_suffix, invalid_value in cases:
+                with self.subTest(role=role, field=field):
+                    health = "none" if role == "db" else "healthy"
+                    row = ["a" * 64, "sha256:" + "b" * 64, "running", "true",
+                           "2026-11-20T00:00:00Z", "markina-gallery", role, health]
+                    if field == "record_shape":
+                        output = "too|few|fields\n"
+                    else:
+                        index = {
+                            "container_id": 0,
+                            "image_id": 1,
+                            "state": 2,
+                            "running_flag": 3,
+                            "started_at": 4,
+                            "project_label": 5,
+                            "service_label": 6,
+                            "health_state": 7,
+                        }[field]
+                        row[index] = invalid_value
+                        output = "|".join(row) + "\n"
+
+                    def runner(argv, captured_output=output):
+                        return self._result(list(argv), captured_output)
+
+                    expected = f"{role}_{code_suffix}"
+                    with self.assertRaises(inventory.InventoryError) as raised:
+                        inventory._container(name, role, runner)
+                    self.assertEqual(str(raised.exception), expected)
+                    self.assertIn(expected, inventory.SAFE_INVENTORY_ERROR_CODES)
+                    self.assertNotIn("secret", str(raised.exception))
+
+    def test_unknown_container_role_or_validation_class_uses_generic_safe_code(self) -> None:
+        error = inventory._container_inventory_error("private-role", "untrusted-value")
+        self.assertEqual(str(error), "container_inventory_invalid")
+        self.assertIn(str(error), inventory.SAFE_INVENTORY_ERROR_CODES)
+
     def test_inventory_failure_logs_only_allowlisted_code(self) -> None:
-        for code in ("container_inspect_failed", "shared_container_list_empty"):
+        for code in (
+            "container_inspect_failed",
+            "shared_container_list_empty",
+            "api_container_project_label_mismatch",
+        ):
             with self.subTest(code=code):
                 output = io.StringIO()
                 error = inventory.InventoryError(code)

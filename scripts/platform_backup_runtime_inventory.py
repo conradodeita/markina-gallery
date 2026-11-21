@@ -32,6 +32,20 @@ GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SCHEMA_REVISION = re.compile(r"[A-Za-z0-9_]{1,64}\Z")
+CONTAINER_VALIDATION_ERROR_KINDS = frozenset({
+    "container_record_shape_invalid",
+    "container_id_invalid",
+    "container_image_id_invalid",
+    "container_project_label_mismatch",
+    "container_service_label_mismatch",
+    "container_running_flag_invalid",
+    "container_state_invalid",
+    "container_health_state_invalid",
+    "container_started_at_invalid",
+})
+CONTAINER_VALIDATION_ERROR_CODES = frozenset(
+    f"{role}_{kind}" for role in CONTAINER_NAMES for kind in CONTAINER_VALIDATION_ERROR_KINDS
+)
 
 
 class InventoryError(ValueError):
@@ -56,7 +70,7 @@ SAFE_INVENTORY_ERROR_CODES = frozenset({
     "installed_release_manifest_invalid", "installed_release_receipt_mismatch",
     "installed_release_rollback_unsafe", "installed_release_rollback_mismatch",
     "inventory_changed_during_scan",
-})
+}) | CONTAINER_VALIDATION_ERROR_CODES
 
 
 Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
@@ -72,6 +86,12 @@ def _output(result: subprocess.CompletedProcess[str], code: str) -> str:
     return result.stdout.strip()
 
 
+def _container_inventory_error(role: str, kind: str) -> InventoryError:
+    if role not in CONTAINER_NAMES or kind not in CONTAINER_VALIDATION_ERROR_KINDS:
+        return InventoryError("container_inventory_invalid")
+    return InventoryError(f"{role}_{kind}")
+
+
 def _container(name: str, service: str, runner: Runner) -> dict[str, object]:
     raw = _output(runner([
         "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "inspect",
@@ -79,14 +99,24 @@ def _container(name: str, service: str, runner: Runner) -> dict[str, object]:
     ]), "container_inspect_failed")
     parts = raw.split("|")
     if len(parts) != 8:
-        raise InventoryError("container_inventory_invalid")
+        raise _container_inventory_error(service, "container_record_shape_invalid")
     identifier, image, state, running, started_at, project, actual_service, health = parts
-    if (not CONTAINER_ID.fullmatch(identifier) or not IMAGE_ID.fullmatch(image)
-            or project != "markina-gallery" or actual_service != service
-            or running not in {"true", "false"} or state not in {"running", "exited", "created", "restarting"}
-            or health not in {"healthy", "unhealthy", "starting", "none"}
-            or len(started_at) > 64):
-        raise InventoryError("container_inventory_invalid")
+    if not CONTAINER_ID.fullmatch(identifier):
+        raise _container_inventory_error(service, "container_id_invalid")
+    if not IMAGE_ID.fullmatch(image):
+        raise _container_inventory_error(service, "container_image_id_invalid")
+    if project != "markina-gallery":
+        raise _container_inventory_error(service, "container_project_label_mismatch")
+    if actual_service != service:
+        raise _container_inventory_error(service, "container_service_label_mismatch")
+    if running not in {"true", "false"}:
+        raise _container_inventory_error(service, "container_running_flag_invalid")
+    if state not in {"running", "exited", "created", "restarting"}:
+        raise _container_inventory_error(service, "container_state_invalid")
+    if health not in {"healthy", "unhealthy", "starting", "none"}:
+        raise _container_inventory_error(service, "container_health_state_invalid")
+    if len(started_at) > 64:
+        raise _container_inventory_error(service, "container_started_at_invalid")
     return {
         "id": identifier,
         "image": image,
