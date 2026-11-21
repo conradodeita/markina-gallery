@@ -36,8 +36,21 @@ def main() -> int:
                 "protected_environments_missing")
         require("cancel-in-progress: false" in workflow, "operation_cancellation_not_disabled")
 
-    for mode in ("inventory", "install", "bind-and-rehearse", "reconcile"):
+    for mode in ("inventory", "diagnose", "install", "bind-and-rehearse", "reconcile"):
         require(mode in RUNTIME, "runtime_operation_missing:" + mode)
+    diagnose_start = RUNTIME.index("  diagnose:\n")
+    operate_start = RUNTIME.index("  operate:\n", diagnose_start)
+    diagnose_job = RUNTIME[diagnose_start:operate_start]
+    require("inputs.operation == 'diagnose'" in diagnose_job
+            and "environment: production-preflight" in diagnose_job
+            and "needs: [code-evidence]" in diagnose_job
+            and "MARKINA_PLATFORM_BACKUP_DIAGNOSE_SHA=$GITHUB_SHA" in diagnose_job,
+            "backup_diagnostic_not_protected_or_sha_bound")
+    require("backup_runtime_container_diagnostics=" in diagnose_job
+            and "fingerprint" not in diagnose_job and "runtime-artifact" not in diagnose_job
+            and "operate" not in diagnose_job
+            and RUNTIME.count("inputs.operation != 'diagnose'") >= 3,
+            "backup_diagnostic_uses_normal_inventory_or_operate_path")
     require("inputs.approval_fingerprint" in RUNTIME and "inputs.approval_bundle_sha256" in RUNTIME,
             "runtime_approval_inputs_missing")
     require("REQUESTED_FINGERPRINT\" == \"$INVENTORY_FINGERPRINT" in RUNTIME
@@ -54,6 +67,7 @@ def main() -> int:
 
     for command in (
         "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=",
+        "MARKINA_PLATFORM_BACKUP_DIAGNOSE_SHA=",
         "MARKINA_PLATFORM_BACKUP_INSTALL_SHA=",
         "MARKINA_PLATFORM_BACKUP_BIND_SHA=",
         "MARKINA_PLATFORM_BACKUP_RECONCILE_SHA=",
@@ -62,6 +76,13 @@ def main() -> int:
     require("git ls-remote origin refs/heads/main" in SSH_WRAPPER
             and "git hash-object -- \"$source_dir/inventory.py\"" in SSH_WRAPPER,
             "runtime_source_not_sha_and_blob_bound")
+    require("MARKINA_PLATFORM_BACKUP_DIAGNOSE_SHA=([0-9a-f]{40})" in SSH_WRAPPER
+            and "backup_mode=\"diagnose\"" in SSH_WRAPPER,
+            "backup_diagnostic_command_not_exact_sha_bound")
+    require("operation == \"diagnose\" and not args" in SSH_WRAPPER
+            and "diagnostic_main()" in SSH_WRAPPER
+            and "diagnose)\n      acquire_backup_release_lock" in SSH_WRAPPER,
+            "backup_diagnostic_not_readonly_locked_dispatch")
     for variable, source in (
         ("BACKUP_ARTIFACT_BLOB_SHA", "scripts/platform_backup_runtime_artifact.py"),
         ("BACKUP_INVENTORY_BLOB_SHA", "scripts/platform_backup_runtime_inventory.py"),

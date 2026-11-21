@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Preparar inventário ou executar uma etapa já aprovada
+        description: Preparar inventário/diagnóstico ou executar uma etapa aprovada
         required: true
         type: choice
-        options: [inventory, install, bind-and-rehearse, reconcile]
+        options: [inventory, diagnose, install, bind-and-rehearse, reconcile]
       approval_fingerprint:
-        description: Fingerprint do inventário revisado (vazio somente em inventory)
+        description: Fingerprint revisada (vazia em inventory/diagnose)
         required: false
         type: string
         default: ''
       approval_bundle_sha256:
-        description: SHA-256 do pacote ARM64 do inventário revisado
+        description: SHA-256 do pacote ARM64 (vazio em inventory/diagnose)
         required: false
         type: string
         default: ''
@@ -42,7 +42,7 @@ jobs:
         run: python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"
 
   runtime-artifact:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation != 'diagnose' }}
     needs: [code-evidence]
     runs-on: ubuntu-latest
     permissions:
@@ -75,7 +75,7 @@ jobs:
           retention-days: 1
 
   preflight:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation != 'diagnose' }}
     needs: [code-evidence, runtime-artifact]
     runs-on: ubuntu-latest
     environment: production-preflight
@@ -124,8 +124,84 @@ jobs:
           binding="$(printf '%s' "$SSH_HOST|$SSH_PORT|$SSH_USER" | sha256sum | awk '{print $1}')"
           echo "connection_binding=$binding" >> "$GITHUB_OUTPUT"
 
+  diagnose:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'diagnose' }}
+    needs: [code-evidence]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Consultar contagens agregadas pelo canal read-only protegido
+        shell: bash
+        env:
+          SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          SSH_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || { echo "Configuração protegida ausente: $name" >&2; exit 1; }
+          done
+          key_file="$RUNNER_TEMP/backup-diagnostic-key"
+          known_file="$RUNNER_TEMP/backup-diagnostic-known-hosts"
+          output="$RUNNER_TEMP/backup-diagnostic-output"
+          transport_error="$RUNNER_TEMP/backup-diagnostic-transport-error"
+          trap 'rm -f "$key_file" "$known_file" "$output" "$transport_error"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          target="$SSH_USER@$SSH_HOST"
+          options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
+          if ! ssh "${options[@]}" "$target" "MARKINA_PLATFORM_BACKUP_DIAGNOSE_SHA=$GITHUB_SHA" </dev/null >"$output" 2>"$transport_error"; then
+            python - "$output" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+          lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+          allowed = {
+              "diagnostic_container_list_failed", "diagnostic_container_list_invalid",
+              "diagnostic_container_inspect_failed", "diagnostic_container_inventory_invalid",
+              "inventory_error", "inventory_io_failed", "inventory_command_failed",
+          }
+          match = re.fullmatch(r"platform-backup-runtime: container diagnostics failed \(([a-z0-9_]+)\)", lines[0]) if len(lines) == 1 else None
+          print(f"backup_runtime_diagnostic_failed={match.group(1) if match and match.group(1) in allowed else 'transport_or_output_error'}")
+          PY
+            exit 1
+          fi
+          python - "$output" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          import sys
+          from pathlib import Path
+          prefix = "backup_runtime_container_diagnostics="
+          lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+          if len(lines) != 1 or not lines[0].startswith(prefix):
+              raise SystemExit("backup_runtime_diagnostic_output_invalid")
+          data = json.loads(lines[0][len(prefix):])
+          if (type(data) is not dict or set(data) != {"schema_version", "roles"}
+            or type(data.get("schema_version")) is not int or data["schema_version"] != 1):
+              raise SystemExit("backup_runtime_diagnostic_output_invalid")
+          roles = data["roles"]
+          if type(roles) is not dict or set(roles) != {"api", "web", "db"}:
+              raise SystemExit("backup_runtime_diagnostic_output_invalid")
+          fields = {"records", "running", "stopped", "unknown"}
+          for role in roles.values():
+              if type(role) is not dict or set(role) != fields:
+                  raise SystemExit("backup_runtime_diagnostic_output_invalid")
+              if any(type(value) is not int or value < 0 for value in role.values()):
+                  raise SystemExit("backup_runtime_diagnostic_output_invalid")
+              if role["records"] != role["running"] + role["stopped"] + role["unknown"]:
+                  raise SystemExit("backup_runtime_diagnostic_output_invalid")
+          print(prefix + json.dumps(data, sort_keys=True, separators=(",", ":")))
+          PY
+
   operate:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation != 'inventory' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation != 'inventory' && inputs.operation != 'diagnose' }}
     needs: [code-evidence, runtime-artifact, preflight]
     runs-on: ubuntu-latest
     environment: production
