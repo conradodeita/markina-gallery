@@ -103,6 +103,13 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **THEN** o operador SHALL receber somente um código técnico estático permitido ou uma categoria fixa de I/O/comando; nenhuma fingerprint ou precondição aprovada SHALL ser emitida
 - **AND** mensagens de exceção, caminhos, saídas de comandos, dados de configuração, segredos, tokens, chaves e IDs do Drive MUST NOT aparecer no log
 
+#### Scenario: Registro de container falha na validação
+
+- **WHEN** o registro de API, web ou banco não corresponder ao formato fixo esperado
+- **THEN** o operador SHALL receber somente um código allowlisted que identifique o papel fixo do container e a classe do campo inválido
+- **AND** valores retornados, nomes e IDs de containers, argumentos/saída do comando, exceções, caminhos e dados de configuração MUST NOT aparecer no log
+- **AND** nenhuma fingerprint ou precondição aprovada SHALL ser emitida
+
 #### Scenario: Instalar o forced command de backup
 
 - **WHEN** a revisão do wrapper exato passar pelo CI e o instalador protegido confirmar novamente o fingerprint atual do host
