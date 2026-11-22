@@ -147,6 +147,14 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **WHEN** a cópia fixa não existir, mais de uma cópia corresponder aos critérios, a identidade/metadados forem inseguros ou o SHA-256 divergir do recibo
 - **THEN** a restauração MUST abortar antes da troca, sem remover ou alterar qualquer wrapper ou cópia preservada, e SHALL emitir somente falha sanitizada
 
+#### Scenario: Recuperação compensatória não comprovada
+
+- **WHEN** a validação da versão restaurada falhar e a troca atômica de retorno à versão ativa antes da tentativa falhar ou não puder ser confirmada por metadados, SHA-256, sintaxe, allowlist e invariância dos containers
+- **THEN** o fluxo MUST parar sem nova troca, repetição automática ou limpeza, preservar o alvo no estado observado e todas as versões e recibos envolvidos, e emitir somente o código estático allowlisted `wrapper_restore_fallback_unverified`
+- **AND** o estado ativo SHALL ser informado como não verificado, sem revelar caminhos, hashes, IDs ou conteúdo
+- **AND** qualquer recuperação manual SHALL exigir fluxo protegido próprio com contrato e implementação revisados, merge autorizado, CI verde da `main` no SHA exato, novo preflight somente leitura, fingerprint atual e autorização operacional explícita aprovada pelo ambiente protegido
+- **AND** MUST NOT executar comandos shell/SSH ad hoc nem remover cópias ou recibos
+
 #### Scenario: O estado de containers compartilhados divergir
 
 - **WHEN** qualquer container mudar entre os inventários estáveis antes e depois da preparação do artefato
