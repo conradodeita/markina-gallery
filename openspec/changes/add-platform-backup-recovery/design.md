@@ -2,7 +2,7 @@
 
 ## Context
 
-Política aprovada pelo proprietário em 06/11/2026, após esclarecer que os valores são globais: cópia diária, RPO alvo de 24 h, RTO alvo de 8 h ainda não medido, retenção 7 diários/4 semanais/3 mensais e ensaio mensal. Escopo PostgreSQL completo e configurações essenciais cifradas; classes pessoais, financeiras e biométricas existentes no banco incluídas. Arquivos de mídia/biometria/WhatsApp e restore lógico por tenant ficam para etapa posterior. Chave de recuperação offline do proprietário; Google Workspace foi escolhido para a segunda cópia, com identidade dedicada na rotina e conta do proprietário somente no ensaio pré-abertura. Quota/destino/custódia efetivos e chamadas reais seguem pendentes.
+Política aprovada pelo proprietário em 06/11/2026, após esclarecer que os valores são globais: cópia diária, RPO alvo de 24 h, RTO alvo de 8 h ainda não medido, retenção 7 diários/4 semanais/3 mensais e ensaio mensal. Escopo PostgreSQL completo e configurações essenciais cifradas; classes pessoais, financeiras e biométricas existentes no banco incluídas. Arquivos de mídia/biometria/WhatsApp e restore lógico por tenant ficam para etapa posterior. A chave fica sob custódia offline do proprietário. Em 17/11, o proprietário escolheu a mesma conta Workspace já conectada para a rotina e autorizou a criação da pasta privada `Pick-your-Pic Tenants` na raiz do Meu Drive. O vínculo operacional dessa conta, a chave e o agendamento ainda precisam ser configurados.
 
 O inventário de metadata foi concluído sem abrir backups: Pick-your-Pic 2/2 sem diferenças; ClearBudget 3/2, uma extra preservada. Isso não valida conteúdo, restauração ou independência. A hipótese de credencial systemd ausente foi retirada; a inspeção rclone só funcionou quando suas escritas locais ficaram em overlay/tmpfs.
 
@@ -53,14 +53,14 @@ Implementar e ensaiar localmente o pacote global, catálogo durável, agenda, c�
 - Selecionar união dos 7 dias, 4 semanas ISO e 3 meses mais recentes com ponto válido por período, sem duplicar cópias por tenant ou apagar dados ativos.
 - Uma exclusão local simulada exige outra cópia independente do mesmo conjunto com restauração comprovada, receipt íntegro e preservação do último ponto recuperável. O planejador nunca deleta por conta própria; qualquer expurgo real permanece bloqueado.
 - O planejador usa os períodos UTC mais recentes representados, sem descartar pontos apenas por falhas/dias sem backup, e preserva adicionalmente o ponto recuperável mais recente. A remoção de uma cópia local exige confirmação explícita vinculada ao UUID do backup/destino, cópia sobrevivente de outro domínio/raiz e recibo assinado correspondente ao ciphertext/schema. Ambas as cópias ficam sob locks adquiridos em ordem estável; reabertura e autenticação do sobrevivente precedem unlink do candidato. Nenhum scheduler chama essa operação e ela não implementa expurgo de provedores reais ou exclusão de todas as cópias de um conjunto antigo.
-- Consentimento/permissões Drive, cadastro da identidade dedicada, quota/destino real, chave real e ensaio externo são gates operacionais pendentes. A indisponibilidade deles não bloqueia contratos locais independentes, mas impede declarar recuperação integral/produção pronta.
+- Consentimento, quota, acesso do app à pasta definitiva e recuperação externa sintética têm evidência. A chave real, a recuperação do acesso Workspace sem depender do servidor de origem e a verificação do scheduler produtivo são gates operacionais pendentes.
 
 ## Risks / Trade-offs
 
 - Streams GCM precisam autenticar antes de liberar plaintext: staging privado e finalize obrigatório; testes de alteração/truncamento são gates.
 - Catálogo fora do banco precisa ser durável e auditável: fsync, eventos sem sobrescrita, validação de sequência e retry idempotente; perda do catálogo não autoriza expurgo.
 - Escopo inicial não inclui arquivos: mesmo restore global do banco não representa recuperação integral de fotos/biometria/WhatsApp.
-- Independência sintética não equivale à real; Google Workspace está escolhido, mas identidade dedicada, quota, pasta/permissões e restore externo seguem pendentes.
+- A execução sintética confirma a passagem pelo Workspace e o restore. Comprovar a independência da rotina exige recuperar a cópia e a chave fora do servidor de origem com a configuração operacional.
 - Não executar código não confiável de dump sem autenticação e destino isolado.
 
 ## Migration Plan

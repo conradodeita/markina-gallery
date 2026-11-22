@@ -1,37 +1,7 @@
-# Execução segura da homologação de autenticação
+# Procedimento de homologação de autenticação — aposentado
 
-Este procedimento é exclusivo da Markina Gallery. Ele só pode começar depois da aprovação registrada no inventário e deve usar sempre `-p markina-gallery -f docker/docker-compose.yml`.
+> **Não executar nem usar como roteiro.** A decisão do proprietário em 18/11/2026 encerrou o ambiente de homologação. O bootstrap, as credenciais e o fluxo descritos neste documento foram supersedidos; não crie um Environment/secrets `homolog`, arquivo de configuração de homologação ou destino intermediário equivalente.
 
-## Variáveis externas obrigatórias
+As instruções anteriores também associavam o domínio real `markina.pickyourpic.com.br` ao alias de proxy `markina-homolog-nginx`, o que não deve ser usado para configurar nem alterar o tráfego de produção. O arquivo `docker/.env.homolog` continua sendo apenas um nome legado da configuração de produção em operações documentadas; seu nome não representa um ambiente separado.
 
-Crie `/opt/markina-gallery/docker/.env.homolog` fora do Git, com permissões restritas. Use valores novos, próprios de homologação, para:
-
-- `APP_ENV=staging`
-- `DOMAIN=markina.pickyourpic.com.br`
-- `MARKINA_GALLERY_PORT=127.0.0.1:8080`
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` e `DATABASE_URL`
-- `SECRET_KEY` e `SESSION_COOKIE_NAME`
-- `ADMIN_SEED_EMAIL`, `ADMIN_SEED_PASSWORD` (mínimo 12 caracteres) e `ADMIN_SEED_TOTP_SECRET`
-
-Não copie banco, senha, TOTP, token DuckDNS, token WhatsApp ou segredo de produção. PostgreSQL e Redis ficam apenas na rede interna do Compose.
-
-## Sequência de homologação
-
-1. Confirmar que o diretório de destino e o arquivo `.env.homolog` pertencem ao serviço da Markina Gallery e não são legíveis por outros usuários.
-2. Executar `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml config`.
-3. Construir somente os serviços da Markina Gallery e assegurar que o PostgreSQL exclusivo está saudável. Antes de subir API e workers em uma homologação autorizada, identificar a revisão de destino com `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml run --rm --no-deps migrate alembic heads`; aplicar somente a revisão validada usando o mesmo prefixo seguido de `migrate alembic upgrade <revisão-validada>`. Conferir depois usando o mesmo prefixo seguido de `migrate`, que só lê as revisões. Não aplicar `head` automaticamente nem passar por contract TOTP sem seus gates próprios.
-4. Criar o administrador inicial uma única vez com `docker compose --env-file docker/.env.homolog -p markina-gallery -f docker/docker-compose.yml --profile bootstrap run --rm seed-admin`. A senha e o TOTP ficam disponíveis apenas durante esse container temporário, nunca na API em execução.
-5. Conectar somente o serviço `nginx` da Markina à rede externa `npm-network`, sob o alias `markina-homolog-nginx`. Configurar no Nginx Proxy Manager o host `markina.pickyourpic.com.br` apontando para `markina-homolog-nginx:80`, com certificado HTTPS para esse host. Não editar hosts existentes nem conectar serviços da Markina à rede do ClearBudget.
-
-## Smoke test
-
-- `curl -fsS https://markina.pickyourpic.com.br/healthz`
-- `curl -fsS https://markina.pickyourpic.com.br/api/health`
-- Abrir a tela inicial e confirmar os contextos Cliente e Fotógrafo.
-- Confirmar senha + TOTP do administrador inicial; o WhatsApp continua em sandbox e não envia mensagem real.
-- Conferir `docker compose -p markina-gallery -f docker/docker-compose.yml ps` e os logs da Markina Gallery, sem exibir segredos.
-- Após o smoke test aprovado, remover qualquer arquivo temporário de credenciais iniciais, mantendo somente o `.env.homolog` protegido para a operação do ambiente.
-
-## Rollback
-
-Em caso de falha, usar somente a versão anterior conhecida da Markina Gallery com `docker compose -p markina-gallery -f docker/docker-compose.yml up -d`. Não executar `prune`, não alterar ClearBudget, Nginx Proxy Manager, Portainer ou seus recursos. Se a migration falhar, não expor o proxy e registrar o erro antes de qualquer nova tentativa.
+Para desenvolvimento, siga o setup local e use dados sintéticos. Para publicação ou recuperação da produção, consulte `DEPLOY.md`, o runbook da operação específica e a change OpenSpec aprovada. Este registro não autoriza mudanças no servidor, proxy, DNS, banco, secrets ou serviços.

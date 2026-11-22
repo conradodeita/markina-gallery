@@ -22,10 +22,13 @@ WRAPPER = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(
 )
 INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-facial-services.sh").read_bytes()
 APP_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-app-services.sh").read_bytes()
+API_BASE_EXPORT_SCRIPT = (ROOT / "scripts/export_prod_app_api_base_image.sh").read_bytes()
+APP_ARTIFACT_UPLOAD_WRAPPER = (ROOT / "scripts/production-app-artifact-ssh-wrapper.sh").read_text(encoding="utf-8")
 RETIREMENT_INVENTORY_SCRIPT = (ROOT / "scripts/deploy-prod-infinitepay-retirement.sh").read_bytes()
 ORDERS_INVENTORY_SCRIPT = (ROOT / "scripts/orders_pilot_release.py").read_bytes()
 APP_ENV_INVENTORY_SCRIPT = (ROOT / "scripts/app_env_transition_inventory.py").read_bytes()
 APP_ENV_INVENTORY_CONTRACT = (ROOT / "backend/app/environment_transition_inventory.py").read_bytes()
+COMPOSE_RECONCILIATION_SCRIPT = (ROOT / "openspec/changes/fix-app-release-compose-preflight/operations/reconcile_retired_gemma_stub.py").read_text(encoding="utf-8")
 PREVIEW_MIGRATION_INVENTORY = (ROOT / "scripts/preview_adjustment_migration_inventory.py").read_bytes()
 PREVIEW_MIGRATION_DEPLOY = (ROOT / "scripts/deploy-prod-preview-adjustment-migration.sh").read_text(encoding="utf-8")
 PREVIEW_MIGRATION_WRAPPER_INSTALL = (ROOT / "scripts/install-prod-preview-migration-wrapper.sh").read_text(encoding="utf-8")
@@ -57,8 +60,13 @@ def release_candidate_snapshot(root: Path, manifest: dict, *, target: str = "HEA
             raise AssertionError("snapshot do manifesto não é candidato API/web nem change de aposentadoria aprovada")
     ready, reason = evaluate(root, baseline, target, manifest)
     if not ready:
-        changed = set(git(root, "diff", "--name-only", baseline, target).splitlines())
-        if classify(changed) not in {"protected", "dependencies"} or reason not in {
+        # Classify only changes after the reviewed manifest snapshot. The
+        # production baseline can predate already-reviewed app changes, but
+        # new app changes after the snapshot must still fail this contract.
+        changed_since_snapshot = set(
+            git(root, "diff", "--name-only", source, target).splitlines()
+        )
+        if classify(changed_since_snapshot) not in {"none", "protected", "dependencies"} or reason not in {
             "api_fora_do_escopo", "arquivo_fora_do_escopo", "runtime_diverge_do_blob_aprovado",
         }:
             raise AssertionError(f"candidato não comprova a recusa protegida esperada: {reason}")
@@ -80,9 +88,41 @@ def main() -> None:
     )[0]
     release = WORKFLOW.split("  production-release:", 1)[1]
     app_preflight = WORKFLOW.split("  production-app-preflight:", 1)[1].split(
+        "  production-app-handoff-preflight:", 1
+    )[0]
+    handoff_preflight = WORKFLOW.split("  production-app-handoff-preflight:", 1)[1].split(
         "  production-app-release:", 1
     )[0]
+    app_artifact = WORKFLOW.split("  production-app-image-artifact:", 1)[1].split(
+        "  infinitepay-retirement-scope:", 1
+    )[0]
+    bridge_workflow = (ROOT / ".github/workflows/production-app-compose-bridge-install.yml").read_text(encoding="utf-8")
+    evidence_gate, bridge_install = bridge_workflow.split("  production-app-compose-bridge-install:", 1)
+    require("on:\n  workflow_dispatch:\n\npermissions: {}",
+            "instalação da ponte apenas por despacho explícito e sem permissões padrão", evidence_gate)
+    main_dispatch = "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
+    verify_evidence = 'scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-bridge-install'
+    for block in (evidence_gate, bridge_install):
+        require(main_dispatch, "instalação apenas na main", block)
+        require(verify_evidence, "instalação exige evidência do SHA exato", block)
+        require("set -Eeuo pipefail", "falha da consulta bloqueia mesmo com tee", block)
+    require("environment: production", "ponte exige ambiente protegido", bridge_install)
+    require("needs: [ci-evidence]", "instalação aguarda evidência antes da revisão protegida", bridge_install)
+    require("scripts/install-prod-app-compose-bridge.sh", "instalador fixo da ponte", bridge_install)
+    require("scripts/install-prod-preview-migration-wrapper.sh", "wrapper atualizado após instalar ponte", bridge_install)
+    if "PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY" in bridge_install or "PRODUCTION_SSH_" in evidence_gate:
+        raise AssertionError("segredos da instalação só podem estar no job de instalação protegido")
+    if (bridge_install.index(verify_evidence) > bridge_install.index("scripts/install-prod-app-compose-bridge.sh")
+            or "app-compose-bridge-install" in WORKFLOW
+            or "production-app-release:" in bridge_workflow):
+        raise AssertionError("instalação deve revalidar CI antes de SSH e manter despacho separado do release")
     app_release = WORKFLOW.split("  production-app-release:", 1)[1]
+    release_scope = WORKFLOW.split("  release-scope:", 1)[1].split(
+        "  production-app-image-artifact:", 1
+    )[0]
+    compose_reconciliation = WORKFLOW.split("  production-app-compose-reconciliation:", 1)[1].split(
+        "  production-app-rollback-preflight:", 1
+    )[0]
     retirement_scope = WORKFLOW.split("  infinitepay-retirement-scope:", 1)[1].split(
         "  infinitepay-retirement-preflight:", 1
     )[0]
@@ -130,8 +170,108 @@ def main() -> None:
     require("needs.release-scope.outputs.scope == 'facial'", "fluxo facial isolado", preflight)
     require("needs.release-scope.outputs.scope == 'app'", "preflight API/web condicionado ao classificador", app_preflight)
     require("MARKINA_APP_TARGET_SHA=$GITHUB_SHA", "inventário API/web restrito", app_preflight)
+    require("needs: [release-scope]", "preflight API/web pode começar antes dos gates demorados", app_preflight)
+    require("MARKINA_APP_BASE_IMAGE_EXPORT_SHA=${GITHUB_SHA}_IMAGE_ID=${API_BASE_IMAGE_ID}",
+            "export read-only usa SHA e ID-base exatos", app_preflight)
+    require("production-app-api-base-${{ github.sha }}", "artifact-base pertence ao SHA do run", app_preflight)
+    require("retention-days: 1", "artifact-base tem retenção curta", app_preflight)
+    if any(token in app_preflight.lower() for token in ("docker load", "compose up", "docker image tag", "compose build")):
+        raise AssertionError("preflight de export não pode carregar imagem nem alterar serviços")
+    require("needs: [ci-scope]", "classificador de release executa antes da matriz", release_scope)
+    require("needs: [release-scope, production-app-preflight]", "produtor vincula classificador e imagem-base do preflight", app_artifact)
+    require("runs-on: ubuntu-24.04-arm", "produtor constrói em ARM64 nativo", app_artifact)
+    require("production-app-api-base-${{ github.sha }}", "produtor baixa a base do mesmo run/SHA", app_artifact)
+    require("FROM ${API_BASE_IMAGE}", "overlay API parte da imagem ativa", app_artifact)
+    require("COPY backend/app /app/app", "overlay API copia somente o código da aplicação", app_artifact)
+    require("--pull=false", "build API não substitui a base por outra imagem remota", app_artifact)
+    require("--api-base-image-id \"$API_BASE_IMAGE_ID\"", "manifesto registra o ID-base inventariado", app_artifact)
+    require("production-app-arm64-${{ github.sha }}", "bundle candidato pertence ao SHA do run", app_artifact)
+    require("retention-days: 1", "bundle candidato tem retenção curta", app_artifact)
+    require("connection_binding: ${{ steps.inventory.outputs.connection_binding }}",
+            "preflight expõe somente o digest não sensível do destino SSH", app_preflight)
+    require("printf '%s\\0' \"$PRODUCTION_SSH_HOST\" \"$PRODUCTION_SSH_PORT\" \"$PRODUCTION_SSH_USER\" | sha256sum",
+            "preflight vincula host, porta e usuário sem expor valores", app_preflight)
     require("environment: production", "aprovação protegida para API/web", app_release)
     require("scripts/deploy-prod-app-services.sh", "release API/web dedicado", app_release)
+    require("PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY }}",
+            "upload usa credencial separada e protegida", app_release)
+    require("EXPECTED_API_BASE_IMAGE_ID", "release compara API base com preflight", app_release)
+    require("PREFLIGHT_CONNECTION_BINDING: ${{ needs.production-app-preflight.outputs.connection_binding }}",
+            "release recebe o digest do endpoint inventariado", app_release)
+    require("\"$release_connection_binding\" == \"$PREFLIGHT_CONNECTION_BINDING\"",
+            "release falha fechado se o endpoint divergir do preflight", app_release)
+    require("--api-base-image-id \"$EXPECTED_API_BASE_IMAGE_ID\"", "release valida o manifesto contra o preflight", app_release)
+    require("MARKINA_APP_ARTIFACT_UPLOAD_SHA=${GITHUB_SHA}_BUNDLE_SHA256=${EXPECTED_BUNDLE_SHA256}",
+            "upload limitado por SHA e digest completos", app_release)
+    require("--artifact-sha256 '$EXPECTED_BUNDLE_SHA256'", "deploy consome exatamente o bundle enviado", app_release)
+    require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks, release-scope, production-app-image-artifact, production-app-preflight, production-app-handoff-preflight]",
+            "promoção aguarda todos os gates e producer/preflight", app_release)
+    require("environment: production-preflight", "inventário final permanece read-only", handoff_preflight)
+    require("needs: [release-scope, production-app-preflight, production-app-image-artifact]",
+            "inventário final aguarda os IDs e bundle imutáveis", handoff_preflight)
+    require("MARKINA_APP_HANDOFF_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_BASE=${API_BASE_IMAGE_ID}_API=${API_IMAGE_ID}_WEB=${WEB_IMAGE_ID}",
+            "comando fixo vincula o mesmo SHA/bundle/IDs", handoff_preflight)
+    require("APPROVAL_FINGERPRINT: ${{ needs.production-app-handoff-preflight.outputs.approval_fingerprint }}",
+            "aprovação usa fingerprint final", app_release)
+    require("--mode handoff-release", "deploy usa protocolo de preservação por geração", app_release)
+    recovery_workflow = (ROOT / '.github/workflows/production-app-handoff-recovery.yml').read_text(encoding='utf-8')
+    recovery_readonly, recovery_mutation = recovery_workflow.split('\n  recover:\n', 1)
+    require('environment: production-preflight', 'diagnóstico separado sem chave de deploy', recovery_readonly)
+    require('environment: production\n', 'recuperação exige aprovação protegida própria', recovery_mutation)
+    require('needs: [code-evidence, recovery-inventory]', 'recuperação aguarda prova atual e CI', recovery_mutation)
+    for block in (recovery_readonly, recovery_mutation):
+        require('--app-handoff-recovery', 'revalidação explícita dos gates de código', block)
+    require('"$REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT"', 'fingerprint próprio conferido', recovery_mutation)
+    require('"$REQUESTED_WITNESSES" == "$INVENTORY_WITNESSES"', 'testemunhas exigem registro aprovado próprio', recovery_mutation)
+    require('"$binding" == "$PREFLIGHT_CONNECTION_BINDING"', 'recuperação no mesmo endpoint inventariado', recovery_mutation)
+    if 'secrets.PRODUCTION_SSH_PRIVATE_KEY' in recovery_readonly or '${{ inputs.' in recovery_mutation.split('run: |', 1)[1]:
+        raise AssertionError('chave de deploy deve ser protegida e inputs não podem ser interpolados no shell')
+    if not (app_release.index("\"$release_connection_binding\" == \"$PREFLIGHT_CONNECTION_BINDING\"")
+            < app_release.index("production_app_artifact.py verify")
+            < app_release.index("MARKINA_APP_ARTIFACT_UPLOAD_SHA=")
+            < app_release.index("scripts/deploy-prod-app-services.sh")):
+        raise AssertionError("bundle deve ser verificado antes do upload e do deploy")
+    require("^MARKINA_APP_ARTIFACT_UPLOAD_SHA=([0-9a-f]{40})_BUNDLE_SHA256=([0-9a-f]{64})$",
+            "wrapper de upload aceita somente SHA/digest exatos", APP_ARTIFACT_UPLOAD_WRAPPER)
+    require("os.replace(temporary, final)", "upload substitui atomicamente o bundle", APP_ARTIFACT_UPLOAD_WRAPPER)
+    if any(token in APP_ARTIFACT_UPLOAD_WRAPPER for token in ("docker ", "tarfile", "extractall", "bash -c")):
+        raise AssertionError("wrapper de upload não pode carregar, extrair ou executar o bundle")
+    require("- app-compose-reconcile", "operação manual de reconciliação Compose", WORKFLOW)
+    require("inputs.operation == 'app-compose-reconcile'", "reconciliação só por dispatch na main", compose_reconciliation)
+    require("needs: [backend, frontend, openspec, homolog-inventory-policy, gitleaks]",
+            "reconciliação aguarda os gates completos de CI", compose_reconciliation)
+    require("environment: production", "reconciliação protegida pelo ambiente de produção", compose_reconciliation)
+    require("PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}",
+            "reconciliação usa a credencial de operação protegida", compose_reconciliation)
+    require("python3 - --apply --expected-main-sha %q", "operação executa apenas o helper fixado no SHA", compose_reconciliation)
+    require("< \"$helper\"", "helper revisado segue por stdin com host key estrita", compose_reconciliation)
+    require("bfe511f850224823254b0fc9f51fa7ff60ecfba0", "helper exige o checkout produtivo inventariado", COMPOSE_RECONCILIATION_SCRIPT)
+    require('["git", "fetch", "--no-tags", "origin", "refs/heads/main:refs/remotes/origin/main"]',
+            "helper atualiza somente origin/main", COMPOSE_RECONCILIATION_SCRIPT)
+    if "git fetch" in compose_reconciliation:
+        raise AssertionError("fetch de main deve ocorrer dentro do lock operacional do helper")
+    if COMPOSE_RECONCILIATION_SCRIPT.index("fcntl.flock(lock_fd") > COMPOSE_RECONCILIATION_SCRIPT.index('"git", "fetch"'):
+        raise AssertionError("helper deve adquirir o lock antes de atualizar a referência Git")
+    if "PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY" in compose_reconciliation:
+        raise AssertionError("reconciliação de estado não pode usar chave somente-leitura")
+    if "\n    env:\n      PRODUCTION_SSH_HOST" in compose_reconciliation:
+        raise AssertionError("credenciais da reconciliação devem ficar limitadas ao passo SSH")
+    if any(token in compose_reconciliation.lower() for token in (
+        "docker compose up", "docker compose down", "docker compose build", "alembic upgrade",
+        "compose stop", "compose restart", "facial_processing_enabled=",
+    )):
+        raise AssertionError("reconciliação não pode alterar containers, schema ou configuração facial")
+    for fragment, label in (
+        ("fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)", "helper adquire lock operacional sem espera"),
+        ("compose_config(temp_candidate, app_version)", "helper valida candidato Compose antes da troca"),
+        ("os.replace(temp_candidate, OVERLAY)", "helper instala somente por substituição atômica"),
+        ("atomic_write(OVERLAY, original", "helper restaura automaticamente em falha pós-troca"),
+        ("project_container_snapshot() != project_before", "helper preserva IDs, estados e saúde dos containers"),
+        ('"{{.Id}} {{json .State}}"', "snapshot não exige bloco Health nos containers"),
+        ('"--no-trunc"', "snapshot usa IDs completos para conferir todas as respostas Docker"),
+        ("parse_container_snapshot(output, ids)", "snapshot valida JSON e representa saúde ausente como none"),
+    ):
+        require(fragment, label, COMPOSE_RECONCILIATION_SCRIPT)
     require("workflow_dispatch:", "rollback manual explícito", WORKFLOW)
     require("- infinitepay-retirement-preflight", "operação manual de preflight", WORKFLOW)
     require("- infinitepay-retirement-release", "operação manual de release", WORKFLOW)
@@ -318,6 +458,19 @@ def main() -> None:
     app_blob_header = f"blob {len(app_inventory_text)}\0".encode()
     app_blob_sha = hashlib.sha1(app_blob_header + app_inventory_text).hexdigest()
     require(f'APP_SCRIPT_BLOB_SHA="{app_blob_sha}"', "wrapper fixa o script API/web exato", WRAPPER)
+    base_export_text = API_BASE_EXPORT_SCRIPT.replace(b"\r\n", b"\n")
+    base_export_blob_sha = hashlib.sha1(
+        f"blob {len(base_export_text)}\0".encode() + base_export_text
+    ).hexdigest()
+    require(f'APP_BASE_IMAGE_EXPORT_BLOB_SHA="{base_export_blob_sha}"',
+            "wrapper fixa o export read-only da imagem-base", WRAPPER)
+    require('script_name="export_prod_app_api_base_image.sh"',
+            "wrapper seleciona somente o helper de export fixado", WRAPPER)
+    require('inventory_runtime="api-base-export"', "wrapper limita o helper ao export", WRAPPER)
+    require('bash -s -- --mode export --sha "$target_sha" --expected-image-id "$expected_image_id"',
+            "wrapper fixa modo, SHA e ID-base", WRAPPER)
+    require("'{{.Image}}'", "exporter consulta ID da imagem do container", API_BASE_EXPORT_SCRIPT.decode("utf-8"))
+    require('docker image save "$image_id" | gzip -1', "exporter transmite somente imagem comprimida", API_BASE_EXPORT_SCRIPT.decode("utf-8"))
     retirement_inventory_text = RETIREMENT_INVENTORY_SCRIPT.replace(b"\r\n", b"\n")
     retirement_blob_header = f"blob {len(retirement_inventory_text)}\0".encode()
     retirement_blob_sha = hashlib.sha1(retirement_blob_header + retirement_inventory_text).hexdigest()
@@ -330,8 +483,26 @@ def main() -> None:
     require("MARKINA_APP_ROLLBACK_SHA=([0-9a-f]{40})", "wrapper aceita apenas SHA para inventário de rollback", WRAPPER)
     if "--mode release" in WRAPPER or '"$SSH_ORIGINAL_COMMAND"' in WRAPPER:
         raise AssertionError("wrapper não pode encaminhar comando arbitrário nem release")
-    if "mktemp" in WRAPPER or "git fetch" in WRAPPER:
-        raise AssertionError("wrapper não cria temporários nem altera refs locais do checkout")
+    backup_dispatch = WRAPPER.split('if [[ -n "$backup_mode" ]]; then', 1)[1].split(
+        '\ninventory_runtime="bash"', 1
+    )[0]
+    temporary_assignment = 'source_dir="$(mktemp -d)"'
+    temporary_cleanup = 'trap \'rm -rf -- "$source_dir"\' EXIT'
+    require('git ls-remote origin refs/heads/main', "SHA remoto da main validado", backup_dispatch)
+    require(temporary_assignment, "staging isolado do suporte de backup", backup_dispatch)
+    require(temporary_cleanup, "staging temporário sempre removido", backup_dispatch)
+    if not (
+        backup_dispatch.index('git ls-remote origin refs/heads/main')
+        < backup_dispatch.index(temporary_assignment)
+        < backup_dispatch.index(temporary_cleanup)
+        < backup_dispatch.index("curl --location")
+    ):
+        raise AssertionError("staging do suporte deve ser criado após validar o SHA e antes do download")
+    legacy_inventory = WRAPPER.split('\ninventory_runtime="bash"', 1)[1]
+    if "mktemp" in legacy_inventory:
+        raise AssertionError("caminho de preflight legado não pode criar temporários")
+    if "git fetch" in WRAPPER:
+        raise AssertionError("wrapper não pode alterar refs locais do checkout")
 
     require("printf '%s\\n' \"$script_body\" | MARKINA_EXPECTED_REPOSITORY=", "somente conteúdo validado alimenta stdin", WRAPPER)
     script = INVENTORY_SCRIPT.decode("utf-8")
@@ -408,12 +579,15 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    if app_manifest.get("production_baseline_sha") != "1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8":
-        raise AssertionError("baseline web diverge do inventário registrado")
+    # Active API/web release attested by image identities and healthy receipts;
+    # see enable-platform-backup-runtime/validation-picker-scope.md.
+    if app_manifest.get("production_baseline_sha") != "492c141cd998efc87ebde1ee81ea9101effb4f7c":
+        raise AssertionError("baseline API/web diverge da publicação comprovada")
     if "emergency_api" in app_manifest:
         raise AssertionError("contrato API emergencial não pode permanecer após a publicação convencional comprovada")
-    require("scripts/prepare_emergency_api_image.py", "homologação de imagem API antes da troca", app_script)
-    if app_manifest.get("expected_database_revision") != "20261022_0087":
+    if "compose build" in app_script or "docker build" in app_script:
+        raise AssertionError("release de produção não pode reconstruir imagens no host")
+    if app_manifest.get("expected_database_revision") != "20261113_0126":
         raise AssertionError("revisão de banco app diverge do inventário registrado")
     require("facial-last-healthy.sha", "marcador da última versão facial saudável", script)
     require('baseline_file="${1:-$STATE_DIR/facial-last-healthy.sha}"', "baseline facial usa o marcador operacional", script)
@@ -463,6 +637,23 @@ def main() -> None:
         actual = git(ROOT, "rev-parse", f"{runtime_source}:{path}")
         if actual != expected:
             raise AssertionError("arquivo de runtime app diverge do blob revisado")
+    expected_backup_support = {
+        "scripts/backup_runtime/pyp-platform-backup.service",
+        "scripts/backup_runtime/pyp-platform-backup.timer",
+        "scripts/backup_runtime/requirements-py310-arm64.lock",
+    }
+    support_blobs = app_manifest.get("support_blobs", {})
+    if set(support_blobs) != expected_backup_support:
+        raise AssertionError("arquivos de suporte do backup não estão fixados no manifesto")
+    for path, expected in support_blobs.items():
+        actual = git(ROOT, "rev-parse", f"{runtime_source}:{path}")
+        if actual != expected:
+            raise AssertionError("arquivo de suporte do backup diverge do blob revisado")
+    for forbidden in ("systemctl enable pyp-platform-backup.timer",
+                      "systemctl start pyp-platform-backup.service",
+                      "scripts/backup_runtime/pyp-platform-backup.timer"):
+        if forbidden in app_script:
+            raise AssertionError("deploy API/web não pode instalar ou iniciar o backup")
     require("config --no-interpolate --hash", "hash usa JSON resolvido sem nova interpolação", script)
     if "compose config --hash" in script:
         raise AssertionError("hash direto omite env_file no Compose do host")
@@ -483,17 +674,35 @@ def main() -> None:
     if not (release_script.index('alembic upgrade') < release_script.index("compose up")):
         raise AssertionError("migration deve concluir antes da recriação de serviços")
 
-    require('EXPECTED_DATABASE_REVISION="20261022_0087"', "schema atual da aplicação fixado", app_script)
+    require('EXPECTED_DATABASE_REVISION="20261113_0126"', "schema atual da aplicação fixado", app_script)
     require('readonly SERVICES=(api web)', "release app inclui somente API e web", app_script)
     require("require_facial_processing_enabled_in_config", "release app preserva FACIAL_PROCESSING_ENABLED=true", app_script)
-    require('compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
+    require('--artifact-sha256', "release exige digest do bundle", app_script)
+    require('compose up -d --no-build --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"',
             "release app não recria dependências", app_script)
+    app_release_script = app_script.split("\nrelease() {", 1)[1].split("\nrollback() {", 1)[0]
+    handoff_release_script = app_script.split('\nhandoff_release() {', 1)[1].split('\nhandoff_recover() {', 1)[0]
+    ordered = ('verify_candidate_artifact', 'handoff_bridge handoff-prepare', 'load_candidate_artifact',
+               'handoff_bridge handoff-apply', 'handoff_https', 'handoff_save_receipt', 'handoff_clear_markers')
+    positions = [handoff_release_script.index(token) for token in ordered]
+    if positions != sorted(positions):
+        raise AssertionError('handoff deve validar antes dos efeitos e liberar marcador só após HTTPS/recibo')
+    require("verify_candidate_artifact", "release verifica digest, SHA e imagem-base", app_release_script)
+    require("load_candidate_artifact", "release carrega somente o bundle verificado", app_release_script)
+    if not (app_release_script.index("verify_candidate_artifact")
+            < app_release_script.index("load_candidate_artifact")
+            < app_release_script.index("compose up")):
+        raise AssertionError("bundle deve ser verificado e carregado antes de recriar API/web")
+    if "compose build" in app_release_script:
+        raise AssertionError("release app não pode construir imagens no host")
     for fragment, label in (
-        ("20261022_0087", "schema app documentado"),
-        ("1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8", "baseline app documentado"),
+        ("20261113_0126", "schema app documentado"),
+        ("bfe511f850224823254b0fc9f51fa7ff60ecfba0", "baseline app documentado"),
         ("127.0.0.1:8080", "porta Markina documentada"),
         ("https://markina.pickyourpic.com.br", "domínio documentado"),
         ("worker OTP", "exclusão do worker OTP documentada"),
+        ("pyp-platform-backup.service", "serviço de backup fora do deploy API/web"),
+        ("pyp-platform-backup.timer", "timer de backup fora do deploy API/web"),
     ):
         require(fragment, label, APP_RUNBOOK)
     require("compose exec -T nginx nginx -t", "validação confinada ao nginx Markina", release_script)

@@ -1,5 +1,19 @@
 # Validação e limites
 
+## Release produtivo autorizado — 16/11/2026
+
+Rollout aplicado no commit9df3b735 e schema0126, conforme [registro do release](../../../docs/saas-evolution/production-release-2026-11-16.md). CI da branch43996786889 e da main43999779751 aprovados. Keyring dedicado root-only e cópia externa em D: escolhida pelo proprietário recuperaram a mesma fixture; produção conserva o fator original cifrado, com plaintextNULL. Backup0126 restaurado isoladamente e decifrado. Treze serviços saudáveis,3196 probes de saúde/web sem erro; seis conjuntos financeiros e18891 embeddings preservados. Pagamentos/PIX prontos e WhatsApp reconectado/ready. Revisão visual autenticada pendente pelo erro de conexão Browser. As seções anteriores conservam o histórico dos ensaios e bloqueios de preparação.
+
+## Custódia em arquivo privado — 16/11/2026
+
+`scripts/admin_totp_custody.py` reutiliza o cipher TOTP e as primitivas POSIX privadas do emissor. Quatro testes passaram em container Linux/Python3.10: modos/proprietário/symlinks/hardlinks, configuração e JSON duplicado, ambiente divergente com recusa antes do consumidor, recuperação após remoção do arquivo fonte. No Windows os quatro casos são explicitamente skipped por dependerem de POSIX; isso não foi contado como validação Linux. Ruff e OpenSpec estrito passaram.
+
+Ensaio SSH independente executou o helper no host e entregou as variáveis por ambiente ao cliente Docker, sem valores em argv. O container intermediário isolado em rede none cifrou uma fixture sintética; o keyring foi copiado para a memória do processo Windows, removido da origem, transferido de volta para diretório privado e recuperou a mesma fixture. Recibo sanitizado `totp-file-custody-proof.json` no diretório externo de revisão. A cópia de recuperação deste ensaio é transitória; custódia real externa durável/offline e ativação produtiva continuam pendentes. Nenhuma chave real foi criada e nenhum container produtivo foi substituído.
+
+A primeira tentativa foi recusada porque o caminho de revisão tinha um ancestral pertencente ao usuário de aplicação. O ensaio passou em raiz privada sob `/run`; a localização proposta para uso durável é `/etc/pyp-totp`, root:root e0700, com arquivo0400/0600. A primeira chamada Docker usava imagem anterior sem o módulo cipher e foi corrigida para a imagem intermediária já inventariada. Esses ajustes foram limitados ao harness.
+
+Revisão proporcional reutilizou `_private_directory`/`_read` e `TotpSecretCipher`, sem duplicar validações de filesystem ou algoritmo. O helper mantém o contrato de ambiente atual; não houve refatoração de código alheio.
+
 ## Base e segurança operacional
 
 - Base da worktree: `origin/main=6af538ecd5c46da7691fa973c33869f263945a25`, branch isolada `feature/pickyourpic-saas-mainline`.

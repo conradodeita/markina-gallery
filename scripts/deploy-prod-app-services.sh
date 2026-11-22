@@ -9,31 +9,32 @@ readonly RELEASE_LOCK_BLOB="b95712afefc977e3aa8afe95a879c908103a6f79"
 readonly PROJECT_ROOT="/opt/markina-gallery"
 readonly EXPECTED_HOST="clearbudget-vnic"
 readonly PROJECT_NAME="markina-gallery"
-readonly COMPOSE_FILE="docker/docker-compose.yml"
 readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
+readonly ARTIFACT_DIR="/tmp/markina-gallery-app-artifacts-${UID}"
+readonly APP_COMPOSE_BRIDGE="/usr/local/sbin/markina-gallery-app-compose-bridge"
+readonly APP_COMPOSE_BRIDGE_BLOB="e52d3b791471fdbff568ea89b09ee343f7ffbe16"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
-readonly COMPOSE_FILE_LABEL="/opt/markina-gallery/docker/docker-compose.yml,/var/lib/markina-gallery/deploy-state/branding.compose.yml,/opt/markina-gallery/docker/docker-compose.raw-development.yml,/opt/markina-gallery/docker/docker-compose.preview-adjustment.yml,/opt/markina-gallery/docker/docker-compose.system-monitor.yml,/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
-readonly COMPOSE_EXTRA_FILES=(
-  "/var/lib/markina-gallery/deploy-state/branding.compose.yml"
-  "docker/docker-compose.raw-development.yml"
-  "docker/docker-compose.preview-adjustment.yml"
-  "docker/docker-compose.system-monitor.yml"
-  "/var/lib/markina-gallery/deploy-state/system-monitor.compose.yml"
-)
 readonly SERVICES=(api web)
-readonly EXPECTED_DATABASE_REVISION="20261022_0087"
+readonly EXPECTED_DATABASE_REVISION="20261113_0126"
 
 MODE=""
 TARGET_SHA=""
 APPROVAL_FINGERPRINT=""
+ARTIFACT_SHA256=""
 ROLLBACK_SHA=""
 EXPECTED_REPOSITORY="${MARKINA_EXPECTED_REPOSITORY:-}"
 EXPECTED_URL="${MARKINA_PUBLIC_BASE_URL:-$PUBLIC_URL}"
 CHECKOUT_SHA=""
+APP_INTERRUPTED=false
 ACTIVE_SHA=""
 COMPOSE_APP_VERSION=""
+BRIDGE_SOURCE_FINGERPRINT=""
 DATABASE_REVISION=""
+CANDIDATE_API_IMAGE_ID=""
+CANDIDATE_WEB_IMAGE_ID=""
+CANDIDATE_IMAGE_ARCHIVE=""
+API_BASE_IMAGE_ID=""
 production_deploy_lock_fd=9
 
 fail() { echo "deploy-prod-app-services: $*" >&2; exit 1; }
@@ -61,28 +62,84 @@ parse_arguments() {
       --mode) MODE="${2:-}"; shift 2 ;;
       --sha) TARGET_SHA="${2:-}"; shift 2 ;;
       --approval-fingerprint) APPROVAL_FINGERPRINT="${2:-}"; shift 2 ;;
+      --artifact-sha256) ARTIFACT_SHA256="${2:-}"; shift 2 ;;
+      --api-base-image-id) API_BASE_IMAGE_ID="${2:-}"; shift 2 ;;
+      --candidate-api-id) CANDIDATE_API_IMAGE_ID="${2:-}"; shift 2 ;;
+      --candidate-web-id) CANDIDATE_WEB_IMAGE_ID="${2:-}"; shift 2 ;;
       *) fail "argumento não permitido: $1" ;;
     esac
   done
-  [[ "$MODE" == "inventory" || "$MODE" == "release" || "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]] \
-    || fail "modo deve ser inventory, release, rollback-inventory ou rollback"
+  case "$MODE" in
+    picker-inventory|picker-release|inventory|adoption-inventory|adopt|release|rollback-inventory|rollback|handoff-inventory|handoff-release|handoff-witness-inventory|handoff-witness-register|handoff-legacy-recovery-inventory|handoff-legacy-recover|handoff-recovery-inventory|handoff-recover) ;;
+    *) fail "modo inválido" ;;
+  esac
   [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "SHA alvo inválido"
-  if [[ "$MODE" == "release" || "$MODE" == "rollback" ]]; then
+  if [[ "$MODE" == "release" || "$MODE" == "rollback" || "$MODE" == "adopt" || "$MODE" == handoff-release || "$MODE" == handoff-witness-register || "$MODE" == handoff-*-recover || "$MODE" == handoff-recover || "$MODE" == picker-release ]]; then
     [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint obrigatório"
+  fi
+  if [[ "$MODE" == release || "$MODE" == handoff-release || "$MODE" == handoff-inventory ]]; then
+    [[ "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail "digest do bundle obrigatório para release"
+  elif [[ -n "$ARTIFACT_SHA256" ]]; then
+    fail "digest do bundle fora dos modos de candidato"
+  fi
+  if [[ "$MODE" == handoff-inventory || "$MODE" == handoff-release ]]; then
+    [[ "$API_BASE_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+      && "$CANDIDATE_API_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+      && "$CANDIDATE_WEB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+      && "$CANDIDATE_API_IMAGE_ID" != "$CANDIDATE_WEB_IMAGE_ID" ]] || fail "identidade do artifact obrigatória"
+  elif [[ -n "$API_BASE_IMAGE_ID$CANDIDATE_API_IMAGE_ID$CANDIDATE_WEB_IMAGE_ID" ]]; then
+    fail "IDs do artifact fora dos modos de candidato"
   fi
 }
 
+adopt_runtime_base() {
+  [[ "$(hostname)" == "$EXPECTED_HOST" && "$(pwd -P)" == "$PROJECT_ROOT" ]] || fail "alvo de adoção diverge"
+  [[ -z "$(git status --porcelain)" && "$(git rev-parse origin/main)" == "$TARGET_SHA" ]] || fail "main/checkout diverge"
+  [[ "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$TARGET_SHA" ]] || fail "main mudou"
+  acquire_app_deploy_lock
+  bridge_call adopt || fail "fingerprint de adoção divergiu; base anterior preservada"
+  echo "base privada do runtime API/web adotada; serviços sem alterações"
+}
+
+bridge_call() {
+  local operation="$1" bridge_mode="$MODE" bridge_approval="$APPROVAL_FINGERPRINT"
+  shift
+  # Ordinary reads keep their original closed vocabulary during a handoff.
+  if [[ "$MODE" == handoff-* || "$MODE" == picker-* ]]; then bridge_mode=inventory; bridge_approval=""; fi
+  [[ "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$APP_COMPOSE_BRIDGE_BLOB" ]] || fail "ponte root-only diverge do blob revisado"
+  sudo -n "$APP_COMPOSE_BRIDGE" --mode "$bridge_mode" --sha "$TARGET_SHA" \
+    --app-version "$COMPOSE_APP_VERSION" --approval-fingerprint "$bridge_approval" \
+    --source-fingerprint "$BRIDGE_SOURCE_FINGERPRINT" \
+    "$operation" -- "$@"
+}
+
+handoff_bridge() {
+  local operation="$1" bridge_mode
+  local -a arguments=()
+  case "$operation" in
+    picker-inventory|handoff-inventory|handoff-witness-inventory) bridge_mode=inventory ;;
+    picker-prepare|picker-apply|handoff-prepare|handoff-apply|handoff-proxy|handoff-witness-register) bridge_mode=release ;;
+    handoff-recovery-inventory|handoff-legacy-recovery-inventory) bridge_mode=rollback-inventory ;;
+    handoff-recovery-prepare|handoff-recovery-apply|handoff-legacy-recovery-prepare|handoff-legacy-recovery-finalize|handoff-legacy-recovery-proxy) bridge_mode=rollback ;;
+    *) fail "operação handoff não permitida" ;;
+  esac
+  [[ "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$APP_COMPOSE_BRIDGE_BLOB" ]] || fail "ponte root-only diverge do blob revisado"
+  if [[ "$bridge_mode" == release || "$bridge_mode" == rollback ]]; then
+    arguments+=(--approval-fingerprint "$APPROVAL_FINGERPRINT")
+  fi
+  if [[ "$operation" == handoff-inventory || "$operation" == handoff-prepare || "$operation" == handoff-apply ]]; then
+    arguments+=(--artifact-sha256 "$ARTIFACT_SHA256" --api-base-image-id "$API_BASE_IMAGE_ID"
+      --candidate-api-id "$CANDIDATE_API_IMAGE_ID" --candidate-web-id "$CANDIDATE_WEB_IMAGE_ID")
+  fi
+  sudo -n "$APP_COMPOSE_BRIDGE" --mode "$bridge_mode" --sha "$TARGET_SHA" "${arguments[@]}" "$operation"
+}
+
 compose() {
-  local files=(--env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE") file
-  for file in "${COMPOSE_EXTRA_FILES[@]}"; do files+=(-f "$file"); done
-  APP_VERSION="$COMPOSE_APP_VERSION" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" </dev/null
+  bridge_call compose "$@"
 }
 
 resolved_hashes() {
-  compose config --format json 2>/dev/null \
-    | docker compose -p "$PROJECT_NAME" -f - --profile facial --profile preview-adjustment \
-      config --no-interpolate --hash api,web 2>/dev/null \
-    || fail "não foi possível calcular hashes Compose resolvidos"
+  bridge_call hashes || fail "não foi possível calcular hashes Compose resolvidos"
 }
 
 database_revision() {
@@ -98,8 +155,7 @@ verify_repository() {
   local origin remote_sha api_id api_version service
   [[ "$(hostname)" == "$EXPECTED_HOST" ]] || fail "host diverge do alvo"
   [[ "$(pwd -P)" == "$PROJECT_ROOT" && "$(git rev-parse --show-toplevel)" == "$PROJECT_ROOT" ]] || fail "checkout Markina ausente"
-  [[ -f "$COMPOSE_FILE" && -f "$ENV_FILE" && -d "$STATE_DIR" ]] || fail "Compose, ambiente ou estado ausente"
-  for file in "${COMPOSE_EXTRA_FILES[@]}"; do [[ -f "$file" ]] || fail "manifesto Compose ativo ausente"; done
+  [[ -f "$ENV_FILE" && -d "$STATE_DIR" ]] || fail "ambiente ou estado ausente"
   git check-ignore -q "$ENV_FILE" || fail "arquivo de ambiente não está ignorado"
   [[ -n "$EXPECTED_REPOSITORY" ]] || fail "repositório esperado ausente"
   [[ -z "$(git status --porcelain)" ]] || fail "checkout contém alterações locais"
@@ -122,10 +178,10 @@ verify_repository() {
       fi
     done
   fi
-  if [[ "$MODE" == inventory || "$MODE" == release ]]; then
+  if [[ "$MODE" == inventory || "$MODE" == release || "$MODE" == handoff-inventory || "$MODE" == handoff-release ]]; then
     release_assert_no_pending || fail "tentativa interrompida; investigar/recuperar"
   fi
-  if [[ "$MODE" == "release" ]]; then
+  if [[ "$MODE" == "release" || "$MODE" == handoff-release || "$MODE" == handoff-inventory ]]; then
     git diff --quiet "$CHECKOUT_SHA" "$TARGET_SHA" -- backend/migrations/ \
       || fail "migrations fora do escopo"
     # Verificador/manifesto do alvo por memória/pipe: sem arquivos temporários.
@@ -135,6 +191,9 @@ verify_repository() {
       --base "$CHECKOUT_SHA" --target "$TARGET_SHA" \
       --manifest <(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json") \
       || fail "escopo ou blobs API/web não aprovados"
+    [[ "$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
+      | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("emergency_api") else "no")')" == no ]] \
+      || fail "manifesto emergency_api não é suportado no release por artifact"
   fi
   if [[ "$MODE" == "rollback-inventory" || "$MODE" == "rollback" ]]; then
     [[ -f "$STATE_DIR/app-previous.sha" ]] || fail "SHA anterior de API/web ausente"
@@ -198,15 +257,16 @@ verify_repository() {
   web_id="$(compose ps -q web)"
   [[ -n "$web_id" && "$web_id" != *$'\n'* ]] || fail "web ausente/duplicado"
   web_image="$(docker inspect --format '{{.Image}}' "$web_id")"
-  web_hash="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$web_id")"
+  web_hash="$(bridge_call service-hash web)" || fail "identidade semântica web indisponível"
   if [[ "$APP_INTERRUPTED" == false ]]; then
-    APP_WEB_IDENTITY="$(release_assert_web_identity "$web_image" "$web_hash")" || fail "identidade web não comprovada"
+    APP_WEB_IDENTITY="$(bridge_call web-identity)" || fail "identidade web não comprovada"
+    [[ "$APP_WEB_IDENTITY" == *" $web_image $web_hash "* ]] || fail "recibo web semântico diverge"
   fi
-  if [[ "$MODE" == release ]]; then
+  if [[ "$MODE" == release || "$MODE" == handoff-release ]]; then
     local current_image current_tag tag_id ref
     for service in "${SERVICES[@]}"; do
       ref="$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q "$service")")"
-      [[ "$ref" == "$PROJECT_NAME-$service" || "$ref" == "$PROJECT_NAME-$service:latest" ]] || fail "referência ativa inesperada"
+      [[ "$ref" == "$PROJECT_NAME-$service" || "$ref" == "$PROJECT_NAME-$service:latest" || "$ref" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "referência ativa inesperada"
       current_image="$(docker inspect --format '{{.Image}}' "$(compose ps -q "$service")")"
       [[ "$(release_image_id "$current_image")" == "$current_image" ]] || fail "imagem ativa não disponível"
       current_tag="$PROJECT_NAME-app-rollback-$service-${current_image#sha256:}"
@@ -219,20 +279,11 @@ verify_repository() {
 }
 
 require_facial_processing_enabled_in_config() {
-  local config
-  config="$(compose config --format json 2>/dev/null)" || fail "não foi possível validar a flag facial no Compose"
-  printf '%s\n' "$config" | python3 -c 'import json,sys
-try:
-    environment=json.load(sys.stdin)["services"]["api"].get("environment",{})
-    valid=isinstance(environment,dict) and environment.get("FACIAL_PROCESSING_ENABLED")=="true"
-except (AttributeError,KeyError,TypeError,ValueError):
-    valid=False
-sys.exit(0 if valid else 1)' \
-    || fail "FACIAL_PROCESSING_ENABLED deve permanecer true na API após o deploy"
+  bridge_call assert-facial || fail "APP_ENV=production e FACIAL_PROCESSING_ENABLED=true devem permanecer ativos"
 }
 
 runtime_snapshot() {
-  local hashes config_hash service id project actual_service workdir files hash health image expected
+  local hashes config_hash service id project actual_service hash health image expected
   compose config --quiet 2>/dev/null || fail "configuração Compose inválida"
   require_facial_processing_enabled_in_config
   hashes="$(resolved_hashes)"
@@ -242,13 +293,10 @@ runtime_snapshot() {
     [[ -n "$id" && "$(wc -l <<<"$id" | tr -d ' ')" == 1 ]] || fail "container $service ausente ou duplicado"
     project="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' "$id")"
     actual_service="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.service" }}' "$id")"
-    workdir="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$id")"
-    files="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$id")"
     health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id")"
     image="$(docker inspect --format '{{.Image}}' "$id")"
-    hash="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.config-hash" }}' "$id")"
-    [[ "$project" == "$PROJECT_NAME" && "$actual_service" == "$service" \
-      && "$workdir" == "/opt/markina-gallery/docker" && "$files" == "$COMPOSE_FILE_LABEL" ]] \
+    hash="$(bridge_call service-hash "$service")" || fail "prova semântica do serviço falhou"
+    [[ "$project" == "$(bridge_call service-project "$service")" && "$actual_service" == "$service" ]] \
       || fail "identidade do container $service diverge"
     expected="$(awk -v service="$service" '$1 == service {print $2}' <<<"$hashes")"
     expected="${expected#sha256:}"
@@ -282,20 +330,23 @@ runtime_snapshot() {
   [[ -n "$nginx_id" ]] || fail "nginx Markina ausente"
   ports="$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$nginx_id")"
   [[ "$ports" == '{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"8080"}]}' ]] || fail "bind nginx diverge"
-  printf 'nginx_bind=%s\ncompose_config=%s\n' "$ports" "$config_hash"
+  local source_fingerprint
+  source_fingerprint="$(bridge_call sources-fingerprint)" || fail "fingerprint das fontes Compose indisponível"
+  [[ "$source_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint das fontes Compose inválido"
+  printf 'nginx_bind=%s\ncompose_config=%s\ncompose_sources=%s\n' "$ports" "$config_hash" "$source_fingerprint"
 }
 
 fingerprint() {
   local fingerprint_mode="$MODE"
   [[ "$MODE" == release ]] && fingerprint_mode=inventory
   [[ "$MODE" == rollback ]] && fingerprint_mode=rollback-inventory
-  local snapshot recovery="" service
+  local snapshot="${1:-}" recovery="" service
   if [[ "$MODE" == rollback* ]]; then
     for service in "${SERVICES[@]}"; do
       recovery+="$(cat "$STATE_DIR/app-$service-rollback-id")|$(cat "$STATE_DIR/app-$service-image-ref")|"
     done
   fi
-  snapshot="$(runtime_snapshot)" || return 1
+  [[ -n "$snapshot" ]] || snapshot="$(runtime_snapshot)" || return 1
   printf '%s\n' "$fingerprint_mode" "$TARGET_SHA" "$ROLLBACK_SHA" "$ACTIVE_SHA" "$CHECKOUT_SHA" "$EXPECTED_URL" \
     "database_revision=$DATABASE_REVISION" "$COMPOSE_APP_VERSION" "${APP_WEB_IDENTITY:-}" "${APP_RESTORE_WEB:-}" "${APP_RESTORE_API_VERSION:-}" "$recovery" "$snapshot" \
     | sha256sum | awk '{print $1}'
@@ -316,6 +367,16 @@ inventory() {
   echo "nenhum comando mutável foi executado"
 }
 
+adoption_inventory() {
+  [[ "$(hostname)" == "$EXPECTED_HOST" && "$(pwd -P)" == "$PROJECT_ROOT" ]] || fail "alvo de adoção diverge"
+  [[ -z "$(git status --porcelain)" ]] || fail "checkout contém alterações locais"
+  [[ "$(git rev-parse origin/main)" == "$TARGET_SHA" ]] || fail "SHA de adoção não é main local"
+  [[ "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$TARGET_SHA" ]] || fail "main mudou"
+  [[ "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$APP_COMPOSE_BRIDGE_BLOB" ]] || fail "ponte diverge"
+  sudo -n "$APP_COMPOSE_BRIDGE" --mode inventory --sha "$TARGET_SHA" adoption-inventory
+  echo "impacto=read-only; nenhum serviço ou arquivo persistente alterado"
+}
+
 rollback_inventory() {
   verify_repository
   runtime_snapshot
@@ -333,18 +394,248 @@ rollback_inventory() {
   echo "nenhum comando mutável foi executado"
 }
 
-release() {
-  local current_fp service id image tag ref api_before expected_api expected_web emergency target_hashes
+verify_candidate_artifact() {
+  local expected_api_base="$1" bundle verify_output candidate_archive
+  [[ -d "$ARTIFACT_DIR" && ! -L "$ARTIFACT_DIR" ]] || fail "diretório privado do artifact ausente/inválido"
+  [[ "$(stat -c '%u' -- "$ARTIFACT_DIR")" == "$UID" && "$(stat -c '%a' -- "$ARTIFACT_DIR")" == 700 ]] \
+    || fail "diretório privado do artifact não pertence ao usuário ou não está em modo 0700"
+  bundle="$ARTIFACT_DIR/$TARGET_SHA.bundle"
+  [[ -f "$bundle" && ! -L "$bundle" && "$(stat -c '%u' -- "$bundle")" == "$UID" \
+    && "$(stat -c '%a' -- "$bundle")" == 600 ]] || fail "bundle ausente ou permissões inválidas"
+  verify_output="$(candidate_artifact_tool verify --bundle "$bundle" \
+    --target-sha "$TARGET_SHA" --bundle-sha256 "$ARTIFACT_SHA256" \
+    --api-base-image-id "$expected_api_base" --extract-dir "$ARTIFACT_DIR")" \
+    || fail "bundle não corresponde ao SHA, digest ou imagem API base inventariada"
+  CANDIDATE_API_IMAGE_ID="$(sed -n 's/^api_image_id=//p' <<<"$verify_output")"
+  CANDIDATE_WEB_IMAGE_ID="$(sed -n 's/^web_image_id=//p' <<<"$verify_output")"
+  candidate_archive="$(sed -n 's/^image_archive=//p' <<<"$verify_output")"
+  [[ "$CANDIDATE_API_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+    && "$CANDIDATE_WEB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+    && "$CANDIDATE_API_IMAGE_ID" != "$CANDIDATE_WEB_IMAGE_ID" \
+    && "$candidate_archive" == "$ARTIFACT_DIR"/.images-* \
+    && -f "$candidate_archive" && ! -L "$candidate_archive" ]] \
+    || fail "manifesto do bundle não contém imagens API/web válidas"
+  CANDIDATE_IMAGE_ARCHIVE="$candidate_archive"
+}
+
+candidate_artifact_tool() {
+  # Before the checkout change, use only the reviewed target's verifier.
+  if [[ "$MODE" == handoff-release ]]; then
+    python3 -c 'import sys; p=sys.argv.pop(1); code=sys.argv.pop(1); exec(compile(code,p,"exec"),{"__file__":p,"__name__":"__main__"})' \
+      "$PROJECT_ROOT/scripts/production_app_artifact.py" "$(git show "$TARGET_SHA:scripts/production_app_artifact.py")" "$@"
+  else
+    python3 scripts/production_app_artifact.py "$@"
+  fi
+}
+
+load_candidate_artifact() {
+  local api_actual web_actual api_platform web_platform
+  docker load --input "$CANDIDATE_IMAGE_ARCHIVE" >/dev/null || fail "não foi possível carregar o bundle validado"
+  api_actual="$(release_image_id "$PROJECT_NAME-api")" || fail "imagem API do bundle ausente"
+  web_actual="$(release_image_id "$PROJECT_NAME-web")" || fail "imagem web do bundle ausente"
+  [[ "$api_actual" == "$CANDIDATE_API_IMAGE_ID" && "$web_actual" == "$CANDIDATE_WEB_IMAGE_ID" ]] \
+    || fail "tags carregadas não correspondem aos IDs fixados no bundle"
+  api_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$api_actual")" \
+    || fail "arquitetura da imagem API não comprovada"
+  web_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$web_actual")" \
+    || fail "arquitetura da imagem web não comprovada"
+  [[ "$api_platform" == linux/arm64 && "$web_platform" == linux/arm64 ]] \
+    || fail "bundle não contém somente imagens linux/arm64"
+  rm -f -- "$CANDIDATE_IMAGE_ARCHIVE"
+  CANDIDATE_IMAGE_ARCHIVE=""
+}
+
+cleanup_candidate_artifact() {
+  rm -f -- "$ARTIFACT_DIR/$TARGET_SHA.bundle"
+  [[ -z "$CANDIDATE_IMAGE_ARCHIVE" ]] || rm -f -- "$CANDIDATE_IMAGE_ARCHIVE"
+}
+
+handoff_host_guard() {
+  [[ "$(hostname)" == "$EXPECTED_HOST" && "$(pwd -P)" == "$PROJECT_ROOT" ]] || fail "alvo handoff diverge"
+  [[ -d "$STATE_DIR" && -f "$ENV_FILE" && -z "$(git status --porcelain)" ]] || fail "checkout/estado inválido"
+  [[ "$(git rev-parse origin/main)" == "$TARGET_SHA" \
+    && "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$TARGET_SHA" ]] || fail "main mudou"
+}
+
+handoff_https() {
+  if [[ "$MODE" == handoff-legacy-recover ]]; then
+    handoff_bridge handoff-legacy-recovery-proxy || fail "prova/reload nginx Markina falhou"
+  else
+    handoff_bridge handoff-proxy || fail "prova/reload nginx Markina falhou"
+  fi
+  local path
+  for path in /healthz /api/health /; do
+    curl -fsS --retry 5 --retry-delay 2 --retry-max-time 40 --max-time 5 "$EXPECTED_URL$path" -o /dev/null \
+      || fail "smoke HTTPS falhou em $path"
+  done
+}
+
+handoff_receipt_value() {
+  local receipt="$1" key="$2" value
+  value="$(sed -n "s/^$key=//p" <<<"$receipt")"
+  [[ -n "$value" && "$value" != *$'\n'* ]] || fail "recibo handoff ausente/duplicado"
+  printf '%s\n' "$value"
+}
+
+handoff_save_receipt() {
+  local receipt="$1" checkout api_version web_version web_image web_hash
+  checkout="$(handoff_receipt_value "$receipt" checkout_sha)"
+  api_version="$(handoff_receipt_value "$receipt" api_version)"
+  web_version="$(handoff_receipt_value "$receipt" web_version)"
+  web_image="$(handoff_receipt_value "$receipt" web_image_id)"
+  web_hash="$(handoff_receipt_value "$receipt" web_semantic_hash)"
+  [[ "$checkout" =~ ^[0-9a-f]{40}$ && "$api_version" =~ ^[0-9a-f]{40}$ && "$web_version" =~ ^[0-9a-f]{40}$ \
+    && "$web_image" =~ ^sha256:[0-9a-f]{64}$ && "$web_hash" =~ ^[0-9a-f]{64}$ ]] || fail "recibo handoff inválido"
+  [[ "$(git rev-parse HEAD)" == "$checkout" ]] || fail "checkout diverge do recibo"
+  release_write_file web-current.identity "$web_version $web_image $web_hash $checkout" || fail "recibo web não salvo"
+  release_write_file app-last-healthy.sha "$checkout" || fail "recibo saudável não salvo"
+  # Preserve old receipts as historical evidence; they cannot authorize an app rollback.
+}
+
+handoff_clear_markers() {
+  local interrupted="$1" marker
+  [[ "$interrupted" =~ ^[0-9a-f]{40}$ ]] || fail "SHA da tentativa inválido"
+  for marker in app-in-flight.sha app-rollback-in-flight.sha; do
+    if [[ -e "$STATE_DIR/$marker" ]]; then
+      [[ ! -L "$STATE_DIR/$marker" && "$(cat "$STATE_DIR/$marker")" == "$interrupted" ]] || fail "marcador de outra tentativa"
+    fi
+  done
+  for marker in app-in-flight.sha app-rollback-in-flight.sha; do
+    [[ ! -e "$STATE_DIR/$marker" ]] || rm -- "$STATE_DIR/$marker"
+  done
+}
+
+handoff_inventory() {
   verify_repository
-  current_fp="$(fingerprint)"
+  runtime_snapshot
+  handoff_bridge handoff-inventory
+  echo 'serviços=api,web; impacto=breve interrupção HTTP; migrations=nenhuma; workers=preservados'
+}
+
+picker_release() {
+  local receipt version checkout
+  handoff_host_guard
+  runtime_snapshot
+  version="$(docker inspect --format '{{json .Config.Env}}' "$(compose ps -q api)" \
+    | python3 -c 'import json,sys; values=[v.split("=",1)[1] for v in json.load(sys.stdin) if v.startswith("APP_VERSION=")]; print(values[0] if len(values)==1 else "")')"
+  [[ "$version" =~ ^[0-9a-f]{40}$ ]] || fail "APP_VERSION ativa inválida para Picker"
+  COMPOSE_APP_VERSION="$version"
+  checkout="$(git rev-parse HEAD)"
+  [[ "$checkout" == "$version" ]] || fail "checkout diverge da API; reconciliar antes do Picker"
+  handoff_bridge picker-prepare
+  release_write_file app-previous.sha "$checkout" || fail "checkout anterior não salvo"
+  release_write_file app-in-flight.sha "$version" || fail "marcador não salvo"
+  receipt="$(handoff_bridge picker-apply)" || fail "troca Picker interrompida; recuperação própria necessária"
+  [[ "$(handoff_receipt_value "$receipt" picker_status)" == healthy ]] || fail "Picker sem recibo saudável"
+  runtime_snapshot
+  handoff_https
+  handoff_save_receipt "$receipt"
+  handoff_clear_markers "$version"
+  echo "Picker configurado; API saudável; web preservada"
+}
+
+handoff_release() {
+  local declared_api="$CANDIDATE_API_IMAGE_ID" declared_web="$CANDIDATE_WEB_IMAGE_ID" service id image tag receipt
+  trap cleanup_candidate_artifact EXIT
+  verify_repository
+  runtime_snapshot
+  [[ "$(docker inspect --format '{{.Image}}' "$(compose ps -q api)")" == "$API_BASE_IMAGE_ID" ]] || fail "base API mudou"
+  verify_candidate_artifact "$API_BASE_IMAGE_ID"
+  [[ "$CANDIDATE_API_IMAGE_ID" == "$declared_api" && "$CANDIDATE_WEB_IMAGE_ID" == "$declared_web" ]] || fail "IDs divergem do inventário final"
+  # Recompute the approved fingerprint and persist the private journal before effects.
+  handoff_bridge handoff-prepare
+  release_write_file app-web-rollback.identity "$APP_WEB_IDENTITY" || fail "recibo anterior não salvo"
+  release_write_file app-api-rollback.version "$COMPOSE_APP_VERSION" || fail "versão anterior não salva"
+  for service in "${SERVICES[@]}"; do
+    id="$(compose ps -q "$service")"
+    image="$(docker inspect --format '{{.Image}}' "$id")"
+    tag="$PROJECT_NAME-app-rollback-$service-${image#sha256:}"
+    if release_image_id "$tag" >/dev/null; then
+      [[ "$(release_image_id "$tag")" == "$image" ]] || fail "tag de recuperação em conflito"
+    fi
+    docker image tag "$image" "$tag"
+    [[ "$(release_image_id "$tag")" == "$image" ]] || fail "preservação de imagem não confirmada"
+    release_write_file "app-$service-rollback-id" "$image" || fail "ID anterior não salvo"
+    release_write_file "app-$service-rollback-image" "$tag" || fail "imagem anterior não salva"
+  done
+  release_write_file app-previous.sha "$CHECKOUT_SHA" || fail "checkout anterior não salvo"
+  release_write_file app-api-target-id "$CANDIDATE_API_IMAGE_ID" || fail "ID candidato não salvo"
+  release_write_file app-web-target-id "$CANDIDATE_WEB_IMAGE_ID" || fail "ID candidato não salvo"
+  release_write_file app-in-flight.sha "$TARGET_SHA" || fail "marcador não salvo"
+  git switch --detach "$TARGET_SHA" >/dev/null
+  load_candidate_artifact
+  receipt="$(handoff_bridge handoff-apply)" || fail "troca interrompida; inventário próprio de recuperação necessário"
+  [[ "$(handoff_receipt_value "$receipt" handoff_status)" == healthy ]] || fail "troca sem recibo saudável"
+  COMPOSE_APP_VERSION="$TARGET_SHA"
+  runtime_snapshot
+  handoff_https
+  handoff_save_receipt "$receipt"
+  handoff_clear_markers "$TARGET_SHA"
+  printf '%s %s handoff-app-services %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CHECKOUT_SHA" "$TARGET_SHA" >> "$STATE_DIR/app-history.log"
+  echo "release saudável: $TARGET_SHA; serviços=api,web; anteriores preservados"
+}
+
+handoff_recover() {
+  local preparation receipt checkout interrupted
+  handoff_host_guard
+  preparation="$(handoff_bridge handoff-recovery-prepare)" || fail "inventário de recuperação mudou"
+  interrupted="$(handoff_receipt_value "$preparation" interrupted_sha)"
+  [[ "$interrupted" =~ ^[0-9a-f]{40}$ ]] || fail "tentativa interrompida inválida"
+  local marker
+  for marker in app-in-flight.sha app-rollback-in-flight.sha; do
+    [[ ! -e "$STATE_DIR/$marker" || ( ! -L "$STATE_DIR/$marker" && "$(cat "$STATE_DIR/$marker")" == "$interrupted" ) ]] || fail "marcador de outra tentativa"
+  done
+  release_write_file app-rollback-in-flight.sha "$interrupted" || fail "marcador de recuperação não salvo"
+  receipt="$(handoff_bridge handoff-recovery-apply)" || fail "recuperação interrompida; novo inventário necessário"
+  [[ "$(handoff_receipt_value "$receipt" handoff_status)" == healthy ]] || fail "recuperação sem recibo saudável"
+  checkout="$(handoff_receipt_value "$receipt" checkout_sha)"
+  [[ "$checkout" =~ ^[0-9a-f]{40}$ ]] || fail "checkout de recuperação inválido"
+  git switch --detach "$checkout" >/dev/null
+  COMPOSE_APP_VERSION="$(handoff_receipt_value "$receipt" api_version)"
+  runtime_snapshot
+  handoff_https
+  handoff_save_receipt "$receipt"
+  handoff_clear_markers "$interrupted"
+  printf '%s %s recover-app-handoff %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$interrupted" "$checkout" >> "$STATE_DIR/app-history.log"
+  echo "recuperação saudável: $checkout; candidatos preservados"
+}
+
+handoff_legacy_recover() {
+  local preparation checkout marker receipt
+  handoff_host_guard
+  preparation="$(handoff_bridge handoff-legacy-recovery-prepare)" || fail "inventário legado mudou"
+  checkout="$(handoff_receipt_value "$preparation" checkout_sha)"
+  [[ "$checkout" =~ ^[0-9a-f]{40}$ ]] || fail "checkout legado inválido"
+  marker="$(cat "$STATE_DIR/app-in-flight.sha")"
+  [[ "$marker" =~ ^[0-9a-f]{40}$ ]] || fail "marcador legado inválido"
+  git switch --detach "$checkout" >/dev/null
+  runtime_snapshot
+  handoff_https
+  # Root re-proves all originals and sources before clearing this exact marker.
+  receipt="$(handoff_bridge handoff-legacy-recovery-finalize)" || fail "reconciliação não comprovada"
+  [[ "$(handoff_receipt_value "$receipt" legacy_recovery_status)" == healthy ]] || fail "recibo legado inválido"
+  release_write_file app-last-healthy.sha "$checkout" || fail "recibo saudável não salvo"
+  printf '%s %s recover-legacy-handoff %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$marker" "$checkout" >> "$STATE_DIR/app-history.log"
+  echo "tentativa legada reconciliada: $checkout; containers intactos"
+}
+
+release() {
+  local current_fp source_fingerprint service id image tag ref api_before expected_api expected_web target_hashes approval_snapshot
+  trap cleanup_candidate_artifact EXIT
+  verify_repository
+  approval_snapshot="$(runtime_snapshot)" || fail "runtime Compose não foi inventariado"
+  current_fp="$(fingerprint "$approval_snapshot")"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "fingerprint mudou; nada foi alterado"
+  source_fingerprint="$(sed -n 's/^compose_sources=//p' <<<"$approval_snapshot")"
+  [[ "$source_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint das fontes Compose inválido"
+  BRIDGE_SOURCE_FINGERPRINT="$source_fingerprint"
   printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/app-in-flight.sha"
   release_write_file app-web-rollback.identity "$APP_WEB_IDENTITY" || fail "recibo anterior não salvo"
   release_write_file app-api-rollback.version "$COMPOSE_APP_VERSION" || fail "versão API anterior não salva"
   for service in "${SERVICES[@]}"; do
     id="$(compose ps -q "$service")"
     image="$(docker inspect --format '{{.Image}}' "$id")"
-    ref="$(docker inspect --format '{{.Config.Image}}' "$id")"
+    ref="$PROJECT_NAME-$service"
     tag="$PROJECT_NAME-app-rollback-$service-${image#sha256:}"
     local existing
     if existing="$(release_image_id "$tag")"; then [[ "$existing" == "$image" ]] || fail "tag de recuperação já aponta a outro ID"; fi
@@ -353,10 +644,11 @@ release() {
     printf '%s\n' "$image" > "$STATE_DIR/app-$service-rollback-id"
     printf '%s\n' "$tag" > "$STATE_DIR/app-$service-rollback-image"
     printf '%s\n' "$ref" > "$STATE_DIR/app-$service-image-ref"
-    docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$id" > "$STATE_DIR/app-$service-rollback-hash"
+    bridge_call service-hash "$service" > "$STATE_DIR/app-$service-rollback-hash"
   done
   printf '%s\n' "$ACTIVE_SHA" > "$STATE_DIR/app-previous.sha"
   printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/app-in-flight.sha"
+  bridge_call snapshot || fail "snapshots Compose ativos não foram preservados"
   git switch --detach "$TARGET_SHA" >/dev/null
   api_before="$COMPOSE_APP_VERSION"
   COMPOSE_APP_VERSION="$TARGET_SHA"
@@ -366,15 +658,6 @@ release() {
   for service in "${SERVICES[@]}"; do
     awk -v service="$service" '$1 == service {sub(/^sha256:/,"",$2); print $2}' <<<"$target_hashes" > "$STATE_DIR/app-$service-target-hash"
   done
-  emergency="$(git show "$TARGET_SHA:openspec/changes/add-production-app-release-workflow/runtime-gates.json" \
-    | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("emergency_api") else "no")')"
-  if [[ "$emergency" == yes ]]; then
-    python3 scripts/prepare_emergency_api_image.py --previous "$(cat "$STATE_DIR/app-api-rollback-id")" \
-      --sha "$TARGET_SHA" --receipt "$STATE_DIR/app-api-homologation.json" || fail "candidato API não homologado"
-    compose build web
-  else
-    compose build "${SERVICES[@]}"
-  fi
   # Compare the original live configuration against its own checkout. The
   # reviewed API-only env_file changes the target's resolved Compose hash.
   git switch --detach "$CHECKOUT_SHA" >/dev/null
@@ -385,28 +668,26 @@ release() {
   git switch --detach "$TARGET_SHA" >/dev/null
   [[ "$(resolved_hashes)" == "$target_hashes" ]] || fail "configuração alvo mudou durante build"
   for service in "${SERVICES[@]}"; do
-    [[ "$(release_image_id "$(cat "$STATE_DIR/app-$service-rollback-image")")" == "$(cat "$STATE_DIR/app-$service-rollback-id")" ]] || fail "backup mudou durante build"
+    [[ "$(release_image_id "$(cat "$STATE_DIR/app-$service-rollback-image")")" == "$(cat "$STATE_DIR/app-$service-rollback-id")" ]] || fail "backup mudou durante release"
   done
-  expected_api="$(release_image_id "$PROJECT_NAME-api")" || fail "build API sem ID"
-  expected_web="$(release_image_id "$PROJECT_NAME-web")" || fail "build web sem ID"
+  verify_candidate_artifact "$(cat "$STATE_DIR/app-api-rollback-id")"
+  load_candidate_artifact
+  expected_api="$CANDIDATE_API_IMAGE_ID"
+  expected_web="$CANDIDATE_WEB_IMAGE_ID"
   release_write_file app-api-target-id "$expected_api" || fail "não registrou ID construído da API"
   release_write_file app-web-target-id "$expected_web" || fail "não registrou ID construído do web"
-  if [[ "$emergency" == yes ]]; then
-    emergency_maintenance start || fail "manutenção não iniciada; containers preservados"
-  fi
-  compose up -d --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"
+  compose up -d --no-build --no-deps --force-recreate --wait --wait-timeout 120 "${SERVICES[@]}"
   runtime_snapshot
   [[ "$(docker inspect --format '{{.Image}}' "$(compose ps -q api)")" == "$expected_api" \
     && "$(docker inspect --format '{{.Image}}' "$(compose ps -q web)")" == "$expected_web" ]] || fail "runtime não usa IDs construídos"
   compose exec -T nginx nginx -t || fail "configuração nginx Markina inválida"
   compose exec -T nginx nginx -s reload || fail "reload nginx Markina falhou"
-  if [[ "$emergency" == yes ]]; then emergency_maintenance finish || fail "reabertura não validada"; fi
   for path in /healthz /api/health /; do
     curl -fsS --retry 5 --retry-delay 2 --retry-max-time 40 --max-time 5 "$EXPECTED_URL$path" -o /dev/null \
       || fail "smoke HTTPS falhou em $path"
   done
   local web_hash
-  web_hash="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$(compose ps -q web)")"
+  web_hash="$(bridge_call service-hash web)"
   release_write_file web-current.identity "$TARGET_SHA $expected_web $web_hash $TARGET_SHA" || fail "identidade web não salva"
   # Histórico web-only anterior não é rollback válido depois de trocar a API.
   rm -f "$STATE_DIR/web-previous.identity" "$STATE_DIR/web-previous.services" "$STATE_DIR/web-previous.compose"
@@ -418,10 +699,15 @@ release() {
 
 rollback() {
   local current_fp service id image ref tag current_web current_api restore_web restore_api_version
+  local source_fingerprint approval_snapshot
   local -A restore_ids restore_refs next_ids next_refs next_tags
   verify_repository
-  current_fp="$(fingerprint)"
+  approval_snapshot="$(runtime_snapshot)" || fail "runtime Compose não foi inventariado para rollback"
+  current_fp="$(fingerprint "$approval_snapshot")"
   [[ "$current_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "inventário de rollback mudou; nada foi alterado"
+  source_fingerprint="$(sed -n 's/^compose_sources=//p' <<<"$approval_snapshot")"
+  [[ "$source_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint das fontes Compose inválido"
+  BRIDGE_SOURCE_FINGERPRINT="$source_fingerprint"
   restore_web="$APP_RESTORE_WEB" restore_api_version="$APP_RESTORE_API_VERSION"
   for service in "${SERVICES[@]}"; do
     restore_ids[$service]="$(cat "$STATE_DIR/app-$service-rollback-id")"
@@ -436,7 +722,7 @@ rollback() {
     for service in "${SERVICES[@]}"; do
       id="$(compose ps -q "$service")"
       image="$(docker inspect --format '{{.Image}}' "$id")"
-      ref="$(docker inspect --format '{{.Config.Image}}' "$id")"
+      ref="$PROJECT_NAME-$service"
       tag="$PROJECT_NAME-app-rollback-$service-${image#sha256:}"
       local existing
       if existing="$(release_image_id "$tag")"; then [[ "$existing" == "$image" ]] || fail "tag de preservação em conflito"; fi
@@ -448,6 +734,7 @@ rollback() {
     done
     release_write_file app-rollback-in-flight.sha "$TARGET_SHA" || fail "não registrou tentativa"
   fi
+  bridge_call snapshot || fail "snapshots Compose atuais não foram preservados para rollback"
   current_web="$(release_read_identity "$STATE_DIR/app-rollback-next.identity")" || fail "recibo contingencial ausente"
   current_api="$(cat "$STATE_DIR/app-rollback-next.version")"
   for service in "${SERVICES[@]}"; do
@@ -548,12 +835,24 @@ main() {
   parse_arguments "$@"
   [[ "$EXPECTED_URL" == "$PUBLIC_URL" ]] || fail "domínio diverge do alvo"
   release_load_support || fail "suporte não verificável; preparação autorizada necessária"
-  if [[ "$MODE" == release || "$MODE" == rollback ]]; then acquire_app_deploy_lock; fi
+  if [[ "$MODE" == release || "$MODE" == rollback || "$MODE" == handoff-release || "$MODE" == handoff-witness-register || "$MODE" == handoff-legacy-recover || "$MODE" == handoff-recover || "$MODE" == picker-release ]]; then acquire_app_deploy_lock; fi
   case "$MODE" in
+    picker-release) picker_release ;;
+    picker-inventory) handoff_host_guard; runtime_snapshot; handoff_bridge picker-inventory ;;
     inventory) inventory ;;
+    adoption-inventory) adoption_inventory ;;
+    adopt) adopt_runtime_base ;;
     release) release ;;
     rollback-inventory) rollback_inventory ;;
     rollback) rollback ;;
+    handoff-inventory) handoff_inventory ;;
+    handoff-release) handoff_release ;;
+    handoff-recover) handoff_recover ;;
+    handoff-legacy-recover) handoff_legacy_recover ;;
+    handoff-witness-inventory|handoff-witness-register|handoff-legacy-recovery-inventory|handoff-recovery-inventory)
+      handoff_host_guard
+      handoff_bridge "$MODE"
+      ;;
   esac
 }
 

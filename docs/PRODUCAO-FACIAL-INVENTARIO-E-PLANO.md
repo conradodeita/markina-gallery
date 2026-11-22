@@ -6,6 +6,10 @@ Data: 2026-09-08. Este inventário foi produzido somente a partir do repositóri
 
 O proprietário informou que o reconhecimento facial está funcionando em produção e determinou que `FACIAL_PROCESSING_ENABLED` permaneça `true` em qualquer deploy futuro. Esta instrução substitui as orientações históricas abaixo que exigem `false` no primeiro deploy de produção. Os wrappers atuais de release devem continuar recusando uma configuração alvo que desabilite a flag. Esta atualização não autoriza deploy, migration ou alteração de serviço.
 
+## Decisão vigente sobre homologação — 18/11/2026
+
+O proprietário encerrou o ambiente operacional de homologação. Não há deploy, inventário ou manutenção remota de homologação; a CI valida com dados sintéticos, e produção continua atrás de aprovação humana. As referências abaixo a PRs, SHAs, workflows, aprovação ou primeiro deploy em homologação/produção são registro histórico, estão supersedidas e não devem orientar operações atuais. Nenhuma parte deste documento concede autorização para deploy, migration ou alteração de serviço.
+
 ## Estado da candidata
 
 - branch candidata: `feature/productionize-facial-search`;

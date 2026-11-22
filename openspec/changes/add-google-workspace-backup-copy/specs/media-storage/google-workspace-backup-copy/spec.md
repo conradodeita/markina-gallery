@@ -16,7 +16,7 @@ A integração SHALL enviar ao Workspace somente o artefato global já cifrado e
 
 ### Requirement: Destino dedicado e privado
 
-A cópia SHALL usar uma pasta dedicada autorizada na identidade Workspace configurada para o backup. O ensaio de recuperação pré-abertura SHALL usar a conta do proprietário; a rotina recorrente SHALL usar identidade Workspace dedicada e independente. O sistema MUST NOT criar permissões públicas ou ampliar permissões do Drive.
+A cópia SHALL usar uma pasta dedicada autorizada na conta Workspace escolhida pelo proprietário. A conta escolhida em D17 é a mesma do ensaio e seu acesso de recuperação SHALL independer do servidor de origem. O sistema MUST NOT criar permissões públicas ou ampliar permissões do Drive.
 
 #### Scenario: Destino configurado
 - **WHEN** o proprietário configura o destino da cópia
@@ -24,7 +24,7 @@ A cópia SHALL usar uma pasta dedicada autorizada na identidade Workspace config
 
 #### Scenario: Identidades separadas
 - **WHEN** o operador prepara o ensaio pré-abertura e a rotina recorrente
-- **THEN** o ensaio usa a conta do proprietário e a rotina usa a identidade dedicada, cada qual com pasta e autorização verificadas; os segredos não são compartilhados nem registrados no catálogo
+- **THEN** o ensaio e a rotina usam a conta Workspace escolhida, com pastas e autorizações verificadas; segredos não são registrados no catálogo
 
 ### Requirement: Busca delimitada e completa
 A busca de objetos remotos SHALL limitar-se à pasta configurada, usando o escopo do usuário ou o `driveId` exato do Shared Drive. Busca incompleta, paginação inesperada, objeto duplicado ou metadata incompatível MUST falhar fechado antes de ler ou enviar o objeto.
@@ -99,7 +99,7 @@ O sistema MUST NOT considerar recuperável um upload sem leitura de retorno e va
 
 ### Requirement: Restore Workspace antes da abertura a tenants
 
-O cadastro público SHALL permanecer fechado até um teste autorizado com a conta do proprietário comprovar backup no Workspace e restore global em destino descartável isolado e vazio, e a rotina recorrente com identidade dedicada comprovar uma cópia lida de volta e validada.
+O cadastro público SHALL permanecer fechado até um teste autorizado com a conta do proprietário comprovar backup no Workspace e restore global em destino descartável isolado e vazio, e a rotina recorrente com a conta Workspace escolhida comprovar uma cópia lida de volta e validada.
 
 #### Scenario: Tentativa de abrir cadastro sem prova
 - **WHEN** o operador prepara a abertura do SaaS e não existe evidência válida do teste de restore Workspace

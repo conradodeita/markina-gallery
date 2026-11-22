@@ -45,6 +45,7 @@ class SyntheticDrive:
         self.list_status = 200
         self.list_error_payload: dict[str, object] | None = None
         self.incomplete_search = False
+        self.delete_status = 204
         self.upload_starts = 0
         self.stream_reads = 0
         self.last_query: dict[str, str] = {}
@@ -79,8 +80,12 @@ class SyntheticDrive:
         return httpx.Response(201, json=metadata)
 
     def get(self, url: str, **kwargs) -> httpx.Response:
-        assert url == FILES_ENDPOINT
         assert kwargs["headers"]["Authorization"] == f"Bearer {self.token}"
+        if url.startswith(FILES_ENDPOINT + "/"):
+            file_id = url.rsplit("/", 1)[1]
+            item = next((value for value in self.files if value["id"] == file_id), None)
+            return httpx.Response(404) if item is None else httpx.Response(200, json=item)
+        assert url == FILES_ENDPOINT
         self.last_query = kwargs["params"]
         if self.list_status != 200:
             return httpx.Response(self.list_status, json=self.list_error_payload or {
@@ -94,6 +99,16 @@ class SyntheticDrive:
             "files": matched,
             "incompleteSearch": self.incomplete_search,
         })
+
+    def delete(self, url: str, **kwargs) -> httpx.Response:
+        assert url.startswith(FILES_ENDPOINT + "/")
+        assert kwargs["headers"]["Authorization"] == f"Bearer {self.token}"
+        if self.delete_status not in {200, 204}:
+            return httpx.Response(self.delete_status)
+        file_id = url.rsplit("/", 1)[1]
+        self.files = [item for item in self.files if item["id"] != file_id]
+        self.bodies.pop(file_id, None)
+        return httpx.Response(self.delete_status)
 
     @contextmanager
     def stream_get(self, url: str, **kwargs):
@@ -188,6 +203,61 @@ def test_upload_and_streaming_readback_use_only_ciphertext_and_redact_configurat
     assert drive.files[0]["name"] == f"{artifact.backup_id}.pypb"
     assert drive.folder_id not in repr(store)
     assert drive.token not in repr(store)
+
+
+def test_synthetic_destination_item_is_read_back_and_deleted_by_exact_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    drive = SyntheticDrive()
+    store = make_store(drive)
+    name = "pyp-backup-rehearsal-" + "a" * 32 + ".txt"
+    content = b"Pick-your-Pic synthetic destination rehearsal\n" + b"a" * 32 + b"\n"
+
+    uploaded = store.upload_rehearsal_item(name=name, content=content)
+    assert uploaded.size_bytes == len(content)
+    assert uploaded.sha256 == hashlib.sha256(content).hexdigest()
+    assert store.read_rehearsal_item(file_id=uploaded.file_id, name=name) == content
+    assert store.delete_rehearsal_item(file_id=uploaded.file_id, name=name) is True
+
+    assert drive.files == []
+    assert drive.bodies == {}
+
+
+def test_synthetic_delete_refuses_an_object_outside_the_bound_folder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    drive = SyntheticDrive()
+    store = make_store(drive)
+    name = "pyp-backup-rehearsal-" + "b" * 32 + ".txt"
+    content = b"synthetic payload"
+    uploaded = store.upload_rehearsal_item(name=name, content=content)
+    drive.files[0]["parents"] = ["another-folder"]
+
+    with pytest.raises(BackupStorageError) as error:
+        store.delete_rehearsal_item(file_id=uploaded.file_id, name=name)
+
+    assert error.value.code == "conflict"
+    assert drive.delete_status == 204
+    assert len(drive.files) == 1
+
+
+def test_synthetic_delete_failure_is_not_reported_as_cleaned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    drive = SyntheticDrive()
+    store = make_store(drive)
+    name = "pyp-backup-rehearsal-" + "c" * 32 + ".txt"
+    uploaded = store.upload_rehearsal_item(name=name, content=b"synthetic payload")
+    drive.delete_status = 500
+
+    with pytest.raises(BackupStorageError) as error:
+        store.delete_rehearsal_item(file_id=uploaded.file_id, name=name)
+
+    assert error.value.code == "io"
+    assert len(drive.files) == 1
 
 
 def test_store_without_explicit_transport_fails_closed_without_network(
