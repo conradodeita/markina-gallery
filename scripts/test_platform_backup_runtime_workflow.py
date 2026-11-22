@@ -1,8 +1,11 @@
 """Guard the fixed SSH and protected environment contract for backup operations."""
 
 import ast
+import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -200,6 +203,60 @@ def main() -> int:
     require("environment: production" in WRAPPER_INSTALL
             and "PRODUCTION_SSH_PRIVATE_KEY" in WRAPPER_INSTALL,
             "wrapper_bootstrap_not_protected")
+    install_job = WRAPPER_INSTALL[WRAPPER_INSTALL.index("  install-wrapper:\n"):]
+    binding_start = install_job.index("      - name: Revalidar CI, fingerprint e destino do canal de escrita\n")
+    write_start = install_job.index("      - name: Atualizar somente o forced command após aprovação protegida\n", binding_start)
+    binding_step = install_job[binding_start:write_start]
+    require("INVENTORY_CONNECTION: ${{ needs.preflight.outputs.connection_binding }}" in binding_step
+            and 'production_binding="$(printf \'%s\' "$SSH_HOST|$SSH_PORT|$SSH_USER"' in binding_step
+            and '[[ "$production_binding" == "$INVENTORY_CONNECTION" ]]' in binding_step,
+            "wrapper_install_destination_not_bound_to_current_preflight_output")
+    require("PREFLIGHT_HOST" not in binding_step and "PREFLIGHT_PORT" not in binding_step
+            and "PREFLIGHT_USER" not in binding_step and "preflight_binding" not in binding_step,
+            "wrapper_install_reads_variables_from_another_protected_environment")
+    binding_lines = [
+        line for line in binding_step.splitlines()
+        if line.strip().startswith("production_binding=")
+        or line.strip() == '[[ "$production_binding" == "$INVENTORY_CONNECTION" ]]'
+    ]
+    require(len(binding_lines) == 2, "wrapper_install_binding_shell_contract_incomplete")
+    binding_script = "\n".join(binding_lines)
+    connection = "production.example|22|ubuntu"
+    expected_binding = hashlib.sha256(connection.encode("utf-8")).hexdigest()
+    bash_executable = shutil.which("bash") or "bash"
+    if os.name == "nt":
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        git_bash = Path(program_files) / "Git" / "bin" / "bash.exe"
+        if git_bash.is_file():
+            bash_executable = str(git_bash)
+
+    def run_binding(inventory_connection: str) -> subprocess.CompletedProcess[str]:
+        environment = {
+            name: os.environ[name]
+            for name in ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")
+            if name in os.environ
+        }
+        environment.update({
+            "SSH_HOST": "production.example",
+            "SSH_PORT": "22",
+            "SSH_USER": "ubuntu",
+            "INVENTORY_CONNECTION": inventory_connection,
+        })
+        for name in ("PREFLIGHT_HOST", "PREFLIGHT_PORT", "PREFLIGHT_USER"):
+            environment.pop(name, None)
+        return subprocess.run(
+            [bash_executable, "-e", "-u", "-o", "pipefail", "-c", binding_script],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    matching_binding = run_binding(expected_binding)
+    require(matching_binding.returncode == 0, "wrapper_install_rejected_matching_preflight_binding")
+    mismatched_binding = run_binding("0" * 64)
+    require(mismatched_binding.returncode != 0, "wrapper_install_accepted_mismatched_preflight_binding")
     require("flock -n \"$release_lock\"" in INSTALL_WRAPPER
             and "application_and_shared_containers_unchanged=true" in INSTALL_WRAPPER,
             "wrapper_bootstrap_does_not_preserve_shared_host_state")

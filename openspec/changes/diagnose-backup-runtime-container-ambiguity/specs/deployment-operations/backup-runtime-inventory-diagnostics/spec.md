@@ -65,3 +65,17 @@ O instalador do forced command protegido SHALL validar o contrato agregado read-
 - **THEN** a verificação da instalação pode concluir sem usar contagens como fingerprint ou precondição do runtime
 - **AND** falha de comando, formato ou preservação dos containers restaura o forced command anterior
 - **AND** o inventário normal continua recusando a identidade ambígua
+
+### Requirement: Destino da instalação vinculado ao preflight atual
+
+O job de escrita SHALL comparar o binding de sua conexão SSH de produção com o `connection_binding` emitido pelo job protegido de preflight da mesma execução, sem depender de variáveis escopadas a outro ambiente.
+
+#### Scenario: Destino de escrita corresponde ao preflight
+- **WHEN** a fingerprint solicitada corresponde à fingerprint recém-coletada e o binding da conexão de produção corresponde ao binding do preflight
+- **THEN** o job pode continuar para os gates de instalação protegida
+- **AND** a igualdade da conexão continua obrigatória antes de qualquer comando SSH de escrita
+
+#### Scenario: Destino de escrita diverge do preflight
+- **WHEN** o binding da conexão de produção não corresponde ao `connection_binding` do preflight
+- **THEN** o job falha antes de abrir a conexão SSH de escrita
+- **AND** nenhuma alteração no host é realizada
