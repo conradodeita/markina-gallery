@@ -101,17 +101,13 @@ jobs:
           SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
           SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
           SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
-          PREFLIGHT_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
-          PREFLIGHT_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
-          PREFLIGHT_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
         shell: bash
         run: |
           set -Eeuo pipefail
           python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"
           [[ "$REQUESTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT" ]]
-          preflight_binding="$(printf '%s' "$PREFLIGHT_HOST|$PREFLIGHT_PORT|$PREFLIGHT_USER" | sha256sum | awk '{print $1}')"
           production_binding="$(printf '%s' "$SSH_HOST|$SSH_PORT|$SSH_USER" | sha256sum | awk '{print $1}')"
-          [[ "$preflight_binding" == "$INVENTORY_CONNECTION" && "$production_binding" == "$INVENTORY_CONNECTION" ]]
+          [[ "$production_binding" == "$INVENTORY_CONNECTION" ]]
       - name: Atualizar somente o forced command após aprovação protegida
         shell: bash
         env:

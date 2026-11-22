@@ -31,6 +31,8 @@ Ver proposal.md — Why. O runtime já possui inventário normal que falha fecha
 
 6. **Sem alteração de runtime da aplicação ou dados.** A mudança fica no artefato do suporte operacional e sua CI; não requer migration, alteração de Compose, API/web, Drive ou configuração. Reversão consiste em retirar a referência operacional do diagnóstico pelo mecanismo protegido e manter a versão anterior do wrapper disponível.
 
+7. **Binding de destino usa a saída do preflight atual.** O job `install-wrapper`, no ambiente `production`, calcula o binding de sua própria conexão SSH a partir de `PRODUCTION_SSH_HOST/PORT/USER` e compara esse hash diretamente com `needs.preflight.outputs.connection_binding`. Não tenta reler `PRODUCTION_PREFLIGHT_*` no ambiente `production`, pois variáveis escopadas ao ambiente `production-preflight` não ficam disponíveis ao job de escrita. A igualdade continua sendo obrigatória antes de qualquer SSH de escrita; fingerprint e CI exata permanecem validadas separadamente.
+
 ## Risks / Trade-offs
 
 - [Contagens podem variar enquanto o daemon muda] → O resultado é diagnóstico pontual, não aprovação; qualquer operação posterior repete o inventário e exige fingerprint atual.
