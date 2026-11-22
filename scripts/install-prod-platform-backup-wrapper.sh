@@ -159,18 +159,23 @@ try:
         raise ValueError
     report = json.loads(line[len(prefix):])
     if (type(report) is not dict or set(report) != {"schema_version", "roles"}
-            or type(report.get("schema_version")) is not int or report["schema_version"] != 1):
+            or type(report.get("schema_version")) is not int or report["schema_version"] != 2):
         raise ValueError
     roles = report["roles"]
     if type(roles) is not dict or set(roles) != {"api", "web", "db"}:
         raise ValueError
-    fields = {"records", "running", "stopped", "unknown"}
+    fields = {
+        "label_records", "compose_records", "matched_records",
+        "label_only_records", "compose_only_records", "running", "stopped", "unknown",
+    }
     for role in roles.values():
         if type(role) is not dict or set(role) != fields:
             raise ValueError
-        if any(type(value) is not int or value < 0 for value in role.values()):
+        if any(type(value) is not int or not 0 <= value <= 512 for value in role.values()):
             raise ValueError
-        if role["records"] > 512 or role["records"] != role["running"] + role["stopped"] + role["unknown"]:
+        if (role["label_records"] != role["matched_records"] + role["label_only_records"]
+                or role["compose_records"] != role["matched_records"] + role["compose_only_records"]
+                or role["label_records"] != role["running"] + role["stopped"] + role["unknown"]):
             raise ValueError
 except (TypeError, ValueError):
     raise SystemExit(1)
