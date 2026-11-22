@@ -1,5 +1,187 @@
 # Estado da execução
 
+## Roadmap operacional até Tenant Release Ready — revisto em 22/11/2026
+
+> Este é o índice operacional único do release SaaS. As specs e cada Change OpenSpec continuam sendo a fonte do comportamento e das evidências técnicas. Atualize este bloco quando um checkpoint mudar; os registros datados abaixo e a matriz R14 continuam como histórico, não como estado corrente. Não há percentual geral de prontidão.
+
+### Baseline verificado
+
+- **Linha integrada:** origin/main = a5d48f376d40c45d9bddc572c0d76b44cb47d8b6. A PR [#410](https://github.com/conradodeita/markina-gallery/pull/410) foi integrada por merge commit e sua branch foi preservada.
+- **CI dessa main:** run [45054469658](https://github.com/conradodeita/markina-gallery/actions/runs/45054469658) passou no mesmo SHA em nova tentativa. A primeira tentativa teve uma falha isolada de Vitest que não se repetiu; a causa da primeira ocorrência não foi determinada. Nenhum código mudou entre as tentativas.
+- **Produção:** a última evidência documentada é o release de 16/11 no commit 9df3b7354c2bd9d5247248b86b25ce79d8256f9e, schema 20261113_0126, operação restrita ao fotógrafo proprietário. O runtime não foi revalidado em 22/11 e a main a5d48f3, inclusive a #410, não foi publicada. Não inferir o estado operacional atual a partir desses snapshots.
+- **Ambientes:** a decisão de 18/11 eliminou homologação. Testes usam ambiente local e CI com dados sintéticos; qualquer validação remota usa produção e requer os gates próprios. Tasks antigas que ainda mandem executar homologação precisam ser reconciliadas antes de serem usadas.
+- **Matriz R14:** requirements.json foi gerado em 09/11 e contém status antigos. A ordem R14 continua sendo a prioridade, mas seus status e contagens não medem o estado atual. O relatório do release e a checklist pós-deploy são evidência histórica útil, não uma confirmação de produção em 22/11.
+
+### Estados usados neste roadmap
+
+- **Concluído:** critério verificável satisfeito no ambiente indicado; não implica publicação se a evidência for apenas local/CI.
+- **Integrado:** código está na main; aceite operacional, visual ou humano ainda pode faltar.
+- **Parcial:** parte do fluxo foi implementada e validada, mas falta um critério descrito abaixo.
+- **Aguardando proprietário:** decisão, revisão ou autorização humana específica é necessária.
+- **Bloqueado por operação:** depende de configuração, credencial, identidade externa ou ação protegida em produção.
+- **Pendente:** ainda não há evidência suficiente de implementação e validação.
+
+A ordem de execução continua a sequência R14 do projeto — F0 ambiente; F1 TOTP/isolamento; F2 carteira/upload; F3 compra de créditos; F4 painéis; F5 Drive/backup/arquivo; F6 fidelidade; F7 cadastro; F8 integração/piloto. As fases A–I abaixo organizam os gates de release solicitados sem alterar essa prioridade.
+
+**Estado resumido das fases:** A tem baseline integrado, mas falta paridade operacional; B–D têm componentes integrados e validações parciais, sem prova fim a fim multi-tenant; E depende de decisões/ensaios de Workspace e produção; F–G têm canais e infraestrutura do proprietário parcialmente operacionais, ainda sem prova para tenants; H aguarda integração sintética e aceite do piloto; I **não está pronta**. Nenhuma fase é declarada concluída para liberação de tenants apenas por CI ou por tarefas marcadas no OpenSpec.
+
+### Fase A — Reconciliação e estabilidade da plataforma
+
+| Checkpoint | Estado e evidência | Próxima ação e critério de saída | Responsável e gate |
+|---|---|---|---|
+| A1. Baseline integrado e CI | **Concluído para a main a5d48f3.** PR #410 integrada; CI da PR e CI da main passaram. A falha inicial isolada de frontend não foi reproduzida. | Repetir validação apenas se o SHA mudar ou uma falha for reproduzida; exigir CI verde no SHA candidato ao próximo release. | Coordenador; sem ação humana agora. |
+| A2. Paridade main–produção | **Parcial.** Último release documentado em 16/11; main atual não está publicada e o ambiente não foi reconsultado neste checkpoint. | Fazer inventário read-only de versão, schema, serviços, portas, health, backups e rollback; comparar ao candidato. Só depois apresentar preflight e plano de impacto zero antes de qualquer escrita. | Coordenador + A; operação de produção exige autorização específica do proprietário. |
+| A3. Coerência OpenSpec e ambiente | **Parcial.** Existem Changes ativas na main; algumas tasks ainda mencionam homologação, eliminada em 18/11. | Reconciliar instruções antigas para local/CI/produção antes de executar cada task. Aceitar conclusão apenas com evidência do ambiente aplicável. | Coordenador e executor de cada Change; sem publicação implícita. |
+
+### Fase B — Funcionalidades essenciais do SaaS
+
+| Checkpoint | Estado e evidência | Próxima ação e critério de saída | Responsável e gate |
+|---|---|---|---|
+| B1. Carteira, créditos e upload | **Integrado e com validações locais registradas.** Changes da carteira e compra de créditos estão na main; isso não comprova ativação comercial nem a jornada de dois tenants. | Validar saldo/ledger, idempotência, consumo por foto, retry e isolamento com dois tenants sintéticos pela interface. Definir pacotes, preços, quantidade e regras antes de habilitar compra real. | Coordenador; preços e ativação exigem decisão do proprietário. |
+| B2. Galerias, seleção, prévias e mídia privada | **Integrado; aceite de release parcial.** Fluxos e correções estão em Changes ativas como complete-private-gallery-operations-and-sales, remediate-gallery-workflow-and-payment-experience e mudanças de acesso/coleção. | Confirmar OTP, convite, autorização por pasta, seleção, preview protegido sem EXIF, upload/processamento e recusa cruzada entre tenants. Fechar a validação pós-release da task 9.4 somente depois de release autorizado. | Executor da Change/Coordenador; dados sintéticos; nenhuma imagem de cliente como fixture. |
+| B3. Carrinho, pedidos, pagamento e entrega | **Fluxo do proprietário documentado em produção em 16/11; evolução tenant segue parcial.** PIX e Mercado Pago de vendas de fotos são distintos da compra de créditos pela plataforma. | Testar snapshots, confirmação manual/Orders, webhook, estorno/chargeback, entrega Google Photos manual e histórico por tenant. Não executar cobrança real; separar sandbox e teste sintético. | Coordenador + executor do checkout; ativação real exige configuração e autorização do proprietário. |
+| B4. Painel global e operação do fotógrafo | **Parcial.** add-platform-owner-console tem fontes runtime de backup/arquivo/restauração pendentes; loyalty está explicitamente adiada. | Fechar fontes duráveis e autenticadas antes de exibir saúde; validar suspensão, onboarding, saldo, uploads, falhas e auditoria por tenant. Não preencher valores de fidelidade por inferência. | Executor da Change; integração do console depende das provas operacionais da fase E. |
+
+### Fase C — Experiência e funcionamento do produto
+
+| Checkpoint | Estado e evidência | Próxima ação e critério de saída | Responsável e gate |
+|---|---|---|---|
+| C1. Consistência mobile/desktop | **Parcial.** Existem Changes integradas para galerias, carrinho, apresentação e painel; a main CI aprovada comprova testes automatizados, não revisão visual autenticada atual. | Reconciliar tasks que dizem homologação; validar localmente com dados sintéticos e, quando exigido, fazer a revisão autorizada em produção. Conferir cliente e fotógrafo em tamanhos móveis e desktop, sem overflow e com escopo correto. | Executor da Change; aceite visual humano quando o critério o exigir. |
+| C2. Acessibilidade e navegação do checkout | **Parcial.** unified-client-cart-and-pix registra navegação e foco automatizados; leitura por leitor de tela real e aceite humano ainda constam como pendentes. | Completar apenas a verificação que falta, registrar evidência e reconciliar as tasks 5.4/5.5 com a decisão de não manter homologação. | Executor da Change + proprietário para aceite autenticado; não repetir auditorias já concluídas. |
+
+### Fase D — Segurança, privacidade e isolamento multi-tenant
+
+| Checkpoint | Estado e evidência | Próxima ação e critério de saída | Responsável e gate |
+|---|---|---|---|
+| D1. Autenticação e sessão | **Integrado; aceite final pendente.** TOTP, sessões e fluxos de cliente têm código/testes na main; protect-admin-totp-secrets ainda aguarda revisão humana para sincronização/arquivo. | Validar senha/TOTP, recuperação, revogação, OTP/rate limit, respostas neutras e roteamento decidido pelo backend. Exigir revisão humana da Change antes de sync/archive. | Executor da Change; revisão humana do proprietário. |
+| D2. Isolamento entre fotógrafos | **Parcial.** Há fundações, constraints e testes selecionados; operar com o tenant proprietário não prova isolamento completo. | Demonstrar dois tenants isolados em UI, API, dados, mídia, workers, cache, jobs, billing, OAuth e auditoria; testar acessos A→B recusados e controles positivos A→A/B→B. Critério R14-014. | Executor da fundação/piloto + Coordenador; só testes sintéticos até gate de produção. |
+| D3. Privacidade, retenção e exclusão | **Parcial.** Decisions e a checklist pós-deploy mantêm prazos de biometria, logs, mídia e solicitações de titulares em aberto; o perfil operacional e histórico financeiro seguem decisões temporárias explícitas. | Fechar as decisões necessárias por finalidade e dado, implementar/validar exclusão auditada e publicar Termos versionados. A revisão jurídica futura foi adiada pelo proprietário e não é bloqueio automático do primeiro release. | Coordenador centraliza as decisões; qualquer operação com dados reais exige autorização própria. |
+| D4. Busca facial | **Capacidade separada e condicional.** O release de 16/11 registra o recurso ativo para o proprietário; isso não libera acesso para outro tenant. | Para cada tenant, manter escopo, consentimento, criptografia, retenção, revogação e auditoria. Pode ficar desativada para novos tenants sem bloquear o release básico; só anunciar se a validação e autorização específica forem atendidas. | Executor da Change facial + proprietário para qualquer ativação/configuração operacional. |
+
+### Fase E — Armazenamento, backup e recuperação
+
+| Checkpoint | Estado e evidência | Próxima ação e critério de saída | Responsável e gate |
+|---|---|---|---|
+| E1. Workspace, OAuth e destinos | **Bloqueado por validação operacional.** add-google-drive-storage-foundation ainda exige confirmar tipo de Drive, quota, permissões herdadas, identidade dedicada, destino/caller definitivos e custódia. Evidência sintética não comprova acesso real. | Atualizar inventário sem expor tokens; manter identidade/raiz de backup distintas da identidade/raiz de mídia. Confirmar que o Drive não é origem de previews. | A no backup; B na mídia; proprietário para acesso/configuração externa. |
+| E2. Backup global | **Parcial.** #410 foi integrada e corrigiu a resolução da API/web no inventário. O inventário anterior falhou sem fingerprint, então estado de runtime/destino permanece desconhecido. A proposta de restore-wrapper está na PR draft #411, SHA da cabeça da PR da data deste roadmap: da2d9234afb72dd8ac3357a97ce8293a31a69852; CI 45057616904 passou. | Revisão humana da proposta #411 → implementação local e CI → preflight atualizado → autorização própria de instalação → apenas inventory → autorização separada para primeira cópia/restore → só então ativar timer diário, retenção 7/4/3 e restore mensal. A aprovação da proposta não autoriza merge nem operação. | A; revisão do proprietário para proposta; autorização operacional separada para cada mutação em produção. |
+| E3. Arquivo frio e recuperação de mídia | **Código em PR draft; ensaio real pendente.** PR #400 está na cabeça 1a7743f67bfb50e80089d0bbd4a40b725c3f815f, CI antiga verde; branch está 2 commits à frente/30 atrás de main, sem conflito reportado, e não compartilha caminhos com #410. B confirmou que seu diff compartilha o contrato de google_drive_storage.py e depende de compatibilidade com WorkspaceDriveBackupStore após integração. | Revalidar CI no novo SHA depois de qualquer sync autorizado. Para task 1.4, exigir release autorizado, identidade e raiz Workspace dedicadas, quota/permissões/limites e ensaio sintético do proprietário com upload, readback, manifest/checksums e restore íntegros. | B; tarefa 1.4 pós-release/pré-tenants; produção/Drive exigem autorização explícita. |
+| E4. Recuperação seletiva por tenant | **Adiada por decisão existente.** A decisão D16 aprovou backup inicial global e deixou mídia/restore lógico por tenant para etapa própria. | Não oferecer restore por tenant até existir implementação e prova de isolamento. Para o primeiro release, exigir backup global restaurável e procedimento de incidente compatível; tornar restore seletivo um gate apenas se essa capacidade for prometida comercialmente. | Coordenador; não criar escopo novo sem OpenSpec/decisão. |
+
+### Fase F — Comunicação, notificações e serviços externos
+
+| Checkpoint | Estado e evidência | Próxima ação e critério de saída | Responsável e gate |
+|---|---|---|---|
+| F1. E-mail, OTP e WhatsApp por tenant | **Proprietário ativo; novos tenants pendentes.** O release de 16/11 registrou WhatsApp do proprietário pronto. Isso não valida número, credencial, webhook ou isolamento do canal de cada fotógrafo. | Configurar e testar e-mail/OTP e binding WhatsApp de cada tenant com destinatário sintético controlado, falha segura, retry e revogação. Não enviar mensagem a cliente real no piloto. | Executor de onboarding/comunicação; proprietário centraliza acesso e autorizações. |
+| F2. Push e notificações | **Parcial e opcional para o primeiro release quando WhatsApp/e-mail cobrem os eventos obrigatórios.** As tasks de segredo/transporte e teste Android/iPhone aguardam configuração e dispositivos humanos. | Manter canais desligados por padrão; habilitar somente depois de autorização, teste de recebimento/clique autenticado e prova de ausência de replay. Não bloquear tenants por um canal opcional que não será oferecido. | Executor de notificações; proprietário para segredos, dispositivos e ativação. |
+| F3. Cobranças da plataforma e venda do fotógrafo | **Bases distintas integradas; ativação comercial pendente.** O PIX do fotógrafo para seus clientes não se confunde com o Mercado Pago usado para vender pacotes de créditos. | Definir pacotes/preços/condições, validar conta recebedora e webhook do fluxo de créditos, estorno/revisão manual e PIX do tenant. Só então habilitar produto e cobranças reais. | Proprietário decide política e preços; executor valida contrato sintético/sandbox. |
+
+### Fase G — Infraestrutura e operação
+
+| Checkpoint | Estado e evidência | Próxima ação e critério de saída | Responsável e gate |
+|---|---|---|---|
+| G1. CI e release | **CI da main a5d48f3 verde; release desse SHA não autorizado nem executado.** Existem workflows protegidos e testes em CI sintética. | Cada candidato precisa de CI verde no SHA exato, revisão do diff e inventário de impacto zero antes de uma publicação autorizada. | Coordenador + responsável pela Change. |
+| G2. Domínio, wildcard e HTTPS de tenant | **Parcial e não revalidado neste checkpoint.** A change enable-tenant-subdomain-ingress ainda tem tarefas de certificado/rota wildcard e prova de hostname isolado. DNS wildcard registrado em novembro não prova rota, TLS, renovação ou recusa de host desconhecido. | Reconsultar DNS/TLS/rota, provar hostname sintético e preservação de raiz/markina, com rollback. Não escrever no proxy/DNS/certificados sem inventário e autorização. | Executor da Change; aprovação operacional do proprietário. |
+| G3. Monitoramento, capacidade e falhas | **Parcial.** Healthchecks e métricas existentes são evidência do release de 16/11; fontes duráveis de backup/arquivo no console, quota externa e carga representativa continuam pendentes. | Exibir ausência de fonte como desconhecida; definir alertas e limites; provar retry, fila, armazenamento e recuperação com cargas sintéticas representativas. | Coordenador + executores de storage/console. |
+| G4. Segredos, migrations e rollback | **Parcial.** Deploy/migration anteriores têm evidência no registro de release; a operação restore-wrapper está proposta, ainda sem código aprovado. | Manter secrets fora do Git, migration aditiva, backup antes do corte, versão compatível e rollback testável. Não alterar .env, workers, proxy ou dados sem autorização própria. | A prepara mudança local depois da revisão; proprietário autoriza operação. |
+
+### Fase H — Validação pré-lançamento
+
+| Checkpoint | Estado e evidência | Próxima ação e critério de saída | Responsável e gate |
+|---|---|---|---|
+| H1. Suítes sintéticas e integração | **Parcialmente comprovado.** CI de a5d48f3 passou; validações locais/OpenSpec das Changes trazem evidência por escopo, mas nenhuma contagem isolada representa a jornada completa. | Executar gates focados e checkpoint integrado no candidato final: backend, frontend, contratos PostgreSQL aplicáveis, OpenSpec estrito, build e política de segredos; corrigir falhas da mudança e repetir o escopo afetado. | Executor de cada Change + Coordenador. |
+| H2. Jornada com dois ou mais tenants | **Pendente — bloqueador do release.** Ainda não existe evidência integrada suficiente de tenants independentes consumindo créditos e fazendo upload pela interface (R14-014). | Em local/CI sintética, criar A e B, comprar/receber saldo conforme fixture, subir fotos, navegar e provar autorização positiva e negativa em todos os domínios; preservar ledger, arquivos e jobs. | Executor do piloto; sem credenciais ou dados reais. |
+| H3. Piloto pré-tenants do proprietário | **Pendente — produção protegida.** A task 8.3 do piloto pede o proprietário primeiro e signup fechado. | Depois do release autorizado: validar Workspace, backup/readback/restore e arquivo/readback/recuperação sintéticos; avaliar falhas e monitor; manter clientes e serviços existentes intactos. | A + B em sequência, sob autorização específica; sem mídia de cliente. |
+| H4. Aceite humano | **Pendente.** Revisão autenticada visual e aceite do fluxo real não são substituídos por CI ou screenshots sem sessão válida. | Apresentar ao proprietário a evidência resumida e obter revisão dos fluxos exigidos antes de sincronizar/arquivar Changes e antes de liberar signup. | Coordenador é o único ponto de contato; proprietário dá os aceites. |
+
+### Fase I — Gate Tenant Release Ready
+
+**Não pronto para abrir o onboarding público.** O release é concluído somente depois dos critérios obrigatórios abaixo estarem comprovados no ambiente correto e o proprietário aprovar a abertura. Deploy de código, por si só, não abre cadastro.
+
+#### Obrigatórios antes de aceitar o primeiro tenant externo
+
+- [ ] Candidato final identificado por SHA, integrado na main, CI verde e diff revisado; plano de impacto zero, rollback e compatibilidade de migrations documentados. (G1, G4, H1)
+- [ ] Dois ou mais tenants sintéticos operam pela interface com isolamento de identidade, clientes, dados, galeria, mídia, jobs, faturamento e notificações; uploads consomem o crédito correto e tentativas cruzadas são negadas. (B1, D2, H2)
+- [ ] Login, sessão, OTP, TOTP/MFA, recuperação, auditoria, propriedade e ações administrativas foram validados conforme as Changes e sem segredos em Git/frontend/logs. (D1, D2, H1)
+- [ ] Onboarding, host/subdomínio, DNS/TLS, e-mail, Termos versionados e canal WhatsApp estão configurados/testados para tenant sintético; cadastro continua fechado até a decisão final. (D3, F1, G2)
+- [ ] Galeria, importação/upload JPEG, processamento, prévias protegidas, seleção, carrinho, pedido, pagamento configurado, entrega manual e histórico passam pela jornada sintética. (B2, B3, F3, H2)
+- [ ] Backup global cifrado com cópia, leitura de retorno e restauração isolada está comprovado; mídia sintética do proprietário foi arquivada e restaurada com manifesto/checksums antes de liberar qualquer tenant. Backup recorrente/retenção devem seguir a decisão D15 e seus ensaios. (E1–E3, H3)
+- [ ] Monitoramento, filas, capacidade, falhas, incidentes e runbooks mostram estado atual; health não usa snapshots antigos como saúde atual. (B4, G3, G4)
+- [ ] O proprietário aprovou as provas do piloto pré-tenants e autorizou separadamente release e abertura do signup. (H3, H4)
+
+#### Obrigatórios antes da abertura comercial
+
+- [ ] Pacotes de crédito, preços, quantidade, moeda, termos e condição de ativação foram definidos pelo proprietário; conta recebedora, webhook, chargeback e revisão manual foram validados em sandbox/sintético. (B1, F3)
+- [ ] PIX e canal de comunicação de cada fotógrafo estão configurados; mensagens externas só são ativadas após autorização e prova de ausência de replay. (F1–F3)
+- [ ] Primeira versão dos Termos, retenção e solicitações de titulares está configurada e aceita por versão; não inventar prazo ou regra comercial. (D3)
+- [ ] Processo de suporte, falha de pagamento, pausa de tenant, recuperação, cópia restaurável e rollback está documentado e operável. (B4, E2–E4, G3–G4)
+
+#### Evoluções posteriores ou condicionais
+
+- **Fidelidade:** adiada pelo proprietário; fora do bloqueio do primeiro release até existir política aprovada.
+- **Restore seletivo por tenant:** etapa própria conforme D16; não anunciar essa capacidade antes de implementação/prova.
+- **Push:** pode ficar desativado se o canal obrigatório por tenant estiver comprovado por outro meio aprovado.
+- **Busca facial para novos tenants:** condicional; não bloqueia o release básico se permanecer desativada e não for vendida como capacidade.
+- **Benchmark de escala, métricas comerciais avançadas e evolução de benefícios:** avançar após medições sintéticas representativas e decisões próprias.
+- **Revisão jurídica futura da minuta:** decisão anterior mantém essa revisão fora do gate do primeiro release; não declarar que ela aconteceu.
+
+#### Não aplicável ou proibido no primeiro release
+
+Não criar ambiente operacional de homologação; não habilitar InfinitePay para novas compras; não expor grade anônima de evento coletivo; não servir previews do Google Drive; não automatizar criação/compartilhamento de álbuns Google Photos; não armazenar RAWs. Qualquer processamento transitório permitido precisa permanecer exatamente dentro de Change OpenSpec autorizada e seu lifecycle.
+
+### Rastreabilidade: fontes e validação exigida por checkpoint
+
+Os links abaixo apontam às Changes e registros que sustentam o checkpoint. A validação na última coluna é critério de saída, não declaração de que já foi executada; evidência existente e ambiente estão descritos na tabela da fase correspondente.
+
+| ID | Fonte de verdade / dependência | Provas e testes exigidos para saída |
+|---|---|---|
+| A1 | [PR #410](https://github.com/conradodeita/markina-gallery/pull/410) e CI nos SHAs integrados. | CI concluída no SHA candidato; documentar falhas transitórias e repetir somente os gates afetados, sem mascarar a causa desconhecida da primeira tentativa. |
+| A2 | [Preflight do backup](../../openspec/changes/enable-platform-backup-runtime/release-preflight.md) e [registro do release de 16/11](production-release-2026-11-16.md). Depende de autorização para qualquer escrita. | Inventário read-only atual de SHA, schema, serviços, portas, health, backup e rollback; comparar com o candidato e registrar plano de impacto zero antes de pedir autorização operacional. |
+| A3 | [Configuração OpenSpec](../../openspec/config.yaml) e `tasks.md` de cada Change ativa. | `openspec validate --strict`; localizar instruções antigas de homologação e reconciliar ambiente/evidência na Change antes de executar as tasks correspondentes. |
+| B1 | [Carteira](../../openspec/changes/add-photographer-credit-wallet/tasks.md) e [compra de créditos](../../openspec/changes/add-mercadopago-credit-purchases/tasks.md). | Testar ledger e idempotência, crédito/consumo por upload, retry e autorização cruzada com fixtures de dois tenants; cobrança real depende de pacote/preço e conta aprovados. |
+| B2 | [Operações de galeria privada](../../openspec/changes/complete-private-gallery-operations-and-sales/tasks.md), [fluxo e pagamento](../../openspec/changes/remediate-gallery-workflow-and-payment-experience/tasks.md) e [galerias derivadas](../../openspec/changes/add-derived-client-galleries/tasks.md). | Testar OTP/convite, escopo de pasta, seleção, upload/processamento, preview protegido sem EXIF e negação de acesso cruzado; usar somente mídia sintética. |
+| B3 | [PIX manual](../../openspec/changes/add-manual-pix-checkout/tasks.md), [Mercado Pago Orders](../../openspec/changes/add-mercadopago-orders-checkout/tasks.md) e [entrega Google Photos](../../openspec/changes/add-order-google-photos-delivery/tasks.md). | Exercitar snapshots do pedido, confirmação/webhook idempotente, estorno e histórico por tenant em ambiente sintético/sandbox; entrega permanece manual e sem criação automatizada de álbum. |
+| B4 | [Console do proprietário](../../openspec/changes/add-platform-owner-console/tasks.md); [fidelidade](../../openspec/changes/add-owner-configurable-loyalty/tasks.md) está adiada. Depende das fontes duráveis da fase E. | Testar autorização administrativa, ações por tenant e estado indisponível/desconhecido quando não houver fonte; não inventar estado nem ativar regras de fidelidade sem decisão. |
+| C1 | [Apresentação de galeria](../../openspec/changes/unify-gallery-presentation/tasks.md), [galeria mobile](../../openspec/changes/two-column-mobile-client-gallery/tasks.md) e [superfícies visuais](../../openspec/changes/add-visual-validation-surfaces/tasks.md). | Verificar fotógrafo e cliente em viewport móvel e desktop, navegação, overflow, mídia e escopo; revisão visual autenticada é aceite humano quando exigida pela Change. |
+| C2 | [Carrinho e PIX do cliente](../../openspec/changes/unified-client-cart-and-pix/tasks.md), tasks 4.6 e 5.4–5.5. | Repetir testes automatizados de foco/teclado após mudança; concluir leitura por leitor de tela e revisão autenticada somente no fluxo/ambiente autorizado, reconciliando a antiga menção a homologação. |
+| D1 | [Segredos TOTP](../../openspec/changes/protect-admin-totp-secrets/tasks.md), [recuperação de conta](../../openspec/changes/secure-photographer-account-recovery/tasks.md) e fluxos de OTP/sessão relevantes. | Testar login, MFA/TOTP, OTP/rate-limit, recuperação, revogação de sessão e respostas neutras; revisar armazenamento e logs sem expor segredos. Revisão humana antes de sync/archive quando a Change exigir. |
+| D2 | [Piloto multi-fotógrafo](../../openspec/changes/add-small-multi-photographer-pilot/tasks.md) e contratos de tenant das Changes de produto. | Testes positivos A→A/B→B e negativos A→B/B→A em UI/API, banco, mídia, fila/jobs, cache, billing e auditoria com tenants sintéticos; critério R14-014. |
+| D3 | [Exclusão auditada de mídia](../../openspec/changes/add-audited-tenant-media-deletion/tasks.md), [encerramento de conta](../../openspec/changes/add-photographer-account-closure/tasks.md) e Termos do [portal de cadastro](../../openspec/changes/add-photographer-signup-portal/tasks.md). | Testar exclusão e retenção por categoria, trilha auditável, encerramento e aceite da versão de Termos; prazo/regra sem decisão permanece bloqueado, não presumido. |
+| D4 | [Runtime facial](../../openspec/changes/restore-production-facial-runtime/tasks.md) e controles de privacidade aplicáveis. A autorização atual do proprietário não se estende a outro tenant. | Se ofertada, testar isolamento biométrico, autorização/consentimento, criptografia, retenção, revogação e exclusão por tenant; caso contrário, provar que segue desativada e não anunciada para novos tenants. |
+| E1 | [Fundação Google Drive](../../openspec/changes/add-google-drive-storage-foundation/tasks.md), [cópia Workspace](../../openspec/changes/add-google-workspace-backup-copy/tasks.md) e [arquivo de mídia](../../openspec/changes/add-gallery-media-archive/tasks.md). | Com autorização, verificar identidade, raiz, caller, quota, permissões e leitura/escrita de fixture sintética; demonstrar que as identidades/raízes de backup e mídia são distintas. Sem tokens em logs ou documentação. |
+| E2 | [Runtime de backup](../../openspec/changes/enable-platform-backup-runtime/tasks.md), [preflight](../../openspec/changes/enable-platform-backup-runtime/release-preflight.md) e [cópia Workspace](../../openspec/changes/add-google-workspace-backup-copy/tasks.md). | Testar inventário/fingerprint atual, SHA/recibo, preservação e rollback do wrapper local; operação protegida de instalação, cópia, restauração e timer exige autorização separada e prova de integridade. |
+| E3 | [Arquivo de mídia](../../openspec/changes/add-gallery-media-archive/tasks.md), task 1.4. | Após release autorizado, ensaiar upload/readback, manifesto e checksums, recuperação da galeria sintética e separação do backup global; sem mídia de cliente. |
+| E4 | [Decisão D16](decisions.md) e futuro OpenSpec próprio. Depende de implementação e de ser uma capacidade prometida. | Fora do critério básico enquanto não ofertada; antes de prometer, especificar e testar restauração seletiva sem cruzar tenants, incluindo auditoria e recuperação comprovada. |
+| F1 | [Portal do fotógrafo](../../openspec/changes/add-photographer-signup-portal/tasks.md), [provisionamento WhatsApp](../../openspec/changes/wire-photographer-whatsapp-autoprovision-ui/tasks.md) e [notificações](../../openspec/changes/configurable-push-and-whatsapp-notifications/tasks.md). | Validar e-mail/OTP e binding do canal com destinatário sintético, isolamento por tenant, falha/retry, revogação e ausência de duplicação; mensagens a clientes reais dependem de autorização. |
+| F2 | [Notificações configuráveis](../../openspec/changes/configurable-push-and-whatsapp-notifications/tasks.md). Push é opcional se os eventos obrigatórios forem cobertos por canal aprovado. | Testar falha/retry, replay, entrega e clique autenticado; teste em dispositivo real exige aparelho e aceite do proprietário. Manter desligado até aprovação. |
+| F3 | [Compra de créditos](../../openspec/changes/add-mercadopago-credit-purchases/tasks.md), [Orders](../../openspec/changes/add-mercadopago-orders-checkout/tasks.md) e [PIX](../../openspec/changes/add-manual-pix-checkout/tasks.md). | Sandbox/fixtures para webhook, deduplicação, estorno/chargeback e conta recebedora; provar separação entre compra de créditos da plataforma e venda de fotos do tenant. Pacotes e preços dependem do proprietário. |
+| G1 | [Ponte de release Compose](../../openspec/changes/add-root-only-compose-release-bridge/tasks.md), workflows de release e CI da main. | No candidato exato: OpenSpec estrito, testes/build aplicáveis, análise de segredos e compatibilidade de migrations; revisar diff e rollback antes de qualquer publicação autorizada. |
+| G2 | [Ingress de subdomínio](../../openspec/changes/enable-tenant-subdomain-ingress/tasks.md) e [custódia DNS wildcard](../../openspec/changes/secure-wildcard-dns-credential-custody/tasks.md). | Provar DNS/TLS/rota do hostname sintético, renovação e rejeição de host desconhecido; qualquer escrita em DNS/proxy/certificado requer inventário e autorização de produção. |
+| G3 | [Console](../../openspec/changes/add-platform-owner-console/tasks.md), [backup Workspace](../../openspec/changes/add-google-workspace-backup-copy/tasks.md) e [arquivo de mídia](../../openspec/changes/add-gallery-media-archive/tasks.md). | Testar fonte ausente/desatualizada como desconhecida, health/alerta, filas, retry, falha e limites de quota/capacidade com carga sintética; não projetar saúde a partir de snapshot antigo. |
+| G4 | [Ponte de release](../../openspec/changes/add-root-only-compose-release-bridge/tasks.md), [preflight](../../openspec/changes/enable-platform-backup-runtime/release-preflight.md) e proposta [PR #411](https://github.com/conradodeita/markina-gallery/pull/411). | Após aprovação da proposta, validar rollback local do wrapper e compatibilidade; conferir segredo/migration/diff. Não alterar `.env`, workers, proxy ou dados sem autorização operacional própria. |
+| H1 | Changes de B1–G4 e gate de release da [inscrição](../../openspec/changes/add-photographer-signup-portal/production-release-readiness.md). | Checkpoint integrado no SHA final: backend, frontend, contratos PostgreSQL aplicáveis, build, `openspec validate --strict`, política de segredos e testes sintéticos relevantes; repetir falhas afetadas. |
+| H2 | [Piloto multi-fotógrafo](../../openspec/changes/add-small-multi-photographer-pilot/tasks.md), requisito R14-014 e Changes de carteira/upload/tenant. | Jornada sintética A/B pela interface, saldo e consumo corretos, acesso próprio permitido, cruzado negado e jobs/arquivos preservados; sem credencial ou dado real. |
+| H3 | [Piloto](../../openspec/changes/add-small-multi-photographer-pilot/tasks.md), task 8.3, [backup](../../openspec/changes/enable-platform-backup-runtime/tasks.md) e [arquivo](../../openspec/changes/add-gallery-media-archive/tasks.md). | Somente depois do release e autorização específica: ensaio do proprietário com backup/readback/restore e arquivo/readback/recuperação sintéticos; registrar integridade, alertas, rollback e signup ainda fechado. |
+| H4 | [Piloto](../../openspec/changes/add-small-multi-photographer-pilot/tasks.md), task 8.4, e Changes que exigem review humana. | Proprietário revisa evidência do fluxo autenticado e visual, aprova cada Change que exige sync/archive e dá autorizações próprias de release e abertura; coordenador registra decisão e SHA. |
+
+Os itens da checklist de liberação abaixo referenciam estes IDs; não substituem as evidências e autorizações individuais.
+
+### Execução paralela e estado de A/B
+
+| Executor/frente | Estado agora | Próximo passo seguro | Dependência ou conflito |
+|---|---|---|---|
+| A — backup global | #410 integrada e CI da main verde. #411 segue OPEN/DRAFT no SHA da2d9234, CI verde, aguardando revisão da proposta restore-wrapper. Nenhuma ação em servidor. | Após revisão humana: implementar somente a operação local protegida, testar, manter proposta/tarefas coerentes e voltar para revisão. Depois, preparar inventário atualizado; instalação e primeira cópia são gates separados. | Não usar aprovação da #410 como autorização de #411, instalação, backup, restore ou timer. |
+| B — adapter de arquivo Drive | #400 segue OPEN/DRAFT no SHA 1a7743f67bfb50e80089d0bbd4a40b725c3f815f, CI verde no SHA antigo. Main está 30 commits à frente; GitHub reporta mergeável/BEHIND e sem conflito. A #400 e #410 não têm paths em comum, mas compartilham o contrato testado do WorkspaceDriveBackupStore. B não encontrou tarefa local no mesmo escopo. | Requer decisão para atualizar a branch por merge normal da main mantendo draft, ou para mudar temporariamente a frente de B. Sem uma dessas decisões, manter o código intacto e esperar a task operacional 1.4. | A task 1.4 exige release, identidade/raiz de mídia Workspace, quota/permissões e ensaio sintético em produção. B não tem autorização para Drive/produção nem para branch sync. |
+| Coordenador | Atualiza este roadmap e acompanha os gates de A/B; não toca em produção, segredos, Drive real ou worktrees reservadas. | Revalidar baseline a cada mudança de SHA e distribuir somente tarefas com Change vigente, sem conflito com trabalho local existente. | O checkout principal está sujo e preservado; a frente de deploy local nele não pode ser sobrescrita. |
+
+**Sem nova frente paralela atribuída nesta revisão:** as tarefas de console, pagamentos, onboarding e integração que restam têm decisão comercial, aceite visual ou operação protegida; o candidato local de dependências/release conflita com arquivos de workflow e scripts já alterados no checkout local. Nenhuma task foi inferida nem criada para manter executor ocupado.
+
+### Pendências humanas consolidadas
+
+1. Revisar a proposta da PR #411 no SHA informado; aprovar a proposta libera apenas implementação e CI local, não merge nem operação.
+2. Decidir se autoriza a atualização da branch da PR #400 com merge normal da main a5d48f3, mantendo-a draft; isso apenas deixa o código atualizado e revalida CI, sem merge para main ou acesso ao Drive.
+3. Definir preços/pacotes e regras comerciais antes de habilitar compra real de créditos.
+4. Em checkpoint posterior, aprovar cada preflight/operação de produção e a abertura do signup separadamente.
+
 ## Produção — release de 16/11/2026
 
 SaaS aplicado para a operação do proprietário no runtime9df3b735/schema0126. Treze serviços saudáveis, dados financeiros e fator TOTP preservados, facialtrue e18891 embeddings intactos. Mercado Pago/PIX ativos e WhatsApp reconectado/ready. Provas, rollback e limites no [registro do release](production-release-2026-11-16.md). Configurações pré-tenants permanecem no [checklist pós-deploy](post-deploy-configuration-checklist.md). A revisão visual autenticada pós-deploy permanece pendente pela conexão Browser. Os checkpoints abaixo mantêm seu contexto histórico.
