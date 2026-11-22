@@ -30,10 +30,29 @@ class InventoryTests(unittest.TestCase):
 
     def _runner(self, *, timer_enabled: str = "unknown", third_party_image: str = "8"):
         service_ids = {"api": "c" * 64, "web": "e" * 64, "db": "d" * 64}
+        service_projects = {
+            "api": "markina-gallery-app-" + "1" * 32,
+            "web": "markina-gallery-app-" + "2" * 32,
+            "db": "markina-gallery",
+        }
         service_by_id = {identifier: service for service, identifier in service_ids.items()}
         def run(argv):
+            if argv[0] == inventory.APP_COMPOSE_BRIDGE:
+                operation = argv[argv.index("--sha") + 2]
+                service = argv[-1]
+                if operation == "service-project":
+                    return self._result(list(argv), service_projects[service] + "\n")
+                if operation == "compose":
+                    return self._result(list(argv), service_ids[service] + "\n")
+                raise AssertionError(f"unexpected bridge operation: {operation}")
+            if argv[0] == "/usr/bin/stat":
+                return self._result(list(argv), "regular file|0|0|755|1\n")
             if argv[0] == "/usr/bin/git" and argv[1] == "-C" and list(argv[-2:]) == ["rev-parse", "HEAD"]:
                 return self._result(list(argv), "a" * 40 + "\n")
+            if argv[0] == "/usr/bin/git" and "rev-parse" in argv:
+                return self._result(list(argv), "f" * 40 + "\n")
+            if argv[0] == "/usr/bin/git" and "hash-object" in argv:
+                return self._result(list(argv), "f" * 40 + "\n")
             if "container" in argv and "ls" in argv:
                 if "--filter" in argv:
                     service_filter = next(value for value in argv if value.startswith("label=com.docker.compose.service="))
@@ -54,7 +73,8 @@ class InventoryTests(unittest.TestCase):
                 health = "none" if service == "db" else "healthy"
                 container_id = service_ids[service]
                 image_id = {"api": "a" * 64, "web": "b" * 64, "db": "f" * 64}[service]
-                value = f"{container_id}|sha256:{image_id}|running|true|2026-11-20T00:00:00Z|markina-gallery|{service}|{health}\n"
+                value = (f"{container_id}|sha256:{image_id}|running|true|2026-11-20T00:00:00Z|"
+                         f"{service_projects[service]}|{service}|{health}\n")
                 return self._result(list(argv), value)
             if " exec " in " ".join(argv):
                 return self._result(list(argv), "20261113_0126\n")
@@ -79,6 +99,27 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(len(result["fingerprint"]), 64)
         self.assertEqual(len(result["runtime_fingerprint"]), 64)
         self.assertTrue(inventory.install_preconditions(result["inventory"]))
+
+    def test_public_inventory_summary_omits_container_and_configuration_identities(self) -> None:
+        result = inventory.collect_inventory(self._runner(), root=self.root)
+        output = io.StringIO()
+        with (mock.patch.object(inventory, "collect_inventory", return_value=result),
+              contextlib.redirect_stdout(output)):
+            self.assertEqual(inventory.main("a" * 40), 0)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[0].startswith("backup_runtime_inventory_summary="))
+        self.assertEqual(lines[1], "backup_runtime_fingerprint=" + result["fingerprint"])
+        summary = json.loads(lines[0].split("=", 1)[1])
+        self.assertEqual(set(summary), {
+            "schema_version", "checkout_sha", "containers", "database_schema", "disk_var_lib", "units",
+        })
+        for service in inventory.CONTAINER_ROLES:
+            self.assertEqual(set(summary["containers"][service]), {"state", "running", "health"})
+        for container in result["inventory"]["containers"].values():
+            self.assertNotIn(container["id"], output.getvalue())
+            self.assertNotIn(container["image"], output.getvalue())
+            self.assertNotIn(container["started_at"], output.getvalue())
 
     def test_fingerprint_changes_when_machine_identity_changes(self) -> None:
         first = inventory.collect_inventory(self._runner(), root=self.root)["fingerprint"]
@@ -149,13 +190,15 @@ class InventoryTests(unittest.TestCase):
                         return self._result(list(argv), captured_output)
 
                     expected = f"{role}_{code_suffix}"
+                    active_identity = ({"project": "markina-gallery", "id": "a" * 64}
+                                       if role in inventory.APP_SERVICES else None)
                     with self.assertRaises(inventory.InventoryError) as raised:
-                        inventory._container(role, runner)
+                        inventory._container(role, runner, active_identity=active_identity)
                     self.assertEqual(str(raised.exception), expected)
                     self.assertIn(expected, inventory.SAFE_INVENTORY_ERROR_CODES)
                     self.assertNotIn("secret", str(raised.exception))
 
-    def test_container_selection_uses_only_fixed_project_and_service_labels(self) -> None:
+    def test_app_container_selection_uses_active_bridge_and_revalidates_project_label(self) -> None:
         base = self._runner()
         commands: list[list[str]] = []
 
@@ -163,18 +206,20 @@ class InventoryTests(unittest.TestCase):
             commands.append(list(argv))
             return base(argv)
 
-        result = inventory._container("api", recording_runner)
-        selection = next(command for command in commands if "ls" in command)
-        self.assertIn("label=com.docker.compose.project=markina-gallery", selection)
-        self.assertIn("label=com.docker.compose.service=api", selection)
-        self.assertNotIn("markina-gallery-api-1", selection)
+        identity = inventory._active_app_identity("api", "a" * 40, recording_runner)
+        result = inventory._container("api", recording_runner, active_identity=identity)
+        self.assertEqual([command[command.index("--sha") + 2] for command in commands[:2]],
+                         ["service-project", "compose"])
+        self.assertTrue(all(command[0] == inventory.APP_COMPOSE_BRIDGE for command in commands[:2]))
+        self.assertFalse(any("container" in command and "ls" in command for command in commands))
+        self.assertIn("markina-gallery-app-" + "1" * 32, identity["project"])
         self.assertEqual(result["id"], "c" * 64)
 
-    def test_container_selection_requires_exactly_one_matching_service(self) -> None:
+    def test_database_container_selection_requires_one_fixed_label_match(self) -> None:
         for output, expected in (
-            ("", "api_container_record_missing"),
-            (("a" * 64) + "\n" + ("b" * 64) + "\n", "api_container_record_ambiguous"),
-            ("not-a-container-id\n", "api_container_id_invalid"),
+            ("", "db_container_record_missing"),
+            (("a" * 64) + "\n" + ("b" * 64) + "\n", "db_container_record_ambiguous"),
+            ("not-a-container-id\n", "db_container_id_invalid"),
         ):
             with self.subTest(expected=expected):
                 def runner(argv, selected=output):
@@ -183,7 +228,7 @@ class InventoryTests(unittest.TestCase):
                     raise AssertionError("an invalid service selection must fail before inspect")
 
                 with self.assertRaises(inventory.InventoryError) as raised:
-                    inventory._container("api", runner)
+                    inventory._container("db", runner)
                 self.assertEqual(str(raised.exception), expected)
                 self.assertIn(expected, inventory.SAFE_INVENTORY_ERROR_CODES)
 
@@ -194,7 +239,7 @@ class InventoryTests(unittest.TestCase):
             raise AssertionError("failed service listing must stop before inspect")
 
         with self.assertRaises(inventory.InventoryError) as raised:
-            inventory._container("api", runner)
+            inventory._container("db", runner)
         self.assertEqual(str(raised.exception), "container_service_list_failed")
         self.assertIn(str(raised.exception), inventory.SAFE_INVENTORY_ERROR_CODES)
 
@@ -215,6 +260,8 @@ class InventoryTests(unittest.TestCase):
             "container_inspect_failed",
             "api_container_record_missing",
             "api_container_record_ambiguous",
+            "api_active_project_resolution_failed",
+            "web_active_container_id_invalid",
             "shared_container_list_empty",
             "api_container_project_label_mismatch",
         ):
@@ -247,6 +294,81 @@ class InventoryTests(unittest.TestCase):
                 self.assertNotIn("/etc", output.getvalue())
                 self.assertNotIn("secret", output.getvalue())
                 self.assertNotIn("private output", output.getvalue())
+
+    def test_active_app_bridge_rejects_missing_duplicate_invalid_and_untrusted_outputs(self) -> None:
+        cases = (
+            ("", 0, "api_active_project_invalid"),
+            ("markina-gallery-app-" + "1" * 32 + "\nextra\n", 0,
+             "api_active_project_invalid"),
+            ("private-project\n", 0, "api_active_project_invalid"),
+        )
+        for project_output, status, expected in cases:
+            with self.subTest(expected=expected, output=project_output[:12]):
+                def bad_project(argv, output=project_output, result_status=status):
+                    return self._result(list(argv), output, returncode=result_status)
+
+                with self.assertRaises(inventory.InventoryError) as raised:
+                    inventory._active_app_identity("api", "a" * 40, bad_project)
+                self.assertEqual(str(raised.exception), expected)
+                self.assertIn(expected, inventory.SAFE_INVENTORY_ERROR_CODES)
+                self.assertNotIn("private-project", str(raised.exception))
+
+        def failed_bridge(argv):
+            return self._result(list(argv), "private bridge output", returncode=1)
+
+        with self.assertRaisesRegex(inventory.InventoryError,
+                                    "api_active_project_resolution_failed"):
+            inventory._active_app_identity("api", "a" * 40, failed_bridge)
+
+        responses = iter([
+            "markina-gallery-app-" + "1" * 32 + "\n",
+            "a" * 64 + "\n" + "b" * 64 + "\n",
+        ])
+
+        def duplicate_id(argv):
+            return self._result(list(argv), next(responses))
+
+        with self.assertRaisesRegex(inventory.InventoryError,
+                                    "api_active_container_id_invalid"):
+            inventory._active_app_identity("api", "a" * 40, duplicate_id)
+
+    def test_inventory_rechecks_active_app_identity_before_returning_fingerprint(self) -> None:
+        base = self._runner()
+        api_id_calls = 0
+
+        def changing_api(argv):
+            nonlocal api_id_calls
+            result = base(argv)
+            if (argv[0] == inventory.APP_COMPOSE_BRIDGE
+                    and argv[argv.index("--sha") + 2] == "compose" and argv[-1] == "api"):
+                api_id_calls += 1
+                if api_id_calls == 2:
+                    return self._result(list(argv), "f" * 64 + "\n")
+            return result
+
+        with self.assertRaisesRegex(inventory.InventoryError, "inventory_changed_during_scan"):
+            inventory.collect_inventory(changing_api, root=self.root)
+
+    def test_inventory_requires_installed_bridge_blob_to_match_the_reviewed_sha(self) -> None:
+        def mismatched_bridge(argv):
+            if argv[0] == "/usr/bin/stat":
+                return self._result(list(argv), "regular file|0|0|755|1\n")
+            if argv[0] == "/usr/bin/git" and "rev-parse" in argv:
+                return self._result(list(argv), "f" * 40 + "\n")
+            if argv[0] == "/usr/bin/git" and "hash-object" in argv:
+                return self._result(list(argv), "e" * 40 + "\n")
+            raise AssertionError("bridge identity must be verified before resolving services")
+
+        with self.assertRaisesRegex(inventory.InventoryError,
+                                    "active_compose_bridge_identity_invalid"):
+            inventory._verify_app_compose_bridge("a" * 40, mismatched_bridge)
+
+        def unsafe_metadata(argv):
+            return self._result(list(argv), "symbolic link|0|0|755|1\n")
+
+        with self.assertRaisesRegex(inventory.InventoryError,
+                                    "active_compose_bridge_identity_invalid"):
+            inventory._verify_app_compose_bridge("a" * 40, unsafe_metadata)
 
     def test_container_diagnostics_aggregate_fixed_roles_and_states(self) -> None:
         label_ids_by_role = {
@@ -336,9 +458,6 @@ class InventoryTests(unittest.TestCase):
              for command in commands if "container" in command and "ls" in command},
             {"api", "web", "db"},
         )
-        with self.assertRaisesRegex(inventory.InventoryError, "api_container_record_ambiguous"):
-            inventory._container("api", runner)
-
         output = io.StringIO()
         with (mock.patch.object(inventory, "collect_container_diagnostics", return_value=result),
               contextlib.redirect_stdout(output)):

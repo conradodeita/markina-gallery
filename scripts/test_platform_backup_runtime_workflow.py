@@ -55,11 +55,14 @@ def main() -> int:
             "backup_diagnostic_not_protected_or_sha_bound")
     require("backup_runtime_container_diagnostics=" in diagnose_job
             and "umask 077" in diagnose_job
-            and "fingerprint" not in diagnose_job and "runtime-artifact" not in diagnose_job
+            and "runtime-artifact" not in diagnose_job
             and "operate" not in diagnose_job
             and "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$GITHUB_SHA" in diagnose_job
-            and "backup_runtime_normal_inventory=api_container_record_ambiguous" in diagnose_job
-            and "platform-backup-runtime: inventory failed (api_container_record_ambiguous)" in diagnose_job
+            and "backup_runtime_inventory_summary=" in diagnose_job
+            and "backup_runtime_normal_inventory=success" in diagnose_job
+            and "SAFE_INVENTORY_ERROR_CODES" in diagnose_job
+            and "backup_runtime_fingerprint=" in diagnose_job
+            and 'print("backup_runtime_fingerprint=' not in diagnose_job
             and ' </dev/null >"$normal_output" 2>"$normal_error"' in diagnose_job
             and 'tee "$normal_output"' not in diagnose_job
             and RUNTIME.count("inputs.operation != 'diagnose'") >= 3,
@@ -76,10 +79,10 @@ def main() -> int:
         output_file = Path(directory) / "ssh-output"
         error_parser, aggregate_parser, inventory_parser = workflow_parsers
 
-        def run_parser(source: str, content: str) -> subprocess.CompletedProcess[str]:
+        def run_parser(source: str, content: str, status: int = 0) -> subprocess.CompletedProcess[str]:
             output_file.write_text(content, encoding="utf-8")
             return subprocess.run(
-                [sys.executable, "-c", source, str(output_file)],
+                [sys.executable, "-c", source, str(output_file), str(status)],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
@@ -135,16 +138,60 @@ def main() -> int:
         require(invalid_aggregate.returncode != 0 and "private" not in invalid_aggregate.stdout,
                 "backup_diagnostic_workflow_leaked_or_accepted_invalid_aggregate")
 
+        active_id = "a" * 64
+        inventory_payload = {
+            "schema_version": 1,
+            "checkout_sha": "c" * 40,
+            "containers": {
+                role: {"state": "running", "running": True,
+                       "health": "healthy" if role != "db" else "none"}
+                for role in ("api", "web", "db")
+            },
+            "database_schema": "20261113_0126",
+            "disk_var_lib": {"available_kib": 50000, "use_percent": 50},
+            "units": {
+                "service": {"load": "not-found", "enabled": "unknown", "active": "inactive"},
+                "timer": {"load": "not-found", "enabled": "unknown", "active": "inactive"},
+            },
+        }
+        successful_inventory = run_parser(
+            inventory_parser,
+            "backup_runtime_inventory_summary=" + json.dumps(inventory_payload, sort_keys=True, separators=(",", ":"))
+            + "\nbackup_runtime_fingerprint=" + "f" * 64
+            + "\nbackup_runtime_install_preconditions=pass\n",
+        )
+        require(successful_inventory.returncode == 0
+                and successful_inventory.stdout ==
+                    "backup_runtime_normal_inventory=success\n"
+                    "backup_runtime_install_preconditions=pass\n"
+                and "f" * 64 not in successful_inventory.stdout,
+                "backup_diagnostic_workflow_exposed_success_inventory_fingerprint")
+        leaked_summary = json.loads(json.dumps(inventory_payload))
+        leaked_summary["containers"]["api"]["id"] = active_id
+        invalid_success = run_parser(
+            inventory_parser,
+            "backup_runtime_inventory_summary=" + json.dumps(leaked_summary, sort_keys=True, separators=(",", ":"))
+            + "\nbackup_runtime_fingerprint=" + "f" * 64
+            + "\nbackup_runtime_install_preconditions=pass\n",
+        )
+        require(invalid_success.returncode != 0
+                and invalid_success.stdout == "backup_runtime_normal_inventory=invalid_output\n"
+                and active_id not in invalid_success.stdout,
+                "backup_diagnostic_workflow_accepted_or_exposed_container_identity")
+
         expected_inventory = run_parser(
             inventory_parser,
-            "platform-backup-runtime: inventory failed (api_container_record_ambiguous)\n",
+            "platform-backup-runtime: inventory failed (api_active_project_resolution_failed)\n",
+            1,
         )
         require(expected_inventory.returncode == 0
-                and expected_inventory.stdout == "backup_runtime_normal_inventory=api_container_record_ambiguous\n",
-                "backup_diagnostic_workflow_did_not_confirm_expected_inventory_refusal")
+                and expected_inventory.stdout ==
+                    "backup_runtime_normal_inventory=failed (api_active_project_resolution_failed)\n",
+                "backup_diagnostic_workflow_did_not_allowlist_inventory_failure")
         unexpected_inventory = run_parser(
             inventory_parser,
             "platform-backup-runtime: inventory failed (host-secret-private-path)\n",
+            1,
         )
         require(unexpected_inventory.returncode != 0
                 and unexpected_inventory.stdout == "backup_runtime_normal_inventory=unexpected_failure\n"
@@ -199,12 +246,17 @@ def main() -> int:
         require(match.group(1) != "0" * 40 and match.group(1) == actual,
                 "runtime_blob_pin_diverged:" + variable)
     require("sudo -n /usr/bin/python3.10 -B -c \"$installer_bootstrap\"" in SSH_WRAPPER
+            and "--sha \"$backup_sha\" --bundle-sha256 \"$backup_digest\"" in SSH_WRAPPER
             and "approval-fingerprint \"$backup_fingerprint\"" in SSH_WRAPPER,
             "installer_does_not_receive_fixed_approval_context")
     require("production-release.lock" in SSH_WRAPPER or "production-release.lock" in INSTALL_WRAPPER,
             "common_release_lock_not_used")
     require("backup_runtime_inventory" in SSH_WRAPPER and "verify_installed_release" in SSH_WRAPPER,
             "runtime_receipt_not_revalidated_for_operations")
+    require('if operation == "inventory" and len(args) == 1:' in SSH_WRAPPER
+            and "module.main(args[0])" in SSH_WRAPPER
+            and SSH_WRAPPER.count('inventory "$backup_sha"') == 2,
+            "runtime_inventory_not_bound_to_exact_support_sha")
     for name in ("inventory_bootstrap", "installer_bootstrap"):
         match = re.search(rf"{name}=\"\$\(cat <<'PY'\n(.*?)\nPY\n\)\"", SSH_WRAPPER, re.DOTALL)
         require(match is not None, "python_bootstrap_missing:" + name)
