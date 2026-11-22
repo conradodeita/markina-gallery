@@ -16,33 +16,92 @@ PROJECT_ROOT = Path("/opt/markina-gallery")
 INSTALL_ROOT = Path("/opt/pyp-backup-runtime")
 CONFIG_ROOT = Path("/etc/pyp-backup")
 PICKER_CONFIG = Path("/etc/pyp-google-drive/picker-config.json")
-CONTAINER_NAMES = {
-    "api": "markina-gallery-api-1",
-    "web": "markina-gallery-web-1",
-    "db": "markina-gallery-db-1",
-}
+CONTAINER_ROLES = ("api", "web", "db")
+APP_SERVICES = ("api", "web")
+APP_COMPOSE_BRIDGE = "/usr/local/sbin/markina-gallery-app-compose-bridge"
 CONTAINER_INSPECT = (
     "{{.Id}}|{{.Image}}|{{.State.Status}}|{{.State.Running}}|{{.State.StartedAt}}|"
     "{{index .Config.Labels \"com.docker.compose.project\"}}|"
     "{{index .Config.Labels \"com.docker.compose.service\"}}|"
     "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
 )
+CONTAINER_DIAGNOSTIC_INSPECT = (
+    "{{.Id}}|{{.State.Status}}|"
+    "{{index .Config.Labels \"com.docker.compose.project\"}}|"
+    "{{index .Config.Labels \"com.docker.compose.service\"}}"
+)
 SHARED_CONTAINER_INSPECT = "{{.Id}}|{{.Image}}|{{.State.Status}}|{{.State.StartedAt}}"
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SCHEMA_REVISION = re.compile(r"[A-Za-z0-9_]{1,64}\Z")
+ACTIVE_APP_PROJECT = re.compile(r"(?:markina-gallery|markina-gallery-app-[0-9a-f]{32})\Z")
+CONTAINER_VALIDATION_ERROR_KINDS = frozenset({
+    "container_record_missing",
+    "container_record_ambiguous",
+    "container_record_shape_invalid",
+    "container_id_invalid",
+    "container_image_id_invalid",
+    "container_project_label_mismatch",
+    "container_service_label_mismatch",
+    "container_running_flag_invalid",
+    "container_state_invalid",
+    "container_health_state_invalid",
+    "container_started_at_invalid",
+})
+CONTAINER_VALIDATION_ERROR_CODES = frozenset(
+    f"{role}_{kind}" for role in CONTAINER_ROLES for kind in CONTAINER_VALIDATION_ERROR_KINDS
+)
+ACTIVE_COMPOSE_ERROR_KINDS = frozenset({
+    "active_project_resolution_failed",
+    "active_project_invalid",
+    "active_container_resolution_failed",
+    "active_container_id_invalid",
+})
+ACTIVE_COMPOSE_ERROR_CODES = frozenset(
+    f"{role}_{kind}" for role in APP_SERVICES for kind in ACTIVE_COMPOSE_ERROR_KINDS
+)
 
 
 class InventoryError(ValueError):
     """Inventory could not establish a trustworthy fixed host snapshot."""
 
 
+# Only these stable internal codes may appear in operational logs. Command output,
+# exception text, paths and remote configuration contents are never forwarded.
+SAFE_INVENTORY_ERROR_CODES = frozenset({
+    "host_identity_unavailable", "host_identity_invalid",
+    "checkout_identity_unavailable", "checkout_identity_invalid",
+    "shared_container_list_failed", "shared_container_list_empty", "shared_container_list_invalid",
+    "shared_container_inspect_failed", "shared_container_inventory_invalid",
+    "container_service_list_failed", "container_inspect_failed", "container_inventory_invalid",
+    "schema_inventory_failed", "schema_inventory_invalid",
+    "disk_inventory_failed", "disk_inventory_invalid",
+    "systemd_inventory_failed", "systemd_inventory_invalid",
+    "installed_release_identity_invalid", "installed_release_root_unsafe",
+    "installed_release_file_unavailable", "installed_release_file_unsafe",
+    "installed_release_file_changed", "installed_release_current_mismatch",
+    "installed_release_directory_unsafe", "installed_release_receipt_invalid",
+    "installed_release_manifest_invalid", "installed_release_receipt_mismatch",
+    "installed_release_rollback_unsafe", "installed_release_rollback_mismatch",
+    "inventory_changed_during_scan",
+    "active_compose_bridge_identity_invalid",
+}) | CONTAINER_VALIDATION_ERROR_CODES | ACTIVE_COMPOSE_ERROR_CODES
+SAFE_DIAGNOSTIC_ERROR_CODES = frozenset({
+    "diagnostic_container_list_failed", "diagnostic_container_list_invalid",
+    "diagnostic_container_inspect_failed", "diagnostic_container_inventory_invalid",
+    "diagnostic_compose_list_failed", "diagnostic_compose_list_invalid",
+    "diagnostic_inventory_changed",
+    "inventory_error", "inventory_command_failed", "inventory_io_failed",
+})
+
+
 Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
 
 def _run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, capture_output=True, check=False, text=True, timeout=20)
+    timeout = 60 if argv and argv[0] == APP_COMPOSE_BRIDGE else 20
+    return subprocess.run(argv, capture_output=True, check=False, text=True, timeout=timeout)
 
 
 def _output(result: subprocess.CompletedProcess[str], code: str) -> str:
@@ -51,21 +110,146 @@ def _output(result: subprocess.CompletedProcess[str], code: str) -> str:
     return result.stdout.strip()
 
 
-def _container(name: str, service: str, runner: Runner) -> dict[str, object]:
+def _container_inventory_error(role: str, kind: str) -> InventoryError:
+    if role not in CONTAINER_ROLES or kind not in CONTAINER_VALIDATION_ERROR_KINDS:
+        return InventoryError("container_inventory_invalid")
+    return InventoryError(f"{role}_{kind}")
+
+
+def _active_app_error(service: str, kind: str) -> InventoryError:
+    if service not in APP_SERVICES or kind not in ACTIVE_COMPOSE_ERROR_KINDS:
+        return InventoryError("container_inventory_invalid")
+    return InventoryError(f"{service}_{kind}")
+
+
+def _single_bridge_value(
+    result: subprocess.CompletedProcess[str],
+    failure_code: str,
+    invalid_code: str,
+) -> str:
+    if result.returncode != 0:
+        raise InventoryError(failure_code)
+    if len(result.stdout) > 1024:
+        raise InventoryError(invalid_code)
+    value = result.stdout.strip()
+    if not value or len(value.splitlines()) != 1:
+        raise InventoryError(invalid_code)
+    return value
+
+
+def _active_app_identity(service: str, bridge_sha: str, runner: Runner) -> dict[str, str]:
+    """Resolve one API/web identity through the installed, root-only app bridge."""
+    if (service not in APP_SERVICES or not isinstance(bridge_sha, str)
+            or not GIT_SHA.fullmatch(bridge_sha)):
+        raise InventoryError("container_inventory_invalid")
+    prefix = [APP_COMPOSE_BRIDGE, "--mode", "inventory", "--sha", bridge_sha]
+    project = _single_bridge_value(
+        runner([*prefix, "service-project", "--", service]),
+        f"{service}_active_project_resolution_failed",
+        f"{service}_active_project_invalid",
+    )
+    if not ACTIVE_APP_PROJECT.fullmatch(project):
+        raise _active_app_error(service, "active_project_invalid")
+    identifier = _single_bridge_value(
+        runner([*prefix, "compose", "--", "ps", "-q", service]),
+        f"{service}_active_container_resolution_failed",
+        f"{service}_active_container_id_invalid",
+    )
+    if not CONTAINER_ID.fullmatch(identifier):
+        raise _active_app_error(service, "active_container_id_invalid")
+    return {"project": project, "id": identifier}
+
+
+def _verify_app_compose_bridge(bridge_sha: str, runner: Runner) -> None:
+    if not isinstance(bridge_sha, str) or not GIT_SHA.fullmatch(bridge_sha):
+        raise InventoryError("active_compose_bridge_identity_invalid")
+    metadata = _output(runner([
+        "/usr/bin/stat", "--format=%F|%u|%g|%a|%h", "--", APP_COMPOSE_BRIDGE,
+    ]), "active_compose_bridge_identity_invalid")
+    if metadata != "regular file|0|0|755|1":
+        raise InventoryError("active_compose_bridge_identity_invalid")
+    expected_blob = _output(runner([
+        "/usr/bin/git", "-C", str(PROJECT_ROOT), "rev-parse",
+        f"{bridge_sha}:scripts/production_app_compose_bridge.py",
+    ]), "active_compose_bridge_identity_invalid")
+    installed_blob = _output(runner([
+        "/usr/bin/git", "hash-object", "--", APP_COMPOSE_BRIDGE,
+    ]), "active_compose_bridge_identity_invalid")
+    if (not re.fullmatch(r"[0-9a-f]{40}", expected_blob)
+            or not re.fullmatch(r"[0-9a-f]{40}", installed_blob)
+            or installed_blob != expected_blob):
+        raise InventoryError("active_compose_bridge_identity_invalid")
+
+
+def _active_app_snapshot(bridge_sha: str, runner: Runner) -> dict[str, dict[str, str]]:
+    _verify_app_compose_bridge(bridge_sha, runner)
+    identities = {
+        service: _active_app_identity(service, bridge_sha, runner)
+        for service in APP_SERVICES
+    }
+    if identities["api"]["id"] == identities["web"]["id"]:
+        raise _active_app_error("api", "active_container_id_invalid")
+    return identities
+
+
+def _container(
+    service: str,
+    runner: Runner,
+    *,
+    active_identity: dict[str, str] | None = None,
+) -> dict[str, object]:
+    if service not in CONTAINER_ROLES:
+        raise InventoryError("container_inventory_invalid")
+    if service in APP_SERVICES:
+        if (not isinstance(active_identity, dict)
+                or set(active_identity) != {"project", "id"}
+                or not isinstance(active_identity["project"], str)
+                or not ACTIVE_APP_PROJECT.fullmatch(active_identity["project"])
+                or not isinstance(active_identity["id"], str)
+                or not CONTAINER_ID.fullmatch(active_identity["id"])):
+            raise _container_inventory_error(service, "container_inventory_invalid")
+        expected_project = active_identity["project"]
+        identifier = active_identity["id"]
+    else:
+        raw_ids = _output(runner([
+            "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "ls",
+            "--all", "--no-trunc", "--quiet",
+            "--filter", "label=com.docker.compose.project=markina-gallery",
+            "--filter", f"label=com.docker.compose.service={service}",
+        ]), "container_service_list_failed")
+        ids = raw_ids.splitlines() if raw_ids else []
+        if not ids:
+            raise _container_inventory_error(service, "container_record_missing")
+        if len(ids) != 1:
+            raise _container_inventory_error(service, "container_record_ambiguous")
+        identifier = ids[0]
+        if not CONTAINER_ID.fullmatch(identifier):
+            raise _container_inventory_error(service, "container_id_invalid")
+        expected_project = "markina-gallery"
     raw = _output(runner([
         "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "inspect",
-        "--format", CONTAINER_INSPECT, name,
+        "--format", CONTAINER_INSPECT, identifier,
     ]), "container_inspect_failed")
     parts = raw.split("|")
     if len(parts) != 8:
-        raise InventoryError("container_inventory_invalid")
-    identifier, image, state, running, started_at, project, actual_service, health = parts
-    if (not CONTAINER_ID.fullmatch(identifier) or not IMAGE_ID.fullmatch(image)
-            or project != "markina-gallery" or actual_service != service
-            or running not in {"true", "false"} or state not in {"running", "exited", "created", "restarting"}
-            or health not in {"healthy", "unhealthy", "starting", "none"}
-            or len(started_at) > 64):
-        raise InventoryError("container_inventory_invalid")
+        raise _container_inventory_error(service, "container_record_shape_invalid")
+    inspected_identifier, image, state, running, started_at, project, actual_service, health = parts
+    if not CONTAINER_ID.fullmatch(inspected_identifier) or inspected_identifier != identifier:
+        raise _container_inventory_error(service, "container_id_invalid")
+    if not IMAGE_ID.fullmatch(image):
+        raise _container_inventory_error(service, "container_image_id_invalid")
+    if project != expected_project:
+        raise _container_inventory_error(service, "container_project_label_mismatch")
+    if actual_service != service:
+        raise _container_inventory_error(service, "container_service_label_mismatch")
+    if running not in {"true", "false"}:
+        raise _container_inventory_error(service, "container_running_flag_invalid")
+    if state not in {"running", "exited", "created", "restarting"}:
+        raise _container_inventory_error(service, "container_state_invalid")
+    if health not in {"healthy", "unhealthy", "starting", "none"}:
+        raise _container_inventory_error(service, "container_health_state_invalid")
+    if len(started_at) > 64:
+        raise _container_inventory_error(service, "container_started_at_invalid")
     return {
         "id": identifier,
         "image": image,
@@ -73,6 +257,97 @@ def _container(name: str, service: str, runner: Runner) -> dict[str, object]:
         "running": running == "true",
         "started_at": started_at,
         "health": health,
+    }
+
+
+def _diagnostic_container_ids(service: str, runner: Runner, *, compose: bool) -> set[str]:
+    if service not in CONTAINER_ROLES:
+        raise InventoryError("diagnostic_container_inventory_invalid")
+    if compose:
+        command = [
+            "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "compose",
+            "--project-name", "markina-gallery",
+            "--project-directory", "/opt/markina-gallery/docker",
+            "--file", "/opt/markina-gallery/docker/docker-compose.yml",
+            "ps", "--all", "--quiet", "--no-trunc", "--orphans=false", service,
+        ]
+        error_code = "diagnostic_compose_list_failed"
+        invalid_code = "diagnostic_compose_list_invalid"
+    else:
+        command = [
+            "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "ls",
+            "--all", "--no-trunc", "--quiet",
+            "--filter", "label=com.docker.compose.project=markina-gallery",
+            "--filter", f"label=com.docker.compose.service={service}",
+        ]
+        error_code = "diagnostic_container_list_failed"
+        invalid_code = "diagnostic_container_list_invalid"
+    raw_ids = _output(runner(command), error_code)
+    if len(raw_ids) > 512 * 65:
+        raise InventoryError(invalid_code)
+    identifiers = raw_ids.splitlines() if raw_ids else []
+    if (len(identifiers) > 512 or len(identifiers) != len(set(identifiers))
+            or any(not CONTAINER_ID.fullmatch(value) for value in identifiers)):
+        raise InventoryError(invalid_code)
+    return set(identifiers)
+
+
+def _container_diagnostic(service: str, runner: Runner) -> dict[str, int]:
+    label_identifiers = _diagnostic_container_ids(service, runner, compose=False)
+    compose_identifiers = _diagnostic_container_ids(service, runner, compose=True)
+
+    counts = {"running": 0, "stopped": 0, "unknown": 0}
+    if label_identifiers:
+        raw = _output(runner([
+            "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "inspect",
+            "--format", CONTAINER_DIAGNOSTIC_INSPECT, *sorted(label_identifiers),
+        ]), "diagnostic_container_inspect_failed")
+        rows = raw.splitlines()
+        if len(rows) != len(label_identifiers):
+            raise InventoryError("diagnostic_container_inventory_invalid")
+
+        expected_ids = label_identifiers
+        inspected_ids: set[str] = set()
+        for row in rows:
+            parts = row.split("|")
+            if len(parts) != 4:
+                raise InventoryError("diagnostic_container_inventory_invalid")
+            identifier, state, project, actual_service = parts
+            if (not CONTAINER_ID.fullmatch(identifier) or identifier not in expected_ids
+                    or identifier in inspected_ids or project != "markina-gallery"
+                    or actual_service != service):
+                raise InventoryError("diagnostic_container_inventory_invalid")
+            inspected_ids.add(identifier)
+            if state == "running":
+                category = "running"
+            elif state in {"created", "exited", "dead"}:
+                category = "stopped"
+            else:
+                category = "unknown"
+            counts[category] += 1
+        if inspected_ids != expected_ids:
+            raise InventoryError("diagnostic_container_inventory_invalid")
+
+    if (_diagnostic_container_ids(service, runner, compose=False) != label_identifiers
+            or _diagnostic_container_ids(service, runner, compose=True) != compose_identifiers):
+        raise InventoryError("diagnostic_inventory_changed")
+
+    matched_ids = label_identifiers & compose_identifiers
+    return {
+        "label_records": len(label_identifiers),
+        "compose_records": len(compose_identifiers),
+        "matched_records": len(matched_ids),
+        "label_only_records": len(label_identifiers - compose_identifiers),
+        "compose_only_records": len(compose_identifiers - label_identifiers),
+        **counts,
+    }
+
+
+def collect_container_diagnostics(runner: Runner = _run) -> dict[str, object]:
+    """Return only fixed-role aggregate counts; never disclose container records."""
+    return {
+        "schema_version": 2,
+        "roles": {service: _container_diagnostic(service, runner) for service in CONTAINER_ROLES},
     }
 
 
@@ -154,6 +429,20 @@ def _path_metadata(paths: dict[str, Path]) -> dict[str, object]:
 def _digest(value: object) -> str:
     payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _safe_failure_code(
+    error: BaseException, allowed_codes: frozenset[str] = SAFE_INVENTORY_ERROR_CODES,
+) -> str:
+    """Return only a fixed category or allowlisted code, never exception details."""
+    if isinstance(error, InventoryError):
+        candidate = str(error)
+        return candidate if candidate in allowed_codes else "inventory_error"
+    if isinstance(error, subprocess.SubprocessError):
+        return "inventory_command_failed"
+    if isinstance(error, OSError):
+        return "inventory_io_failed"
+    return "inventory_failed"
 
 
 def _read_root_file(path: Path, *, mode: int, max_size: int) -> bytes:
@@ -285,7 +574,12 @@ def _opaque_configuration_binding(path: Path, machine_id: str) -> str:
         os.close(descriptor)
 
 
-def collect_inventory(runner: Runner = _run, *, root: Path = Path("/")) -> dict[str, object]:
+def collect_inventory(
+    runner: Runner = _run,
+    *,
+    root: Path = Path("/"),
+    bridge_sha: str | None = None,
+) -> dict[str, object]:
     """Observe only fixed application, backup and Picker paths; never read their contents."""
     try:
         machine_id = (root / "etc/machine-id").read_text(encoding="ascii").strip()
@@ -298,13 +592,20 @@ def collect_inventory(runner: Runner = _run, *, root: Path = Path("/")) -> dict[
     ]), "checkout_identity_unavailable")
     if not GIT_SHA.fullmatch(checkout_sha):
         raise InventoryError("checkout_identity_invalid")
+    bridge_sha = checkout_sha if bridge_sha is None else bridge_sha
+    if not GIT_SHA.fullmatch(bridge_sha):
+        raise InventoryError("active_compose_bridge_identity_invalid")
 
     shared_containers = _shared_container_snapshot(runner)
-    containers = {service: _container(name, service, runner) for service, name in CONTAINER_NAMES.items()}
+    active_app = _active_app_snapshot(bridge_sha, runner)
+    containers = {
+        service: _container(service, runner, active_identity=active_app.get(service))
+        for service in CONTAINER_ROLES
+    }
     schema = _output(runner([
         "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "exec", "--env",
         "PGOPTIONS=-c default_transaction_read_only=on -c lock_timeout=2000 -c statement_timeout=10000",
-        CONTAINER_NAMES["db"], "sh", "-ceu",
+        str(containers["db"]["id"]), "sh", "-ceu",
         ('exec psql -X -Atq -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
          '-c "SELECT version_num FROM public.alembic_version"'),
     ]), "schema_inventory_failed")
@@ -342,7 +643,8 @@ def collect_inventory(runner: Runner = _run, *, root: Path = Path("/")) -> dict[
         for name, path in config_paths.items()
         if name in {"source", "keyring", "destination", "picker_config"}
     }
-    if _shared_container_snapshot(runner) != shared_containers:
+    if (_active_app_snapshot(bridge_sha, runner) != active_app
+            or _shared_container_snapshot(runner) != shared_containers):
         raise InventoryError("inventory_changed_during_scan")
     inventory: dict[str, object] = {
         "schema_version": 1,
@@ -414,16 +716,58 @@ def install_preconditions(inventory: dict[str, object]) -> bool:
         return False
 
 
-def main() -> int:
+def public_inventory_summary(inventory: dict[str, object]) -> dict[str, object]:
+    """Expose fixed operational facts without container or protected-file identities."""
+    containers = inventory["containers"]
+    units = inventory["units"]
+    disk = inventory["disk_var_lib"]
+    return {
+        "schema_version": 1,
+        "checkout_sha": inventory["checkout_sha"],
+        "containers": {
+            service: {
+                "state": containers[service]["state"],
+                "running": containers[service]["running"],
+                "health": containers[service]["health"],
+            }
+            for service in CONTAINER_ROLES
+        },
+        "database_schema": inventory["database_schema"],
+        "disk_var_lib": {
+            "available_kib": disk["available_kib"],
+            "use_percent": disk["use_percent"],
+        },
+        "units": {
+            name: {"load": units[name]["load"], "enabled": units[name]["enabled"],
+                  "active": units[name]["active"]}
+            for name in ("service", "timer")
+        },
+    }
+
+
+def diagnostic_main() -> int:
     try:
-        result = collect_inventory()
-        report = json.dumps(result["inventory"], sort_keys=True, separators=(",", ":"))
-        print(f"backup_runtime_inventory={report}")
+        result = collect_container_diagnostics()
+        report = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        print(f"backup_runtime_container_diagnostics={report}")
+        return 0
+    except (InventoryError, OSError, subprocess.SubprocessError) as exc:
+        print(f"platform-backup-runtime: container diagnostics failed "
+              f"({_safe_failure_code(exc, SAFE_DIAGNOSTIC_ERROR_CODES)})")
+        return 1
+
+
+def main(bridge_sha: str | None = None) -> int:
+    try:
+        result = collect_inventory(bridge_sha=bridge_sha)
+        report = json.dumps(public_inventory_summary(result["inventory"]),
+                            sort_keys=True, separators=(",", ":"))
+        print(f"backup_runtime_inventory_summary={report}")
         print(f"backup_runtime_fingerprint={result['fingerprint']}")
         print(f"backup_runtime_install_preconditions={'pass' if install_preconditions(result['inventory']) else 'fail'}")
         return 0
-    except (InventoryError, OSError, subprocess.SubprocessError):
-        print("platform-backup-runtime: inventory failed")
+    except (InventoryError, OSError, subprocess.SubprocessError) as exc:
+        print(f"platform-backup-runtime: inventory failed ({_safe_failure_code(exc)})")
         return 1
 
 

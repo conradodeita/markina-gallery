@@ -97,6 +97,36 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **WHEN** o SHA/CI, a fingerprint, a identidade do host, o artefato, as permissões ou o estado de produção divergirem do que foi revisado
 - **THEN** a operação MUST abortar antes de qualquer escrita persistente e reportar somente uma falha técnica sanitizada
 
+#### Scenario: Diagnóstico sanitizado de falha no inventário
+
+- **WHEN** uma consulta fixa do inventário falhar
+- **THEN** o operador SHALL receber somente um código técnico estático permitido ou uma categoria fixa de I/O/comando; nenhuma fingerprint ou precondição aprovada SHALL ser emitida
+- **AND** mensagens de exceção, caminhos, saídas de comandos, dados de configuração, segredos, tokens, chaves e IDs do Drive MUST NOT aparecer no log
+
+#### Scenario: Registro de container falha na validação
+
+- **WHEN** o registro de API, web ou banco não corresponder ao formato fixo esperado
+- **THEN** o operador SHALL receber somente um código allowlisted que identifique o papel fixo do container e a classe do campo inválido
+- **AND** valores retornados, nomes e IDs de containers, argumentos/saída do comando, exceções, caminhos e dados de configuração MUST NOT aparecer no log
+- **AND** nenhuma fingerprint ou precondição aprovada SHALL ser emitida
+
+#### Scenario: Resolver API e web pela identidade ativa e banco pelos labels fixos
+
+- **WHEN** o inventário resolver API, web e banco para compor a impressão digital
+- **THEN** SHALL confirmar que a ponte é arquivo regular `root:root`, modo `0755`, link único e que seu blob corresponde ao SHA exato do código de suporte revisado; obter API/web pelo projeto ativo e pelo ID completo retornados por operações fixas vinculadas a esse SHA; inspecionar os IDs e revalidar os labels de projeto e serviço
+- **AND** SHALL resolver o banco somente pela combinação exata dos labels Compose `project=markina-gallery` e `service=db`, exigindo um ID completo e revalidando os labels após a inspeção
+- **AND** SHALL repetir a resolução ativa de API/web antes de emitir fingerprint e exigir que projeto e ID não tenham mudado
+- **AND** as leituras inicial, pré-mutação e pós-instalação do instalador SHALL usar o mesmo SHA exato de suporte aprovado em todas as consultas de inventário
+- **AND** MUST NOT selecionar containers por nome, escolher registros antigos por label como fallback para API/web ou usar agregados diagnósticos como identidade; metadados inseguros, falha, ausência, duplicidade, saída inválida, blob da ponte divergente ou mudança SHALL abortar com código estático allowlisted, sem fingerprint ou precondição
+- **AND** IDs e saídas brutas da ponte MUST NOT aparecer em logs
+
+#### Scenario: Emitir resumo de inventário sem identificadores
+
+- **WHEN** o inventário normal concluir com sucesso
+- **THEN** a saída SHALL conter somente o SHA do checkout, estado/saúde dos serviços fixos, revisão do schema, espaço disponível e estado das unidades do runtime
+- **AND** MUST NOT incluir IDs ou imagens de containers, horários de início, metadados de caminhos, conteúdo de configuração ou saída bruta da ponte
+- **AND** os IDs completos SHALL permanecer somente em memória para a inspeção e a composição da fingerprint
+
 #### Scenario: Instalar o forced command de backup
 
 - **WHEN** a revisão do wrapper exato passar pelo CI e o instalador protegido confirmar novamente o fingerprint atual do host

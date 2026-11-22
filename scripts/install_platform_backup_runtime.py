@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tarfile
 from collections.abc import Callable, Iterator, Sequence
+from functools import partial
 from pathlib import Path, PurePosixPath
 
 try:
@@ -611,6 +612,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         receipt = install_verified_bundle(
             _read_stdin(), source_sha=args.sha, bundle_sha256=args.bundle_sha256,
             approval_fingerprint=args.approval_fingerprint,
+            inventory_provider=partial(collect_inventory, bridge_sha=args.sha),
         )
         print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
         return 0

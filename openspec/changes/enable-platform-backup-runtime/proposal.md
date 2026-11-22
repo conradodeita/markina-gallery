@@ -12,6 +12,7 @@ O backup PostgreSQL cifrado já foi enviado ao Workspace, relido e restaurado em
 - Preservar os bloqueios dos adapters locais. Cifrar antes do envio, registrar estados distintos de upload, verificação e recuperação e comprovar retorno em PostgreSQL isolado.
 - Instalar e operar o runtime exclusivamente por canal protegido, com artefato do SHA exato da CI, inventário/fingerprint e comandos fixos; manter serviço, timer e destino desativados até os gates próprios de cada etapa. A ativação do timer exige cópia real verificada, recuperação isolada comprovada e aprovação específica.
 - Limitar a implantação ao Pick-your-Pic, com aprovação própria por etapa. O plano não inclui ativar expurgo, recuperar um tenant isoladamente ou substituir o processo de arquivo de fotos.
+- Manter o baseline do classificador API/web igual ao SHA da última publicação confirmada, evitando que mudanças operacionais posteriores provoquem uma republicação sem alteração de runtime.
 
 ## Capabilities
 
