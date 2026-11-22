@@ -133,6 +133,20 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **THEN** somente o forced command root-owned SHALL ser trocado atomicamente, SHALL preservar uma cópia anterior, SHALL continuar recusando comandos arbitrários e SHALL provar que todos os containers mantiveram identidade, imagem, estado e início
 - **AND** a operação SHALL adquirir o lock comum de release e SHALL NOT recriar containers, alterar portas, proxy, banco ou recursos compartilhados
 
+#### Scenario: Restaurar o forced command anterior após instalação concluída
+
+- **WHEN** uma instalação do wrapper tiver sido concluída, o inventário seguinte revelar falha, e o operador solicitar restauração protegida de uma cópia anterior identificada pelo recibo
+- **THEN** o canal SHALL aceitar somente a cópia root-only preservada no diretório fixo e cujo SHA-256 corresponda ao recibo aprovado, exigindo fingerprint atual, CI da `main` no SHA exato e aprovação do ambiente protegido
+- **AND** SHALL preservar a versão atualmente ativa em uma nova cópia verificável antes de substituir o wrapper em troca atômica
+- **AND** SHALL verificar arquivo regular, owner/mode/link, SHA-256, sintaxe e recusa de comando arbitrário, e SHALL confirmar a invariância de todos os containers
+- **AND** se qualquer verificação posterior à troca falhar, SHALL restaurar atomicamente a versão que estava ativa antes da tentativa de rollback e manter ambos os recibos/cópias
+- **AND** MUST NOT aceitar caminho arbitrário, alterar API/web, banco, Compose, Drive, configuração de backup, serviço ou timer, nem executar inventário mutável
+
+#### Scenario: Cópia anterior ausente, ambígua ou divergente
+
+- **WHEN** a cópia fixa não existir, mais de uma cópia corresponder aos critérios, a identidade/metadados forem inseguros ou o SHA-256 divergir do recibo
+- **THEN** a restauração MUST abortar antes da troca, sem remover ou alterar qualquer wrapper ou cópia preservada, e SHALL emitir somente falha sanitizada
+
 #### Scenario: O estado de containers compartilhados divergir
 
 - **WHEN** qualquer container mudar entre os inventários estáveis antes e depois da preparação do artefato
