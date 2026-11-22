@@ -267,9 +267,100 @@ def main() -> int:
             "wrapper_install_lacks_rollback_on_diagnostic_or_invariance_failure")
     require("SSH_ORIGINAL_COMMAND=\"id\"" in INSTALL_WRAPPER and "\"$BASH\" -n \"$temporary\"" in INSTALL_WRAPPER,
             "wrapper_bootstrap_arbitrary_command_probe_missing")
-    require('git rev-parse "$support_sha:scripts/platform_backup_runtime_inventory.py"' in INSTALL_WRAPPER
-            and 'git hash-object -- "$inventory_source"' in INSTALL_WRAPPER
-            and "module.diagnostic_main()" in INSTALL_WRAPPER
+    source_loader = re.search(
+        r"read_approved_inventory_source\(\) \{\n(.*?)\n\}", INSTALL_WRAPPER, re.DOTALL,
+    )
+    require(source_loader is not None, "approved_inventory_source_loader_missing")
+    source_loader_script = source_loader.group(0)
+    source_load_call = 'read_approved_inventory_source "$support_sha" "$inventory_source"'
+    first_root_write = 'sudo -n install -o root -g root -m 0600 -- "$WRAPPER" "$backup"'
+    require('git show "$approved_sha:$module_path" > "$destination"' in source_loader_script
+            and 'git rev-parse "$approved_sha:$module_path"' in source_loader_script
+            and 'git hash-object -- "$destination"' in source_loader_script
+            and source_load_call in INSTALL_WRAPPER
+            and INSTALL_WRAPPER.index(source_load_call) < INSTALL_WRAPPER.index(first_root_write)
+            and 'inventory_source="$PROJECT_ROOT/scripts/platform_backup_runtime_inventory.py"' not in INSTALL_WRAPPER,
+            "approved_inventory_source_not_pinned_before_wrapper_write")
+    with tempfile.TemporaryDirectory(prefix="backup-approved-source-test-") as directory:
+        repo = Path(directory) / "repo"
+        repo.mkdir()
+        module_path = Path("scripts/platform_backup_runtime_inventory.py")
+        module_git_path = module_path.as_posix()
+        module_file = repo / module_path
+        module_file.parent.mkdir(parents=True)
+        old_source = b"def diagnostic_main():\n    return 1\n"
+        approved_source = b"def diagnostic_main():\n    return 0\n"
+        module_file.write_bytes(old_source)
+
+        def run_git(*arguments: str) -> str:
+            result = subprocess.run(
+                ["git", *arguments], cwd=repo, capture_output=True, text=True, check=False,
+            )
+            require(result.returncode == 0, "approved_inventory_source_fixture_git_failed")
+            return result.stdout.strip()
+
+        run_git("init", "-q", "-b", "main")
+        run_git("config", "core.autocrlf", "false")
+        run_git("config", "user.name", "OpenSpec Test")
+        run_git("config", "user.email", "openspec-test@example.invalid")
+        run_git("config", "commit.gpgsign", "false")
+        run_git("add", module_git_path)
+        run_git("commit", "-q", "-m", "old operational checkout")
+        run_git("branch", "active-checkout")
+        module_file.write_bytes(approved_source)
+        run_git("add", module_git_path)
+        run_git("commit", "-q", "-m", "approved main source")
+        approved_sha = run_git("rev-parse", "HEAD")
+        run_git("rm", "-q", module_git_path)
+        run_git("commit", "-q", "-m", "module absent")
+        missing_sha = run_git("rev-parse", "HEAD")
+        run_git("switch", "-q", "active-checkout")
+        require(module_file.read_bytes() == old_source, "approved_source_fixture_checkout_not_stale")
+
+        source_environment = {
+            name: os.environ[name]
+            for name in ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HOME")
+            if name in os.environ
+        }
+
+        def read_source(commit: str, destination: Path, *, fake_hash: bool = False) -> subprocess.CompletedProcess[str]:
+            shell_script = source_loader_script
+            if fake_hash:
+                shell_script += textwrap.dedent(
+                    """
+                    git() {
+                      if [[ "${1:-}" == "hash-object" ]]; then
+                        printf '0000000000000000000000000000000000000000\\n'
+                        return 0
+                      fi
+                      command git "$@"
+                    }
+                    """,
+                )
+            shell_script += '\nread_approved_inventory_source "$1" "$2"\n'
+            return subprocess.run(
+                [bash_executable, "-e", "-u", "-o", "pipefail", "-c", shell_script,
+                 "bash", commit, str(destination)],
+                cwd=repo,
+                env=source_environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        approved_output = Path(directory) / "approved-source"
+        approved_result = read_source(approved_sha, approved_output)
+        require(approved_result.returncode == 0 and approved_output.read_bytes() == approved_source,
+                "stale_checkout_did_not_load_exact_approved_module")
+        missing_output = Path(directory) / "missing-source"
+        missing_result = read_source(missing_sha, missing_output)
+        require(missing_result.returncode != 0 and not missing_result.stdout and not missing_result.stderr,
+                "missing_approved_module_was_not_sanitized")
+        mismatch_output = Path(directory) / "mismatched-source"
+        mismatch_result = read_source(approved_sha, mismatch_output, fake_hash=True)
+        require(mismatch_result.returncode != 0 and not mismatch_result.stdout and not mismatch_result.stderr,
+                "mismatched_approved_module_hash_was_accepted_or_exposed")
+    require("module.diagnostic_main()" in INSTALL_WRAPPER
             and "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$support_sha" not in INSTALL_WRAPPER
             and "backup_runtime_fingerprint=" not in INSTALL_WRAPPER,
             "wrapper_install_still_requires_ambiguous_backup_fingerprint")

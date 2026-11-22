@@ -79,3 +79,17 @@ O job de escrita SHALL comparar o binding de sua conexão SSH de produção com 
 - **WHEN** o binding da conexão de produção não corresponde ao `connection_binding` do preflight
 - **THEN** o job falha antes de abrir a conexão SSH de escrita
 - **AND** nenhuma alteração no host é realizada
+
+### Requirement: Módulo da verificação pós-instalação fixado à revisão aprovada
+
+O instalador SHALL obter o módulo de diagnóstico do commit exato da `main` aprovado no preflight e MUST validar seu blob Git antes de alterar o forced command; não deve depender do working tree do checkout operacional, que pode permanecer numa revisão anterior.
+
+#### Scenario: Checkout operacional anterior à revisão aprovada
+- **WHEN** o checkout operacional está em revisão anterior, mas a revisão aprovada e seus objetos Git estão disponíveis após o fetch protegido
+- **THEN** o instalador lê o módulo diretamente do commit aprovado e confirma o blob esperado antes da escrita
+- **AND** não atualiza o checkout, não instala o módulo de forma persistente e não publica a aplicação
+
+#### Scenario: Módulo ausente ou blob divergente
+- **WHEN** o módulo não pode ser obtido da revisão aprovada ou seu hash não corresponde ao blob dessa revisão
+- **THEN** a instalação falha de forma sanitizada antes de substituir o forced command
+- **AND** nenhum fallback para arquivo do working tree é permitido
