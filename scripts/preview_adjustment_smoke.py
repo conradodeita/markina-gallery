@@ -12,11 +12,12 @@ from PIL import Image, ImageChops, ImageDraw
 output = Path("/out")
 output.mkdir(exist_ok=True)
 version = subprocess.run(
-    ["rawtherapee-cli", "-v"],
+    ["rawtherapee-cli"],
     text=True,
     capture_output=True,
-    check=False,
+    check=True,
 ).stdout.splitlines()
+assert "RawTherapee, version 5.13, command line." in version, version
 report = {"engine": version[0] if version else "versão indisponível", "samples": []}
 sheet = Image.new("RGB", (1280, 3 * 460), "white")
 draw = ImageDraw.Draw(sheet)

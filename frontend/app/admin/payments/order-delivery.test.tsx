@@ -20,19 +20,15 @@ it("digitar não envia; Enviar persiste e informa agendamento sem alegar entrega
   expect(refresh).toHaveBeenCalledOnce();
 });
 
-it("aceita link do Google Drive no mesmo campo de entrega", async () => {
+it("rejeita serviços que não sejam o Google Photos antes de chamar a API", () => {
   const drive = "https://drive.google.com/file/d/Ab12/view?usp=sharing";
-  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-    delivery: { ...saved, album_url: drive }, notification: { channels: ["whatsapp"] },
-  })));
+  const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
   render(<OrderDeliveryForm orderId="order-1" delivery={initial} onRefresh={vi.fn().mockResolvedValue(undefined)} />);
   fireEvent.change(screen.getByLabelText("Link externo do álbum"), { target: { value: drive } });
   fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
-  await screen.findByRole("status");
-  expect(fetch).toHaveBeenCalledWith("/api/admin/orders/order-1/delivery", expect.objectContaining({
-    body: JSON.stringify({ album_url: drive, version: 0 }),
-  }));
+  expect(screen.getByRole("alert").textContent).toContain("Google Photos");
+  expect(fetch).not.toHaveBeenCalled();
 });
 
 it("preserva rascunho na falha e rejeita destinos que não sejam HTTPS públicos", async () => {

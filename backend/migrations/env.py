@@ -1,5 +1,3 @@
-from __future__ import with_statement
-
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
@@ -7,7 +5,9 @@ from app.auth import Base, database_url
 from app.system_monitor import models as _monitor_models  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", database_url())
+# ConfigParser treats percent signs as interpolation; URLs may contain percent-encoded
+# credentials. Escape only for config storage so SQLAlchemy receives the original URL.
+config.set_main_option("sqlalchemy.url", database_url().replace("%", "%%"))
 target_metadata = Base.metadata
 
 

@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.acervo_context import require_active_owner
@@ -18,7 +21,7 @@ from app.messaging import (
     mask_phone,
     normalize_configured_phone,
 )
-from app.whatsapp_binding import OwnedWhatsAppProvider, resolve_binding
+from app.whatsapp_binding import OwnedWhatsAppProvider, provider_for, resolve_binding
 
 
 def app_environment() -> str:
@@ -63,14 +66,33 @@ def channel_settings(db: Session, *, tenant_id: UUID) -> WhatsAppChannelSettings
             provider_name = resolve_binding(db, tenant_id).name
         except WhatsAppConfigurationError:
             provider_name = "unavailable"
-        settings = WhatsAppChannelSettings(
-            tenant_id=tenant_id, environment=environment,
-            status="sandbox"
-            if provider_name == "sandbox"
-            else "pending_pairing",
-        )
-        db.add(settings)
-        db.flush()
+        values = {
+            "tenant_id": tenant_id,
+            "environment": environment,
+            "status": "sandbox" if provider_name == "sandbox" else "pending_pairing",
+        }
+        table = WhatsAppChannelSettings.__table__
+        dialect = db.get_bind().dialect.name
+        if dialect == "postgresql":
+            statement = postgres_insert(table).values(**values).on_conflict_do_nothing(
+                index_elements=["tenant_id", "environment"]
+            )
+        elif dialect == "sqlite":
+            statement = sqlite_insert(table).values(**values).on_conflict_do_nothing(
+                index_elements=["tenant_id", "environment"]
+            )
+        else:
+            db.add(WhatsAppChannelSettings(**values))
+            db.flush()
+            return db.scalar(select(WhatsAppChannelSettings).where(
+                WhatsAppChannelSettings.tenant_id == tenant_id,
+                WhatsAppChannelSettings.environment == environment,
+            ))
+        db.execute(statement)
+        settings = db.scalar(select(WhatsAppChannelSettings).where(
+            WhatsAppChannelSettings.tenant_id == tenant_id,
+            WhatsAppChannelSettings.environment == environment,
+        ))
     return settings
 
 
@@ -112,6 +134,24 @@ def refresh_channel(
         settings.status = "disconnected"
     db.commit()
     return settings
+
+
+def notification_channel_ready(db: Session, *, tenant_id: UUID) -> bool:
+    """Consulta a capacidade própria sem commit de configuração/filas em edição."""
+    try:
+        provider = provider_for(db, tenant_id=tenant_id)
+        settings = channel_settings(db, tenant_id=tenant_id)
+        if provider.binding.name == "sandbox":
+            return app_environment() in {"development", "test"} and settings.status == "sandbox"
+        if not settings.expected_phone_e164:
+            return False
+        result = provider.connection_status()
+        provider.validate()
+        return result.state == "open" and whatsapp_identities_match(
+            settings.expected_phone_e164, result.connected_phone_e164
+        )
+    except (WhatsAppConfigurationError, WhatsAppDeliveryError, HTTPException):
+        return False
 
 
 def validate_provider(provider, tenant_id):

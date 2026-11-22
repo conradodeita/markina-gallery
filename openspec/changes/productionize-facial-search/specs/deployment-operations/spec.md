@@ -2,12 +2,17 @@
 
 ### Requirement: Deploy preserva o estado facial autorizado do ambiente
 
-O deploy SHALL detectar e validar o estado facial autorizado do ambiente antes de trocar código. Quando o recurso estiver desligado, o `face-worker` SHALL permanecer inativo; quando estiver persistentemente habilitado fora de uma janela temporária de benchmark, o deploy SHALL atualizar e reiniciar o `face-worker` com o mesmo gate, chaves, modelos e limites, verificar healthchecks e manter rollback isolado. Produção MUST permanecer desligada até a ativação protegida prevista na capability de runtime facial de produção.
+Deploy SHALL validar e preservar o estado facial autorizado do ambiente antes de mudar código. Ambiente desligado mantém `face-worker` inativo; ambiente habilitado e autorizado, inclusive produção, mantém flag, chaves, modelos e limites durante atualização, healthcheck e rollback isolado. Produção nova ou sem ativação protegida permanece desligada.
 
 #### Scenario: Upgrade com homologação facial persistente
 
 - **WHEN** homologação está autorizada com `FACIAL_PROCESSING_ENABLED=true` e sem benchmark privado ativo
 - **THEN** o deploy preserva a flag, atualiza API, worker de mídia e `face-worker`, confirma o mesmo estado efetivo nos processos e não exige trailer temporário de pausa/retomada
+
+#### Scenario: Deploy preserva produção facial já autorizada
+
+- **WHEN** produção está protegida e `FACIAL_PROCESSING_ENABLED=true` antes do deploy
+- **THEN** API e workers mantêm o gate ativo; `face-worker` é atualizado com as mesmas chaves, modelos e limites, healthchecks são confirmados e eventual rollback permanece isolado
 
 #### Scenario: Estado facial inconsistente
 

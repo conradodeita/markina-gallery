@@ -24,7 +24,11 @@ O sistema SHALL manter identidade de cliente própria de cada conta de fotógraf
 
 ### Requirement: Domínio e efeitos restritos ao proprietário
 
-O sistema SHALL revalidar a conta ativa e o vínculo autorizado antes de listar, ler, alterar ou excluir recursos. Galerias, pastas, fotos e suas variantes, clientes, vínculos, seleções, favoritos, comentários, visualizações, carrinhos, pedidos, pagamentos, entregas, histórico, estatísticas e auditorias de domínio SHALL permanecer no mesmo proprietário. Referências cruzadas MUST ser recusadas também na persistência. Identificadores, URLs de mídia, filtros e parâmetros externos MUST NOT ampliar o escopo.
+Todos os recursos e efeitos de domínio SHALL permanecer restritos ao fotógrafo proprietário autorizado.
+
+#### Scenario: Fronteira integral dos recursos
+- **WHEN** uma operação lista, lê, altera ou exclui um recurso de domínio
+- **THEN** O sistema SHALL revalidar a conta ativa e o vínculo autorizado antes de listar, ler, alterar ou excluir recursos. Galerias, pastas, fotos e suas variantes, clientes, vínculos, seleções, favoritos, comentários, visualizações, carrinhos, pedidos, pagamentos, entregas, histórico, estatísticas e auditorias de domínio SHALL permanecer no mesmo proprietário. Referências cruzadas MUST ser recusadas também na persistência. Identificadores, URLs de mídia, filtros e parâmetros externos MUST NOT ampliar o escopo.
 
 #### Scenario: Identificador da outra conta
 - **WHEN** fotógrafo ou cliente da conta A solicita recurso ou arquivo da conta B, inclusive por URL direta
@@ -44,7 +48,11 @@ O sistema SHALL revalidar a conta ativa e o vínculo autorizado antes de listar,
 
 ### Requirement: Configuração comercial e comunicação próprias da conta
 
-Branding comercial, PIX, preços editáveis, templates, preferências de avisos e processamento de prévias SHALL ser resolvidos na conta proprietária. A ausência de configuração SHALL apresentar estado não configurado ou canal indisponível, sem usar dados comerciais ou canal de outra conta. Conectores externos SHALL exigir vínculo explícito e autorização operacional; credenciais MUST permanecer fora de tabelas comuns, frontend, logs e relatórios. Configurações técnicas de instalação e catálogos imutáveis compartilhados SHALL permanecer restritos à operação e sem dados comerciais de fotógrafos.
+As configurações comerciais e de comunicação SHALL ser resolvidas na conta proprietária, com credenciais protegidas.
+
+#### Scenario: Contrato completo das configurações da conta
+- **WHEN** a aplicação carrega configurações comerciais, canais ou catálogos compartilhados
+- **THEN** Branding comercial, PIX, preços editáveis, templates, preferências de avisos e processamento de prévias SHALL ser resolvidos na conta proprietária. A ausência de configuração SHALL apresentar estado não configurado ou canal indisponível, sem usar dados comerciais ou canal de outra conta. Conectores externos SHALL exigir vínculo explícito e autorização operacional; credenciais MUST permanecer fora de tabelas comuns, frontend, logs e relatórios. Configurações técnicas de instalação e catálogos imutáveis compartilhados SHALL permanecer restritos à operação e sem dados comerciais de fotógrafos.
 
 #### Scenario: Segunda conta recém-criada
 - **WHEN** o fotógrafo B abre configurações antes de configurar sua identidade e canais
@@ -84,7 +92,11 @@ Branding comercial, PIX, preços editáveis, templates, preferências de avisos 
 
 ### Requirement: Contexto durável em jobs e manutenção
 
-Jobs, outboxes, tentativas, deduplicação, caches e operações de lifecycle SHALL carregar ou derivar proprietário persistido de fonte autorizada, revalidando-o antes de efeitos e publicação. Workers MUST NOT escolher uma conta pelo primeiro registro ou por um contexto global. Suspensão ou revogação SHALL impedir efeitos da conta afetada sem bloquear jobs válidos de outras contas. Limpezas, exclusões e retenção SHALL respeitar o proprietário e as proteções comerciais existentes; permissões biométricas SHALL permanecer específicas e não ser copiadas entre contas.
+Jobs, entregas assíncronas, caches e manutenção SHALL preservar e revalidar o contexto persistido do proprietário.
+
+#### Scenario: Contrato completo de jobs e manutenção
+- **WHEN** um job, retry, cache ou operação de lifecycle produz efeitos sobre dados de uma conta
+- **THEN** Jobs, outboxes, tentativas, deduplicação, caches e operações de lifecycle SHALL carregar ou derivar proprietário persistido de fonte autorizada, revalidando-o antes de efeitos e publicação. Workers MUST NOT escolher uma conta pelo primeiro registro ou por um contexto global. Suspensão ou revogação SHALL impedir efeitos da conta afetada sem bloquear jobs válidos de outras contas. Limpezas, exclusões e retenção SHALL respeitar o proprietário e as proteções comerciais existentes; permissões biométricas SHALL permanecer específicas e não ser copiadas entre contas.
 
 #### Scenario: Revalidação contextual antes do commit
 - **WHEN** uma transação altera registros de A e a conta é suspensa ou o vínculo administrativo demonstrado é revogado antes do commit

@@ -13,13 +13,14 @@ const payload = {
 const response = (body: object, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it.each([50, 75])("salva automaticamente parâmetros próprios com default %i, sem botões manuais", async (strength) => {
+it.each([50, 75, 100])("salva automaticamente parâmetros próprios com intensidade inicial %i, sem botões manuais", async (strength) => {
   const initial = { ...payload, preview_strength: strength };
   const fetcher = vi.fn((_path: string, init?: RequestInit) => response(init?.method === "PATCH"
     ? { ...initial, revision: 2, ...JSON.parse(String(init.body)) } : initial));
   vi.stubGlobal("fetch", fetcher);
   render(<FolderProcessingPanel folderId="folder-1" folderName="Retratos" />);
   const slider = await screen.findByLabelText("Intensidade do ajuste");
+  expect(slider.getAttribute("max")).toBe("100");
   expect(slider.getAttribute("value")).toBe(String(strength));
   expect(screen.queryByRole("button", { name: /Salvar|Processar/ })).toBeNull();
   expect(screen.queryByRole("combobox")).toBeNull();

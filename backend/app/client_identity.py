@@ -14,7 +14,7 @@ class ClientIdentityConflict(ValueError):
 
 def require_identity_tenant(db: Session, tenant_id: UUID) -> None:
     tenant = db.get(Tenant, tenant_id, populate_existing=True) if tenant_id else None
-    if tenant is None or tenant.status != "active":
+    if tenant is None or tenant.status != "active" or tenant.lifecycle == "closed":
         raise ClientIdentityConflict("Contexto de cliente indisponível.")
 
 

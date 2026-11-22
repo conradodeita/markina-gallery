@@ -98,3 +98,5 @@ if ( main --mode unexpected --sha "$(printf 'd%.0s' {1..40})" ) >/dev/null 2>&1;
 fi
 
 echo "retirement deployment dispatch: ok"
+python3 "$SCRIPT_DIR/test_retirement_release_flow.py"
+python3 "$SCRIPT_DIR/test_retirement_legacy_worker.py"

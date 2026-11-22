@@ -39,7 +39,9 @@ def test_resumo_mede_so_arquivos_proprios_sem_cache_global(client_db, commerce, 
         path.write_bytes(b"x" * (3 + index*1000))
     client_db.commit()
     for index, row in enumerate(commerce):
-        result = main.admin_validation_summary(row["admin_request"], client_db)
+        response = main.Response()
+        result = main.admin_validation_summary(row["admin_request"], response, client_db)
+        assert response.headers["Cache-Control"] == "private, no-store"
         assert result["storage"] == {"photo_count": 1, "bytes": 3 + index*1000, "available": True}
         assert result["counts"]["clients"] == 1
         assert result["recent_galleries"][0]["id"] == str(row["parent"].id)

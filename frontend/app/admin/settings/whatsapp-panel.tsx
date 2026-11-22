@@ -110,23 +110,32 @@ export default function WhatsAppPanel() {
 
   async function saveExpectedPhone(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const firstProvision = channel?.provider === "unavailable";
     setBusy("saving");
     setFeedback("");
     try {
-      const response = await fetch("/api/admin/whatsapp/channel", {
-        method: "PATCH",
+      const response = await fetch(firstProvision
+        ? "/api/admin/whatsapp/channel/provision"
+        : "/api/admin/whatsapp/channel", {
+        method: firstProvision ? "POST" : "PATCH",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expected_phone_e164: expectedPhone }),
       });
-      const data: unknown = await response.json().catch(() => null);
-      if (!response.ok || !isChannel(data)) throw new Error();
+      const data: unknown = response.ok ? await response.json().catch(() => null) : null;
+      if (!response.ok || !isChannel(data) || (firstProvision && (
+        data.provider !== "evolution" || data.status !== "pending_pairing" || !data.expected_phone
+      ))) throw new Error();
       setChannel(data);
       setPairing(null);
       setExpectedPhone("");
-      setFeedback("Número esperado salvo. Agora faça o pareamento para confirmar a identidade.");
+      setFeedback(firstProvision
+        ? "WhatsApp preparado. Agora você pode parear seu aparelho."
+        : "Número esperado salvo. Agora faça o pareamento para confirmar a identidade.");
     } catch {
-      setFeedback("Não foi possível salvar. Informe o número completo no formato +5511999999999.");
+      setFeedback(firstProvision
+        ? "Não foi possível preparar o WhatsApp. O canal continua bloqueado; tente novamente mais tarde."
+        : "Não foi possível salvar. Informe o número completo no formato +5511999999999.");
     } finally {
       setBusy(null);
     }
@@ -176,7 +185,7 @@ export default function WhatsAppPanel() {
   const canPair = channel?.provider === "evolution" && Boolean(channel.expected_phone) && busy === null;
 
   return (
-    <section className="admin-card whatsapp-settings" aria-labelledby="whatsapp-settings-title">
+    <section id="whatsapp" className="admin-card whatsapp-settings" aria-labelledby="whatsapp-settings-title">
       <div className="whatsapp-settings-heading">
         <div>
           <p className="eyebrow">Canal transacional</p>
@@ -187,10 +196,10 @@ export default function WhatsAppPanel() {
         </span>
       </div>
 
-      <p className="intro">O sistema envia OTP e avisos pelo número próprio pareado. API key, sessão e QR nunca ficam gravados nesta tela.</p>
+      <p className="intro">O sistema envia OTP e avisos pelo número próprio pareado. É recomendável usar um número de negócios, e não o seu número pessoal. API key, sessão e QR nunca ficam gravados nesta tela, para sua segurança. Para configurar, adicione o número de WhatsApp e escaneie o QR Code, da mesma forma como se estivesse entrando no WhatsApp Web.</p>
 
       {channel ? <div className="whatsapp-overview" aria-live="polite">
-        <div><span>Provedor</span><strong>{channel.provider === "evolution" ? "Evolution API" : "Sandbox"}</strong></div>
+        <div><span>Canal</span><strong>{channel.provider === "sandbox" ? "WhatsApp de teste" : "WhatsApp"}</strong></div>
         <div><span>Ambiente</span><strong>{channel.environment}</strong></div>
         <div><span>Número esperado</span><strong>{channel.expected_phone ?? "Não configurado"}</strong></div>
         <div><span>Número conectado</span><strong>{channel.connected_phone ?? "Não confirmado"}</strong></div>
@@ -205,7 +214,7 @@ export default function WhatsAppPanel() {
 
       <div className="whatsapp-actions">
         <form className="whatsapp-phone-form" onSubmit={saveExpectedPhone}>
-          <label htmlFor="whatsapp-expected-phone">Número próprio de homologação</label>
+          <label htmlFor="whatsapp-expected-phone">Seu número de WhatsApp</label>
           <div>
             <input
               id="whatsapp-expected-phone"
@@ -219,7 +228,9 @@ export default function WhatsAppPanel() {
               onChange={(event) => setExpectedPhone(event.target.value)}
               required
             />
-            <button className="primary" disabled={busy !== null}>Salvar número</button>
+            <button className="primary" disabled={busy !== null || !channel}>
+              {channel?.provider === "unavailable" ? "Preparar WhatsApp" : "Salvar número"}
+            </button>
           </div>
           <small>Use E.164: sinal de +, país, DDD e número, sem espaços.</small>
         </form>
@@ -237,14 +248,14 @@ export default function WhatsAppPanel() {
       {pairing ? <aside className="whatsapp-pairing" aria-labelledby="whatsapp-pairing-title">
         <div className="whatsapp-pairing-intro">
           <p className="eyebrow">Uso único · expira em 60 segundos</p>
-          <h3 id="whatsapp-pairing-title">Conecte o aparelho de homologação</h3>
-          <p>Abra “Aparelhos conectados” no WhatsApp e leia o QR. Se o provedor oferecer código, use-o apenas no aparelho autorizado.</p>
+          <h3 id="whatsapp-pairing-title">Conecte seu WhatsApp</h3>
+          <p>Abra “Aparelhos conectados” no WhatsApp e leia o QR. Se aparecer um código, informe-o no próprio WhatsApp para confirmar o vínculo.</p>
         </div>
         {pairing.qr_base64 ? <div className="whatsapp-pairing-visual">
           <Image
             className="whatsapp-pairing-qr"
             src={pairingImage(pairing.qr_base64)}
-            alt="QR code efêmero para parear o WhatsApp de homologação"
+            alt="QR code efêmero para parear seu WhatsApp"
             width={240}
             height={240}
             unoptimized

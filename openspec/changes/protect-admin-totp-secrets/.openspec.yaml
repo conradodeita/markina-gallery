@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-10-31
+goal: "Criptografar segredos TOTP administrativos em repouso, preservar MFA e prover recuperação segura."

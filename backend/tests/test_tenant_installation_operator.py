@@ -14,17 +14,21 @@ from app.auth import AuditEvent, InstallationOperator, Role, TenantAdmin
 from app.capacity_observability import collector
 from app.installation_operator import operator_is_active
 from app.provision_photographer import provision_photographer
-from app.system_monitor.models import PlatformOwner
 from app.tenancy import TenantContextError
 from tests.test_tenant_client_auth import client_db as _client_db
-from tests.test_tenant_client_auth import graph as _graph
 from tests.test_tenant_client_auth import links as _links
 from tests.test_tenant_client_auth import request
 from tests.test_tenant_client_navigation import cookie
+from tests.test_tenant_ownership_schema import build_graph
 
 client_db = _client_db
-graph = _graph
 links = _links
+
+
+@pytest.fixture
+def graph(client_db):
+    """Uma conta por tenant; o primeiro fotógrafo é o proprietário sintético."""
+    return build_graph(client_db, owner_is_first_admin=True)
 
 
 def provision(db, record, action="grant", *, apply=True):
@@ -34,8 +38,6 @@ def provision(db, record, action="grant", *, apply=True):
 
 @pytest.fixture
 def diagnostic(client_db, graph, links, monkeypatch):
-    client_db.add(PlatformOwner(singleton=1, admin_user_id=graph[0]["admin"].id,
-                              authorization_reference="synthetic-owner"))
     client_db.commit()
     values = [cookie(client_db, record, Role.ADMIN) for record in graph]
     monkeypatch.setattr(collector, "engine", client_db.bind)

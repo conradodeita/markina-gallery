@@ -12,13 +12,19 @@ from app.auth import (
     ParentGallery,
     PaymentCommunication,
     PaymentNotificationOutbox,
-    PhotoAsset,
     PhotoSelection,
     PriceRule,
     SaleOrder,
     SaleOrderItem,
+    now,
+)
+from app.folder_access import (
+    folder_media_access_by_id,
+    folder_selected_media_preview_allowed,
+    photos_with_folder_media_access_by_id,
 )
 from app.gallery_pricing import GalleryPricingError, quote_loaded_gallery
+from app.order_delivery import order_fulfillable
 from app.unified_checkout import communication_join, communications_for_orders
 
 
@@ -75,14 +81,21 @@ def client_carts_by_gallery_payload(
             draft_items[order_id].add(photo_id)
 
     photo_ids = {selection.photo_asset_id for selection in selection_rows}
-    photos = (
-        {
-            photo.id: photo
-            for photo in db.scalars(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.id.in_(photo_ids)))
-        }
-        if photo_ids
-        else {}
+    photos_with_access = photos_with_folder_media_access_by_id(
+        db,
+        photo_ids=photo_ids,
+        tenant_id=tenant_id,
+        client_id=client_id,
     )
+    photos = {
+        photo_id: access[0] for photo_id, access in photos_with_access.items()
+    }
+    photo_media_states = {
+        photo_id: access[1] for photo_id, access in photos_with_access.items()
+    }
+    photo_expiries = {
+        photo_id: access[2] for photo_id, access in photos_with_access.items()
+    }
     parent_ids = {gallery.parent_gallery_id for gallery in galleries}
     parents = {
         parent.id: parent
@@ -104,18 +117,31 @@ def client_carts_by_gallery_payload(
         draft = drafts_by_gallery.get(gallery_id)
         if draft and selected_photo_ids and draft_items[draft.id] == selected_photo_ids:
             payload["draft_order_id"] = str(draft.id)
-        payload["items"] = [
-            {
-                "id": str(selection.photo_asset_id),
-                "name": photos[selection.photo_asset_id].display_name
-                or photos[selection.photo_asset_id].filename,
-                "preview_url": (
-                    f"/gallery/{gallery.id}/photos/{selection.photo_asset_id}/preview"
-                ),
-            }
-            for selection in selections
-            if selection.photo_asset_id in photos
-        ]
+        payload["items"] = []
+        current_time = now()
+        for selection in selections:
+            photo = photos.get(selection.photo_asset_id)
+            if not photo:
+                continue
+            media_state = photo_media_states.get(photo.id, "unavailable")
+            expiry = photo_expiries.get(photo.id)
+            preview_available = photo.available and folder_selected_media_preview_allowed(
+                media_state=media_state,
+                expiry=expiry,
+                selected_at=selection.created_at,
+                at=current_time,
+            )
+            payload["items"].append(
+                {
+                    "id": str(selection.photo_asset_id),
+                    "name": photo.display_name or photo.filename,
+                    "media_state": media_state,
+                    "preview_url": (
+                        f"/gallery/{gallery.id}/photos/{selection.photo_asset_id}/preview"
+                        if preview_available else None
+                    ),
+                }
+            )
         if not selections:
             continue
         parent = parents.get(gallery.parent_gallery_id)
@@ -252,6 +278,24 @@ def client_orders_by_gallery_payload(
         .order_by(SaleOrderItem.filename_snapshot)
     ):
         items_by_order[item.sale_order_id].append(item)
+    folder_access = folder_media_access_by_id(
+        db,
+        folder_ids={
+            item.folder_id_snapshot
+            for items in items_by_order.values()
+            for item in items
+            if item.folder_id_snapshot
+        },
+        tenant_id=tenant_id,
+        client_id=client_id,
+    )
+    media_states = {
+        folder_id: access[0] for folder_id, access in folder_access.items()
+    }
+    folder_expiries = {
+        folder_id: access[1] for folder_id, access in folder_access.items()
+    }
+    current_time = now()
     communications = communications_for_orders(db, orders)
     communication_ids = [communication.id for communication in communications.values()]
     deliveries: dict[UUID, PaymentNotificationOutbox] = {}
@@ -269,6 +313,9 @@ def client_orders_by_gallery_payload(
     for order in orders:
         communication = communications.get(order.id)
         delivery = deliveries.get(communication.id) if communication else None
+        order_open = (
+            order.payment_status == "pending" and order.frozen_at is not None
+        ) or (order_fulfillable(order) and order.delivery_album_url is None)
         state = (
             "selection_finalized"
             if order.payment_status == "not_required"
@@ -316,9 +363,23 @@ def client_orders_by_gallery_payload(
                         "photo_id": str(item.photo_asset_id_snapshot),
                         "name": item.filename_snapshot,
                         "unit_price_cents": item.unit_price_cents if order.payment_required_snapshot else None,
+                        "media_state": (
+                            "available" if item.folder_id_snapshot is None
+                            else media_states.get(item.folder_id_snapshot, "unavailable")
+                        ),
                         "preview_url": (
                             f"/gallery/{gallery_id}/photos/{item.photo_asset_id_snapshot}/preview"
-                            if item.photo_asset_id is not None
+                            if item.photo_asset_id is not None and folder_selected_media_preview_allowed(
+                                media_state=(
+                                    "available" if item.folder_id_snapshot is None
+                                    else media_states.get(item.folder_id_snapshot, "unavailable")
+                                ),
+                                expiry=folder_expiries.get(item.folder_id_snapshot),
+                                selected_at=None,
+                                existing_order_created_at=order.created_at,
+                                existing_order_open=order_open,
+                                at=current_time,
+                            )
                             else None
                         ),
                     }

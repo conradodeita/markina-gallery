@@ -10,7 +10,15 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from test_facial_engine import _face, _gallery, _settings, _vector
 
-from app.auth import Base, FacialJob, PhotoAnalysis, PhotoFaceEmbedding, now
+from app.auth import (
+    Base,
+    FacialJob,
+    PhotoAnalysis,
+    PhotoCreditOperation,
+    PhotoFaceEmbedding,
+    PhotographerCreditEntry,
+    now,
+)
 from app.facial.crypto import FacialCipher
 from app.facial.detection import (
     Detection,
@@ -30,7 +38,7 @@ from app.facial.lifecycle import (
     media_can_proceed,
 )
 from app.media import generate_derivatives, safe_source_path
-from tests.tenant_fixtures import FIXTURE_TENANT_ID
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_unmetered_owner
 
 
 @pytest.fixture
@@ -55,6 +63,8 @@ def scene(tmp_path, monkeypatch):
     admin = fixture_admin(AdminUser(email="highres@example.invalid", password_hash="synthetic",
         email_verified=True, totp_secret="synthetic"))
     db.add(admin)
+    db.flush()
+    fixture_unmetered_owner(db, admin)
     db.commit()
     factory = sessionmaker(bind=db.bind, expire_on_commit=False)
     monkeypatch.setattr(auth, "SessionLocal", factory)
@@ -243,6 +253,7 @@ def test_admin_metrics_do_not_expose_arbitrary_payloads(scene, monkeypatch):
 def test_upload_handler_recovers_committed_reservation_without_duplicate_jobs(scene, monkeypatch):
     import asyncio
 
+    from fastapi import HTTPException
     from starlette.requests import Request
 
     from app.auth import MediaJob
@@ -280,8 +291,9 @@ def test_upload_handler_recovers_committed_reservation_without_duplicate_jobs(sc
             receive,
         )
 
-    with pytest.raises(OSError):
+    with pytest.raises(HTTPException) as interrupted:
         asyncio.run(import_photo_source(photo.id, request(), db))
+    assert interrupted.value.status_code == 503
     db.rollback()
     assert db.get(PhotoAnalysis, photo.id).state == "receiving"
     assert not safe_source_path(photo).exists()
@@ -292,6 +304,8 @@ def test_upload_handler_recovers_committed_reservation_without_duplicate_jobs(sc
     assert db.get(PhotoAnalysis, photo.id).state == "pending"
     assert len(list(db.scalars(select(FacialJob)))) == 1
     assert len(list(db.scalars(select(MediaJob)))) == 1
+    assert db.scalar(select(PhotoCreditOperation.id)) is None
+    assert db.scalar(select(PhotographerCreditEntry.id)) is None
 
 
 def test_orphan_cleanup_only_removes_expired_owned_fragments(scene):
@@ -719,91 +733,3 @@ def test_upload_index_media_region_query_and_purge_integrated(scene):
     purge_gallery_records(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)
     db.commit()
     assert facial_cleanup_proof(db, tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id)["clean"]
-
-
-@pytest.mark.parametrize("end_state", ["completed", "failed", "disabled", "expired"])
-def test_gemma_highres_preserves_sface_and_bounds_source_retention(scene, end_state):
-    from app.auth import FacialEmbeddingExperimentSetting
-    from app.facial.gemma_provider import GEMMA_MODEL_VERSION
-    from app.facial.jobs import FacialJobRepository
-    from app.facial.worker import process_claimed_index_job
-
-    db, parent, photo, settings, tmp = scene
-    setting = FacialEmbeddingExperimentSetting(
-        singleton=1, enabled=True, enabled_since=parent.created_at - timedelta(seconds=1),
-    )
-    db.add(setting)
-    db.commit()
-    row, path = prepare(scene)
-    jobs = list(db.scalars(select(FacialJob)))
-    assert {job.kind for job in jobs} == {"index", "index_gemma"}
-    gemma_job = next(job for job in jobs if job.kind == "index_gemma")
-    sface_job = next(job for job in jobs if job.kind == "index")
-    assert gemma_job.model_version == GEMMA_MODEL_VERSION
-    assert gemma_job.idempotency_key != sface_job.idempotency_key
-    repository = FacialJobRepository()
-    cipher = FacialCipher(active_key_id="test", keys={"test": b"k" * 32})
-    claim = repository.claim_next(db, lease_seconds=120, job_class="index")
-    process_claimed_index_job(db, claim, repository=repository, provider=HighresProvider(),
-                             cipher=cipher, settings=settings, derivatives_root=tmp / "derivatives")
-    db.commit()
-    original_metrics = dict(row.metrics)
-    generate_derivatives(db, photo)
-    assert row.state == "ready" and media_can_proceed(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
-    assert path.exists()  # Gemma não bloqueia mídia, mas ainda pode ler a fonte.
-    claim = repository.claim_next(db, lease_seconds=120, job_class="gemma")
-    assert claim is not None
-    if end_state == "completed":
-        from app.facial.gemma_provider import GEMMA_MODEL_ID
-        from app.facial.provider import normalize_embedding
-        class GemmaProvider(HighresProvider):
-            model_id = GEMMA_MODEL_ID
-            model_version = GEMMA_MODEL_VERSION
-            embedding_dimension = 768
-            def observe_highres_path(self, path):
-                assert path.is_file()
-                vector = normalize_embedding([1, *([0] * 767)], 768)
-                return [replace(_face(vector), image_width=2400, image_height=1600)]
-        process_claimed_index_job(db, claim, repository=repository, provider=GemmaProvider(),
-                                 cipher=cipher, settings=settings, derivatives_root=tmp / "derivatives")
-        db.commit()
-        assert {item.embedding_dimension for item in db.scalars(select(PhotoFaceEmbedding))} == {128, 768}
-    elif end_state == "failed":
-        repository.fail(db, claim, ValueError("private content"), max_attempts=1, retry_delay_seconds=1)
-    else:
-        repository.cancel(db, claim)
-        gemma_job.status = "queued"
-        if end_state == "disabled":
-            setting.enabled = False
-        else:
-            row.expires_at = now() - timedelta(seconds=1)
-        db.commit()
-    db.refresh(row)
-    assert row.state == "ready" and row.metrics == original_metrics
-    from sqlalchemy.orm import sessionmaker
-    from test_preview_adjustment import BrightEngine
-
-    from app.preview_adjustment.service import process_one
-
-    assert process_one(sessionmaker(db.bind), BrightEngine())
-    db.expire_all()
-    assert cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
-    assert not path.exists()
-
-
-def test_gemma_active_reader_prevents_source_cleanup_even_after_ttl(scene):
-    from app.auth import FacialEmbeddingExperimentSetting
-    from app.facial.jobs import FacialJobRepository
-
-    db, parent, photo, _settings, _tmp = scene
-    db.add(FacialEmbeddingExperimentSetting(
-        singleton=1, enabled=True, enabled_since=parent.created_at - timedelta(seconds=1),
-    ))
-    db.commit()
-    row, path = prepare(scene)
-    claim = FacialJobRepository().claim_next(db, lease_seconds=120, job_class="gemma")
-    assert claim is not None
-    row.expires_at = now() - timedelta(seconds=1)
-    db.commit()
-    assert not cleanup_source(db, photo.id, tenant_id=FIXTURE_TENANT_ID)
-    assert path.exists()

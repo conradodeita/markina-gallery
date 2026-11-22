@@ -4,9 +4,9 @@ import { PRODUCT_NAME } from "../../product-brand";
 
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
-type ActionKind = "password" | "email";
+type ActionKind = "password" | "email" | "assisted";
 
 function takeTokenFromFragment() {
   const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -33,8 +33,11 @@ export function AdminAccountAction({ kind }: { kind: ActionKind }) {
   const [loading, setLoading] = useState(false);
   const [complete, setComplete] = useState(false);
   const [message, setMessage] = useState("");
+  const tokenRead = useRef(false);
 
   useEffect(() => {
+    if (tokenRead.current) return;
+    tokenRead.current = true;
     const fragmentToken = takeTokenFromFragment();
     queueMicrotask(() => setToken(fragmentToken));
   }, []);
@@ -45,24 +48,30 @@ export function AdminAccountAction({ kind }: { kind: ActionKind }) {
     const data = new FormData(event.currentTarget);
     const password = String(data.get("newPassword") ?? "");
     const confirmation = String(data.get("confirmation") ?? "");
+    const secondFactor = String(data.get("secondFactor") ?? "").trim();
     if (password !== confirmation) {
       setMessage("As senhas não coincidem.");
       return;
     }
     setLoading(true);
     setMessage("");
-    const response = await fetch("/api/auth/admin/recovery/reset", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({ token, new_password: password }),
-    });
-    const detail = await responseDetail(response, "Não foi possível redefinir a senha.");
-    setLoading(false);
-    setMessage(detail);
-    if (response.ok) {
-      setToken("");
-      setComplete(true);
+    try {
+      const response = await fetch(kind === "assisted" ? "/api/auth/photographer-access-recovery/confirm" : "/api/auth/admin/recovery/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ token, new_password: password, ...(kind === "password" && secondFactor ? { second_factor_code: secondFactor } : {}) }),
+      });
+      const detail = await responseDetail(response, "Não foi possível redefinir a senha.");
+      setMessage(detail);
+      if (response.ok) {
+        setToken("");
+        setComplete(true);
+      }
+    } catch {
+      setMessage("Não foi possível confirmar o resultado. Verifique sua conexão antes de tentar novamente.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -70,17 +79,24 @@ export function AdminAccountAction({ kind }: { kind: ActionKind }) {
     if (!token) return;
     setLoading(true);
     setMessage("");
-    const response = await fetch("/api/auth/admin/email/confirm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({ token }),
-    });
-    const detail = await responseDetail(response, "Não foi possível confirmar o novo e-mail.");
-    setLoading(false);
-    setMessage(detail);
-    setToken("");
-    setComplete(response.ok);
+    try {
+      const response = await fetch("/api/auth/admin/email/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ token }),
+      });
+      const detail = await responseDetail(response, "Não foi possível confirmar o novo e-mail.");
+      setMessage(detail);
+      if (response.ok) {
+        setToken("");
+        setComplete(true);
+      }
+    } catch {
+      setMessage("Não foi possível confirmar o resultado. Verifique sua conexão antes de tentar novamente.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   const tokenReady = token === null ? "loading" : token ? "ready" : "missing";
@@ -89,14 +105,14 @@ export function AdminAccountAction({ kind }: { kind: ActionKind }) {
       <section className="auth-card" aria-labelledby="account-action-title">
         <p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p>
         <h1 id="account-action-title">
-          {kind === "password" ? "Crie uma nova senha" : "Confirme o novo e-mail"}
+          {kind === "assisted" ? "Confirme seu e-mail e escolha uma senha" : kind === "password" ? "Crie uma nova senha" : "Confirme o novo e-mail"}
         </h1>
         {tokenReady === "loading" ? (
           <p className="intro" role="status">Preparando confirmação segura…</p>
         ) : complete ? (
           <div className="auth-form">
             <p className="intro" role="status">{message}</p>
-            <p>Suas sessões anteriores foram encerradas. Entre novamente para continuar.</p>
+            <p>{kind === "assisted" ? "O novo e-mail e a nova senha só entrarão em vigor quando o proprietário concluir o atendimento. O status da conta continua sendo respeitado." : "Suas sessões anteriores foram encerradas. Entre novamente para continuar."}</p>
             <Link className="primary account-action-link" href="/">Ir para o login</Link>
           </div>
         ) : tokenReady === "missing" ? (
@@ -104,8 +120,9 @@ export function AdminAccountAction({ kind }: { kind: ActionKind }) {
             <p className="intro" role="alert">Este link está incompleto, expirou ou já foi utilizado.</p>
             <Link className="secondary account-action-link" href="/">Voltar ao login</Link>
           </div>
-        ) : kind === "password" ? (
+        ) : kind !== "email" ? (
           <form className="auth-form" onSubmit={resetPassword}>
+            {kind === "assisted" ? <p className="intro">Esta confirmação prepara a recuperação. O proprietário concluirá a alteração depois; sua senha não será exibida a ele.</p> : null}
             <p className="auth-helper">Use pelo menos 12 caracteres. Evite senhas comuns, seu e-mail e a senha atual.</p>
             <label>
               Nova senha
@@ -115,7 +132,12 @@ export function AdminAccountAction({ kind }: { kind: ActionKind }) {
               Confirme a nova senha
               <input name="confirmation" type="password" minLength={12} maxLength={128} autoComplete="new-password" required />
             </label>
-            <button className="primary" disabled={loading}>{loading ? "Salvando…" : "Redefinir senha"}</button>
+            {kind === "password" ? <><label>
+              Código do autenticador ou de recuperação
+              <input name="secondFactor" inputMode="text" autoComplete="one-time-code" pattern="[0-9]{6}|[A-Za-z0-9_-]{24}" maxLength={24} />
+            </label>
+            <p className="auth-helper">Se recebeu o link pelo fluxo de recuperação por e-mail do cadastro de fotógrafo no site e ativou o autenticador, informe o código do aplicativo ou um código de recuperação salvo. Se recebeu este link após validar o código do WhatsApp, deixe o campo vazio; o TOTP continua exigido no próximo login.</p></> : null}
+            <button className="primary" disabled={loading}>{loading ? "Salvando…" : kind === "assisted" ? "Confirmar e aguardar proprietário" : "Redefinir senha"}</button>
           </form>
         ) : (
           <div className="auth-form">

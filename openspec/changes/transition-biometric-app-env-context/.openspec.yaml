@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-10-29
+goal: Definir e validar, com gates de privacidade, como tratar apenas dados
+  biométricos elegíveis vinculados ao APP_ENV de origem sem habilitar busca
+  facial nem pagamentos reais.

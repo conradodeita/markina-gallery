@@ -4,11 +4,11 @@
 
 ### Requirement: Orientação condicional de OTP sem revelar elegibilidade
 
-A interface SHALL apresentar após solicitação ou reenvio de OTP de cliente aceitos a mensagem “O código será enviado somente se este telefone tiver acesso à galeria. Se não receber, confirme seu acesso com o fotógrafo.” e o campo “Código de acesso”. A orientação SHALL ser idêntica independentemente do vínculo e SHALL preservar o contrato de autenticação e as mensagens administrativas.
+Na etapa de validação, a interface SHALL apresentar a mensagem “O código será enviado somente se este telefone tiver acesso à galeria. Se não receber, confirme seu acesso com o fotógrafo.” e o campo “Código de acesso”, sempre igual independentemente do vínculo. Em `invite_only`, essa etapa SHALL ser precedida pelo aviso privado e ação explícita definidos em `show-private-gallery-access-guidance`.
 
-#### Scenario: Solicitação aceita
+#### Scenario: Etapa de código após solicitação aceita
 
-- **WHEN** a API aceita a solicitação de código da cliente
+- **WHEN** a cliente está na etapa de código após a API aceitar sua solicitação e, se o contexto for `invite_only`, após selecionar a ação explícita de continuação
 - **THEN** a interface exibe a orientação condicional e o campo Código de acesso sem afirmar envio efetivo nem revelar vínculo
 
 #### Scenario: Reenvio aceito

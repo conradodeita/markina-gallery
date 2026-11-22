@@ -1,6 +1,6 @@
 # Release de aposentadoria InfinitePay
 
-Este procedimento é dedicado à change `release-infinitepay-retirement-prod`. Ele não autoriza um deploy por si só. O workflow é manual, exige `main`, CI, inventário de produção com fingerprint e aprovação do environment `production` antes de qualquer alteração no banco ou nos serviços.
+Este procedimento é dedicado à change `release-infinitepay-retirement-prod`. O workflow usa operações manuais separadas de preflight e release, exige `main`, CI e aprovação explícita do inventário/plano com seu fingerprint. O environment `production` sozinho não substitui essa aprovação.
 
 ## Pré-condições
 
@@ -31,9 +31,29 @@ Depois da migration, o executor confirma schema, imagens, healthchecks locais e 
 
 ## Falhas e recuperação
 
-- Antes de iniciar a migration, a falha tenta restaurar o checkout e API/web/worker anteriores, retagando suas imagens preservadas; o banco permanece sem mudança de schema.
+- Antes de iniciar a migration, a falha restaura o SHA de checkout observado no inventário e, se pausados, inicia os mesmos containers de API e worker anteriores e aguarda saúde. Web só é recriado após a migration; as imagens anteriores ficam preservadas por tags derivadas de seus digests.
 - Depois que a migration começa, o executor não executa downgrade nem restauração automática. Mantém o arquivo `infinitepay-retirement-in-flight.sha`, preserva o archive e as imagens antigas e declara o release inconclusivo.
 - A recuperação pós-migration é uma operação coordenada separada: reconciliar o estado, obter autorização explícita, restaurar o backup validado somente no banco Markina, restaurar o SHA/imagens anteriores e confirmar saúde. Não usar `alembic downgrade`, `pg_restore --clean`, `compose down`, prune ou remoção de volumes como resposta automática.
 - Se o binding for inesperado, compartilhado, symlink/hardlink, alterado desde o inventário ou ainda referenciado, a limpeza física para. O mount removido do Compose não autoriza apagar outro arquivo.
 
-O inventário anterior e a aprovação protegida são condições obrigatórias. Esta documentação não declara que o host já possui recibo de restauração, backup validado, schema `0086` ou binding exclusivo; esses fatos só serão conhecidos no preflight remoto.
+## Publicação concluída em 2026-10-24
+
+Publicado `1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8`, schema `20261022_0087`. API/web/worker saudáveis e nas imagens construídas para o alvo; 11 serviços conferidos e HTTPS aprovado em `/healthz`, `/api/health` e `/`. PIX próprio disponível, cartão desativado. Configuração/credenciais/colunas operacionais, rotas e variáveis de ambiente InfinitePay não existem no runtime novo; o binding exclusivo foi removido e o marcador de execução foi encerrado.
+
+O run `40117699957` passou CI/inventário/aprovação, mas abortou antes da migration porque o worker legado não tratava SIGTERM, recuperando a versão anterior. O proprietário então autorizou indisponibilidade temporária, worker parado, correção pontual e execução direta da etapa final sem repetir CI. O executor local `22f1cdea` validou imagem/source legados, API pausada, filas ativas/elegíveis zeradas e espera ociosa antes de SIGINT; confirmou saída `130`. O worker novo tem parada graciosa normal. Não reclassificar o run falho como verde: a evidência de conclusão é a execução direta e a conferência real do servidor.
+
+O Nginx Markina conservava endereços antigos após recriação: upstreams diretos e `nginx -t` passaram, e reload somente desse container restabeleceu HTTPS. Uma falha de sintaxe no JSON de referências também foi corrigida na limpeza; o helper recusou remoção até os gates de saúde, referência e identidade serem repetidos corretamente.
+
+Backup preservado: `/var/lib/markina-gallery/backups/infinitepay-retirement-20261024T183605Z-1f4483bd6200.dump`, modo `0600`, 110.924.004 bytes, SHA-256 `375b38ea454285d099a4ce043a352abb1321e1044a134bb607f41260e5a2a8ed`. Foi restaurado em PostgreSQL isolado sem rede, portas ou mount persistente. As seis projeções financeiras tiveram contagens/hashes idênticos antes/depois; duas compras InfinitePay confirmadas, 64 pedidos e 64 agrupamentos preservados. Recibo minimizado em `/var/lib/markina-gallery/deploy-state/infinitepay-retirement-financial-proof-1f4483bd.json`; nenhum dado de cliente ou segredo foi exposto.
+
+Container de prova e executor temporário removidos. Identidade web reconciliada com cópia anterior, manifesto API/web avançado ao SHA/schema publicados e contrato emergencial anterior retirado. A PR #281 passou integralmente e foi integrada em `172aef76c6cc971cd81466200da399a6912e90f9`; suas correções e evidências operacionais não exigiram nova publicação da aplicação.
+
+Recibo final restrito: `/var/lib/markina-gallery/deploy-state/infinitepay-retirement-release-1f4483bd.json`, modo `0600`, com resultado `published_healthy`.
+
+## Encerramento operacional e OpenSpec
+
+Em 2026-10-24 o proprietário autorizou concluir os três itens restantes. A PR #281 foi mesclada após CI verde. O wrapper `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper` foi atualizado atomicamente para SHA-256 `96150855a71fe790aa5405cc0de53710e570d2c0768165f9224738316c4373e1`, mantendo `root:root`, modo `0755`, pin app `646852479c83d0bfa356203379a95cbd9e4019f6` e pin de aposentadoria `935af96ec1b650eb2c9ae188186eec38f0dd532b`. A cópia anterior foi preservada e conferida em `/var/backups/markina-gallery/preflight-ssh-wrapper-20261024T1926Z-close-pr281`.
+
+O preflight real pelo wrapper instalado passou em modo somente leitura para `172aef76c6cc971cd81466200da399a6912e90f9`: checkout e runtime mantidos em `1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8`, schema `0087`, API/web saudáveis nas imagens esperadas, bind `127.0.0.1:8080` e os três endpoints HTTPS respondendo `200`. Fingerprint de evidência `07a56b90e3baf3f75a046c42ea2395b08e9a0aa720a01400515d8b746d74b991`; esse valor não autoriza outra publicação. Não foram reiniciados serviços nem aplicada migration nesse encerramento.
+
+As specs de `deployment-operations` e `gallery-sales/infinitepay-retirement` foram consolidadas e conferidas contra todos os requisitos dos deltas (12 e quatro, respectivamente). A validação retornou 23 specs válidas e zero erros. As duas changes foram arquivadas em `openspec/changes/archive/2026-10-24-release-infinitepay-retirement-prod/` e `openspec/changes/archive/2026-10-24-retire-infinitepay-checkout/`, com todas as tarefas concluídas. A integração desse registro é somente documental e não exige deploy.

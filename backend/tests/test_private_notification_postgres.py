@@ -30,6 +30,7 @@ from app.auth import (
 from app.notification_delivery import recipient_allowed
 from app.notification_events import record_restricted_folder_ready
 from app.private_upload_batches import process_ready_batches
+from tests.test_photographer_onboarding_migration import _demo_helpers
 from tests.test_tenant_migration import migrate
 
 pytest_plugins = ("tests.test_private_upload_batch_migration",)
@@ -40,7 +41,10 @@ def test_private_notification_key_fits_postgres_preserves_retries_and_legacy_key
 ) -> None:
     monkeypatch.setenv("TRANSACTIONAL_WHATSAPP_ENABLED", "true")
     monkeypatch.setenv("WEB_PUSH_ENABLED", "true")
-    migrate(private_batch_migration_database, "upgrade", "20261017_0083")
+    migrate(private_batch_migration_database, "upgrade", "20261031_0093")
+    _demo_helpers().create_synthetic_owner(private_batch_migration_database)
+    # O comportamento atual usa todas as colunas/tabelas, não um ORM sobre 0095.
+    migrate(private_batch_migration_database, "upgrade", "20261110_0124")
     engine = create_engine(private_batch_migration_database)
     try:
         with Session(engine) as db:

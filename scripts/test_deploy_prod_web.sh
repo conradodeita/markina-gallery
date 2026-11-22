@@ -3,6 +3,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 for file in scripts/deploy-prod-web.sh scripts/deploy-prod-lock.sh scripts/deploy-prod-state.sh; do bash -n "$file"; done
+script="$(cat scripts/deploy-prod-web.sh)"
+[[ "$script" != *'docker/docker-compose.raw-development.yml'* ]] || { echo 'overlay RAW aposentado no helper web' >&2; exit 1; }
 # Parse inválido deve abortar antes de carregar suporte ou tocar o host.
 if bash scripts/deploy-prod-web.sh --mode invalid --sha 1111111111111111111111111111111111111111 >/dev/null 2>&1; then
   echo 'modo inválido aceito' >&2; exit 1

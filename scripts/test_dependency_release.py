@@ -31,8 +31,8 @@ class DependencyReleaseTests(unittest.TestCase):
         self.git("config", "gc.auto", "0")
         self.git("config", "maintenance.auto", "false")
         files = list(policy.COMPOSE_FILES) + list(policy.WEB_BUILD_BLOBS) + list(policy.DEPENDENCY_MANIFESTS)
-        files += ["backend/Dockerfile", "backend/Dockerfile.face", "backend/Dockerfile.gemma",
-                  "backend/Dockerfile.preview-adjustment", "backend/Dockerfile.raw-development",
+        files += ["backend/Dockerfile", "backend/Dockerfile.face",
+                  "backend/Dockerfile.preview-adjustment",
                   "scripts/dependency_release.py"]
         for file in files:
             destination = self.root / file
@@ -89,7 +89,7 @@ class DependencyReleaseTests(unittest.TestCase):
         self.change_python()
         report = policy.impact(self.root, self.base, self.commit())
         self.assertEqual(set(report["images"]), {"backend/Dockerfile", "backend/Dockerfile.face",
-            "backend/Dockerfile.gemma", "backend/Dockerfile.preview-adjustment", "backend/Dockerfile.raw-development"})
+            "backend/Dockerfile.preview-adjustment"})
         self.assertEqual(set(report["images"]["backend/Dockerfile.face"]["services"]),
                          {"face-search-worker", "face-index-worker", "face-maintenance-worker"})
 
@@ -186,7 +186,6 @@ class DependencyReleaseTests(unittest.TestCase):
         inventory["services"]["migrate"] = dict(record, status="exited")
         plan = policy.plan(self.root, self.base, target, inventory, "python")
         self.assertEqual(set(plan["selected_services"]), {"api", "worker", "face-search-worker"})
-        self.assertIn("raw-development-worker", plan["excluded_inactive_services"])
         self.assertIn("migrate", plan["excluded_inactive_services"])
         self.assertIn("face-search-worker:specialized_homologation_and_rollback_required", plan["blockers"])
         self.assertFalse(plan["ready_for_operational_inventory"])

@@ -1,0 +1,9 @@
+# Tasks
+
+## 1. Reconciliação comprovável
+
+- [x] 1.1 Identificar a branch principal remota atual e isolar o trabalho sem alterar o checkout sujo; iniciar worktree no `main` confirmado. Evidência: `git ls-remote` e `origin/main` em `6af538ecd5c46da7691fa973c33869f263945a25`, branch `feature/pickyourpic-saas-mainline`; checkout original preservado.
+- [x] 1.2 Confirmar produção em somente leitura: versões da API/worker, ambiente, health checks, containers e hashes dos módulos carregados; registrar limites e não coletar PII/segredos. Evidência: API `74f61300e7a818d1605afda3db1d07574c443110` com 141/144 módulos iguais a `main`; worker `c1944189761799be96eeeb921cad9906484d8b09` com 135/144 iguais a `main`; worker 144/144 igual ao próprio `APP_VERSION`.
+- [x] 1.3 Classificar diferenças sem alterar o código funcional: API diverge em 3 módulos que coincidem com checkout do servidor `0dd015a`; worker diverge em 9 módulos. Revisão e testes indicam preservar `main`, manter proteções de ambiente/tenant e não reduzir o limite de força de prévia de 100 para o legado 75. A diferença 75/100 fica como gate de compatibilidade futura, sem evidência de incidente em produção.
+- [x] 1.4 Executar testes focados e revisão de diff; registrar resultados em `validation.md` e atualizar a matriz Fase 0. Evidência: 61 testes de criptografia/transição passaram com PostgreSQL isolado; suíte adicional de processamento/prévia/métricas: 51 passaram, 2 foram ignorados pela suíte, 7 warnings de depreciação, 183,07 s.
+- [x] 1.5 Confirmar ambiente local/sintético compatível para as fases seguintes; documentar serviços sem alterar Docker compartilhado ou produção. Evidência: virtualenv isolado Python 3.13.13 e PostgreSQL 17.11 efêmero em tmpfs, porta loopback, sem migration; testes focados conectaram apenas ao banco descartável.

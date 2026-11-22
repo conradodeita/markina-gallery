@@ -1,0 +1,51 @@
+{
+  "markina-gallery-face-index-worker-1": {
+    "architecture": "arm64",
+    "os": "linux",
+    "size": 573438749,
+    "os_release": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+    "model_marker": {
+      "kind": "markina-face-models",
+      "manifest_sha256": "c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075",
+      "model_version": "yunet-2023mar+sface-2021dec",
+      "schema_version": 1
+    },
+    "manifest_sha256": "c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075"
+  },
+  "markina-gallery-face-maintenance-worker-1": {
+    "architecture": "arm64",
+    "os": "linux",
+    "size": 573438749,
+    "os_release": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+    "model_marker": {
+      "kind": "markina-face-models",
+      "manifest_sha256": "c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075",
+      "model_version": "yunet-2023mar+sface-2021dec",
+      "schema_version": 1
+    },
+    "manifest_sha256": "c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075"
+  },
+  "markina-gallery-face-search-worker-1": {
+    "architecture": "arm64",
+    "os": "linux",
+    "size": 573438749,
+    "os_release": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+    "model_marker": {
+      "kind": "markina-face-models",
+      "manifest_sha256": "c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075",
+      "model_version": "yunet-2023mar+sface-2021dec",
+      "schema_version": 1
+    },
+    "manifest_sha256": "c8322285b6103a50008ce1082a2ba8a99422cfe1731e160837cba11ebdecf075"
+  },
+  "markina-gallery-api-1": {
+    "architecture": "arm64",
+    "os": "linux",
+    "size": 365607956
+  },
+  "markina-gallery-worker-1": {
+    "architecture": "arm64",
+    "os": "linux",
+    "size": 374716138
+  }
+}

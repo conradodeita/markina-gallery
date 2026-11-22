@@ -2,7 +2,7 @@
 
 ### Requirement: Hierarquia cromática compartilhada
 
-O site SHALL usar tokens e componentes compartilhados na identidade preta/amarela, com cinza e bege para superfícies e tons derivados para destacar navegação, ações e seções. SHALL manter legibilidade, foco acessível e layout fluido; texto sobre amarelo SHALL ser escuro com contraste adequado. Cores semânticas fora da paleta SHALL limitar-se a estados de sucesso/erro. Mídias SHALL manter cores próprias e superfícies neutras; temas configurados das galerias SHALL ser preservados. Ícone e cores do PWA SHALL seguir a identidade preta/amarela.
+O site SHALL usar identidade preta/amarela, fundo cinza, bege em ações secundárias e amarelo nos destaques. Texto sobre amarelo SHALL ser escuro e legível; cores fora da paleta ficam restritas a sucesso/erro. Mídias e temas de galeria mantêm cores próprias; layout, foco e PWA seguem a identidade compartilhada.
 
 #### Scenario: Administração e cliente responsivos
 - **WHEN** o usuário navega no desktop ou mobile

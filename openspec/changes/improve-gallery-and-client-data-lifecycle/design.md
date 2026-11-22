@@ -170,6 +170,12 @@ Antes de alterar código, os artefatos ativos `align-admin-gallery-wizard-and-fo
 
 As capabilities transversais de seleção, experiência original, previews protegidos, apresentação/marca-d'água e liberação completa SHALL receber deltas formais antes da implementação. Enquanto esses deltas não existirem e as propostas conflitantes não estiverem reconciliadas, a primeira task de código permanece bloqueada. A distinção entre `Client` e pessoa fotografada/dependente fica explicitamente adiada para uma change posterior e não destrava busca facial sem o spike obrigatório.
 
+### 12. O painel financeiro distingue seleção finalizada sem cobrança
+
+`SaleOrder.payment_status=not_required` só representa uma seleção externa finalizada quando `payment_required_snapshot=false` e `frozen_at` está preenchido. O endpoint administrativo SHALL reportá-la como `selection_finalized`, e não como `awaiting_payment`; o filtro de pendências prioritárias não inclui esse estado. A interface mostra “Seleção finalizada sem cobrança”, não apresenta total de R$ 0,00 nem mensagem de falta de comunicação, e não soma o item como receita confirmada. A biblioteca do cliente continua usando o estado já existente `selection_finalized`.
+
+Pedidos legados confirmados sem `PaymentCommunication` continuam sendo apresentados pelo `SaleOrder.payment_status` confirmado. A ausência da comunicação é tratada como ausência de detalhe legado, não como prova de que a cliente deixou de comunicar. As regras não modificam valores, decisões nem transações financeiras.
+
 ## Risks / Trade-offs
 
 - [Falha entre armazenamento e banco] → usar manifesto durável, chaves determinísticas, checksum e etapas idempotentes antes de remover referências.

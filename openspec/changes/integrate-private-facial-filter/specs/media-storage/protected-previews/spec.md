@@ -11,12 +11,12 @@ O sistema SHALL montar candidatos faciais somente com fotos cuja prévia de clie
 
 ### Requirement: Separação entre mídia e material biométrico
 
-Originais, prévias internas limpas, prévias protegidas, referências temporárias e embeddings SHALL usar ciclos e autorizações separados. Embeddings e classificação técnica SHALL usar uma prévia interna sem marca d'água derivada do original; essa variante SHALL NOT ser servida ou incorporada ao navegador da cliente. O navegador SHALL receber somente a prévia protegida, IDs opacos, banda pública `best|other`, posição e progresso agregado necessários ao filtro; SHALL NOT receber referência armazenada, vetor, indicadores técnicos brutos, similaridade, landmarks, caixa facial, caminho interno, variante limpa ou modelo.
+Originais, prévias limpas, prévias protegidas, referências e embeddings SHALL manter acesso e retenção separados. Análise facial usa derivado limpo, nunca entregue à cliente; respostas ao navegador incluem somente prévia protegida e metadados mínimos para resultados e progresso, sem artefatos biométricos ou caminhos internos.
 
 #### Scenario: Cliente consulta resultado
 
 - **WHEN** a cliente carrega ou atualiza o bloco de possíveis fotos
-- **THEN** a resposta contém apenas referências autorizadas, ordem e estado de expiração, sem artefato biométrico
+- **THEN** a resposta contém referências autorizadas, banda `best|other`, posição, expiração e progresso agregado; não inclui referência, vetor, score, landmarks, caixa facial, caminho interno, prévia limpa, modelo ou indicador técnico bruto
 
 #### Scenario: Foto é indexada e classificada automaticamente
 
@@ -25,12 +25,12 @@ Originais, prévias internas limpas, prévias protegidas, referências temporár
 
 ### Requirement: Aviso de tentativa de cópia na apresentação da cliente
 
-A apresentação da cliente SHALL manter a marca d'água na imagem visível e SHALL abrir um diálogo acessível de direitos autorais quando interceptar menu de contexto, cópia, arraste ou captura de tela detectável pelo navegador. O diálogo SHALL mencionar a Lei nº 9.610/98, artigo 79, solicitar que a imagem não seja copiada ou compartilhada sem autorização e oferecer fechamento claro. A interface SHALL NOT afirmar que consegue impedir toda captura ou download fora dos eventos controláveis pelo navegador. A prévia administrativa SHALL NOT exibir esse diálogo como se o fotógrafo fosse uma cliente.
+A prévia da cliente SHALL manter a marca d'água e abrir diálogo acessível sobre direitos em tentativas de cópia detectáveis pelo navegador; deve permitir fechar e não prometer impedir toda captura/download. A prévia administrativa SHALL manter seus controles sem mostrar mensagem dirigida à cliente.
 
 #### Scenario: Cliente tenta abrir opções de download
 
-- **WHEN** a cliente aciona o menu de contexto, copia ou arrasta uma prévia protegida
-- **THEN** a ação padrão é cancelada e um diálogo explica a proteção autoral, sem revelar nem carregar a variante interna limpa
+- **WHEN** a cliente aciona menu de contexto, cópia, arraste ou captura de tela detectável pelo navegador
+- **THEN** a interface cancela eventos controláveis e abre diálogo acessível que cita a Lei nº 9.610/98, artigo 79, pede que a imagem não seja copiada/compartilhada sem autorização e oferece fechamento; não promete impedir capturas fora do navegador nem carrega a variante limpa
 
 #### Scenario: Fotógrafo revisa a apresentação administrativa
 
@@ -39,14 +39,12 @@ A apresentação da cliente SHALL manter a marca d'água na imagem visível e SH
 
 ### Requirement: Proteção visual global configurável
 
-O fotógrafo SHALL poder configurar globalmente texto, tipografia, cor, tamanho, transparência, orientação, posição em uma grade de nove pontos, sombra e uma camada opcional de linhas diagonais transversais. A interface SHALL mostrar uma prévia responsiva antes do salvamento. O servidor SHALL validar os limites, persistir a configuração e reprocessar somente as prévias protegidas; originais e prévias internas de análise facial SHALL permanecer inalterados.
-
-O texto SHALL continuar repetido pela imagem para reduzir recortes triviais, com a grade de posição definindo o alinhamento principal do padrão. As linhas de segurança SHALL usar a cor e uma opacidade proporcional à marca, sem substituir o texto.
+O fotógrafo SHALL configurar texto e estilo globais da marca d'água: tipografia, cor, tamanho, transparência, orientação, grade de nove posições, sombra e linhas diagonais opcionais. UI SHALL pré-visualizar; servidor SHALL validar, salvar e reprocessar só prévias protegidas. Texto se repete; linhas usam cor/opacidade proporcionais, sem substituir o texto; originais e derivados limpos permanecem intactos.
 
 #### Scenario: Fotógrafo salva proteção em camadas
 
-- **WHEN** o fotógrafo escolhe texto, 60% de transparência, posição inferior central, sombra e linhas transversais
-- **THEN** a prévia ao vivo representa esses controles e o processamento seguinte grava texto e linhas somente em `client_preview`
+- **WHEN** o fotógrafo escolhe texto, tipografia, cor, tamanho, transparência, orientação, posição inferior central, sombra e linhas diagonais
+- **THEN** a prévia responsiva repete o texto alinhado pela grade; linhas usam a cor e opacidade proporcional. Só a prévia protegida é reprocessada, sem mudar original ou derivado facial limpo
 
 #### Scenario: Proteção global é alterada após uploads
 

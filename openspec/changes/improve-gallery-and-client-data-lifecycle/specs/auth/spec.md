@@ -26,7 +26,9 @@ O sistema SHALL resolver uma única identidade de cliente pelo telefone normaliz
 
 ### Requirement: Vínculo de sessão existente por link
 
-O sistema SHALL exigir autenticação de cliente ao abrir o link de uma Galeria pública. Quando já houver sessão `client` válida, o sistema SHALL aplicar no backend o modo de acesso e o escopo do token sem solicitar novo OTP, sem duplicar cadastro e sem modificar nome ou telefone. O vínculo automático SHALL ocorrer somente para link público válido em modo `standard`; `invite_only` SHALL exigir associação ou convite individual compatível, e `collective_protected` SHALL manter o registro pendente sem liberar fotos.
+O sistema SHALL exigir autenticação de cliente ao abrir o link de uma Galeria pública. Com sessão `client` válida, SHALL aplicar no backend o modo de acesso e o escopo do token sem novo OTP, cadastro duplicado ou alteração de nome e telefone.
+
+O vínculo automático SHALL ocorrer somente em modo `standard`. `invite_only` SHALL exigir associação ou convite individual compatível. `collective_protected` SHALL manter o registro pendente sem liberar fotos.
 
 #### Scenario: Link aberto sem sessão
 

@@ -4,16 +4,20 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PurchasePreview } from "../../purchase-preview";
 import { notifyCartChanged } from "../../client-navigation";
-import { SelectionDeadline } from "../../selection-deadline";
 import { SystemState } from "../../ui-kit";
+import MercadoPagoResume from "./mercadopago-resume";
+import PaymentLogo from "../payment-logo";
+import paymentStyles from "../payment-methods.module.css";
+import { MERCADO_PAGO_MINIMUM_TOTAL_CENTS, paymentMoney } from "../mercadopago";
+import { clientMediaStatusMessage, type MediaArchiveStatus } from "../../media-archive-status";
 
 type CartGroup = { payment_required?: boolean; message?: string; revision?: string; gallery_id: string; parent_gallery_id: string; name: string; quantity: number;
-  legacy_review_url?: string | null; total_cents: number | null; error: string | null; browse_url: string; selection_expires_at: string | null;
-  items: Array<{ id: string; name: string; folder_name: string | null; preview_url: string }> };
+  legacy_review_url?: string | null; total_cents: number | null; error: string | null; browse_url: string;
+  items: Array<{ id: string; name: string; folder_name: string | null; preview_url: string | null; media_status?: MediaArchiveStatus }> };
 type Payment = { id: string; revision: string; total_cents: number; pix_copy_paste: string;
   pix_qr_code: string; pix_instructions: string | null; receiver_name: string | null };
 type Cart = { groups: CartGroup[]; quantity: number; can_prepare: boolean; cart_revision?: string | null;
-  pix_available?: boolean; payment_error?: string | null; total_cents: number | null; payment?: Payment };
+  pix_available?: boolean; mercadopago_available?: boolean; payment_error?: string | null; total_cents: number | null; payment?: Payment };
 const money = (value: number) => (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function CartPage() {
@@ -119,7 +123,8 @@ export default function CartPage() {
 
   if (reported) return <section className="unified-cart"><h1>Pagamento informado</h1><p>Seu pagamento aguarda a confirmação do fotógrafo.</p><Link className="primary" href={`/library/purchases#payment-${reported}`}>Ver compra</Link><Link href="/library">Continuar nas galerias</Link></section>;
   return <section className="unified-cart">
-    <h1>{cart?.groups.length && cart.groups.every((group) => group.payment_required === false) ? "Revise suas fotos" : "Revise suas fotos e escolha como pagar"}</h1>
+    <h1>{!cart?.groups.length ? "Seu carrinho" : cart.groups.every((group) => group.payment_required === false) ? "Revise suas fotos" : "Revise suas fotos e escolha como pagar"}</h1>
+    <MercadoPagoResume />
     {notice ? <p role="status">{notice} <Link href="/library/purchases">Ver histórico</Link></p> : null}
     {error ? <div role="alert"><p>{error}</p><button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Atualizar revisão</button></div> : null}
     {!cart && !error ? <SystemState tone="loading" title="Carregando carrinho" detail="Buscando suas fotos selecionadas." /> : null}
@@ -127,11 +132,10 @@ export default function CartPage() {
     {cart?.groups.map((group) => <section className="unified-cart-group" key={group.gallery_id} aria-label={`Fotos de ${group.name}`}>
       <div className="section-heading"><h2>{group.name}</h2><span>{group.quantity} foto(s){group.total_cents !== null ? ` · ${money(group.total_cents)}` : ""}</span></div>
       {group.message?.trim() ? <p style={{ whiteSpace: "pre-wrap" }}>{group.message}</p> : null}
-      <SelectionDeadline expiresAt={group.selection_expires_at} />
       {group.error ? <p role="alert">{group.error}</p> : null}
       <div className="unified-cart-photos">{group.items.map((photo) => <figure key={photo.id}>
-        <PurchasePreview path={photo.preview_url} name={photo.name} />
-        <figcaption><strong>{photo.name}</strong>{photo.folder_name ? <small>{photo.folder_name}</small> : null}</figcaption>
+        {photo.preview_url ? <PurchasePreview path={photo.preview_url} name={photo.name} /> : <div className="purchase-preview-unavailable" role="img" aria-label={`Prévia indisponível de ${photo.name}`}>Prévia indisponível no momento</div>}
+        <figcaption><strong>{photo.name}</strong>{photo.folder_name ? <small>{photo.folder_name}</small> : null}{photo.media_status && photo.media_status !== "available" ? <small>{clientMediaStatusMessage(photo.media_status)}</small> : null}</figcaption>
         <button type="button" className="secondary" disabled={busy} aria-label={`Remover ${photo.name} de ${group.name}`} onClick={() => void remove(group, photo.id)}>Remover</button>
       </figure>)}</div>
       <div className="dashboard-actions"><Link href={group.browse_url}>Continuar escolhendo</Link><button type="button" className="secondary" disabled={busy} onClick={() => void remove(group)}>Remover seleção de {group.name}</button></div>
@@ -142,6 +146,21 @@ export default function CartPage() {
       <h2>Total {cart.total_cents === null ? "a conferir" : money(cart.total_cents)}</h2>
       <p>{cart.groups.filter((group) => group.payment_required !== false).reduce((sum, group) => sum + group.quantity, 0)} foto(s) com cobrança</p>
       {cart.payment_error ? <p role="alert">{cart.payment_error}</p> : null}
+      <div className={paymentStyles.choices} aria-label="Formas de pagamento">
+        {cart.pix_available !== false ? <a className={paymentStyles.option} href="#cart-system-pix" aria-label="Pagar com PIX do sistema">
+          <PaymentLogo provider="pix" /><span><strong>PIX do sistema</strong><small>Pague pelo QR Code. O fotógrafo confere seu pagamento.</small></span>
+        </a> : null}
+        {cart.mercadopago_available && cart.cart_revision ? cart.total_cents !== null &&
+          cart.total_cents < MERCADO_PAGO_MINIMUM_TOTAL_CENTS ? <div className={paymentStyles.option}
+            aria-disabled="true" aria-label="Mercado Pago indisponível para este valor">
+            <PaymentLogo provider="mercadopago" /><span><strong>Mercado Pago</strong>
+              <small>Disponível a partir de {paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Selecione mais fotos ou use o PIX do sistema.</small></span>
+          </div> : <Link className={paymentStyles.option}
+            aria-label="Pagar com Mercado Pago" data-mp-checkout-cta="checkout-api" href="/library/checkout">
+            <PaymentLogo provider="mercadopago" /><span><strong>Pagar com Mercado Pago</strong><small>Cartão de crédito ou PIX · confirmação automática</small></span>
+          </Link> : null}
+      </div>
+      <div id="cart-system-pix" className={paymentStyles.manualPix}>
       {cart.pix_available !== false ? cart.payment ? <>
         <h3>Pague com PIX</h3>
         {cart.payment.receiver_name ? <p>Recebedor: {cart.payment.receiver_name}</p> : null}
@@ -152,7 +171,8 @@ export default function CartPage() {
         <p>Após pagar {money(cart.payment.total_cents)}, informe o pagamento para o fotógrafo conferir.</p>
         <button type="button" className="primary" disabled={busy} onClick={() => void report()}>{busy ? "Salvando…" : "Informar pagamento"}</button>
       </> : !error && cart.can_prepare ? <p role="status">Preparando PIX…</p> : <p>Confira os avisos acima para continuar.</p>
-        : <p role="alert">O PIX do sistema está temporariamente indisponível. Contate o fotógrafo.</p>}
+        : <p>O PIX do sistema não está disponível para esta compra.</p>}
+      </div>
     </section> : null}
   </section>;
 }

@@ -20,7 +20,7 @@ from app.provision_installation_operator import provision_operator
 from app.provision_photographer import provision_photographer
 
 SYNTHETIC_PASSWORD = "Synthetic!Pilot2026.NoRealAccount"
-SYNTHETIC_TOTP = "JBSWY3DPEHPK3PXP"
+SYNTHETIC_TOTP = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@ Permitir ao fotógrafo disponibilizar manualmente o álbum final do Google Photo
 
 ### Requirement: Link de entrega administrado por pedido
 
-O sistema SHALL permitir ao fotógrafo autenticado cadastrar, substituir e remover o link do álbum do Google Photos em cada pedido. O formulário SHALL ocupar o lugar do texto de mensagem e dos estados, contadores de tentativas e ações de reenvio no card de Vendas e pagamentos, preservando identificação, itens, valores e ações financeiras. A operação SHALL exigir o botão explícito "Enviar" para persistir/disponibilizar e agendar o aviso configurado, ou confirmação de remoção para retirar o link. Digitar SHALL NOT produzir esses efeitos. O sistema SHALL mostrar sucesso apenas após persistência e registrar autor, pedido, tipo de ação e data UTC sem copiar o URL para o log de auditoria.
+O fotógrafo autenticado SHALL cadastrar, substituir ou remover o link do Google Photos por pedido. O formulário SHALL substituir histórico/controles de mensagem no card e preservar identificação, itens, valores e ações financeiras. Somente `Enviar` SHALL persistir e agendar o aviso; remoção exige confirmação. Digitação SHALL NOT ter efeitos. Sucesso aparece após persistência, e auditoria registra autor/pedido/ação/UTC e MUST NOT incluir URL.
 
 #### Scenario: Salvar e retomar o link
 - **WHEN** o fotógrafo preenche um link válido, clica em Enviar e recarrega a página
@@ -34,7 +34,7 @@ O sistema SHALL aceitar somente HTTPS, sem credenciais, portas não padrão ou c
 
 ### Requirement: Botão de entrega em Compras
 
-O sistema SHALL exibir em cada pedido de Compras um botão verde "Fotos disponíveis" quando houver link salvo e pagamento confirmado, e um botão cinza desabilitado "Fotos indisponíveis" nos demais casos. O botão ativo SHALL abrir o álbum em nova aba sem conceder acesso à janela de origem e sem transmitir referência da página. O estado SHALL ser identificável pelo texto e pela semântica acessível, além da cor. Prévias compradas, ampliação e dados do pedido SHALL permanecer disponíveis segundo as regras existentes.
+Cada pedido SHALL mostrar botão verde ativo `Fotos disponíveis` somente com link salvo e pagamento confirmado; nos demais casos, botão cinza desabilitado `Fotos indisponíveis`. O ativo SHALL abrir o álbum em nova aba sem acesso à janela de origem nem envio de Referer. Texto e semântica acessível SHALL identificar o estado além da cor. Prévias, ampliação e dados do pedido seguem as regras existentes.
 
 #### Scenario: Álbum disponível
 - **WHEN** a cliente abre seu pedido com pagamento confirmado e link de entrega salvo
@@ -46,7 +46,7 @@ O sistema SHALL exibir em cada pedido de Compras um botão verde "Fotos disponí
 
 ### Requirement: Isolamento e continuidade da entrega
 
-O sistema SHALL fornecer o link somente ao fotógrafo autenticado ou à cliente proprietária de pedido com pagamento confirmado. Enviar, substituir e Reenviar aviso SHALL exigir pagamento confirmado no backend, sem alterar implicitamente esse estado. Remover link SHALL continuar permitido ao fotógrafo mesmo em pedido não confirmado. Cada pedido SHALL manter seu link independente, mesmo em PIX agrupado. Expiração da seleção e remoção do acervo SHALL preservar o link por pedido e as regras existentes do histórico comercial.
+Somente o fotógrafo autenticado ou a cliente proprietária com pagamento confirmado SHALL acessar o link. Enviar, substituir e reenviar aviso SHALL exigir confirmação no backend sem alterar o pagamento; fotógrafo pode remover o link mesmo antes da confirmação. Links SHALL permanecer independentes por pedido em PIX agrupado e sobreviver à expiração/remoção do acervo conforme o histórico comercial.
 
 #### Scenario: Pedido ainda não confirmado
 - **WHEN** o fotógrafo tenta Enviar ou Reenviar aviso para pedido pendente ou com pagamento não localizado

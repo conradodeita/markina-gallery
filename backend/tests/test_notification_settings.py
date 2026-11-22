@@ -3,18 +3,21 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.auth import (
     AdminUser,
     Base,
     Client,
     DerivedGallery,
+    MediaArchiveCycle,
+    MediaArchiveNotice,
     NotificationDelivery,
     NotificationEvent,
     NotificationSetting,
     ParentGallery,
     PaymentMessageTemplate,
+    PhotoFolder,
     PushSubscription,
     SessionLocal,
     Tenant,
@@ -30,7 +33,7 @@ from app.notification_settings import (
     save_setting,
     setting_for,
 )
-from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin, fixture_unmetered_owner
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +58,7 @@ def authenticated(role="admin"):
                                             email_verified=True))
             db.add(admin)
             db.flush()
+            fixture_unmetered_owner(db, admin)
             subject_id = admin.id
         else:
             person = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente fixture", phone_e164="+5511999999630")
@@ -98,6 +102,59 @@ def test_configuration_api_is_admin_only_and_validates_templates():
     assert response.status_code == 200
     assert response.json()["version"] == 2
     assert client.put("/admin/notification-settings/first_access", json=payload).status_code == 422
+
+
+def test_disconnected_whatsapp_blocks_edits_but_preserves_push_and_templates(monkeypatch):
+    from app import notification_settings, whatsapp_channel
+
+    monkeypatch.setattr(whatsapp_channel, "notification_channel_ready", lambda *a, **k: False)
+    monkeypatch.setattr(notification_settings, "notification_channel_ready", lambda *a, **k: False)
+    client = authenticated()
+    response = client.get("/admin/notification-settings")
+    assert response.json()["whatsapp_editable"] is False
+    item = response.json()["settings"][0]
+    payload = {key: item[key] for key in ("version", "whatsapp_enabled", "push_enabled",
+                                         "whatsapp_body", "push_title", "push_body")}
+    denied = client.put("/admin/notification-settings/first_access", json={
+        **payload, "whatsapp_body": "Novo aviso", "push_body": "Não deve persistir",
+    })
+    assert denied.status_code == 409
+    assert denied.json()["detail"]["code"] == "whatsapp_channel_required"
+    with SessionLocal() as db:
+        current = setting_for(db, "first_access", tenant_id=FIXTURE_TENANT_ID)
+        assert current.version == item["version"]
+        assert current.whatsapp_body == item["whatsapp_body"]
+        assert current.push_body == item["push_body"]
+    # Payload completo com campos WhatsApp inalterados deve salvar somente push.
+    saved = client.put("/admin/notification-settings/first_access", json={
+        **payload, "push_body": "Aviso push independente", "push_enabled": False,
+    })
+    assert saved.status_code == 200
+    assert saved.json()["push_body"] == "Aviso push independente"
+    assert saved.json()["whatsapp_body"] == item["whatsapp_body"]
+    assert client.put("/admin/payment-message-templates/confirmed",
+                      json={"body": "Novo aviso confirmado"}).status_code == 409
+
+
+def test_whatsapp_edit_revalidates_the_tenant_connection(monkeypatch):
+    from app import notification_settings, whatsapp_channel
+
+    seen = []
+    monkeypatch.setattr(whatsapp_channel, "notification_channel_ready", lambda *a, **k: True)
+    monkeypatch.setattr(notification_settings, "notification_channel_ready",
+                        lambda db, *, tenant_id: seen.append(tenant_id) or True)
+    client = authenticated()
+    item = client.get("/admin/notification-settings").json()["settings"][0]
+    payload = {key: item[key] for key in ("version", "whatsapp_enabled", "push_enabled",
+                                         "whatsapp_body", "push_title", "push_body")}
+    saved = client.put("/admin/notification-settings/first_access", json={**payload, "whatsapp_body": "Aviso atualizado"})
+    assert saved.status_code == 200
+    assert seen == [FIXTURE_TENANT_ID]
+    monkeypatch.setattr(notification_settings, "notification_channel_ready", lambda *a, **k: False)
+    denied = client.put("/admin/notification-settings/first_access", json={
+        **payload, "version": saved.json()["version"], "whatsapp_enabled": False,
+    })
+    assert denied.status_code == 409
 
 
 def test_link_compras_is_validated_and_rendered_only_for_delivery_whatsapp():
@@ -317,5 +374,69 @@ def test_event_rolls_back_with_business_transaction():
     with SessionLocal() as db:
         assert not list(db.scalars(select(NotificationEvent)))
         assert not list(db.scalars(select(NotificationDelivery)))
+
+
+def test_media_archive_notice_inbox_is_tenant_scoped_and_internal():
+    def seed(tenant_id, suffix):
+        gallery = ParentGallery(tenant_id=tenant_id, name=f"Galeria {suffix}")
+        db.add(gallery)
+        db.flush()
+        folder = PhotoFolder(
+            tenant_id=tenant_id,
+            parent_gallery_id=gallery.id,
+            name=f"Pasta {suffix}",
+            position=0,
+            purpose="content",
+            status="released",
+        )
+        db.add(folder)
+        db.flush()
+        cycle = MediaArchiveCycle(
+            tenant_id=tenant_id,
+            parent_gallery_id=gallery.id,
+            folder_id=folder.id,
+            cycle_number=1,
+            state="local",
+        )
+        db.add(cycle)
+        db.flush()
+        notice = MediaArchiveNotice(
+            tenant_id=tenant_id,
+            cycle_id=cycle.id,
+            notice_type="window_7_days",
+            idempotency_key=f"test-window:{suffix}",
+            title="Aviso sintético",
+            body="Texto sintético do aviso.",
+            created_at=now(),
+        )
+        db.add(notice)
+        return notice
+
+    with SessionLocal() as db:
+        foreign_tenant = Tenant()
+        db.add(foreign_tenant)
+        db.flush()
+        own_notice = seed(FIXTURE_TENANT_ID, "own")
+        foreign_notice = seed(foreign_tenant.id, "foreign")
+        db.commit()
+        own_id, foreign_id = own_notice.id, foreign_notice.id
+
+    client = authenticated()
+    listing = client.get("/admin/media-archive/notices")
+    assert listing.status_code == 200
+    assert [item["id"] for item in listing.json()["items"]] == [str(own_id)]
+    assert listing.json()["unread_count"] == 1
+    assert client.post(f"/admin/media-archive/notices/{foreign_id}/read").status_code == 404
+
+    read = client.post(f"/admin/media-archive/notices/{own_id}/read")
+    assert read.status_code == 200
+    assert read.json()["read_at"]
+    assert client.post(f"/admin/media-archive/notices/{own_id}/read").json()["read_at"] == read.json()["read_at"]
+    reread = client.get("/admin/media-archive/notices").json()
+    assert reread["unread_count"] == 0
+    assert reread["items"][0]["read_at"] == read.json()["read_at"]
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(NotificationEvent)) == 0
+        assert db.scalar(select(func.count()).select_from(NotificationDelivery)) == 0
 
 from tests.tenant_fixtures import fixture_session

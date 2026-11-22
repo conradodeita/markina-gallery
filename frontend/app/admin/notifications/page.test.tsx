@@ -19,7 +19,7 @@ async function openCard(name: string) {
 }
 
 it("exibe sete eventos, prévias e dois interruptores sem a caixa de entrada antiga", async () => {
-  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings })));
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings, whatsapp_editable: true })));
   vi.stubGlobal("fetch", fetch);
   render(<NotificationsPage />);
   for (const item of settings) await openCard(item.label);
@@ -45,7 +45,7 @@ it("mostra prévias de pagamento para compra agrupada e pedido individual", asyn
   const configured = settings.map((item) => item.event_type === "payment_confirmed"
     ? { ...item, whatsapp_body: "Pagamento {{contexto_pagamento}} confirmado." }
     : item);
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings: configured }))));
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings: configured, whatsapp_editable: true }))));
   render(<NotificationsPage />);
   await openCard("payment_confirmed");
   expect(screen.getByText("Pagamento da compra 1234abcd confirmado.")).toBeTruthy();
@@ -53,7 +53,7 @@ it("mostra prévias de pagamento para compra agrupada e pedido individual", asyn
 });
 
 it("inicia recolhido e preserva rascunhos e abertura independente sem chamadas adicionais", async () => {
-  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings })));
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings, whatsapp_editable: true })));
   vi.stubGlobal("fetch", fetch);
   const { container } = render(<NotificationsPage />);
   await screen.findByRole("heading", { name: "first_access" });
@@ -75,7 +75,7 @@ it("inicia recolhido e preserva rascunhos e abertura independente sem chamadas a
 });
 
 it("salva somente o evento escolhido com versão e canais independentes", async () => {
-  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ settings })))
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ settings, whatsapp_editable: true })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ ...settings[0], version: 2, push_enabled: false })));
   vi.stubGlobal("fetch", fetch);
   render(<NotificationsPage />);
@@ -90,7 +90,7 @@ it("salva somente o evento escolhido com versão e canais independentes", async 
 });
 
 it("preserva rascunho em erro e explica conflito de versão", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ settings })))
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ settings, whatsapp_editable: true })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "A configuração mudou. Atualize a página antes de salvar." }), { status: 422 })));
   render(<NotificationsPage />);
   const summary = await openCard("first_access");
@@ -105,8 +105,61 @@ it("preserva rascunho em erro e explica conflito de versão", async () => {
 });
 
 it("permite recuperar falha na carga sem enviar alterações", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new Error()).mockResolvedValueOnce(new Response(JSON.stringify({ settings }))));
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new Error()).mockResolvedValueOnce(new Response(JSON.stringify({ settings, whatsapp_editable: true }))));
   render(<NotificationsPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Tentar novamente" }));
   expect((await screen.findByRole("heading", { name: "first_access" })).closest("details")).toHaveProperty("open", false);
+});
+
+it("bloqueia WhatsApp sem conexão e permite editar e salvar push", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ settings, whatsapp_editable: false })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...settings[0], version: 2, push_body: "Novo push" })));
+  vi.stubGlobal("fetch", fetch);
+  render(<NotificationsPage />);
+  await openCard("first_access");
+  expect(screen.getByRole("link", { name: "Configurar WhatsApp" }).getAttribute("href")).toBe("/admin/settings#whatsapp");
+  const form = within(screen.getByRole("form", { name: "first_access" }));
+  expect(form.getByLabelText(/Mensagem do WhatsApp/).closest("fieldset")).toHaveProperty("disabled", true);
+  expect(form.getByLabelText("Enviar WhatsApp").closest("fieldset")).toHaveProperty("disabled", true);
+  expect(form.getByLabelText(/Mensagem do push/)).not.toHaveProperty("disabled", true);
+  fireEvent.change(form.getByLabelText(/Mensagem do push/), { target: { value: "Novo push" } });
+  fireEvent.click(form.getByRole("button", { name: "Salvar evento" }));
+  await form.findByText("Configuração da sua conta salva.");
+  const payload = JSON.parse(fetch.mock.calls[1][1].body);
+  expect(payload.whatsapp_body).toBe(settings[0].whatsapp_body);
+  expect(payload.push_body).toBe("Novo push");
+  expect(screen.queryByText(/Evolution API/)).toBeNull();
+});
+
+it("falha fechada quando a resposta não traz capacidade WhatsApp", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings }))));
+  render(<NotificationsPage />);
+  await openCard("first_access");
+  const form = within(screen.getByRole("form", { name: "first_access" }));
+  expect(form.getByLabelText(/Mensagem do WhatsApp/).closest("fieldset")).toHaveProperty("disabled", true);
+  expect(form.getByLabelText(/Título do push/)).not.toHaveProperty("disabled", true);
+});
+
+it("bloqueia os controles se o canal cair entre a consulta e o salvamento", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ settings, whatsapp_editable: true })))
+    .mockResolvedValueOnce(new Response(
+      JSON.stringify({ detail: { code: "whatsapp_channel_required", message: "Conecte seu WhatsApp em Configurações." } }),
+      { status: 409 },
+    ))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...settings[0], version: 2, push_body: "Push após queda" })));
+  vi.stubGlobal("fetch", fetch);
+  render(<NotificationsPage />);
+  await openCard("first_access");
+  const form = within(screen.getByRole("form", { name: "first_access" }));
+  fireEvent.change(form.getByLabelText(/Mensagem do WhatsApp/), { target: { value: "Rascunho" } });
+  fireEvent.click(form.getByRole("button", { name: "Salvar evento" }));
+  await form.findByRole("alert");
+  expect(form.getByLabelText(/Mensagem do WhatsApp/).closest("fieldset")).toHaveProperty("disabled", true);
+  expect(form.getByLabelText(/Título do push/)).not.toHaveProperty("disabled", true);
+  fireEvent.change(form.getByLabelText(/Mensagem do push/), { target: { value: "Push após queda" } });
+  fireEvent.click(form.getByRole("button", { name: "Salvar evento" }));
+  await form.findByText("Configuração da sua conta salva.");
+  const payload = JSON.parse(fetch.mock.calls[2][1].body);
+  expect(payload.whatsapp_body).toBe(settings[0].whatsapp_body);
+  expect(payload.push_body).toBe("Push após queda");
 });

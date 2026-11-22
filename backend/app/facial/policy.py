@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.acervo_context import owned_record
 from app.auth import AuditEvent, GalleryFacialPolicy, ParentGallery, now
+from app.facial.closure_gate import FacialCleanupInProgress, require_facial_mutation_allowed
 from app.facial.config import FacialSettings
 from app.facial.purge import enqueue_gallery_purge
 from app.tenancy import require_admin_tenant
@@ -17,6 +18,13 @@ from app.tenancy import require_admin_tenant
 
 class FacialPolicyError(RuntimeError):
     """Política facial não pode avançar no estado solicitado."""
+
+
+def _require_open_facial_mutations(db: Session, tenant_id: UUID) -> None:
+    try:
+        require_facial_mutation_allowed(db, tenant_id)
+    except FacialCleanupInProgress as exc:
+        raise FacialPolicyError("Política facial indisponível durante o encerramento.") from exc
 
 
 @dataclass(frozen=True)
@@ -57,6 +65,7 @@ def ensure_automatic_policy(
 
     if not settings.enabled:
         raise FacialPolicyError("O processamento facial está desligado no ambiente.")
+    _require_open_facial_mutations(db, tenant_id)
     parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
     if (
         not parent
@@ -124,6 +133,7 @@ def prepare_policy(
     draft: FacialPolicyDraft,
 ) -> GalleryFacialPolicy:
     tenant_id = require_admin_tenant(db, actor_admin_id).id
+    _require_open_facial_mutations(db, tenant_id)
     parent = owned_record(db, ParentGallery, parent_gallery_id, tenant_id=tenant_id)
     if not parent or parent.lifecycle_status in {"deleting", "deleted"}:
         raise FacialPolicyError("Galeria pública indisponível para política facial.")
@@ -200,6 +210,7 @@ def activate_policy(
     settings: FacialSettings,
 ) -> GalleryFacialPolicy:
     tenant_id = require_admin_tenant(db, actor_admin_id).id
+    _require_open_facial_mutations(db, tenant_id)
     policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     missing = activation_inventory(policy, settings)
     if missing:
@@ -234,6 +245,7 @@ def suspend_policy(
     actor_admin_id: UUID,
 ) -> GalleryFacialPolicy:
     tenant_id = require_admin_tenant(db, actor_admin_id).id
+    _require_open_facial_mutations(db, tenant_id)
     policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     if policy is None:
         raise FacialPolicyError("Política facial não encontrada.")
@@ -266,6 +278,7 @@ def revoke_policy(
     actor_admin_id: UUID,
 ) -> GalleryFacialPolicy:
     tenant_id = require_admin_tenant(db, actor_admin_id).id
+    _require_open_facial_mutations(db, tenant_id)
     policy = read_policy(db, parent_gallery_id, tenant_id=tenant_id)
     if policy is None:
         raise FacialPolicyError("Política facial não encontrada.")

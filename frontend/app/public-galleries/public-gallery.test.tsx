@@ -28,6 +28,20 @@ function response(value: object, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(value), { status })); }
 
 describe("Galeria pública da cliente", () => {
+  it("orienta a contatar o fotógrafo quando não há contato público publicado", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) return response({ state: "unavailable", manual_selection_available: true });
+      if (path.endsWith("/comments")) return response({ comments: [] });
+      if (path.endsWith("/reopening-requests")) return response({ request: null });
+      if (path.endsWith("/photos")) return response({ photos: [], cart: { quantity: 0, items: [] } });
+      return response({ id: "public-1", name: "Galeria", favorites_enabled: false, comments_enabled: false, folder_display_mode: "individual", support_contact_email: null });
+    }));
+    render(<PublicGalleryPage />);
+    expect(await screen.findByRole("heading", { name: "Privacidade das suas fotos" })).toBeTruthy();
+    expect(screen.getByText(/Fale com o fotógrafo pelo canal em que recebeu o convite/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Fale com o suporte" })).toBeNull();
+  });
+
   it("navega pelas pastas comuns e exclusivas de cada cliente sem mostrar as da outra", async () => {
     let recipient = "ana";
     const fetchMock = vi.fn((path: string) => {
@@ -38,11 +52,13 @@ describe("Galeria pública da cliente", () => {
         { id: "common", name: "Comum", folder_id: "folder-1", folder_name: "Fotos comuns", folder_position: 0, preview_url: "/common" },
         { id: recipient, name: "Retrato", folder_id: `folder-${recipient}`, folder_name: `Fotos de ${recipient}`, folder_position: 1, preview_url: "/restricted" },
       ], cart: { quantity: 0, items: [] } });
-      return response({ id: "public-1", name: "Galeria", favorites_enabled: false, comments_enabled: false, folder_display_mode: "individual" });
+      return response({ id: "public-1", name: "Galeria", favorites_enabled: false, comments_enabled: false, folder_display_mode: "individual", support_contact_email: "privacy@example.test" });
     });
     vi.stubGlobal("fetch", fetchMock);
     const first = render(<PublicGalleryPage />);
     const common = await screen.findByRole("button", { name: "Fotos comuns (1 fotos)" });
+    expect(screen.getByRole("heading", { name: "Privacidade das suas fotos" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Fale com o suporte" }).getAttribute("href")).toBe("mailto:privacy@example.test");
     const ana = screen.getByRole("button", { name: "Fotos de ana (1 fotos)" });
     expect(common.getAttribute("aria-pressed")).toBe("true");
     const commonPreview = screen.getByRole("img", { name: "Prévia protegida de Comum" });
@@ -193,8 +209,9 @@ describe("Galeria pública da cliente", () => {
     render(<PublicGalleryPage />);
     await chooseUpload();
     fireEvent.click(await screen.findByRole("button", { name: "Conferir envio" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const heading = await screen.findByRole("heading", { name: "Possibilidades encontradas" });
-    expect(document.activeElement).toBe(heading);
+    await waitFor(() => expect(document.activeElement).toBe(heading));
     expect(scroll).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });
@@ -346,7 +363,8 @@ describe("Galeria pública da cliente", () => {
 
   it("usa a largura útil do desktop e amplia a foto sem limitar as demais páginas", () => {
     const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
-    expect(css).toContain(".public-gallery-shell { display:grid; width:min(calc(100% - 32px),1760px);");
+    expect(css).toContain(".public-gallery-shell { display:grid;");
+    expect(css).not.toContain("width:min(calc(100% - 32px),1760px)");
     expect(css).toContain(".gallery-presentation { width:100%;");
     expect(css).toContain(".gallery-presentation-dialog { width:min(100%,1600px);");
     expect(css).toContain(".gallery-presentation-grid { grid-template-columns:repeat(4,minmax(0,1fr));");
@@ -356,8 +374,8 @@ describe("Galeria pública da cliente", () => {
   it("carrega somente após autorização e mantém a primeira seleção na jornada pública", async () => {
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/photos/photo-1/selection") && init?.method === "POST") return response({ status: "selected", private_gallery_id: "private-1", gallery_created: true, reference_created: true, selection_created: true, selection_expires_at: "2026-09-30T23:59:59Z", cart: { quantity: 1, total_cents: 700, savings_cents: 0 } }, 201);
-      if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", preview_url: "/public-galleries/public-1/photos/photo-1/preview", selected: false }], private_gallery_id: null, cart: { quantity: 0, items: [] } });
-      return response({ id: "public-1", name: "Festa escolar", event_name: "Formatura", description: "Escolha suas fotos", access_mode: "standard", photos_url: "/public-galleries/public-1/photos" });
+      if (path.endsWith("/photos")) return response({ photos: [{ id: "photo-1", name: "Foto 1", folder_id: "folder-1", folder_name: "Retratos", preview_url: "/public-galleries/public-1/photos/photo-1/preview", selected: false }], folders: [{ id: "folder-1", name: "Retratos", position: 0, access_expires_at: "2027-09-30T23:59:59Z", access_open: true, media_state: "available", can_request_reopening: false, reopening_request: null }], private_gallery_id: null, cart: { quantity: 0, items: [] } });
+      return response({ id: "public-1", name: "Festa escolar", event_name: "Formatura", description: "Escolha suas fotos", access_mode: "standard", photos_url: "/public-galleries/public-1/photos", selection_expires_at: null });
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<PublicGalleryPage />);
@@ -368,13 +386,60 @@ describe("Galeria pública da cliente", () => {
       expect.objectContaining({ method: "POST", credentials: "same-origin" }),
     ));
     expect(await screen.findByText("Sua seleção foi iniciada e ficará salva nesta galeria.")).toBeTruthy();
-    expect(screen.getByLabelText("Prazo para novas seleções").textContent).toContain("30/09/2026");
+    expect(screen.getByLabelText("Prazo para novas seleções").textContent).toContain("30/09/2027");
     expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/public-galleries/public-1/photos"))).toHaveLength(1);
     expect((screen.getByRole("button", { name: /Desmarcar/ }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("7,00");
-    expect(within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: /^Carrinho/ }).getAttribute("href")).toBe("/library/cart");
-    expect(within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: /^Carrinho/ }).className).toContain("selection-summary__proceed");
+    const proceed = within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: "Prosseguir" });
+    expect(proceed.getAttribute("href")).toBe("/library/cart");
+    expect(proceed.className).toContain("selection-summary__proceed");
+  });
+
+  it("identifica a pasta expirada e solicita reabertura com o escopo daquela pasta", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/reopening-requests") && init?.method === "POST") {
+        return response({ id: "reopen-1", status: "pending" }, 201);
+      }
+      if (path.endsWith("/photos")) return response({ photos: [], folders: [{
+        id: "folder-private-1", name: "Retratos da Ana", position: 0,
+        access_expires_at: "2026-09-01T00:00:00Z", access_open: false,
+        media_state: "available", can_request_reopening: true, reopening_request: null,
+      }], cart: { quantity: 0, items: [] } });
+      return response({ id: "public-1", name: "Formatura", event_name: null, description: null,
+        access_mode: "standard", photos_url: "/photos" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PublicGalleryPage />);
+
+    expect(await screen.findByText("O prazo desta pasta terminou e as fotos não estão disponíveis no momento.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Solicitar reabertura desta pasta" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public-galleries/public-1/reopening-requests",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"folder_id":"folder-private-1"'),
+      }),
+    ));
+    expect(await screen.findByText("Reabertura solicitada. Aguarde a resposta do fotógrafo.")).toBeTruthy();
+    expect(screen.queryByRole("img", { name: /Prévia protegida/ })).toBeNull();
+  });
+
+  it("mantém o aviso de recuperação sem expor fotos enquanto a pasta está no arquivo frio", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/photos")) return response({ photos: [], folders: [{
+        id: "folder-cold", name: "Retratos", position: 0,
+        access_expires_at: "2026-09-01T00:00:00Z", access_open: false,
+        media_state: "archived", can_request_reopening: false, reopening_request: null,
+      }], cart: { quantity: 0, items: [] } });
+      return response({ id: "public-1", name: "Formatura", event_name: null, description: null,
+        access_mode: "standard", photos_url: "/photos" });
+    }));
+    render(<PublicGalleryPage />);
+
+    expect(await screen.findByText("Esta pasta está no arquivo frio. Sua seleção continua salva; fale com o fotógrafo para solicitar a recuperação.")).toBeTruthy();
+    expect(screen.queryByRole("img", { name: /Prévia protegida/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Selecionar foto" })).toBeNull();
   });
 
   it("mantém a coleção visível quando o carrinho está vazio, sem atalho privado", async () => {
@@ -495,7 +560,7 @@ describe("Galeria pública da cliente", () => {
       expect.objectContaining({ method: "POST" }),
     ));
     expect(screen.getByLabelText("Resumo da seleção").textContent).toContain("1 foto");
-    expect(within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: /^Carrinho/ })).toBeTruthy();
+    expect(within(screen.getByLabelText("Resumo da seleção")).getByRole("link", { name: "Prosseguir" })).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Favoritar" })[0]);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/public-galleries/public-1/photos/photo-2/favorite",

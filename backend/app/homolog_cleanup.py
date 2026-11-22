@@ -19,11 +19,19 @@ from app.auth import (
     AuditEvent,
     AuthSession,
     Base,
+    MercadoPagoCreditPurchase,
+    MercadoPagoCreditPurchaseEvent,
     ParentGallery,
+    PhotoCreditOperation,
+    PhotoCreditOperationEvent,
+    PhotographerCreditAllocationEvent,
+    PhotographerCreditEntry,
+    PhotographerCreditPackage,
     PushSubscription,
     Role,
     SessionLocal,
     Tenant,
+    TenantCreditWallet,
 )
 from app.media import derivatives_root, source_root
 from app.system_monitor import models as monitor_models
@@ -48,15 +56,36 @@ MONITOR_PRESERVED_TABLES = frozenset({
     monitor_models.MonitorSample.__tablename__, monitor_models.MonitorWorker.__tablename__,
     monitor_models.MonitorIncident.__tablename__, monitor_models.MonitorTransition.__tablename__,
 })
-PRESERVED_TABLES = MONITOR_PRESERVED_TABLES | frozenset({
-    "admin_action_token", "admin_security_challenge", "admin_user", "installation_operator",
+SAAS_RETAINED_HISTORY_TABLES = frozenset({
+    "photographer_access_recovery",
+    "facial_search_consent_proof",
+    "media_archive_cycle", "media_archive_event", "media_archive_notice",
+    "media_archive_object", "media_archive_operation",
+    "media_archive_recovery_credit_allocation_event", "media_archive_recovery_credit_reservation",
+    "media_archive_recovery_request", "media_archive_space_reservation",
+    "tenant_closure_identity_verification", "tenant_closure_media_deletion_batch",
+    "tenant_closure_media_deletion_item", "tenant_closure_recovery_batch",
+    "tenant_closure_recovery_item", "tenant_closure_request",
+})
+PRESERVED_TABLES = MONITOR_PRESERVED_TABLES | SAAS_RETAINED_HISTORY_TABLES | frozenset({
+    "media_archive_coordinator", "media_archive_recovery_pricing",
+    "photographer_terms_draft", "photographer_terms_version",
+    "admin_action_token", "admin_security_challenge", "admin_totp_recovery_code",
+    "admin_totp_enrollment",
+    "admin_user", "installation_operator", "platform_admin_event", "photographer_signup",
+    "google_drive_connection", "google_drive_oauth_attempt",
+    "tenant_credit_wallet", "photographer_credit_package", "photographer_credit_entry",
+    "photo_credit_operation", "photo_credit_operation_event", "photographer_credit_allocation_event",
     "branding_settings", "email_delivery", "email_delivery_attempt",
     "facial_calibration_approval", "facial_rollout_operation",
     "facial_embedding_experiment_setting",
     "global_pix_settings", "notification_setting", "payment_message_template",
     "preview_adjustment_settings", "progressive_pricing_preset",
-    "progressive_pricing_tier", "whatsapp_channel_settings", "tenant", "tenant_admin",
+    "progressive_pricing_tier", "photographer_business_profile", "photographer_terms_acceptance",
+    "whatsapp_channel_settings", "whatsapp_tenant_credential", "tenant", "tenant_admin",
     "raw_development_settings",
+    "payment_preferences", "mercadopago_account",
+    "mercadopago_credit_purchase", "mercadopago_credit_purchase_event",
 })
 MIXED_TABLES = frozenset({"audit_event", "auth_session", "push_subscription"})
 OPERATIONAL_TABLES = frozenset({
@@ -76,6 +105,7 @@ OPERATIONAL_TABLES = frozenset({
     "payment_communication", "payment_confirmation_correction", "payment_group",
     "provider_payment", "provider_payment_attempt", "provider_payment_correction",
     "provider_payment_receipt",
+    "mercadopago_payment", "mercadopago_webhook",
     "payment_notification_outbox", "photo_analysis", "photo_asset", "photo_comment",
     "photo_face_embedding", "photo_favorite", "photo_folder", "photo_selection",
     "photo_view", "pix_checkout_settings", "preview_adjustment", "price_rule",
@@ -123,6 +153,8 @@ def admin_security_audit_criteria():
         AuditEvent.event.like("admin_security.%"),
         AuditEvent.event.like("admin_password.%"),
         AuditEvent.event.like("admin_totp.%"),
+        AuditEvent.event.like("photographer_signup.%"),
+        AuditEvent.event.like("google_drive.%"),
         AuditEvent.event == "admin.redirected",
     )
 
@@ -224,6 +256,27 @@ def _clear_media_root(root: Path) -> None:
             entry.rmdir()
 
 
+def has_mercadopago_financial_history(db: Session) -> bool:
+    """Resets integrais não podem apagar prova financeira de nenhum fotógrafo."""
+    from app.auth import MercadoPagoPayment, MercadoPagoWebhook
+
+    return bool(db.scalar(select(MercadoPagoPayment.id).where(
+        MercadoPagoPayment.sent_at.is_not(None)).limit(1))
+        or db.scalar(select(MercadoPagoWebhook.id).limit(1))
+        or db.scalar(select(MercadoPagoCreditPurchase.id).limit(1))
+        or db.scalar(select(MercadoPagoCreditPurchaseEvent.id).limit(1)))
+
+
+def has_credit_wallet_history(db: Session) -> bool:
+    """Resets integrais não podem apagar ledger, operações nem alocações de créditos."""
+    return any(db.scalar(select(model.id).limit(1)) for model in (
+        PhotographerCreditEntry,
+        PhotoCreditOperation,
+        PhotoCreditOperationEvent,
+        PhotographerCreditAllocationEvent,
+    ))
+
+
 def execute(db: Session, confirmation: str) -> dict[str, object]:
     require_homolog_environment()
     if confirmation not in {CONFIRMATION, WITHOUT_BACKUP_CONFIRMATION}:
@@ -241,6 +294,32 @@ def execute(db: Session, confirmation: str) -> dict[str, object]:
     db.execute(text(f"LOCK TABLE {qualified} IN SHARE ROW EXCLUSIVE MODE"))
     require_single_tenant(db)
     require_known_schema(db)
+    retained_tables = []
+    for table in sorted(SAAS_RETAINED_HISTORY_TABLES):
+        name = preparer.quote(table)
+        retained_tables.append(f"{preparer.quote_schema(schema)}.{name}" if schema else name)
+    # Impedir inserções entre a conferência e a exclusão das referências antigas.
+    db.execute(text(f"LOCK TABLE {', '.join(retained_tables)} IN SHARE MODE"))
+    if any(db.scalar(select(1).select_from(Base.metadata.tables[name]).limit(1)) is not None
+           for name in sorted(SAAS_RETAINED_HISTORY_TABLES)):
+        raise RuntimeError("Limpeza integral bloqueada: preserve o histórico de arquivo e encerramento.")
+    from app.auth import MercadoPagoPayment, MercadoPagoWebhook
+    financial_tables = []
+    for model in (
+        MercadoPagoPayment, MercadoPagoWebhook, MercadoPagoCreditPurchase,
+        MercadoPagoCreditPurchaseEvent, TenantCreditWallet, PhotographerCreditPackage,
+        PhotographerCreditEntry, PhotographerCreditAllocationEvent,
+        PhotoCreditOperation, PhotoCreditOperationEvent,
+    ):
+        name = preparer.quote(model.__tablename__)
+        financial_tables.append(f"{preparer.quote_schema(schema)}.{name}" if schema else name)
+    db.execute(text(f"LOCK TABLE {', '.join(financial_tables)} IN EXCLUSIVE MODE"))
+    if has_mercadopago_financial_history(db):
+        raise RuntimeError(
+            "Reset bloqueado: preserve e reconcilie as evidências financeiras Mercado Pago.")
+    if has_credit_wallet_history(db):
+        raise RuntimeError(
+            "Reset bloqueado: preserve e reconcilie o histórico de créditos.")
     order = operational_delete_order()
     if db.scalar(select(AuthSession.id).where(
         AuthSession.role == Role.ADMIN.value, AuthSession.client_subject_id.is_not(None)
@@ -255,6 +334,11 @@ def execute(db: Session, confirmation: str) -> dict[str, object]:
     db.execute(delete(PushSubscription).where(PushSubscription.role == Role.CLIENT.value))
     db.execute(delete(AuthSession).where(AuthSession.role == Role.CLIENT.value))
     db.execute(update(ParentGallery).values(cover_photo_id=None))
+    # O registro financeiro sobrevive à remoção dos ativos sintéticos e mantém
+    # a identidade/fingerprint em snapshot, sem criar crédito de volta.
+    db.execute(update(PhotoCreditOperation).where(
+        PhotoCreditOperation.photo_asset_id.is_not(None)
+    ).values(photo_asset_id=None))
     for name in order:
         db.execute(delete(Base.metadata.tables[name]))
     db.execute(delete(AuditEvent).where(~admin_security_audit_criteria()))

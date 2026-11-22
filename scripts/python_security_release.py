@@ -18,8 +18,7 @@ from pathlib import Path
 PINS = {"aiohttp": "3.14.4", "multidict": "6.9.1", "urllib3": "2.8.0", "yarl": "1.25.1"}
 ORDER = (
     "api", "worker", "face-maintenance-worker", "face-search-worker",
-    "face-index-worker", "preview-adjustment-worker", "raw-development-worker",
-    "face-gemma-index-worker",
+    "face-index-worker", "preview-adjustment-worker",
 )
 SPECIALIZED = set(ORDER[2:])
 UNAVAILABLE = "Python release blocked: cooperative drain and production executor are not implemented; never use the legacy api/web flow"

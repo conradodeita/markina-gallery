@@ -50,7 +50,7 @@ from app.auth import (
     token_hash,
 )
 from app.main import app
-from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin, fresh_totp_code
 
 
 @pytest.fixture(autouse=True)
@@ -83,14 +83,13 @@ def authenticate_admin(client: TestClient) -> UUID:
         db.add(admin)
         db.commit()
         admin_id = admin.id
-        secret = admin.totp_secret
     challenge_id = client.post(
         "/auth/admin/password",
         json={"email": "diretorio@markina.test", "password": "senha-segura"},
     ).json()["challenge_id"]
     assert client.post(
         "/auth/admin/totp",
-        json={"challenge_id": challenge_id, "code": pyotp.TOTP(secret).now()},
+        json={"challenge_id": challenge_id, "code": fresh_totp_code(admin)},
     ).status_code == 200
     return admin_id
 

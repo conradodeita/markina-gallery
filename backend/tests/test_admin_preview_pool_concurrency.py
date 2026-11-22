@@ -32,6 +32,7 @@ from app.auth import (
     now,
     token_hash,
 )
+from tests.schema_fixtures import create_test_schema
 from tests.test_tenant_acervo import graph as _graph
 from tests.test_tenant_client_auth import links as _links
 from tests.test_tenant_client_auth import request
@@ -78,14 +79,18 @@ def client_db(tmp_path):
 
 
 @pytest.mark.parametrize("scope", ["public", "private"])
-def test_postgresql_preview_schema_preserves_later_sqlite_constraints(tmp_path, scope):
+@pytest.mark.parametrize("schema_creator", ["preview", "shared"])
+def test_postgresql_preview_schema_preserves_later_sqlite_constraints(tmp_path, scope, schema_creator):
     catalog = {table.name: str(CreateTable(table).compile(dialect=sqlite_dialect()))
                for table in Base.metadata.tables.values()}
     postgresql = create_mock_engine(
         "postgresql://",
         lambda statement, *_args, **_kwargs: str(statement.compile(dialect=postgresql.dialect)),
     )
-    preview_metadata().create_all(postgresql)
+    if schema_creator == "preview":
+        preview_metadata().create_all(postgresql)
+    else:
+        create_test_schema(postgresql)
     assert {table.name: str(CreateTable(table).compile(dialect=sqlite_dialect()))
             for table in Base.metadata.tables.values()} == catalog
     engine = create_engine(f"sqlite:///{tmp_path / 'later.sqlite'}")

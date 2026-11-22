@@ -24,7 +24,7 @@ A composição compartilhada já preserva autorização, marca-d’água e visua
 - transformar tipografia e layout em editor livre de página ou aceitar CSS fornecido pelo fotógrafo;
 - expor grade coletiva, original, download ou prévia antes do OTP;
 - ativar busca facial, alterar Evolution API ou configurar credenciais externas;
-- fazer deploy nesta fase de planejamento.
+- fazer deploy em produção nesta change; a implantação autorizada em homologação está registrada nas tasks 7.5–7.6, e a revisão humana da task 7.7 continua pendente.
 
 ## Decisions
 
@@ -56,7 +56,7 @@ Alternativa descartada: publicar automaticamente ao concluir o processamento. Is
 
 Cards de pasta usarão a miniatura protegida já retornada pelo backend e navegarão para a etapa Imagens com `folder=<uuid>` como parâmetro interno. O editor confrontará esse identificador com as pastas carregadas da Galeria pública antes de abrir a área de trabalho; um valor inválido não produzirá consulta fora do escopo. A mesma área suportará pasta em preparação ou publicada, diferenciando fotos disponíveis, prontas para publicar, processando e falhas.
 
-Os cards de cliente serão extraídos como componente comum entre etapa 05 e resumo. A API agregará em lote contadores, `gallery_status` e `commercial_status` com precedência documentada: `pending_review`, `awaiting_payment`, `paid`, `overdue`, `cancelled` e `no_order`. Estado da galeria e estado comercial permanecerão badges separados para não confundir acesso com pagamento.
+Os cards de cliente serão extraídos como componente comum entre etapa 05 e resumo. A API agregará em lote contadores, `gallery_status` e `commercial_status` com precedência documentada: `pending_review`, `awaiting_payment`, `paid`, `cancelled` e `no_order`. A expiração de acesso permanece no estado da galeria/pasta e não altera a situação financeira; a precedência original com `overdue` foi superada pela regra por pasta de `add-gallery-media-archive`.
 
 Alternativa descartada: construir resumo por chamadas individuais a cada privada/pedido. Isso cria N+1, estados transitórios incoerentes e lógica de precedência no navegador.
 

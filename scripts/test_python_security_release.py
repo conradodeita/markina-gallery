@@ -113,10 +113,10 @@ class SimulatedRollout(unittest.TestCase):
 
     def test_optional_inactive_is_not_started(self):
         value = state()
-        value["services"]["raw-development-worker"]["running"] = False
-        result = self.run_plan(value, ops("api", "raw-development-worker"))
+        value["services"]["preview-adjustment-worker"]["running"] = False
+        result = self.run_plan(value, ops("api", "preview-adjustment-worker"))
         self.assertEqual(result["events"], ["preserve:api", "replace:api", "healthy:api"])
-        self.assertEqual(result["state"]["services"]["raw-development-worker"], value["services"]["raw-development-worker"])
+        self.assertEqual(result["state"]["services"]["preview-adjustment-worker"], value["services"]["preview-adjustment-worker"])
 
     def test_no_duplicate_or_foreign_service(self):
         for services in (("api", "api"), ("web",), ("db",), ("nginx",), ("foreign-project",)):
@@ -186,9 +186,9 @@ class RealPreparation(unittest.TestCase):
 
     def test_optional_missing_not_included(self):
         value = inventory()
-        del value["services"]["face-gemma-index-worker"]
+        del value["services"]["preview-adjustment-worker"]
         result = plan(value, SHA, {}, NOW)
-        self.assertIn("face-gemma-index-worker", result["inactive_optional"])
+        self.assertIn("preview-adjustment-worker", result["inactive_optional"])
 
     def test_corrected_consumer_not_recreated(self):
         value = inventory()

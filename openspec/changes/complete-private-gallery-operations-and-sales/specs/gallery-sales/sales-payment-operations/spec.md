@@ -80,7 +80,7 @@ O sistema SHALL projetar nos cards da Galeria pública e privada o estado comerc
 
 ### Requirement: Valores mutuamente exclusivos do funil financeiro
 
-O sistema SHALL calcular no backend e apresentar separadamente `Valor das fotos selecionadas`, `Valor dos pedidos` e `Receita confirmada`. O primeiro SHALL representar a cotação vigente das seleções ainda no carrinho e sem comunicação de pagamento; o segundo SHALL somar somente pedidos com pagamento comunicado aguardando decisão administrativa; o terceiro SHALL somar somente pedidos cujo depósito foi confirmado pelo administrador. Um mesmo valor SHALL NOT participar simultaneamente de mais de um estágio.
+O backend SHALL calcular separadamente `Valor das fotos selecionadas`, `Valor dos pedidos` e `Receita confirmada`. Cada valor SHALL pertencer somente ao seu estágio comercial, sem contagem simultânea em mais de um estágio.
 
 #### Scenario: Cliente apenas seleciona ou abre o PIX
 

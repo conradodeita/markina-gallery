@@ -47,6 +47,35 @@ describe("biblioteca e compras da cliente", () => {
     expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
   });
 
+  it("mantém retorno tardio reaberto visível para conferência sem retomar checkout", async () => {
+    const reopenedOrder = {
+      id: "legacy-order",
+      gallery_name: "Galeria encerrada",
+      parent_gallery_name: "Evento legado",
+      gallery_status_label: "Galeria ativa",
+      gallery_removed: false,
+      commercial_state: "cancelled",
+      payment_method: "credit_card",
+      provider_payment_state: "exception",
+      provider_cart_reopened_at: "2026-10-21T17:00:00Z",
+      provider_requires_reconciliation: true,
+      confirmed_at: null,
+      total_cents: 1400,
+      items: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(() => response({
+      orders: [], payment_groups: [], removed_movements: [],
+      provider_payment_groups: [{ id: "legacy-card", state: "exception", cart_reopened_at: reopenedOrder.provider_cart_reopened_at,
+        requires_reconciliation: true, total_cents: 1400, orders: [reopenedOrder] }],
+    })));
+    render(<PurchasesPage />);
+
+    expect(await screen.findByText("Conferência após reabertura")).toBeTruthy();
+    expect(screen.getByText(/Esta ocorrência não confirma pagamento/)).toBeTruthy();
+    expect(screen.getByText(/O fotógrafo precisa conferir um retorno da tentativa anterior/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Continuar pagamento" })).toBeNull();
+  });
+
   it("abre a mesma galeria pela capa e pelo botão e mantém navegação após falha", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ journeys: [{
       id: "public-1", name: "Festa escolar", event_name: "Formatura", status: "active",
@@ -71,14 +100,17 @@ describe("biblioteca e compras da cliente", () => {
   it("preserva itens e contagem quando a prévia está ausente ou falha", async () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [{
       id: "order-missing", gallery_name: "Evento", parent_gallery_name: "Evento", confirmed_at: null, total_cents: 1400,
-      items: [{ photo_id: "missing", name: "Ausente.jpg", preview_url: null }, { photo_id: "failed", name: "Falha.jpg", preview_url: "/library/history/items/failed/preview" }],
+      items: [{ photo_id: "missing", name: "Ausente.jpg", preview_url: null, media_state: "archived" }, { photo_id: "failed", name: "Falha.jpg", preview_url: "/library/history/items/failed/preview" }],
     }] }) : response({ journeys: [] })));
     render(<PurchasesPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Ver fotos (2)" }));
     expect(screen.getByText("Ausente.jpg")).toBeTruthy();
+    expect(screen.getByText("Arquivada no arquivo frio")).toBeTruthy();
+    expect(screen.getByText(/Sua seleção continua salva/)).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Prévia protegida de Ausente.jpg" })).toBeNull();
     fireEvent.error(screen.getByRole("img", { name: "Prévia protegida de Falha.jpg" }));
     expect(screen.getAllByText("Prévia indisponível")).toHaveLength(1);
-    expect(screen.getByText("Imagem removida")).toBeTruthy();
+    expect(screen.queryByText("Imagem removida")).toBeNull();
     expect(screen.getByText(/2 foto\(s\)/)).toBeTruthy();
   });
 
@@ -123,28 +155,46 @@ describe("biblioteca e compras da cliente", () => {
     expect(screen.getAllByRole("article")).toHaveLength(3);
     expect(screen.getAllByText("Pagamento informado")).toHaveLength(3);
   });
-  it.each([
-    { state: "seleção editável", quantity: 1, orders: [], deadlineVisible: true },
-    { state: "pagamento informado", quantity: 0, orders: [{ order_id: "reported-1", commercial_state: "payment_reported", total_cents: 700 }], deadlineVisible: true },
-    { state: "sem seleção", quantity: 0, orders: [], deadlineVisible: true },
-  ])("mostra o prazo contextual na biblioteca no estado $state", async ({ quantity, orders, deadlineVisible }) => {
+  it("mostra a data autoritativa por pasta mesmo sem itens no carrinho", async () => {
+    const expiresAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+    vi.stubGlobal("fetch", vi.fn(() => response({ journeys: [{
+      id: "public-deadline",
+      name: "Galeria sem carrinho",
+      event_name: "Formatura",
+      status: "active",
+      primary_surface: "public",
+      browse_url: "/public-galleries/public-deadline",
+      public_gallery: publicGallery,
+      private_gallery: null,
+      selection_deadlines: [{ folder_id: "folder-deadline", folder_name: "Apresentação", expires_at: expiresAt }],
+      selection: { quantity: 0 },
+      orders: [],
+      has_prepared_photos: false,
+      actions: { continue_url: "/public-galleries/public-deadline", review_url: null, orders_url: null, prepared_url: null, fallback_url: null },
+    }] })));
+
+    render(<LibraryPage />);
+    const folderDeadline = await screen.findByRole("group", { name: "Prazo na pasta Apresentação" });
+    expect(folderDeadline.querySelector("time")?.getAttribute("datetime")).toBe(expiresAt);
+    expect(await within(folderDeadline).findByText(/para selecionar/)).toBeTruthy();
+    expect(screen.getByText("Galeria sem carrinho")).toBeTruthy();
+    expect(screen.queryByText("Revisar carrinho")).toBeNull();
+  });
+
+  it("não mostra o prazo legado da galeria como se fosse prazo das pastas", async () => {
     const datedPrivateGallery = { ...privateGallery, selection_expires_at: "2026-09-30T23:59:59Z" };
     vi.stubGlobal("fetch", vi.fn((path: string) => path.endsWith("/purchases") ? response({ orders: [] }) : response({
       journeys: [{
         id: "public-deadline", name: "Galeria com prazo", event_name: "Formatura", status: "active", primary_surface: "public", browse_url: "/public-galleries/public-deadline",
-        public_gallery: publicGallery, private_gallery: datedPrivateGallery, selection: { quantity }, orders, has_prepared_photos: false,
-        actions: { continue_url: "/public-galleries/public-deadline", review_url: quantity > 0 ? "/gallery/private-1" : null, orders_url: orders.length ? "/gallery/private-1" : null, prepared_url: null, fallback_url: null },
+        public_gallery: publicGallery, private_gallery: datedPrivateGallery, selection: { quantity: 1 }, orders: [], has_prepared_photos: false,
+        actions: { continue_url: "/public-galleries/public-deadline", review_url: "/library/cart", orders_url: null, prepared_url: null, fallback_url: null },
       }],
     })));
 
     render(<LibraryPage />);
     expect((await screen.findAllByText("Galeria com prazo")).length).toBeGreaterThan(0);
-    if (deadlineVisible) {
-      expect(screen.getAllByLabelText("Prazo para novas seleções").length).toBeGreaterThan(0);
-      expect(within(screen.getByRole("region", { name: "Galerias" })).getByLabelText("Prazo para novas seleções").textContent).toContain("30/09/2026");
-    } else {
-      expect(screen.queryByText(/Seleção até/)).toBeNull();
-    }
+    expect(screen.queryByLabelText("Prazo para novas seleções")).toBeNull();
+    expect(screen.queryByText(/30\/09\/2026/)).toBeNull();
   });
 
   it("usa a privada como contingência quando a origem não está disponível", async () => {

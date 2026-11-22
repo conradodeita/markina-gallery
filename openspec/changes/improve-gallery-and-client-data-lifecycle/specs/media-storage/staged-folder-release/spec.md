@@ -42,6 +42,10 @@ O sistema SHALL permitir ao fotógrafo excluir diretamente uma pasta vazia ou em
 - **WHEN** o fotógrafo confirma a remoção de uma pasta vazia em preparação
 - **THEN** o sistema a remove, registra auditoria e não altera galerias privadas
 
+#### Scenario: Pasta vazia com configuração de processamento
+- **WHEN** o fotógrafo confirma a exclusão permitida de uma pasta vazia com configuração de processamento persistida
+- **THEN** o sistema SHALL remover a configuração dependente do mesmo tenant na transação da pasta, preservando configurações de outras pastas e tenants e revertendo tudo em caso de erro
+
 #### Scenario: Tentativa de exclusão isolada de pasta liberada
 
 - **WHEN** o fotógrafo tenta excluir isoladamente uma pasta ainda usada por galeria privada ativa

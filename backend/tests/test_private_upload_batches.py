@@ -369,3 +369,45 @@ def test_canonical_restricted_folder_upload_notifies_only_after_closed_batch_is_
         db.commit()
         assert not process_ready_batches(db)
         assert db.scalar(select(func.count(NotificationEvent.id))) == 1
+
+
+def test_upload_batch_creation_requires_onboarding_and_available_credit(monkeypatch):
+    browser, gallery_id, _derived_folder_id = setup_private()
+    with SessionLocal() as db:
+        gallery = db.get(DerivedGallery, gallery_id)
+        parent = db.get(ParentGallery, gallery.parent_gallery_id)
+        folder = PhotoFolder(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            name="Pasta privada sintética",
+            purpose="content",
+            audience_scope="selected",
+            status="preparing",
+        )
+        db.add(folder)
+        db.flush()
+        folder_id = folder.id
+        db.commit()
+
+    from app import photographer_onboarding
+
+    monkeypatch.setattr(photographer_onboarding, "_signup_identity", lambda *_args: object())
+    monkeypatch.setattr(photographer_onboarding, "onboarding_status", lambda *_args, **_kwargs: {
+        "email_verified": True,
+        "profile_complete": True,
+        "terms_accepted": True,
+        "pix_configured": True,
+        "whatsapp_configured": True,
+        "credits_available": False,
+    })
+
+    responses = [
+        browser.post(f"/admin/derived-galleries/{gallery_id}/upload-batches"),
+        browser.post(f"/admin/photo-folders/{folder_id}/upload-batches"),
+    ]
+    for response in responses:
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "photographer_onboarding_required"
+        assert response.json()["detail"]["credits_available"] is False
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(PrivateUploadBatch)) == 0

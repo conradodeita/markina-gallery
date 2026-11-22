@@ -29,9 +29,17 @@ O fotógrafo SHALL consultar as tentativas reabertas por filtro explícito em Ve
 - **THEN** vê somente as tentativas auditadas encerradas da própria conta
 - **AND** a lista principal e suas contagens não as tratam como pendência ativa
 
-### Requirement: Evidência tardia exige conferência visível
+### Requirement: Recibos tardios preservados
 
-A recuperação auditada com recibo queued/processing/verified ou recebido após a recuperação (inclusive ignored/failed), NSU persistido, confirmed_at ou estado incompatível com exception SHALL continuar visível nas projeções apropriadas. A ocorrência não confirmada SHALL indicar Conferência após reabertura e explicar que o fotógrafo precisa conferir um retorno da tentativa anterior. MUST NOT expor URL antiga para pagamento, confirmar pedidos cancelados, alterar a nova compra ou inferir cancelamento remoto a partir da remoção de fotos.
+Recibos `queued`, `processing` ou `verified` SHALL permanecer visíveis após reabertura. Recibos `ignored` ou `failed` SHALL permanecer visíveis se o instante efetivo (`processed_at`, ou `created_at` quando não houver processamento) for igual ou posterior ao evento auditado. Um recibo terminal anterior, sem outra evidência, não exige conferência.
+
+#### Scenario: Recibo terminal anterior à reabertura
+- **WHEN** existe somente um recibo `ignored` ou `failed` cujo instante efetivo antecede a reabertura
+- **THEN** a tentativa permanece histórica e não reaparece para conferência
+
+### Requirement: Sinais financeiros exigem conferência
+
+NSU, `confirmed_at` e estados financeiros incompatíveis SHALL permanecer visíveis após reabertura. Evidência não confirmada SHALL indicar `Conferência após reabertura`. O sistema MUST NOT expor URL antiga, confirmar pedido cancelado, alterar compra nova nem inferir cancelamento remoto pela remoção de fotos.
 
 #### Scenario: Evidência chega após esvaziar o carrinho
 - **WHEN** chega evidência financeira da tentativa reaberta depois da remoção de fotos

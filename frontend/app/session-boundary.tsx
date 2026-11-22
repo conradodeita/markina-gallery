@@ -135,20 +135,23 @@ function ProtectedSession({ pathname, children, navigate }: {
     const observedFetch: typeof fetch = async (input, options) => {
       let ownApi = false;
       let activitySignal = false;
+      let requestPath = "";
       try {
         const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin);
         ownApi = url.origin === window.location.origin && url.pathname.startsWith("/api/");
         activitySignal = url.pathname === "/api/auth/activity";
+        requestPath = url.pathname;
       } catch {
         ownApi = false;
       }
       const method = (options?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
       const mutation = !activitySignal && !["GET", "HEAD", "OPTIONS"].includes(method);
+      const optionalAddressEligibilityRead = method === "GET" && requestPath === "/api/admin/onboarding/address";
       if (ownApi && blocked) throw new DOMException("Sessão indisponível", "AbortError");
       try {
         const response = await originalFetch(input, options);
         if (ownApi && active && verified && !blocked) {
-          if (response.status === 401 || response.status === 403) void check("forbidden");
+          if (response.status === 401 || (response.status === 403 && !optionalAddressEligibilityRead)) void check("forbidden");
           else if (response.status === 408 || response.status >= 500) checkAfterFailure(mutation);
         }
         return response;

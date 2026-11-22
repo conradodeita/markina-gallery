@@ -17,9 +17,10 @@ from uuid import UUID, uuid4
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 from fastapi import HTTPException, Request, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -38,6 +39,9 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy import (
+    inspect as sa_inspect,
+)
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -46,11 +50,17 @@ from sqlalchemy.orm import (
     relationship,
     sessionmaker,
 )
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.messaging import WhatsAppConfigurationError
 from app.ownership_schema import apply_ownership_constraints
 from app.product_brand import DEFAULT_WATERMARK_TEXT
 from app.system_monitor.pool import MonitoredQueuePool
+from app.totp_crypto import (
+    TotpSecretCipher,
+    TotpSecretError,
+    legacy_totp_dual_write_enabled,
+)
 from app.whatsapp_delivery import encrypt_otp, otp_encryption_key
 
 
@@ -147,8 +157,124 @@ class AdminUser(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(512))
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    totp_secret: Mapped[str] = mapped_column(String(128))
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    _totp_secret_legacy: Mapped[str | None] = mapped_column(
+        "totp_secret", String(128), nullable=True
+    )
+    _totp_secret_envelope: Mapped[str | None] = mapped_column(
+        "totp_secret_envelope", String(768), nullable=True
+    )
+    totp_last_used_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tenant_memberships: Mapped[list[TenantAdmin]] = relationship(cascade="all, delete-orphan")
+
+    @property
+    def totp_secret(self) -> str:
+        if "_totp_secret_envelope" in sa_inspect(self).expired_attributes:
+            _ = self._totp_secret_envelope
+        value = getattr(self, "_totp_secret_value", None)
+        if not value:
+            raise TotpSecretError()
+        if (sa_inspect(self).persistent
+                and getattr(self, "_totp_secret_needs_encryption", False)):
+            flag_modified(self, "_totp_secret_envelope")
+        return value
+
+    @totp_secret.setter
+    def totp_secret(self, value: str) -> None:
+        self._totp_secret_value = value
+        self._totp_secret_needs_encryption = True
+        self._totp_secret_envelope = "pending-encryption"
+
+
+class AdminTotpEnrollment(Base):
+    """Material temporário cifrado, vinculado à sessão que inicia o fator."""
+    __tablename__ = "admin_totp_enrollment"
+    __table_args__ = (
+        CheckConstraint("attempts >= 0 AND attempts <= 5"),
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("tenant_id", "admin_user_id"),
+        ForeignKeyConstraint(["admin_user_id", "tenant_id"], ["tenant_admin.admin_user_id", "tenant_admin.tenant_id"]),
+        ForeignKeyConstraint(["session_id", "tenant_id"], ["auth_session.id", "auth_session.tenant_id"], ondelete="CASCADE"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    session_id: Mapped[UUID] = mapped_column()
+    secret_envelope: Mapped[str | None] = mapped_column(String(768), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AdminTotpRecoveryCode(Base):
+    __tablename__ = "admin_totp_recovery_code"
+    __table_args__ = (
+        UniqueConstraint("admin_user_id", "code_selector", name="uq_admin_totp_recovery_selector"),
+        Index("ix_admin_totp_recovery_active", "admin_user_id", "used_at", "revoked_at"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id", ondelete="CASCADE"))
+    code_selector: Mapped[str] = mapped_column(String(4), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+def _decode_persisted_totp(admin: AdminUser) -> None:
+    legacy = admin._totp_secret_legacy
+    envelope = admin._totp_secret_envelope
+    if not admin.totp_enabled and legacy is None and envelope is None:
+        admin._totp_secret_value = None
+        admin._totp_secret_needs_encryption = False
+        return
+    dual_write = legacy_totp_dual_write_enabled()
+
+    if envelope is not None and not TotpSecretCipher.is_envelope(envelope):
+        raise TotpSecretError()
+
+    if dual_write and isinstance(legacy, str) and legacy and len(legacy) <= 128:
+        needs_encryption = True
+        if envelope is not None:
+            current = TotpSecretCipher.from_environment().decrypt(
+                envelope, admin_id=admin.id
+            )
+            needs_encryption = current != legacy
+        admin._totp_secret_value = legacy
+        admin._totp_secret_needs_encryption = needs_encryption
+        if needs_encryption:
+            flag_modified(admin, "_totp_secret_envelope")
+        return
+
+    if envelope is not None:
+        admin._totp_secret_value = TotpSecretCipher.from_environment().decrypt(
+            envelope, admin_id=admin.id
+        )
+        admin._totp_secret_needs_encryption = False
+        return
+
+    # Uma linha recém-escrita por binário legado durante a expansão ainda pode
+    # não ter envelope; ao ler, a aplicação nova cifra antes do próximo flush.
+    if isinstance(legacy, str) and legacy and len(legacy) <= 128:
+        admin._totp_secret_value = legacy
+        admin._totp_secret_needs_encryption = True
+        flag_modified(admin, "_totp_secret_envelope")
+        return
+
+    raise TotpSecretError()
+
+
+@event.listens_for(AdminUser, "load")
+def _decrypt_admin_totp_on_load(admin: AdminUser, _context) -> None:
+    _decode_persisted_totp(admin)
+
+
+@event.listens_for(AdminUser, "refresh")
+def _decrypt_admin_totp_on_refresh(admin: AdminUser, _context, attrs) -> None:
+    if (attrs is None or "_totp_secret_envelope" in attrs
+            or "_totp_secret_legacy" in attrs or "totp_secret" in attrs
+            or "totp_secret_envelope" in attrs):
+        _decode_persisted_totp(admin)
 
 
 class InstallationOperator(Base):
@@ -167,7 +293,7 @@ class InstallationOperator(Base):
 
 
 class FacialEmbeddingExperimentSetting(Base):
-    """Chave global de indexação shadow, alterável apenas pelo operador proprietário."""
+    """Metadado Gemma histórico mapeado para compatibilidade com o schema publicado."""
 
     __tablename__ = "facial_embedding_experiment_setting"
     __table_args__ = (
@@ -196,7 +322,13 @@ class Tenant(Base):
     __tablename__ = "tenant"
     __table_args__ = (
         UniqueConstraint("canonical_host", name="uq_tenant_canonical_host"),
+        CheckConstraint(
+            "canonical_host_status IS NULL OR (canonical_host IS NOT NULL "
+            "AND canonical_host_status IN ('reserved', 'ready'))",
+            name="ck_tenant_canonical_host_status",
+        ),
         CheckConstraint("status IN ('active', 'suspended')", name="ck_tenant_status"),
+        CheckConstraint("lifecycle IN ('open', 'closing', 'closed')", name="ck_tenant_lifecycle"),
         CheckConstraint(
             "canonical_host IS NULL OR (canonical_host = lower(canonical_host) "
             "AND length(canonical_host) BETWEEN 1 AND 253 "
@@ -206,8 +338,305 @@ class Tenant(Base):
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     status: Mapped[str] = mapped_column(String(16), default="active")
+    lifecycle: Mapped[str] = mapped_column(String(16), default="open", server_default="open")
+    photographer_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     canonical_host: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    canonical_host_status: Mapped[str | None] = mapped_column(String(12), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class TenantClosureRequest(Base):
+    """Histórico por ciclo; encerramento não altera suspensão nem saldo."""
+
+    __tablename__ = "tenant_closure_request"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "request_id", name="uq_tenant_closure_request_key"),
+        UniqueConstraint("id", "tenant_id", name="uq_tenant_closure_request_owner"),
+        CheckConstraint("state IN ('closing', 'closed', 'reopened')", name="ck_tenant_closure_state"),
+        CheckConstraint("balance_snapshot >= 0", name="ck_tenant_closure_balance"),
+        CheckConstraint("state = 'closing' OR closed_at IS NOT NULL", name="ck_tenant_closure_closed_at"),
+        CheckConstraint("state != 'reopened' OR reopened_at IS NOT NULL", name="ck_tenant_closure_reopened_at"),
+        CheckConstraint(
+            "biometric_cleanup_completed_at IS NULL OR biometric_cleanup_started_at IS NOT NULL",
+            name="ck_tenant_closure_biometric_cleanup_order",
+        ),
+        Index("uq_tenant_closure_pending", "tenant_id", unique=True,
+              postgresql_where=text("state = 'closing'"), sqlite_where=text("state = 'closing'")),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    request_id: Mapped[UUID] = mapped_column()
+    requested_by: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
+    state: Mapped[str] = mapped_column(String(16), default="closing")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    terms_version: Mapped[str] = mapped_column(String(80))
+    terms_sha256: Mapped[str] = mapped_column(String(64))
+    balance_snapshot: Mapped[int] = mapped_column(BigInteger)
+    balance_acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+    biometric_cleanup_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    biometric_cleanup_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+
+
+class TenantClosureRecoveryBatch(Base):
+    __tablename__ = "tenant_closure_recovery_batch"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_closure_recovery_batch_owner"),
+        UniqueConstraint("tenant_id", "request_id", name="uq_closure_recovery_batch_key"),
+        ForeignKeyConstraint(["closure_request_id", "tenant_id"],
+                             ["tenant_closure_request.id", "tenant_closure_request.tenant_id"],
+                             name="fk_closure_recovery_batch_closure"),
+        CheckConstraint("duration_days IN (7, 14, 30)", name="ck_closure_recovery_batch_duration"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    closure_request_id: Mapped[UUID] = mapped_column()
+    requested_by_owner_admin_id: Mapped[UUID] = mapped_column(ForeignKey("platform_owner.admin_user_id"))
+    request_id: Mapped[UUID] = mapped_column()
+    duration_days: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class TenantClosureRecoveryItem(Base):
+    __tablename__ = "tenant_closure_recovery_item"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "cycle_id", name="uq_closure_recovery_item_cycle"),
+        ForeignKeyConstraint(["batch_id", "tenant_id"],
+                             ["tenant_closure_recovery_batch.id", "tenant_closure_recovery_batch.tenant_id"],
+                             name="fk_closure_recovery_item_batch"),
+        ForeignKeyConstraint(["operation_id", "cycle_id", "tenant_id"],
+                             ["media_archive_operation.id", "media_archive_operation.cycle_id", "media_archive_operation.tenant_id"],
+                             name="fk_closure_recovery_item_operation"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    batch_id: Mapped[UUID] = mapped_column(index=True)
+    cycle_id: Mapped[UUID] = mapped_column()
+    operation_id: Mapped[UUID] = mapped_column()
+
+
+class TenantClosureMediaDeletionBatch(Base):
+    """Recibo agregado da exclusão explícita da mídia fria de um encerramento."""
+
+    __tablename__ = "tenant_closure_media_deletion_batch"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_closure_media_deletion_batch_owner"),
+        UniqueConstraint("tenant_id", "request_id", name="uq_closure_media_deletion_batch_key"),
+        UniqueConstraint("closure_request_id", name="uq_closure_media_deletion_batch_closure"),
+        ForeignKeyConstraint(
+            ["closure_request_id", "tenant_id"],
+            ["tenant_closure_request.id", "tenant_closure_request.tenant_id"],
+            name="fk_closure_media_deletion_batch_closure",
+        ),
+        CheckConstraint(
+            "state IN ('queued', 'processing', 'attention_required', "
+            "'reconciliation_required', 'completed')",
+            name="ck_closure_media_deletion_batch_state",
+        ),
+        CheckConstraint("object_count >= 0", name="ck_closure_media_deletion_batch_objects"),
+        CheckConstraint(
+            "verified_deleted_object_count >= 0 "
+            "AND verified_deleted_object_count <= object_count",
+            name="ck_closure_media_deletion_batch_deleted_objects",
+        ),
+        CheckConstraint("total_bytes >= 0", name="ck_closure_media_deletion_batch_bytes"),
+        CheckConstraint(
+            "length(inventory_sha256) = 64",
+            name="ck_closure_media_deletion_batch_inventory_sha256",
+        ),
+        Index(
+            "ix_closure_media_deletion_batch_tenant_state",
+            "tenant_id", "state", "requested_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    closure_request_id: Mapped[UUID] = mapped_column()
+    requested_by_owner_admin_id: Mapped[UUID] = mapped_column(
+        ForeignKey("platform_owner.admin_user_id"),
+    )
+    request_id: Mapped[UUID] = mapped_column()
+    state: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    inventory_sha256: Mapped[str] = mapped_column(String(64))
+    object_count: Mapped[int] = mapped_column(Integer, default=0)
+    verified_deleted_object_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class TenantClosureMediaDeletionItem(Base):
+    """Vínculo tenant-scoped entre lote, ciclo e operação delete_remote."""
+
+    __tablename__ = "tenant_closure_media_deletion_item"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "cycle_id", name="uq_closure_media_deletion_item_cycle"),
+        UniqueConstraint("operation_id", name="uq_closure_media_deletion_item_operation"),
+        ForeignKeyConstraint(
+            ["batch_id", "tenant_id"],
+            ["tenant_closure_media_deletion_batch.id", "tenant_closure_media_deletion_batch.tenant_id"],
+            name="fk_closure_media_deletion_item_batch",
+        ),
+        ForeignKeyConstraint(
+            ["operation_id", "cycle_id", "tenant_id"],
+            ["media_archive_operation.id", "media_archive_operation.cycle_id", "media_archive_operation.tenant_id"],
+            name="fk_closure_media_deletion_item_operation",
+        ),
+        Index("ix_closure_media_deletion_item_batch", "tenant_id", "batch_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    batch_id: Mapped[UUID] = mapped_column(index=True)
+    cycle_id: Mapped[UUID] = mapped_column()
+    operation_id: Mapped[UUID] = mapped_column()
+
+
+class PhotographerSignup(Base):
+    """Candidatura separada: ainda não é identidade administrativa ou tenant."""
+    __tablename__ = "photographer_signup"
+    __table_args__ = (
+        CheckConstraint("state IN ('email_pending','credentials_pending','active','expired','cancelled')", name="ck_photographer_signup_state"),
+        CheckConstraint("attempts >= 0 AND attempts <= 5", name="ck_photographer_signup_attempts"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    public_request_id: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    photographer_name: Mapped[str] = mapped_column(String(120))
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    state: Mapped[str] = mapped_column(String(24), default="email_pending")
+    otp_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    otp_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_admin_id: Mapped[UUID] = mapped_column(default=uuid4)
+    reserved_tenant_id: Mapped[UUID] = mapped_column(default=uuid4)
+    setup_digest: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    setup_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    totp_envelope: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    adult_attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activated_tenant_id: Mapped[UUID | None] = mapped_column(ForeignKey("tenant.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PhotographerBusinessProfile(Base):
+    """Identificação contratual protegida, separada dos dados do checkout."""
+    __tablename__ = "photographer_business_profile"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="uq_photographer_business_profile_tenant"),
+        CheckConstraint("length(full_name) >= 2", name="ck_photographer_profile_name"),
+        CheckConstraint(
+            "(cpf_fingerprint IS NULL AND cpf_fingerprint_key_version IS NULL) OR "
+            "(cpf_fingerprint IS NOT NULL AND cpf_fingerprint_key_version IS NOT NULL "
+            "AND length(cpf_fingerprint_key_version) BETWEEN 1 AND 40)",
+            name="ck_photographer_profile_fingerprint_key_version",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), unique=True)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    full_name: Mapped[str] = mapped_column(String(160))
+    cpf_envelope: Mapped[str | None] = mapped_column(String(768), nullable=True)
+    cpf_fingerprint: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    cpf_fingerprint_key_version: Mapped[str | None] = mapped_column(
+        String(40), default="legacy-v0", server_default="legacy-v0", nullable=True,
+    )
+    address_envelope: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class PhotographerTermsAcceptance(Base):
+    """Protocolo de aceite de teste/operacional; append-only."""
+    __tablename__ = "photographer_terms_acceptance"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "terms_version", name="uq_photographer_terms_version"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), index=True)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    terms_version: Mapped[str] = mapped_column(String(80))
+    terms_text: Mapped[str] = mapped_column(Text)
+    terms_sha256: Mapped[str] = mapped_column(String(64))
+    provider_identity: Mapped[str] = mapped_column(String(520))
+    photographer_identity: Mapped[str] = mapped_column(String(600))
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    environment: Mapped[str] = mapped_column(String(32))
+
+
+class PhotographerTermsDraft(Base):
+    """Rascunho global editável pelo proprietário; não se torna vigente ao salvar."""
+    __tablename__ = "photographer_terms_draft"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_photographer_terms_draft_singleton"),
+        CheckConstraint("length(template_text) BETWEEN 1 AND 50000", name="ck_photographer_terms_draft_length"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    revision: Mapped[UUID] = mapped_column(default=uuid4)
+    template_text: Mapped[str] = mapped_column(Text)
+    provider_legal_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    provider_contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    updated_by_admin_id: Mapped[UUID | None] = mapped_column(ForeignKey("admin_user.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class PhotographerTermsVersion(Base):
+    """Versões publicadas dos Termos são append-only no banco."""
+    __tablename__ = "photographer_terms_version"
+    __table_args__ = (
+        UniqueConstraint("terms_version", name="uq_photographer_terms_published_version"),
+        CheckConstraint("length(template_sha256) = 64", name="ck_photographer_terms_template_sha256"),
+        CheckConstraint("length(template_text) BETWEEN 1 AND 50000", name="ck_photographer_terms_template_length"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    version_number: Mapped[int] = mapped_column(Integer, unique=True)
+    terms_version: Mapped[str] = mapped_column(String(80))
+    template_text: Mapped[str] = mapped_column(Text)
+    template_sha256: Mapped[str] = mapped_column(String(64))
+    provider_legal_name: Mapped[str] = mapped_column(String(160))
+    provider_contact_email: Mapped[str] = mapped_column(String(320))
+    published_by_admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class GoogleDriveOAuthAttempt(Base):
+    """Tentativa curta de OAuth, ligada à identidade owner e ao PKCE cifrado."""
+    __tablename__ = "google_drive_oauth_attempt"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    actor_admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), index=True)
+    auth_session_id: Mapped[UUID] = mapped_column(ForeignKey("auth_session.id"), index=True)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    state_digest: Mapped[str] = mapped_column(String(64), unique=True)
+    verifier_envelope: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class GoogleDriveConnection(Base):
+    """Conexão global do proprietário; refresh token cifrado fora de tabelas comuns."""
+    __tablename__ = "google_drive_connection"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), unique=True)
+    connected_by_admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
+    refresh_token_envelope: Mapped[dict] = mapped_column(JSON)
+    scopes: Mapped[str] = mapped_column(String(256), default="https://www.googleapis.com/auth/drive.file")
+    state: Mapped[str] = mapped_column(String(32), default="connected")
+    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    quota_limit: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    quota_usage: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    quota_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (CheckConstraint("state IN ('connected','revoked','reauthorization_required')",
+                                      name="ck_google_drive_connection_state"),)
 
 
 class TenantAdmin(Base):
@@ -217,6 +646,65 @@ class TenantAdmin(Base):
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class TenantClosureIdentityVerification(Base):
+    """Desafio temporário de identidade para reabertura tardia de tenant encerrado."""
+
+    __tablename__ = "tenant_closure_identity_verification"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "request_id", name="uq_closure_identity_request"),
+        ForeignKeyConstraint(
+            ["closure_request_id", "tenant_id"],
+            ["tenant_closure_request.id", "tenant_closure_request.tenant_id"],
+            name="fk_closure_identity_closure",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "admin_user_id"],
+            ["tenant_admin.tenant_id", "tenant_admin.admin_user_id"],
+            name="fk_closure_identity_membership",
+        ),
+        CheckConstraint(
+            "state IN ('email_pending', 'verified', 'locked', 'expired', 'superseded')",
+            name="ck_closure_identity_state",
+        ),
+        CheckConstraint("attempts BETWEEN 0 AND 5", name="ck_closure_identity_attempts"),
+        CheckConstraint(
+            "(state = 'verified' AND verified_at IS NOT NULL) OR "
+            "(state != 'verified' AND verified_at IS NULL)",
+            name="ck_closure_identity_verified_at",
+        ),
+        CheckConstraint(
+            "(state = 'email_pending' AND current_name_envelope IS NOT NULL "
+            "AND current_email_envelope IS NOT NULL AND email_fingerprint IS NOT NULL "
+            "AND code_digest IS NOT NULL) OR "
+            "(state != 'email_pending' AND current_name_envelope IS NULL "
+            "AND current_email_envelope IS NULL AND email_fingerprint IS NULL "
+            "AND code_digest IS NULL)",
+            name="ck_closure_identity_pending_material",
+        ),
+        Index(
+            "uq_closure_identity_pending_tenant",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("state = 'email_pending'"),
+            sqlite_where=text("state = 'email_pending'"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    closure_request_id: Mapped[UUID] = mapped_column()
+    admin_user_id: Mapped[UUID] = mapped_column()
+    request_id: Mapped[UUID] = mapped_column()
+    state: Mapped[str] = mapped_column(String(16), default="email_pending")
+    current_name_envelope: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_email_envelope: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    code_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -230,7 +718,7 @@ class AdminSecurityChallenge(Base):
     __table_args__ = (
         CheckConstraint(
             "purpose IN ('password_recovery_otp', 'change_password_otp', 'change_email_otp', "
-            "'change_pix_otp')",
+            "'change_pix_otp', 'change_payment_otp')",
             name="ck_admin_security_purpose",
         ),
         CheckConstraint("attempts >= 0"),
@@ -267,6 +755,56 @@ class AdminActionToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PhotographerAccessRecovery(Base):
+    """Atendimento do proprietário; material transitório cifrado, sem documentos."""
+
+    __tablename__ = "photographer_access_recovery"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["admin_user_id", "tenant_id"], ["tenant_admin.admin_user_id", "tenant_admin.tenant_id"],
+            name="fk_access_recovery_target_membership",
+        ),
+        ForeignKeyConstraint(
+            ["closure_request_id", "tenant_id"], ["tenant_closure_request.id", "tenant_closure_request.tenant_id"],
+            name="fk_access_recovery_closure",
+        ),
+        CheckConstraint("state IN ('email_pending','email_verified','completed','expired')",
+                        name="ck_access_recovery_state"),
+        CheckConstraint("reason_code IN ('lost_email','lost_all_access')", name="ck_access_recovery_reason"),
+        CheckConstraint("identity_confirmed", name="ck_access_recovery_identity_confirmed"),
+        CheckConstraint("length(expected_version) = 64 AND length(request_fingerprint) = 64",
+                        name="ck_access_recovery_versions"),
+        CheckConstraint("state NOT IN ('email_pending','email_verified') OR encrypted_payload IS NOT NULL",
+                        name="ck_access_recovery_pending_payload"),
+        CheckConstraint("state != 'email_pending' OR token_hash IS NOT NULL",
+                        name="ck_access_recovery_pending_token"),
+        CheckConstraint("state NOT IN ('email_verified','completed') OR email_verified_at IS NOT NULL",
+                        name="ck_access_recovery_email_verified"),
+        CheckConstraint("state != 'completed' OR (completed_at IS NOT NULL AND token_hash IS NULL "
+                        "AND encrypted_payload IS NULL)", name="ck_access_recovery_completed"),
+        CheckConstraint("state != 'expired' OR (token_hash IS NULL AND encrypted_payload IS NULL)",
+                        name="ck_access_recovery_expired"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    admin_user_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"), index=True)
+    actor_admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
+    closure_request_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    identity_confirmed: Mapped[bool] = mapped_column(Boolean)
+    reason_code: Mapped[str] = mapped_column(String(24))
+    reset_totp: Mapped[bool] = mapped_column(Boolean, default=False)
+    expected_version: Mapped[str] = mapped_column(String(64))
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    recipient_fingerprint: Mapped[str] = mapped_column(String(64))
+    token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    encrypted_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[str] = mapped_column(String(24), default="email_pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class EmailDelivery(Base):
@@ -565,7 +1103,7 @@ class PhotoAsset(Base):
 
 
 class RawDevelopmentSettings(Base):
-    """Configuração RAW isolada por fotógrafo/tenant."""
+    """ConfiguraÃ§Ã£o RAW isolada por fotÃ³grafo/tenant."""
 
     __tablename__ = "raw_development_settings"
     __table_args__ = (
@@ -586,7 +1124,7 @@ class RawDevelopmentSettings(Base):
 
 
 class RawDevelopmentJob(Base):
-    """Estado e proveniência mínima de uma conversão transitória por tenant."""
+    """Estado e proveniÃªncia mÃ­nima de uma conversÃ£o transitÃ³ria por tenant."""
 
     __tablename__ = "raw_development_job"
     __table_args__ = (
@@ -642,6 +1180,10 @@ class PhotoFolder(Base):
             name="ck_photo_folder_private_content_only",
         ),
         CheckConstraint(
+            "access_duration_days IS NULL OR access_duration_days >= 1",
+            name="ck_photo_folder_access_duration_days",
+        ),
+        CheckConstraint(
             "audience_scope IS NULL OR audience_scope IN ('all', 'selected')",
             name="ck_photo_folder_audience_scope",
         ),
@@ -681,6 +1223,8 @@ class PhotoFolder(Base):
     audience_scope: Mapped[str | None] = mapped_column(String(16), nullable=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    access_duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    access_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
@@ -705,6 +1249,9 @@ class GalleryClientState(Base):
     client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
     selection_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    selection_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -1155,6 +1702,118 @@ class ProviderPaymentCorrection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class MercadoPagoAccount(Base):
+    """Versão imutável da conta; envelopes em tabela dedicada ao cofre."""
+
+    __tablename__ = "mercadopago_account"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    seller_id: Mapped[str] = mapped_column(String(32))
+    public_key: Mapped[str] = mapped_column(String(200))
+    access_token_envelope: Mapped[dict] = mapped_column(JSON)
+    webhook_secret_envelope: Mapped[dict] = mapped_column(JSON)
+    test_account: Mapped[bool] = mapped_column(Boolean)
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        # A migração 0088 já criou essa chave composta para que registros
+        # financeiros referenciem a conta junto ao tenant proprietário.
+        UniqueConstraint("id", "tenant_id", name="uq_owner_mercadopago_account_id_tenant_id"),
+        CheckConstraint("status IN ('active', 'unauthorized')", name="ck_mp_account_status"),
+    )
+
+
+class PaymentPreferences(Base):
+    __tablename__ = "payment_preferences"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), unique=True)
+    account_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("mercadopago_account.id"), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    pix_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    mercadopago_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false")
+    __table_args__ = (
+        CheckConstraint("version >= 0", name="ck_payment_preferences_version"),
+        CheckConstraint("NOT mercadopago_enabled OR account_id IS NOT NULL",
+                        name="ck_payment_preferences_account"),
+    )
+
+
+class MercadoPagoPayment(Base):
+    """Uma tentativa de cobrança com seus pedidos e referência imutáveis."""
+
+    __tablename__ = "mercadopago_payment"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("client.id"), index=True)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("mercadopago_account.id"))
+    account: Mapped[MercadoPagoAccount] = relationship(
+        primaryjoin=(account_id == MercadoPagoAccount.id) & (tenant_id == MercadoPagoAccount.tenant_id),
+        viewonly=True)
+    checkout_key: Mapped[str] = mapped_column(String(36))
+    cart_revision: Mapped[str] = mapped_column(String(64))
+    total_cents: Mapped[int] = mapped_column(Integer)
+    method: Mapped[str] = mapped_column(String(24))
+    state: Mapped[str] = mapped_column(String(32), default="prepared")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    provider_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_payment_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    order_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    order_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    transaction_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    transaction_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    pix_copy_paste: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    check_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_check_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", "client_id", name="uq_mp_payment_owner"),
+        UniqueConstraint("tenant_id", "client_id", "checkout_key", name="uq_mp_checkout_key"),
+        UniqueConstraint("account_id", "provider_order_id", name="uq_mp_provider_order"),
+        CheckConstraint("total_cents > 0", name="ck_mp_total"),
+        CheckConstraint("method IN ('credit_card', 'pix')", name="ck_mp_method"),
+        CheckConstraint("state IN ('prepared', 'sending', 'initiated', 'pending', 'processing', "
+                        "'confirmed', 'rejected', 'canceled', 'expired', 'refunded', "
+                        "'partially_refunded', 'charged_back', 'verification_required', "
+                        "'duplicate_review', 'abandoned')", name="ck_mp_state"),
+        CheckConstraint("state != 'confirmed' OR (provider_order_id IS NOT NULL "
+                        "AND provider_payment_id IS NOT NULL AND confirmed_at IS NOT NULL)",
+                        name="ck_mp_confirmed"),
+        Index("uq_mp_active_client_revision", "tenant_id", "client_id", "cart_revision", unique=True,
+              sqlite_where=text("active = true"), postgresql_where=text("active = true")),
+    )
+
+
+class MercadoPagoWebhook(Base):
+    """Inbox mínima durável; eventos diferentes de uma order não são descartados."""
+
+    __tablename__ = "mercadopago_webhook"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("mercadopago_account.id"))
+    provider_order_id: Mapped[str] = mapped_column(String(64))
+    digest: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(16), default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("account_id", "digest", name="uq_mp_webhook_digest"),
+        CheckConstraint("state IN ('queued', 'processing', 'done', 'ignored', 'failed')",
+                        name="ck_mp_webhook_state"),
+        CheckConstraint("attempts >= 0", name="ck_mp_webhook_attempts"),
+        Index("ix_mp_webhook_queue", "state", "next_attempt_at"),
+    )
+
+
 class SaleOrder(Base):
     __tablename__ = "sale_order"
     tenant_id: Mapped[UUID] = mapped_column(
@@ -1181,6 +1840,12 @@ class SaleOrder(Base):
                              name="fk_sale_order_provider_payment_owner"),
         CheckConstraint("payment_group_id IS NULL OR provider_payment_id IS NULL",
                         name="ck_sale_order_single_payment_method"),
+        ForeignKeyConstraint(["mercadopago_payment_id", "tenant_id", "client_id"],
+                             ["mercadopago_payment.id", "mercadopago_payment.tenant_id",
+                              "mercadopago_payment.client_id"], name="fk_sale_order_mp_owner"),
+        CheckConstraint("mercadopago_payment_id IS NULL OR "
+                        "(payment_group_id IS NULL AND provider_payment_id IS NULL)",
+                        name="ck_sale_order_mp_exclusive"),
         Index(
             "ix_sale_order_parent_payment_status",
             "parent_gallery_id_snapshot",
@@ -1261,6 +1926,7 @@ class SaleOrder(Base):
     assets_removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payment_group_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     provider_payment_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    mercadopago_payment_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -1377,6 +2043,430 @@ class GalleryLifecycleOperation(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class MediaArchiveCycle(Base):
+    """Catálogo tenant-scoped de um ciclo de arquivo frio por pasta."""
+
+    __tablename__ = "media_archive_cycle"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_media_archive_cycle_id_tenant"),
+        UniqueConstraint(
+            "folder_id", "cycle_number", name="uq_media_archive_cycle_folder_number",
+        ),
+        ForeignKeyConstraint(
+            ["folder_id", "parent_gallery_id", "tenant_id"],
+            ["photo_folder.id", "photo_folder.parent_gallery_id", "photo_folder.tenant_id"],
+            name="fk_media_archive_cycle_folder_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["parent_gallery_id", "tenant_id"], ["parent_gallery.id", "parent_gallery.tenant_id"],
+            name="fk_media_archive_cycle_parent_tenant",
+        ),
+        CheckConstraint(
+            "state IN ('local', 'archiving', 'archived', 'restoring', 'reconciliation_required', 'deleting', 'deleted')",
+            name="ck_media_archive_cycle_state",
+        ),
+        CheckConstraint("cycle_number >= 1", name="ck_media_archive_cycle_number"),
+        CheckConstraint("object_count >= 0", name="ck_media_archive_cycle_object_count"),
+        CheckConstraint("total_bytes >= 0", name="ck_media_archive_cycle_total_bytes"),
+        CheckConstraint(
+            "manifest_sha256 IS NULL OR length(manifest_sha256) = 64",
+            name="ck_media_archive_cycle_manifest_sha256",
+        ),
+        CheckConstraint("manifest_version >= 1", name="ck_media_archive_cycle_manifest_version"),
+        Index("ix_media_archive_cycle_tenant_folder_state", "tenant_id", "folder_id", "state"),
+        Index("ix_media_archive_cycle_state_next_check", "state", "next_archive_check_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_gallery_id: Mapped[UUID] = mapped_column(index=True)
+    folder_id: Mapped[UUID] = mapped_column(index=True)
+    cycle_number: Mapped[int] = mapped_column(Integer, default=1)
+    state: Mapped[str] = mapped_column(String(32), default="local", index=True)
+    manifest_version: Mapped[int] = mapped_column(Integer, default=1)
+    manifest: Mapped[dict] = mapped_column(JSON, default=dict)
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    object_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_archive_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    last_window_notice_for_expiry: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class MediaArchiveOperation(Base):
+    """Job durável de arquivo, recuperação ou exclusão fria explícita."""
+
+    __tablename__ = "media_archive_operation"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_media_archive_operation_id_tenant"),
+        UniqueConstraint(
+            "id", "cycle_id", "tenant_id",
+            name="uq_media_archive_operation_id_cycle_tenant",
+        ),
+        UniqueConstraint(
+            "tenant_id", "idempotency_key", name="uq_media_archive_operation_idempotency",
+        ),
+        ForeignKeyConstraint(
+            ["cycle_id", "tenant_id"], ["media_archive_cycle.id", "media_archive_cycle.tenant_id"],
+            name="fk_media_archive_operation_cycle_tenant",
+        ),
+        CheckConstraint(
+            "operation_type IN ('archive', 'restore', 'delete_remote')",
+            name="ck_media_archive_operation_type",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'failed', 'reconciliation_required', 'completed', 'cancelled')",
+            name="ck_media_archive_operation_status",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_media_archive_operation_attempts"),
+        CheckConstraint(
+            "actor_type IN ('tenant', 'owner', 'system')", name="ck_media_archive_operation_actor",
+        ),
+        CheckConstraint(
+            "length(idempotency_key) BETWEEN 1 AND 200",
+            name="ck_media_archive_operation_idempotency_key",
+        ),
+        CheckConstraint(
+            "status != 'processing' OR (lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)",
+            name="ck_media_archive_operation_processing_lease",
+        ),
+        Index("ix_media_archive_operation_queue", "status", "operation_type", "created_at"),
+        Index("ix_media_archive_operation_lease_expires_at", "lease_expires_at"),
+        Index(
+            "uq_media_archive_operation_active_cycle", "tenant_id", "cycle_id", unique=True,
+            sqlite_where=text("status IN ('queued', 'processing', 'reconciliation_required')"),
+            postgresql_where=text("status IN ('queued', 'processing', 'reconciliation_required')"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    cycle_id: Mapped[UUID] = mapped_column(index=True)
+    operation_type: Mapped[str] = mapped_column(String(24), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    stage: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    actor_type: Mapped[str] = mapped_column(String(16), default="system")
+    actor_admin_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_error_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class MediaArchiveRecoveryPricing(Base):
+    """Taxa global configurável; NULL significa que o preço ainda não foi definido."""
+
+    __tablename__ = "media_archive_recovery_pricing"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_media_archive_recovery_pricing_singleton"),
+        CheckConstraint(
+            "recovery_fee_credits IS NULL OR recovery_fee_credits > 0",
+            name="ck_media_archive_recovery_fee_positive",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    recovery_fee_credits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_by_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "platform_owner.admin_user_id",
+            name="fk_media_archive_recovery_pricing_updated_by_owner",
+        ), nullable=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class MediaArchiveRecoveryRequest(Base):
+    """Prazo e preço congelados quando o tenant pede recuperação."""
+
+    __tablename__ = "media_archive_recovery_request"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id", name="fk_media_archive_recovery_request_tenant"), index=True,
+    )
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_media_archive_recovery_request_id_tenant"),
+        UniqueConstraint("tenant_id", "operation_id", name="uq_media_archive_recovery_request_operation"),
+        ForeignKeyConstraint(
+            ["operation_id", "cycle_id", "tenant_id"],
+            [
+                "media_archive_operation.id", "media_archive_operation.cycle_id",
+                "media_archive_operation.tenant_id",
+            ],
+            name="fk_media_archive_recovery_request_operation_scope",
+        ),
+        ForeignKeyConstraint(
+            ["cycle_id", "tenant_id"],
+            ["media_archive_cycle.id", "media_archive_cycle.tenant_id"],
+            name="fk_media_archive_recovery_request_cycle_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "requested_by_tenant_admin_id"],
+            ["tenant_admin.tenant_id", "tenant_admin.admin_user_id"],
+            name="fk_media_archive_recovery_request_actor_membership",
+        ),
+        ForeignKeyConstraint(
+            ["retry_of_operation_id", "tenant_id"],
+            ["media_archive_operation.id", "media_archive_operation.tenant_id"],
+            name="fk_media_archive_recovery_request_retry_operation_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["requested_by_owner_admin_id"], ["platform_owner.admin_user_id"],
+            name="fk_media_archive_recovery_request_actor_owner",
+        ),
+        ForeignKeyConstraint(["closure_batch_id", "tenant_id"],
+                             ["tenant_closure_recovery_batch.id", "tenant_closure_recovery_batch.tenant_id"],
+                             name="fk_archive_recovery_closure_batch"),
+        CheckConstraint(
+            "(requester_type = 'tenant' AND requested_by_tenant_admin_id = requested_by_admin_id "
+            "AND requested_by_owner_admin_id IS NULL AND retry_of_operation_id IS NULL AND closure_batch_id IS NULL) OR "
+            "(requester_type = 'owner' AND requested_by_tenant_admin_id IS NULL "
+            "AND requested_by_owner_admin_id = requested_by_admin_id "
+            "AND (retry_of_operation_id IS NOT NULL OR closure_batch_id IS NOT NULL))",
+            name="ck_media_archive_recovery_request_actor_shape",
+        ),
+        CheckConstraint("duration_days IN (7, 14, 30)", name="ck_media_archive_recovery_duration"),
+        CheckConstraint(
+            "fee_credits_snapshot IS NULL OR fee_credits_snapshot > 0",
+            name="ck_media_archive_recovery_fee_snapshot",
+        ),
+        CheckConstraint(
+            "((owner_exempt OR technical_cover_exempt) AND fee_credits_snapshot IS NULL) OR "
+            "(NOT owner_exempt AND NOT technical_cover_exempt AND fee_credits_snapshot IS NOT NULL)",
+            name="ck_media_archive_recovery_fee_shape",
+        ),
+        CheckConstraint("NOT technical_cover_exempt OR (closure_batch_id IS NOT NULL AND NOT owner_exempt)",
+                        name="ck_archive_recovery_cover_exemption"),
+        Index("ix_media_archive_recovery_request_tenant_created", "tenant_id", "created_at"),
+        Index("ix_media_archive_recovery_request_cycle", "tenant_id", "cycle_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    operation_id: Mapped[UUID] = mapped_column(index=True)
+    cycle_id: Mapped[UUID] = mapped_column(index=True)
+    requester_type: Mapped[str] = mapped_column(
+        String(16), default="tenant", server_default=text("'tenant'"),
+    )
+    requested_by_admin_id: Mapped[UUID] = mapped_column(nullable=False)
+    requested_by_tenant_admin_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    requested_by_owner_admin_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    retry_of_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    duration_days: Mapped[int] = mapped_column(Integer)
+    fee_credits_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    owner_exempt: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    technical_cover_exempt: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    closure_batch_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaArchiveRecoveryCreditReservation(Base):
+    """Reserva temporária que só vira débito após recuperação integral verificada."""
+
+    __tablename__ = "media_archive_recovery_credit_reservation"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id", name="fk_media_archive_recovery_reservation_tenant"), index=True,
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "id", "tenant_id", name="uq_media_archive_recovery_credit_reservation_id_tenant",
+        ),
+        UniqueConstraint(
+            "tenant_id", "operation_id", name="uq_media_archive_recovery_credit_reservation_operation",
+        ),
+        ForeignKeyConstraint(
+            ["operation_id", "tenant_id"],
+            ["media_archive_operation.id", "media_archive_operation.tenant_id"],
+            name="fk_media_archive_recovery_credit_reservation_operation_tenant",
+        ),
+        CheckConstraint("reserved_credits >= 0", name="ck_media_archive_recovery_reserved_credits"),
+        CheckConstraint(
+            "status IN ('reserved', 'reconciliation_required', 'consumed', 'released', 'exempt')",
+            name="ck_media_archive_recovery_reservation_status",
+        ),
+        CheckConstraint(
+            "(status = 'exempt' AND reserved_credits = 0) OR "
+            "(status != 'exempt' AND reserved_credits > 0)",
+            name="ck_media_archive_recovery_reservation_amount",
+        ),
+        Index("ix_media_archive_recovery_credit_pending", "tenant_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    operation_id: Mapped[UUID] = mapped_column(index=True)
+    reserved_credits: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="reserved", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class MediaArchiveObject(Base):
+    """Objeto binário descrito por referência lógica, nunca por caminho local."""
+
+    __tablename__ = "media_archive_object"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_media_archive_object_id_tenant"),
+        UniqueConstraint("cycle_id", "source_ref", name="uq_media_archive_object_cycle_source"),
+        ForeignKeyConstraint(
+            ["cycle_id", "tenant_id"], ["media_archive_cycle.id", "media_archive_cycle.tenant_id"],
+            name="fk_media_archive_object_cycle_tenant",
+        ),
+        CheckConstraint(
+            "object_type IN ('source', 'derivative', 'commercial_media', 'cover_asset', 'cover_thumbnail', 'manifest')",
+            name="ck_media_archive_object_type",
+        ),
+        CheckConstraint("size_bytes > 0", name="ck_media_archive_object_size"),
+        CheckConstraint("length(sha256) = 64", name="ck_media_archive_object_sha256"),
+        CheckConstraint("length(source_ref) BETWEEN 1 AND 255", name="ck_media_archive_object_source_ref"),
+        CheckConstraint("length(mime_type) BETWEEN 1 AND 127", name="ck_media_archive_object_mime_type"),
+        Index("ix_media_archive_object_cycle", "tenant_id", "cycle_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    cycle_id: Mapped[UUID] = mapped_column(index=True)
+    source_ref: Mapped[str] = mapped_column(String(255))
+    object_type: Mapped[str] = mapped_column(String(32))
+    mime_type: Mapped[str] = mapped_column(String(127))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    remote_object_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    remote_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaArchiveEvent(Base):
+    """Transição append-only e sanitizada de um ciclo/operação de arquivo frio."""
+
+    __tablename__ = "media_archive_event"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["cycle_id", "tenant_id"], ["media_archive_cycle.id", "media_archive_cycle.tenant_id"],
+            name="fk_media_archive_event_cycle_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["operation_id", "tenant_id"], ["media_archive_operation.id", "media_archive_operation.tenant_id"],
+            name="fk_media_archive_event_operation_tenant",
+        ),
+        CheckConstraint("actor_type IN ('tenant', 'owner', 'system')", name="ck_media_archive_event_actor"),
+        Index("ix_media_archive_event_tenant_created", "tenant_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    cycle_id: Mapped[UUID] = mapped_column(index=True)
+    operation_id: Mapped[UUID] = mapped_column(index=True)
+    actor_type: Mapped[str] = mapped_column(String(16))
+    actor_admin_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    event_type: Mapped[str] = mapped_column(String(48))
+    cycle_state_before: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cycle_state_after: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    operation_status_before: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    operation_status_after: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaArchiveNotice(Base):
+    """Aviso interno tenant-scoped para o fotógrafo, sem entrega externa."""
+
+    __tablename__ = "media_archive_notice"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "idempotency_key", name="uq_media_archive_notice_idempotency",
+        ),
+        ForeignKeyConstraint(
+            ["cycle_id", "tenant_id"],
+            ["media_archive_cycle.id", "media_archive_cycle.tenant_id"],
+            name="fk_media_archive_notice_cycle_tenant",
+        ),
+        CheckConstraint(
+            "notice_type IN ('window_7_days', 'blocked_open_order', 'archive_started', "
+            "'archive_completed', 'archive_failed', 'archive_reconciliation_required', "
+            "'recovery_started', 'recovery_completed', 'recovery_failed', "
+            "'recovery_reconciliation_required')",
+            name="ck_media_archive_notice_type",
+        ),
+        Index("ix_media_archive_notice_tenant_created", "tenant_id", "created_at"),
+        Index("ix_media_archive_notice_tenant_read_created", "tenant_id", "read_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    cycle_id: Mapped[UUID] = mapped_column(index=True)
+    notice_type: Mapped[str] = mapped_column(String(40))
+    idempotency_key: Mapped[str] = mapped_column(String(192))
+    title: Mapped[str] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(String(400))
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MediaArchiveCoordinator(Base):
+    """Lease singleton que serializa transferências em todas as réplicas."""
+
+    __tablename__ = "media_archive_coordinator"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_media_archive_coordinator_singleton"),
+        CheckConstraint(
+            "(active_operation_id IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL) OR "
+            "(active_operation_id IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)",
+            name="ck_media_archive_coordinator_lease_shape",
+        ),
+        ForeignKeyConstraint(
+            ["active_operation_id"], ["media_archive_operation.id"],
+            name="fk_media_archive_coordinator_operation",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    active_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class MediaArchiveSpaceReservation(Base):
+    """Reserva persistente de bytes para o staging por volume e operação."""
+
+    __tablename__ = "media_archive_space_reservation"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "operation_id", "volume_key", name="uq_media_archive_space_reservation",
+        ),
+        ForeignKeyConstraint(
+            ["operation_id", "tenant_id"], ["media_archive_operation.id", "media_archive_operation.tenant_id"],
+            name="fk_media_archive_space_reservation_operation_tenant",
+        ),
+        CheckConstraint("reserved_bytes >= 0", name="ck_media_archive_space_reservation_bytes"),
+        CheckConstraint("status IN ('active', 'released')", name="ck_media_archive_space_reservation_status"),
+        CheckConstraint("length(volume_key) = 64", name="ck_media_archive_space_reservation_volume_key"),
+        Index("ix_media_archive_space_reservation_volume_status", "volume_key", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    operation_id: Mapped[UUID] = mapped_column(index=True)
+    volume_key: Mapped[str] = mapped_column(String(64))
+    reserved_bytes: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class GalleryAccessCapability(Base):
@@ -1516,6 +2606,23 @@ def _materialize_required_commercial_snapshots(
     session: Session, _flush_context, _instances
 ) -> None:
     """Garante snapshots em pedidos novos sem confiar em cada consumidor da ORM."""
+
+    pending_totp = [
+        admin for admin in session.new.union(session.dirty)
+        if isinstance(admin, AdminUser)
+        and getattr(admin, "_totp_secret_needs_encryption", False)
+    ]
+    if pending_totp:
+        cipher = TotpSecretCipher.from_environment()
+        for admin in pending_totp:
+            if admin.id is None:
+                admin.id = uuid4()
+            plaintext = admin.totp_secret
+            admin._totp_secret_envelope = cipher.encrypt(plaintext, admin_id=admin.id)
+            admin._totp_secret_legacy = (
+                plaintext if legacy_totp_dual_write_enabled() else None
+            )
+            admin._totp_secret_needs_encryption = False
 
     for record in session.new:
         if isinstance(record, SaleOrder):
@@ -1776,10 +2883,24 @@ class GalleryReopeningRequest(Base):
             "parent_gallery_id", "requested_by_client_id", "idempotency_key",
             name="uq_gallery_reopening_canonical_idempotency",
         ),
+        UniqueConstraint(
+            "photo_folder_id", "requested_by_client_id", "idempotency_key",
+            name="uq_gallery_reopening_folder_idempotency",
+        ),
         ForeignKeyConstraint(
             ["parent_gallery_id", "requested_by_client_id"],
             ["gallery_client_state.parent_gallery_id", "gallery_client_state.client_id"],
             name="fk_gallery_reopening_canonical_state",
+        ),
+        ForeignKeyConstraint(
+            ["photo_folder_id", "parent_gallery_id", "tenant_id"],
+            ["photo_folder.id", "photo_folder.parent_gallery_id", "photo_folder.tenant_id"],
+            name="fk_gallery_reopening_folder_scope",
+        ),
+        ForeignKeyConstraint(
+            ["photo_folder_id", "derived_gallery_id", "tenant_id"],
+            ["photo_folder.id", "photo_folder.derived_gallery_id", "photo_folder.tenant_id"],
+            name="fk_gallery_reopening_derived_folder_scope",
         ),
         CheckConstraint(
             "(derived_gallery_id IS NOT NULL) <> (parent_gallery_id IS NOT NULL)",
@@ -1789,18 +2910,38 @@ class GalleryReopeningRequest(Base):
             "status IN ('pending', 'approved', 'refused')",
             name="ck_gallery_reopening_request_status",
         ),
+        CheckConstraint(
+            "approved_duration_days IS NULL OR approved_duration_days >= 1",
+            name="ck_gallery_reopening_approved_duration_days",
+        ),
+        CheckConstraint(
+            "photo_folder_id IS NULL OR status != 'approved' OR approved_duration_days IS NOT NULL",
+            name="ck_gallery_reopening_folder_approval_duration",
+        ),
         Index(
             "uq_gallery_reopening_request_pending",
+            "tenant_id",
             "derived_gallery_id",
             unique=True,
-            sqlite_where=text("status = 'pending'"),
-            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("photo_folder_id IS NULL AND status = 'pending'"),
+            postgresql_where=text("photo_folder_id IS NULL AND status = 'pending'"),
         ),
         Index(
             "uq_gallery_reopening_canonical_pending",
+            "tenant_id",
             "parent_gallery_id", "requested_by_client_id", unique=True,
-            sqlite_where=text("parent_gallery_id IS NOT NULL AND status = 'pending'"),
-            postgresql_where=text("parent_gallery_id IS NOT NULL AND status = 'pending'"),
+            sqlite_where=text("parent_gallery_id IS NOT NULL AND photo_folder_id IS NULL AND status = 'pending'"),
+            postgresql_where=text("parent_gallery_id IS NOT NULL AND photo_folder_id IS NULL AND status = 'pending'"),
+        ),
+        Index(
+            "uq_gallery_reopening_folder_pending_client",
+            "tenant_id", "photo_folder_id", "requested_by_client_id", unique=True,
+            sqlite_where=text("photo_folder_id IS NOT NULL AND status = 'pending'"),
+            postgresql_where=text("photo_folder_id IS NOT NULL AND status = 'pending'"),
+        ),
+        Index(
+            "ix_gallery_reopening_folder_approved_until",
+            "tenant_id", "photo_folder_id", "status", "approved_until",
         ),
         Index(
             "ix_gallery_reopening_request_status_created",
@@ -1816,6 +2957,9 @@ class GalleryReopeningRequest(Base):
     parent_gallery_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("parent_gallery.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    photo_folder_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("photo_folder.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     requested_by_client_id: Mapped[UUID] = mapped_column(
         ForeignKey("client.id"), nullable=False, index=True
     )
@@ -1826,6 +2970,7 @@ class GalleryReopeningRequest(Base):
     )
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     approved_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now, onupdate=now
@@ -1988,7 +3133,7 @@ class WhatsAppChannelSettings(Base):
         ForeignKey("tenant.id"), index=True,
     )
     __table_args__ = (
-        UniqueConstraint("environment"),
+        UniqueConstraint("tenant_id", "environment", name="uq_scope_whatsapp_channel_settings_environment"),
         CheckConstraint(
             "status IN ('sandbox', 'pending_pairing', 'connecting', 'ready', "
             "'mismatch', 'disconnected', 'error')"
@@ -2001,6 +3146,23 @@ class WhatsAppChannelSettings(Base):
     status: Mapped[str] = mapped_column(String(24), default="sandbox", index=True)
     last_error: Mapped[str | None] = mapped_column(String(240), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class WhatsAppTenantCredential(Base):
+    """Credencial de webhook isolada por tenant; segredos ficam cifrados."""
+
+    __tablename__ = "whatsapp_tenant_credential"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "environment", name="uq_whatsapp_tenant_credential_scope"),
+        UniqueConstraint("environment", "instance_name", name="uq_whatsapp_tenant_instance"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    environment: Mapped[str] = mapped_column(String(32), index=True)
+    instance_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    webhook_secret_envelope: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
@@ -2139,7 +3301,7 @@ class PreviewAdjustmentSettings(Base):
     __table_args__ = (
         CheckConstraint("id = 1"),
         CheckConstraint("generation >= 1"),
-        CheckConstraint("strength BETWEEN 10 AND 75"),
+        CheckConstraint("strength BETWEEN 10 AND 100", name="ck_preview_adjustment_strength"),
     )
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
@@ -2157,7 +3319,7 @@ class GalleryPreviewSettings(Base):
     )
     __table_args__ = (
         CheckConstraint("generation >= 1"),
-        CheckConstraint("strength BETWEEN 10 AND 75"),
+        CheckConstraint("strength BETWEEN 10 AND 100", name="ck_gallery_preview_strength"),
         CheckConstraint("exposure_tenths BETWEEN -20 AND 20"),
     )
     parent_gallery_id: Mapped[UUID] = mapped_column(
@@ -2180,7 +3342,7 @@ class FolderProcessingSettings(Base):
     __table_args__ = (
         CheckConstraint("preview_mode IN ('inherit', 'custom', 'off')"),
         CheckConstraint("facial_mode IN ('inherit', 'on', 'off')"),
-        CheckConstraint("preview_strength BETWEEN 10 AND 75"),
+        CheckConstraint("preview_strength BETWEEN 10 AND 100", name="ck_folder_preview_strength"),
         CheckConstraint("preview_exposure_tenths BETWEEN -20 AND 20"),
         CheckConstraint("revision >= 1"),
     )
@@ -2649,6 +3811,8 @@ class FacialSearchRequest(Base):
             name="ck_facial_search_compare_progress",
         ),
         Index("ix_facial_search_client_gallery_expiry", "client_id", "parent_gallery_id", "expires_at"),
+        # O schema implantado 0089 mantém engines históricos; a aplicação cria
+        # novas buscas exclusivamente com SFace e o worker recusa outras engines.
         CheckConstraint(
             "search_engine IN ('opencv-yunet-sface', 'google-embeddinggemma-2')",
             name="ck_facial_search_engine",
@@ -2690,6 +3854,42 @@ class FacialSearchRequest(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now, onupdate=now
     )
+
+
+class FacialSearchConsentProof(Base):
+    """Comprovante mínimo preservado quando a busca facial operacional é removida."""
+
+    __tablename__ = "facial_search_consent_proof"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "source_search_request_id",
+            name="uq_facial_consent_proof_request",
+        ),
+        CheckConstraint(
+            "authorization_method IN ('legacy', 'explicit_consent', 'direct_region')",
+            name="ck_facial_consent_proof_method",
+        ),
+        CheckConstraint(
+            "subject_declaration IS NULL OR subject_declaration IN ('adult', 'minor', 'conditional')",
+            name="ck_facial_consent_proof_subject",
+        ),
+        CheckConstraint(
+            "consent_version IS NOT NULL OR authorization_method IN ('legacy', 'direct_region')",
+            name="ck_facial_consent_proof_consent_method",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    source_search_request_id: Mapped[UUID] = mapped_column()
+    parent_gallery_id: Mapped[UUID] = mapped_column()
+    client_id: Mapped[UUID] = mapped_column()
+    authorization_method: Mapped[str] = mapped_column(String(32))
+    consent_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    legal_notice_version: Mapped[str] = mapped_column(String(80))
+    subject_declaration: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class FacialSearchSnapshotItem(Base):
@@ -2793,6 +3993,7 @@ class FacialJob(Base):
     )
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_facial_job_idempotency"),
+        # Preservado conforme schema 0089 para ler jobs legados sem reprocessá-los.
         CheckConstraint(
             "kind IN ('index', 'index_gemma', 'purge', 'search', 'search_gemma', 'cleanup')", name="ck_facial_job_kind"
         ),
@@ -3161,7 +4362,555 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class PlatformAdminEvent(Base):
+    """Auditoria global sanitizada, sem payload livre nem retenção automática."""
+    __tablename__ = "platform_admin_event"
+    __table_args__ = (
+        CheckConstraint("result IN ('success','denied')", name="ck_platform_admin_result"),
+        CheckConstraint("origin = 'web_console'", name="ck_platform_admin_origin"),
+        CheckConstraint("action IN ('tenant.activate','tenant.suspend','console.access_denied','tenant.status_denied','photographer.totp_revoked','photographer.totp_revoke_denied','tenant.host_ready','tenant.host_activation_denied','media_archive.recovery_pricing_updated','tenant.reopened','tenant.media_deletion_requested','tenant.media_deletion_retry','tenant.profile_reduced','credit.granted','credit.revoked','credit.package_created','credit.package_updated','credit.purchase_reviewed')", name="ck_platform_admin_action"),
+        CheckConstraint(
+            "action != 'tenant.profile_reduced' OR (result = 'success' AND tenant_id IS NOT NULL "
+            "AND object_id IS NOT NULL AND previous_status IS NOT NULL AND next_status IS NOT NULL "
+            "AND previous_status = 'retained' AND next_status = 'reduced')",
+            name="ck_platform_admin_profile_reduced_context",
+        ),
+        CheckConstraint(
+            "action NOT IN ('tenant.media_deletion_requested','tenant.media_deletion_retry') OR "
+            "(result = 'success' AND tenant_id IS NOT NULL AND object_id IS NOT NULL "
+            "AND previous_status IS NOT NULL AND next_status IS NOT NULL)",
+            name="ck_platform_admin_media_deletion_context",
+        ),
+        CheckConstraint("evidence_sha256 IS NULL OR length(evidence_sha256) = 64", name="ck_platform_admin_evidence_sha256"),
+        CheckConstraint("action != 'tenant.host_ready' OR (result = 'success' AND tenant_id IS NOT NULL AND object_id IS NOT NULL AND previous_status IS NOT NULL AND previous_status = 'reserved' AND next_status IS NOT NULL AND next_status = 'ready' AND evidence_sha256 IS NOT NULL)", name="ck_platform_admin_host_ready_context"),
+        CheckConstraint("action != 'tenant.reopened' OR (result = 'success' AND tenant_id IS NOT NULL AND object_id IS NOT NULL AND previous_status = 'closed' AND next_status = 'open')", name="ck_platform_admin_tenant_reopened_context"),
+        CheckConstraint("reason_code IS NULL OR reason_code IN ('lost_device','authenticator_unavailable','assisted_recovery')", name="ck_platform_admin_reason"),
+        CheckConstraint("target_version IS NULL OR length(target_version) = 64", name="ck_platform_admin_support_version"),
+        CheckConstraint("action NOT IN ('photographer.totp_revoked','photographer.totp_revoke_denied') OR (reason_code IS NOT NULL AND target_version IS NOT NULL AND object_id IS NOT NULL AND (action != 'photographer.totp_revoked' OR tenant_id IS NOT NULL))", name="ck_platform_admin_support_context"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    request_id: Mapped[UUID | None] = mapped_column(unique=True, nullable=True)
+    actor_admin_id: Mapped[UUID] = mapped_column(ForeignKey("admin_user.id"))
+    object_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    tenant_id: Mapped[UUID | None] = mapped_column(ForeignKey("tenant.id"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(40))
+    reason_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evidence_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    previous_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    next_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    result: Mapped[str] = mapped_column(String(16))
+    origin: Mapped[str] = mapped_column(String(24), default="web_console")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+
+@event.listens_for(PlatformAdminEvent, "before_update")
+@event.listens_for(PlatformAdminEvent, "before_delete")
+def _protect_platform_admin_event(_mapper, _connection, _target):
+    raise RuntimeError("Auditoria global é append-only.")
+
+
+# Carteira de créditos do fotógrafo. O saldo permanece reconstruível do ledger;
+# nenhum campo de saldo editável é armazenado nesta configuração.
+class TenantCreditWallet(Base):
+    __tablename__ = "tenant_credit_wallet"
+    __table_args__ = (
+        CheckConstraint("mode IN ('finite', 'unmetered')", name="ck_tenant_credit_wallet_mode"),
+        Index(
+            "uq_tenant_credit_wallet_single_unmetered", "mode", unique=True,
+            postgresql_where=text("mode = 'unmetered'"),
+            sqlite_where=text("mode = 'unmetered'"),
+        ),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16), default="finite", server_default=text("'finite'"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class PhotographerCreditPackage(Base):
+    """Catálogo comercial global administrado somente pelo proprietário persistido."""
+
+    __tablename__ = "photographer_credit_package"
+    __table_args__ = (
+        CheckConstraint("length(trim(name)) BETWEEN 1 AND 120", name="ck_credit_package_name"),
+        CheckConstraint("credit_quantity > 0", name="ck_credit_package_quantity"),
+        CheckConstraint(
+            "(price_cents IS NULL AND currency_code IS NULL) OR "
+            "(price_cents > 0 AND currency_code IS NOT NULL "
+            "AND length(currency_code) = 3 AND currency_code = upper(currency_code))",
+            name="ck_credit_package_price_currency",
+        ),
+        CheckConstraint(
+            "active = false OR (price_cents IS NOT NULL AND currency_code IS NOT NULL)",
+            name="ck_credit_package_active_price",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    credit_quantity: Mapped[int] = mapped_column(Integer)
+    price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    currency_code: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_by_admin_id: Mapped[UUID] = mapped_column(ForeignKey("platform_owner.admin_user_id"))
+    updated_by_admin_id: Mapped[UUID] = mapped_column(ForeignKey("platform_owner.admin_user_id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class PhotoCreditOperation(Base):
+    """Reserva idempotente por tenant e identidade persistente do PhotoAsset."""
+
+    __tablename__ = "photo_credit_operation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["photo_asset_id", "tenant_id"], ["photo_asset.id", "photo_asset.tenant_id"],
+            name="fk_credit_operation_photo_tenant",
+        ),
+        UniqueConstraint(
+            "tenant_id", "photo_asset_id_snapshot", name="uq_credit_operation_asset_snapshot",
+        ),
+        CheckConstraint(
+            "photo_asset_id IS NULL OR photo_asset_id = photo_asset_id_snapshot",
+            name="ck_credit_operation_photo_snapshot",
+        ),
+        CheckConstraint("length(payload_fingerprint) = 64", name="ck_credit_operation_fingerprint"),
+        CheckConstraint("quantity = 1", name="ck_credit_operation_quantity"),
+        CheckConstraint(
+            "status IN ('reserved', 'consumed', 'released', 'reconciliation_required')",
+            name="ck_credit_operation_status",
+        ),
+        Index("ix_credit_operation_reconcile", "tenant_id", "status", "updated_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    photo_asset_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    photo_asset_id_snapshot: Mapped[UUID] = mapped_column()
+    storage_key_snapshot: Mapped[str] = mapped_column(String(1024))
+    payload_fingerprint: Mapped[str] = mapped_column(String(64))
+    quantity: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+    status: Mapped[str] = mapped_column(
+        String(32), default="reserved", server_default=text("'reserved'"), index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PhotographerCreditEntry(Base):
+    """Movimento imutável; delta e referências permitem reconstruir o saldo."""
+
+    __tablename__ = "photographer_credit_entry"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["operation_id", "tenant_id"],
+            ["photo_credit_operation.id", "photo_credit_operation.tenant_id"],
+            name="fk_credit_entry_operation_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["archive_operation_id", "tenant_id"],
+            ["media_archive_operation.id", "media_archive_operation.tenant_id"],
+            name="fk_credit_entry_archive_operation_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["source_entry_id", "tenant_id"],
+            ["photographer_credit_entry.id", "photographer_credit_entry.tenant_id"],
+            name="fk_credit_entry_source_tenant",
+        ),
+        CheckConstraint(
+            "entry_type IN ('owner_grant', 'grant_revocation', 'purchase', "
+            "'upload_consumption', 'archive_recovery', 'purchase_reversal', 'correction')",
+            name="ck_credit_entry_type",
+        ),
+        CheckConstraint(
+            "(entry_type IN ('owner_grant', 'purchase') AND delta > 0) OR "
+            "(entry_type IN ('grant_revocation', 'upload_consumption', 'archive_recovery', 'purchase_reversal') AND delta < 0) OR "
+            "(entry_type = 'correction' AND delta <> 0)",
+            name="ck_credit_entry_delta",
+        ),
+        CheckConstraint(
+            "entry_type <> 'upload_consumption' OR (operation_id IS NOT NULL AND delta = -1)",
+            name="ck_credit_entry_upload_operation",
+        ),
+        CheckConstraint(
+            "(entry_type = 'archive_recovery' AND archive_operation_id IS NOT NULL "
+            "AND operation_id IS NULL AND delta < 0) OR "
+            "(entry_type <> 'archive_recovery' AND archive_operation_id IS NULL)",
+            name="ck_credit_entry_archive_operation",
+        ),
+        CheckConstraint(
+            "entry_type <> 'purchase' OR package_id IS NOT NULL",
+            name="ck_credit_entry_purchase_package",
+        ),
+        CheckConstraint(
+            "entry_type NOT IN ('grant_revocation', 'purchase_reversal', 'upload_consumption') "
+            "OR source_entry_id IS NOT NULL",
+            name="ck_credit_entry_source_required",
+        ),
+        CheckConstraint(
+            "entry_type NOT IN ('owner_grant', 'grant_revocation') "
+            "OR global_owner_admin_id IS NOT NULL",
+            name="ck_credit_entry_owner_authority",
+        ),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_credit_entry_idempotency"),
+        Index(
+            "uq_credit_entry_operation_consumption", "tenant_id", "operation_id", unique=True,
+            postgresql_where=text("entry_type = 'upload_consumption' AND operation_id IS NOT NULL"),
+            sqlite_where=text("entry_type = 'upload_consumption' AND operation_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_credit_entry_archive_operation_consumption",
+            "tenant_id", "archive_operation_id", unique=True,
+            postgresql_where=text("entry_type = 'archive_recovery' AND archive_operation_id IS NOT NULL"),
+            sqlite_where=text("entry_type = 'archive_recovery' AND archive_operation_id IS NOT NULL"),
+        ),
+        Index("ix_credit_entry_tenant_created", "tenant_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    entry_type: Mapped[str] = mapped_column(String(32))
+    delta: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(240))
+    operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    archive_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    source_entry_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    package_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("photographer_credit_package.id"), nullable=True,
+    )
+    actor_admin_id: Mapped[UUID | None] = mapped_column(ForeignKey("admin_user.id"), nullable=True)
+    global_owner_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("platform_owner.admin_user_id"), nullable=True,
+    )
+    source_reference: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class MercadoPagoCreditPurchase(Base):
+    """Compra Orders: pagador tenant-bound, recebedor vinculado ao proprietário."""
+
+    __tablename__ = "mercadopago_credit_purchase"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "buyer_admin_id"],
+            ["tenant_admin.tenant_id", "tenant_admin.admin_user_id"],
+            name="fk_credit_purchase_buyer_membership",
+        ),
+        ForeignKeyConstraint(
+            ["receiver_account_id", "receiver_tenant_id"],
+            ["mercadopago_account.id", "mercadopago_account.tenant_id"],
+            name="fk_credit_purchase_receiver_account_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["ledger_entry_id", "tenant_id"],
+            ["photographer_credit_entry.id", "photographer_credit_entry.tenant_id"],
+            name="fk_credit_purchase_ledger_tenant",
+        ),
+        UniqueConstraint("id", "tenant_id", name="uq_credit_purchase_id_tenant"),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_credit_purchase_idempotency"),
+        UniqueConstraint("receiver_account_id", "external_reference", name="uq_credit_purchase_external_reference"),
+        UniqueConstraint("receiver_account_id", "provider_order_id", name="uq_credit_purchase_provider_order"),
+        UniqueConstraint("ledger_entry_id", name="uq_credit_purchase_ledger_entry"),
+        CheckConstraint("credit_quantity > 0", name="ck_credit_purchase_quantity"),
+        CheckConstraint("total_cents > 0", name="ck_credit_purchase_total"),
+        CheckConstraint("currency_code = 'BRL'", name="ck_credit_purchase_currency"),
+        CheckConstraint(
+            "method IS NULL OR method IN ('credit_card', 'pix')", name="ck_credit_purchase_method",
+        ),
+        CheckConstraint(
+            "state IN ('prepared', 'submitting', 'initiated', 'pending', 'processing', 'confirmed', "
+            "'rejected', 'canceled', 'expired', 'refunded', 'partially_refunded', 'charged_back', "
+            "'verification_required', 'abandoned')",
+            name="ck_credit_purchase_state",
+        ),
+        CheckConstraint(
+            "state <> 'confirmed' OR (provider_order_id IS NOT NULL AND provider_payment_id IS NOT NULL "
+            "AND confirmed_at IS NOT NULL AND ledger_entry_id IS NOT NULL)",
+            name="ck_credit_purchase_confirmed",
+        ),
+        CheckConstraint(
+            "review_status IN ('none', 'pending', 'released', 'restricted')",
+            name="ck_credit_purchase_review_status",
+        ),
+        CheckConstraint(
+            "(review_status IN ('none', 'pending') AND reviewed_by_admin_id IS NULL "
+            "AND reviewed_at IS NULL AND review_note IS NULL) OR "
+            "(review_status IN ('released', 'restricted') AND reviewed_by_admin_id IS NOT NULL "
+            "AND reviewed_at IS NOT NULL AND review_note IS NOT NULL)",
+            name="ck_credit_purchase_review_resolution",
+        ),
+        Index("ix_credit_purchase_active", "tenant_id", "active", "created_at"),
+        Index("ix_credit_purchase_reconcile", "active", "next_check_at"),
+        Index("ix_credit_purchase_review_state", "tenant_id", "review_status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    buyer_admin_id: Mapped[UUID] = mapped_column()
+    owner_admin_id: Mapped[UUID] = mapped_column(ForeignKey("platform_owner.admin_user_id"))
+    receiver_tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"))
+    # A FK composta abaixo vincula a conta ao tenant recebedor, não ao comprador.
+    receiver_account_id: Mapped[UUID] = mapped_column()
+    package_id: Mapped[UUID] = mapped_column(ForeignKey("photographer_credit_package.id"))
+    package_name: Mapped[str] = mapped_column(String(120))
+    credit_quantity: Mapped[int] = mapped_column(Integer)
+    total_cents: Mapped[int] = mapped_column(Integer)
+    currency_code: Mapped[str] = mapped_column(String(3), default="BRL", server_default=text("'BRL'"))
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    external_reference: Mapped[str] = mapped_column(String(64))
+    method: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    state: Mapped[str] = mapped_column(String(32), default="prepared", server_default=text("'prepared'"))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    provider_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_payment_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    order_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    order_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    transaction_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    transaction_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pix_copy_paste: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    check_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    next_check_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ledger_entry_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    review_status: Mapped[str] = mapped_column(String(16), default="none", server_default=text("'none'"))
+    reviewed_by_admin_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("platform_owner.admin_user_id"), nullable=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, onupdate=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MercadoPagoCreditPurchaseEvent(Base):
+    """Histórico financeiro append-only e limitado a mudanças da compra."""
+
+    __tablename__ = "mercadopago_credit_purchase_event"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["purchase_id", "tenant_id"],
+            ["mercadopago_credit_purchase.id", "mercadopago_credit_purchase.tenant_id"],
+            name="fk_credit_purchase_event_scope",
+        ),
+        UniqueConstraint("id", "tenant_id", name="uq_credit_purchase_event_id_tenant"),
+        UniqueConstraint("purchase_id", "event_key", name="uq_credit_purchase_event_key"),
+        CheckConstraint(
+            "event_type IN ('prepared', 'submission_started', 'provider_updated', 'initiated', "
+            "'pending', 'processing', 'confirmed', 'rejected', 'canceled', 'expired', "
+            "'refunded', 'partially_refunded', 'charged_back', 'verification_required', "
+            "'abandoned', 'owner_reviewed')",
+            name="ck_credit_purchase_event_type",
+        ),
+        Index("ix_credit_purchase_event_history", "tenant_id", "purchase_id", "occurred_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    purchase_id: Mapped[UUID] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32))
+    event_key: Mapped[str] = mapped_column(String(240))
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class PhotographerCreditAllocationEvent(Base):
+    """Alocação append-only entre uma origem de crédito e seu uso/reserva."""
+
+    __tablename__ = "photographer_credit_allocation_event"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_entry_id", "tenant_id"],
+            ["photographer_credit_entry.id", "photographer_credit_entry.tenant_id"],
+            name="fk_credit_allocation_source_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["operation_id", "tenant_id"],
+            ["photo_credit_operation.id", "photo_credit_operation.tenant_id"],
+            name="fk_credit_allocation_operation_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["credit_entry_id", "tenant_id"],
+            ["photographer_credit_entry.id", "photographer_credit_entry.tenant_id"],
+            name="fk_credit_allocation_entry_tenant",
+        ),
+        CheckConstraint(
+            "event_type IN ('reserved', 'consumed', 'released', 'revoked')",
+            name="ck_credit_allocation_event_type",
+        ),
+        CheckConstraint("quantity > 0", name="ck_credit_allocation_quantity"),
+        CheckConstraint(
+            "(event_type IN ('reserved', 'released') AND operation_id IS NOT NULL AND credit_entry_id IS NULL) OR "
+            "(event_type = 'consumed' AND operation_id IS NOT NULL AND credit_entry_id IS NOT NULL) OR "
+            "(event_type = 'revoked' AND operation_id IS NULL AND credit_entry_id IS NOT NULL)",
+            name="ck_credit_allocation_event_context",
+        ),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_credit_allocation_idempotency"),
+        Index("ix_credit_allocation_source_history", "tenant_id", "source_entry_id", "occurred_at"),
+        Index("ix_credit_allocation_operation_history", "tenant_id", "operation_id", "occurred_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    source_entry_id: Mapped[UUID] = mapped_column(nullable=False)
+    operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    credit_entry_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    event_type: Mapped[str] = mapped_column(String(16))
+    quantity: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(240))
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class MediaArchiveRecoveryCreditAllocationEvent(Base):
+    """Alocação imutável de créditos de origem para um pull de arquivo frio."""
+
+    __tablename__ = "media_archive_recovery_credit_allocation_event"
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenant.id", name="fk_media_archive_credit_allocation_tenant"), index=True,
+    )
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_entry_id", "tenant_id"],
+            ["photographer_credit_entry.id", "photographer_credit_entry.tenant_id"],
+            name="fk_media_archive_credit_allocation_source_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["operation_id", "tenant_id"],
+            ["media_archive_operation.id", "media_archive_operation.tenant_id"],
+            name="fk_media_archive_credit_allocation_operation_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["credit_entry_id", "tenant_id"],
+            ["photographer_credit_entry.id", "photographer_credit_entry.tenant_id"],
+            name="fk_media_archive_credit_allocation_entry_tenant",
+        ),
+        CheckConstraint(
+            "event_type IN ('reserved', 'consumed', 'released')",
+            name="ck_media_archive_credit_allocation_event_type",
+        ),
+        CheckConstraint("quantity > 0", name="ck_media_archive_credit_allocation_quantity"),
+        CheckConstraint(
+            "(event_type IN ('reserved', 'released') AND credit_entry_id IS NULL) OR "
+            "(event_type = 'consumed' AND credit_entry_id IS NOT NULL)",
+            name="ck_media_archive_credit_allocation_event_context",
+        ),
+        UniqueConstraint(
+            "tenant_id", "idempotency_key", name="uq_media_archive_credit_allocation_idempotency",
+        ),
+        Index(
+            "ix_media_archive_credit_allocation_source_history",
+            "tenant_id", "source_entry_id", "occurred_at",
+        ),
+        Index(
+            "ix_media_archive_credit_allocation_operation_history",
+            "tenant_id", "operation_id", "occurred_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    operation_id: Mapped[UUID] = mapped_column(index=True)
+    source_entry_id: Mapped[UUID] = mapped_column(nullable=False)
+    credit_entry_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    event_type: Mapped[str] = mapped_column(String(16))
+    quantity: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(240))
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class PhotoCreditOperationEvent(Base):
+    """Evento append-only de recuperação e transição da operação de upload."""
+
+    __tablename__ = "photo_credit_operation_event"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["operation_id", "tenant_id"],
+            ["photo_credit_operation.id", "photo_credit_operation.tenant_id"],
+            name="fk_credit_operation_event_scope",
+        ),
+        CheckConstraint(
+            "event_type IN ('reserved', 'upload_attempted', 'source_durable', 'consumed', "
+            "'released', 'reconciliation_required', 'reconciled_consumed', 'reconciled_released')",
+            name="ck_credit_operation_event_type",
+        ),
+        Index("ix_credit_operation_event_history", "tenant_id", "operation_id", "occurred_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    operation_id: Mapped[UUID] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32))
+    actor_admin_id: Mapped[UUID | None] = mapped_column(ForeignKey("admin_user.id"), nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+# Registra o modelo global antes de resolver as FKs do catálogo e do ledger.
+from app.system_monitor import models as _system_monitor_models  # noqa: F401
+
 apply_ownership_constraints(Base.metadata)
+
+
+@event.listens_for(MediaArchiveRecoveryCreditAllocationEvent, "before_update")
+@event.listens_for(MediaArchiveRecoveryCreditAllocationEvent, "before_delete")
+def _protect_media_archive_recovery_credit_allocation_event(_mapper, _connection, _target):
+    raise RuntimeError("Alocações de recuperação são append-only.")
+
+
+@event.listens_for(MediaArchiveRecoveryRequest, "before_update")
+@event.listens_for(MediaArchiveRecoveryRequest, "before_delete")
+def _protect_media_archive_recovery_request(_mapper, _connection, _target):
+    raise RuntimeError("Pedidos de recuperação são imutáveis.")
+
+
+@event.listens_for(MediaArchiveRecoveryCreditReservation, "before_update")
+def _protect_media_archive_recovery_reservation_identity(_mapper, _connection, target):
+    from sqlalchemy import inspect as sa_inspect
+
+    state = sa_inspect(target)
+    immutable_fields = (
+        "id", "tenant_id", "operation_id", "reserved_credits", "created_at",
+    )
+    if any(state.attrs[name].history.has_changes() for name in immutable_fields):
+        raise RuntimeError("A identidade da reserva de recuperação é imutável.")
+
+
+@event.listens_for(MediaArchiveRecoveryCreditReservation, "before_delete")
+def _protect_media_archive_recovery_reservation_delete(_mapper, _connection, _target):
+    raise RuntimeError("Reservas de recuperação são históricas e não podem ser removidas.")
 
 
 class ClientChallengeInput(BaseModel):
@@ -3174,6 +4923,30 @@ class ChallengeVerification(BaseModel):
     code: str = Field(pattern=r"^\d{6}$")
     access_token: str | None = Field(default=None, min_length=32, max_length=256)
     parent_gallery_id: UUID | None = None
+
+
+class AdminTotpVerification(BaseModel):
+    challenge_id: UUID
+    code: str = Field(min_length=6, max_length=64)
+
+    @field_validator("code")
+    @classmethod
+    def code_is_totp_or_recovery(cls, value: str) -> str:
+        if re.fullmatch(r"\d{6}|[A-Za-z0-9_-]{24}", value) is None:
+            raise ValueError("Código inválido.")
+        return value
+
+
+class AdminTotpRecoveryCodesInput(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    second_factor_code: str = Field(min_length=6, max_length=64)
+
+    @field_validator("second_factor_code")
+    @classmethod
+    def code_is_totp_or_recovery(cls, value: str) -> str:
+        if re.fullmatch(r"\d{6}|[A-Za-z0-9_-]{24}", value) is None:
+            raise ValueError("Código inválido.")
+        return value
 
 
 class ChallengeResendInput(BaseModel):
@@ -3375,7 +5148,7 @@ def require_client_channel(db: Session, tenant_id: UUID):
 
 def require_client_auth_tenant(db: Session, tenant_id: UUID | None) -> Tenant:
     tenant = db.get(Tenant, tenant_id, populate_existing=True) if tenant_id else None
-    if tenant is None or tenant.status != "active":
+    if tenant is None or tenant.status != "active" or tenant.lifecycle == "closed":
         raise neutral_error()
     from app.tenancy import bind_domain_owner
 
@@ -3535,13 +5308,13 @@ def cleanup_expired_client_otp_pii(db: Session, *, tenant_id: UUID, current_time
 
 def create_session(
     db: Session, response: Response, role: Role, subject_id: UUID,
-    *, tenant_id: UUID | None = None,
+    *, tenant_id: UUID | None = None, platform_scope: bool = False,
 ) -> str:
     from app.tenancy import TenantContextError, require_admin_tenant
 
     try:
         if role == Role.ADMIN:
-            tenant = require_admin_tenant(db, subject_id)
+            tenant = require_admin_tenant(db, subject_id, platform_scope=platform_scope)
             admin = db.get(AdminUser, subject_id, populate_existing=True)
             if not admin or not admin.email_verified:
                 raise TenantContextError("Acesso negado.")
@@ -3594,6 +5367,7 @@ def create_session(
 
 def current_session(
     request: Request, required_role: Role | None = None, *, invalid_session_status: int = 403,
+    platform_scope: bool = False,
 ) -> AuthSession:
     from app.tenancy import TenantContextError, require_admin_tenant
 
@@ -3612,7 +5386,7 @@ def current_session(
             raise HTTPException(status_code=403, detail="Acesso negado.")
         try:
             if session.role == Role.ADMIN.value:
-                tenant = require_admin_tenant(db, session.subject_id)
+                tenant = require_admin_tenant(db, session.subject_id, platform_scope=platform_scope)
                 admin = db.get(AdminUser, session.subject_id, populate_existing=True)
                 if not admin or not admin.email_verified:
                     raise TenantContextError("Acesso negado.")

@@ -36,15 +36,10 @@ INVENTORY_JSON=""
 MIGRATION_STARTED=false
 API_STOPPED=false
 WORKER_STOPPED=false
-ROLLBACK_API_IMAGE=""
-ROLLBACK_API_TAG=""
-ROLLBACK_WEB_IMAGE=""
-ROLLBACK_WEB_TAG=""
-ROLLBACK_WORKER_IMAGE=""
-ROLLBACK_WORKER_TAG=""
 ROLLBACK_API_CONTAINER=""
 ROLLBACK_WORKER_CONTAINER=""
 COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY=false
+ALLOW_LEGACY_WORKER_INTERRUPTION=false
 
 parse_arguments() {
   while [[ $# -gt 0 ]]; do
@@ -52,6 +47,7 @@ parse_arguments() {
       --mode) MODE="${2:-}"; shift 2 ;;
       --sha) TARGET_SHA="${2:-}"; shift 2 ;;
       --approval-fingerprint) APPROVAL_FINGERPRINT="${2:-}"; shift 2 ;;
+      --allow-legacy-worker-interruption) ALLOW_LEGACY_WORKER_INTERRUPTION=true; shift ;;
       *) fail "argumento não permitido: $1" ;;
     esac
   done
@@ -62,14 +58,18 @@ parse_arguments() {
   fi
 }
 
-compose() {
+compose_command() {
   local files=(--env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE") file
   for file in "${COMPOSE_EXTRA_FILES[@]}"; do files+=(-f "$file"); done
   if [[ "$COMPOSE_INCLUDE_ACTIVE_IMAGES_OVERLAY" == true ]]; then
     files+=(-f "$ACTIVE_IMAGES_OVERLAY")
   fi
-  APP_VERSION="$ACTIVE_SHA" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@" </dev/null
+  APP_VERSION="$ACTIVE_SHA" docker compose "${files[@]}" --profile facial --profile preview-adjustment "$@"
 }
+
+compose() { compose_command "$@" </dev/null; }
+
+compose_with_stdin() { compose_command "$@"; }
 
 compose_label_for_service() {
   local service="$1"
@@ -117,6 +117,28 @@ resolved_hashes() {
     | docker compose -p "$PROJECT_NAME" -f - --profile facial --profile preview-adjustment \
       config --no-interpolate --hash api,web,worker 2>/dev/null \
     || fail "não foi possível calcular hash Compose sem exibir configuração"
+}
+
+require_facial_processing_enabled() {
+  local config service id
+  config="$(compose config --format json 2>/dev/null)" || fail "não foi possível validar a flag facial no Compose"
+  printf '%s\n' "$config" | python3 -c 'import json,sys
+try:
+    services=json.load(sys.stdin)["services"]
+    valid=all(isinstance(services[name].get("environment",{}),dict)
+              and services[name]["environment"].get("FACIAL_PROCESSING_ENABLED")=="true"
+              for name in ("api","worker","face-search-worker"))
+except (AttributeError,KeyError,TypeError,ValueError):
+    valid=False
+sys.exit(0 if valid else 1)' \
+    || fail "FACIAL_PROCESSING_ENABLED deve permanecer true na API e nos workers no alvo"
+  for service in api face-search-worker; do
+    id="$(compose ps -q "$service")"
+    [[ -n "$id" && "$(wc -l <<<"$id" | tr -d ' ')" == 1 ]] || fail "runtime facial ativo de $service ausente"
+    docker inspect --format '{{json .Config.Env}}' "$id" \
+      | python3 -c 'import json,sys; values=json.load(sys.stdin); sys.exit(0 if "FACIAL_PROCESSING_ENABLED=true" in values else 1)' \
+      || fail "runtime ativo de $service não tem FACIAL_PROCESSING_ENABLED=true"
+  done
 }
 
 compose_binding_metadata() {
@@ -206,14 +228,14 @@ financial_evidence() {
   local source
   source="$(git show "$TARGET_SHA:scripts/retirement_financial_evidence.py")" \
     || fail "coletor de evidência financeira ausente no SHA aprovado"
-  printf '%s\n' "$source" | compose run --rm --no-deps -T api python -
+  printf '%s\n' "$source" | compose_with_stdin run --rm --no-deps -T api python -
 }
 
 pix_evidence() {
   local source
   source="$(git show "$TARGET_SHA:scripts/retirement_pix_evidence.py")" \
     || fail "verificador do PIX próprio ausente no SHA aprovado"
-  printf '%s\n' "$source" | compose run --rm --no-deps -T api python -
+  printf '%s\n' "$source" | compose_with_stdin run --rm --no-deps -T api python -
 }
 
 create_backup() {
@@ -238,7 +260,7 @@ create_backup() {
     || { rm -f -- "$partial"; fail "pg_dump falhou"; }
   chmod 0600 "$partial"
   [[ -s "$partial" ]] || { rm -f -- "$partial"; fail "pg_dump vazio"; }
-  compose exec -T db pg_restore --list < "$partial" >/dev/null 2>&1 \
+  compose_with_stdin exec -T db pg_restore --list < "$partial" >/dev/null 2>&1 \
     || { rm -f -- "$partial"; fail "arquivo de backup não passou pg_restore --list"; }
   checksum="$(sha256sum "$partial" | awk '{print $1}')"
   [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || { rm -f -- "$partial"; fail "checksum do backup inválido"; }
@@ -285,7 +307,7 @@ print(json.dumps(sorted(set(found)),separators=(",",":")))
   [[ "$health_ok" == true ]] || fail "API/web/worker não estão saudáveis no inventário final"
   python3 scripts/retirement_binding_removal.py --runtime-healthy \
     --compose-consumers-json "$compose_consumers" \
-    --host-references-json "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1].splitlines() if sys.argv[1] else [],separators=(",",":"))' "$host_refs")" \
+    --host-references-json "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1].splitlines() if sys.argv[1] else [],separators=(",",":")))' "$host_refs")" \
     --target-references-json "$target_refs" <<<"$inventory_json" || fail "binding mudou, compartilhado ou ainda referenciado"
 }
 
@@ -355,6 +377,7 @@ inventory() {
   [[ "$checkout" == "$ACTIVE_SHA" ]] || fail "checkout não corresponde à versão ativa"
   schema="$(database_revision)"
   [[ "$schema" == "20261021_0086" ]] || fail "schema diverge da revisão anterior aprovada"
+  require_facial_processing_enabled
   hashes="$(resolved_hashes)"
   api_hash="$(awk '$1 == "api" {sub(/^sha256:/,"",$2); print $2}' <<<"$hashes")"
   web_hash="$(awk '$1 == "web" {sub(/^sha256:/,"",$2); print $2}' <<<"$hashes")"
@@ -397,12 +420,18 @@ PY
 
 verify_restore_receipt() {
   local receipt="$STATE_DIR/infinitepay-retirement-restore-test.json"
-  [[ -f "$receipt" && ! -L "$receipt" && "$(stat -c '%a' "$receipt")" == "600" ]] \
+  [[ -f "$receipt" && ! -L "$receipt" && "$(stat -c '%a' "$receipt")" == "600" \
+    && "$(stat -c '%u' "$receipt")" == "0" ]] \
     || fail "falta recibo 0600 de restauração previamente testada em ambiente isolado"
-  python3 - "$receipt" "$BACKUP_DIR" <<'PY' || fail "recibo de restauração inválido ou backup testado divergente"
-import datetime,hashlib,json,pathlib,sys
+  sudo -n python3 - "$receipt" "$BACKUP_DIR" <<'PY' || fail "recibo de restauração inválido ou backup testado divergente"
+import datetime,hashlib,json,os,pathlib,stat,sys
 receipt=pathlib.Path(sys.argv[1]); backup_root=pathlib.Path(sys.argv[2]).resolve()
-data=json.loads(receipt.read_text(encoding="utf-8"))
+fd=os.open(receipt, os.O_RDONLY | getattr(os,"O_NOFOLLOW",0))
+with os.fdopen(fd,"r",encoding="utf-8") as stream:
+    info=os.fstat(stream.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or stat.S_IMODE(info.st_mode)!=0o600:
+        raise SystemExit(1)
+    data=json.load(stream)
 required={"result","database_revision","backup_file","backup_sha256","tested_at","isolated"}
 if set(data)!=required or data["result"]!="passed" or data["database_revision"]!="20261021_0086" or data["isolated"] is not True:
     raise SystemExit(1)
@@ -437,6 +466,46 @@ acquire_retirement_lock() {
   for marker in app-in-flight.sha app-rollback-in-flight.sha web-in-flight.sha web-pending.identity; do
     [[ ! -e "$STATE_DIR/$marker" ]] || fail "operação de release pendente: $marker"
   done
+}
+
+interrupt_approved_legacy_worker() {
+  local id="$1" image source_hash pending idle state attempt
+  [[ "$ALLOW_LEGACY_WORKER_INTERRUPTION" == true && "$API_STOPPED" == true ]] \
+    || fail "interrupção do worker legado não autorizada ou API ainda ativa"
+  image="$(docker inspect --format '{{.Image}}' "$id")"
+  [[ "$image" == sha256:25067618cf99f3b662f9096fc2f7aa88bcf272da5b2ea62dd91d9de9bd8d3b21 ]] \
+    || fail "imagem do worker legado diverge do inventário"
+  source_hash="$(docker exec "$id" python -B -c 'import hashlib,pathlib; print(hashlib.sha256(pathlib.Path("/app/app/worker.py").read_bytes()).hexdigest())')"
+  [[ "$source_hash" == 2731fb50695ea6cac2df54b85994bf2f4162dbf5e811a3adc97f7b4668dbfc8a ]] \
+    || fail "source do worker legado diverge do inventário"
+  pending="$(compose_with_stdin exec -T db sh -ceu 'exec psql -X -q -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = '10s';
+SELECT
+ (SELECT count(*) FROM media_job WHERE status IN ('queued','processing')) +
+ (SELECT count(*) FROM whatsapp_delivery WHERE status IN ('queued','processing','unknown')) +
+ (SELECT count(*) FROM email_delivery WHERE status IN ('queued','processing')) +
+ (SELECT count(*) FROM notification_delivery WHERE status IN ('queued','processing')) +
+ (SELECT count(*) FROM gallery_lifecycle_operation WHERE status NOT IN ('completed','failed')) +
+ (SELECT count(*) FROM asset_file_cleanup WHERE status IN ('pending','processing'));
+ROLLBACK;
+SQL
+  )" || fail "não confirmou filas antes da interrupção do legado"
+  [[ "$pending" == 0 ]] || fail "há trabalho elegível/ativo; worker legado não será interrompido"
+  idle="$(docker exec "$id" python -B -c 'import pathlib; print(pathlib.Path("/proc/1/wchan").read_text().strip())')"
+  [[ "$idle" == hrtimer_nanosleep ]] || fail "worker legado não está na espera ociosa inventariada"
+  docker kill --signal=SIGINT "$id" >/dev/null || fail "SIGINT do worker legado falhou"
+  WORKER_STOPPED=true
+  for ((attempt=0; attempt<20; attempt++)); do
+    state="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$id")"
+    if [[ "$state" == exited:130 ]]; then
+      echo "worker_legado=interrompido_com_autorizacao exit_code=130 filas_ativas=0"
+      return 0
+    fi
+    [[ "$state" == running:* || "$state" == stopping:* ]] || fail "saída inesperada do worker legado: $state"
+    sleep 0.5
+  done
+  fail "worker legado não concluiu SIGINT; migration não será aplicada"
 }
 
 restore_pre_migration_runtime() {
@@ -479,6 +548,9 @@ release() {
   INVENTORY_JSON="$(sed -n 's/^retirement_inventory_json=//p' <<<"$inventory_output" | tail -n1)"
   actual_fp="$(printf '%s' "$INVENTORY_JSON" | python3 -c 'import hashlib,json,sys; d=json.load(sys.stdin); raw=json.dumps(d,sort_keys=True,separators=(",",":" )).encode(); print(hashlib.sha256(raw).hexdigest())')"
   [[ "$actual_fp" == "$APPROVAL_FINGERPRINT" ]] || fail "inventário mudou durante a aprovação; nada foi alterado"
+  CHECKOUT_SHA="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkout_sha"])' <<<"$INVENTORY_JSON")"
+  [[ "$CHECKOUT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "SHA anterior ausente no inventário aprovado"
+  ACTIVE_SHA="$CHECKOUT_SHA"
   verify_restore_receipt
   trap restore_pre_migration_runtime EXIT
   git fetch --quiet --no-tags origin main || fail "fetch da main aprovada falhou"
@@ -494,15 +566,13 @@ release() {
   tag_api="$PROJECT_NAME-retirement-rollback-api-${old_api#sha256:}"
   tag_web="$PROJECT_NAME-retirement-rollback-web-${old_web#sha256:}"
   tag_worker="$PROJECT_NAME-retirement-rollback-worker-${old_worker#sha256:}"
-  ROLLBACK_API_IMAGE="$old_api"; ROLLBACK_API_TAG="$old_api_tag"
-  ROLLBACK_WEB_IMAGE="$old_web"; ROLLBACK_WEB_TAG="$old_web_tag"
-  ROLLBACK_WORKER_IMAGE="$old_worker"; ROLLBACK_WORKER_TAG="$old_worker_tag"
   docker image tag "$old_api" "$tag_api" || fail "não preservou imagem API anterior"
   docker image tag "$old_web" "$tag_web" || fail "não preservou imagem web anterior"
   docker image tag "$old_worker" "$tag_worker" || fail "não preservou imagem worker anterior"
   git switch --detach "$TARGET_SHA" >/dev/null || fail "não selecionou SHA aprovado"
   ACTIVE_SHA="$TARGET_SHA"
   compose config --quiet || fail "Compose de destino inválido"
+  require_facial_processing_enabled
   compose build api web worker || fail "build API/web/worker falhou"
   [[ "$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$TARGET_SHA" ]] \
     || fail "main mudou durante build; nenhum serviço foi parado"
@@ -514,10 +584,14 @@ release() {
   local worker_container worker_exit
   worker_container="$(compose ps -q worker)"
   [[ -n "$worker_container" ]] || fail "worker Markina ausente antes da migration"
-  compose stop --timeout 180 worker || fail "não foi possível pausar o worker antes da migration"
-  WORKER_STOPPED=true
-  worker_exit="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$worker_container")"
-  [[ "$worker_exit" == exited:0 ]] || fail "worker não concluiu parada graciosa; migration não será aplicada"
+  if [[ "$ALLOW_LEGACY_WORKER_INTERRUPTION" == true ]]; then
+    interrupt_approved_legacy_worker "$worker_container"
+  else
+    compose stop --timeout 180 worker || fail "não foi possível pausar o worker antes da migration"
+    WORKER_STOPPED=true
+    worker_exit="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$worker_container")"
+    [[ "$worker_exit" == exited:0 ]] || fail "worker não concluiu parada graciosa; migration não será aplicada"
+  fi
   create_backup
   pre_evidence="$(financial_evidence)" || fail "snapshot financeiro pré-migration falhou"
   [[ "$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("confirmed_infinitepay_count",-1))' <<<"$pre_evidence")" == 2 ]] \

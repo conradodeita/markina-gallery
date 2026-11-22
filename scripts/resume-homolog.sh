@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Retoma somente os contêineres existentes da aplicação Markina em homologação.
+# Nome legado: retoma somente contêineres existentes da aplicação Markina em produção.
 # Migration, reconstrução, recreação e infraestrutura externa ficam fora deste fluxo.
 
 set -Eeuo pipefail
@@ -58,11 +58,20 @@ discover_services() {
     SERVICES+=("${FACIAL_SERVICES[@]}")
   fi
 
-  existing="$(docker ps --all --quiet \
+  existing="$(docker ps --quiet \
     --filter "label=com.docker.compose.project=$PROJECT_NAME" \
     --filter 'label=com.docker.compose.service=face-gemma-index-worker')"
   if [[ -n "$existing" ]]; then
-    SERVICES+=(face-gemma-index-worker)
+    fail "worker Gemma legado encontrado; retomada automática bloqueada até inventário e decisão operacional"
+    return 1
+  fi
+
+  existing="$(docker ps --quiet \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter 'label=com.docker.compose.service=raw-development-worker')"
+  if [[ -n "$existing" ]]; then
+    fail "worker RAW legado encontrado; retomada automática bloqueada até inventário e decisão operacional"
+    return 1
   fi
 
   existing="$(docker ps --all --quiet \
@@ -137,7 +146,7 @@ wait_for_health() {
 
 main() {
   [[ "$PWD" == "$PROJECT_ROOT" ]] || fail "execute somente em $PROJECT_ROOT"
-  [[ -f "$ENV_FILE" ]] || fail "arquivo Compose de homologação ausente"
+  [[ -f "$ENV_FILE" ]] || fail "configuração externa da produção ausente"
 
   while (($#)); do
     case "$1" in

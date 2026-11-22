@@ -1,0 +1,75 @@
+# Validação e continuidade
+
+## Inventário — 05/11/2026
+
+- Proprietário confirmou escolha no primeiro acesso após verificar e-mail. Ingresso continua leve; sem aprovação manual.
+- Tenant em backend/app/auth.py já tem canonical_host globalmente único. tenant_hosts.py centraliza Host exato e URLs; X-Forwarded-Host não é autoridade. current_session aplica escopo cliente por host; cookies permanecem host-only.
+- photographer_onboarding.py fornece contexto verificado por Signup ativo + membership + sessão e gates financeiros/WhatsApp existentes. Serão reutilizados, sem novo catálogo paralelo de host.
+- UI existente: OnboardingPanel em Configurações e layout administrativo. Nova etapa terá confirmação/check separado da prontidão externa; não misturar endereço escolhido com endereço publicado.
+- Jev consultado: sessão de evidência 91984bd5-6f79-4fa6-8307-b1e7ad4ff4c6. Trecho histórico da change de deep link dizia não haver campo; código atual foi consultado e prevalece. Não inferir ausência por evidência não selecionada.
+- Política de refatoração: reutilizar normalização/contexto/constraint; somente módulo/estado novos diretamente necessários. Nenhuma remoção ou limpeza geral elegível.
+- Guias locais Next.js link.md e use-client.md consultados. Primeira tentativa .mdx não existe; extensão real .md foi localizada.
+- Proposal/design/spec/tasks passaram OpenSpec strict antes da implementação. Sem deploy, alteração de DNS/TLS/proxy/segredo ou dados reais por esta change.
+
+## Estado
+
+Implementação local e validações da escolha/reserva concluídas; nenhuma prontidão operacional externa declarada. Estado de hostname reservado não será ignorado por resolvedores/geradores de links. Publicação futura precisa garantir atualização conjunta dos consumidores antes de habilitar reservas.
+
+## Retomada autorizada — API de reserva
+
+- GET/PUT `/admin/onboarding/address` reutilizam contexto de sessão/signup/membership verificados e excluem PlatformOwner. PUT exige origem permitida pelo controle existente; tenant/estado/hostname arbitrário não são aceitos. Respostas próprias têm Cache-Control private/no-store.
+- Serviço photographer_subdomain.py valida ASCII, prefixo normalizado e lista protegida do design; sugere nome editável sem reservar na consulta. Row lock por tenant + namespace único existente serializam escolha e colisões. Domínio fixo não usa Host/Forwarded do request. Estado reserved, idempotência sem duplicar auditoria e conflito neutro sem identidade alheia comprovados.
+- Domain guard revalida tenant/membership no commit; não foram alterados gates de compra/upload, cookies ou configuração externa.
+- PostgreSQL local sintético em loopback15470: `pytest tests/test_tenant_subdomain_onboarding.py -q --disable-warnings` → **21 passed, 6 avisos preexistentes de on_event, 42.76s**. Inclui ausência de sessão, sessão cliente, e-mail não verificado, membership inativa, tenant suspenso, proprietário, legado, campos extras, Unicode, spoof de Forwarded-Host, colisão A/B e duas corridas reais PostgreSQL (mesmo nome / mesma conta).
+- Ruff nos três arquivos da API/teste passou após ajustar apenas imports do teste novo. Nenhuma credencial operacional/arquivo .env foi alterado. Próxima tarefa: interface 3.1, seguida de integração e prova visual local.
+
+## Interface local
+
+- TenantAddressNotice no layout orienta primeiro acesso elegível para Configurações, sem duplicar aviso na própria página. TenantAddressPanel é a primeira etapa da página, com resumo recolhível/check, prévia sem link e reserva por PUT; conflito/falha preservam a entrada, estado inválido não vira sucesso. Endereço reserved permanece não navegável; somente ready permite abertura manual, sem transferir sessão entre hosts.
+- Hook compartilhado lê dados próprios sem cache e invalida a consulta após reserva. Regra/normalização autoritativa continuam no servidor; não há verificação pública de disponibilidade nem escrita DNS.
+- `npm test -- --run app/admin/settings/tenant-address-panel.test.tsx`: **9 passed**. ESLint focado e `npx tsc --noEmit`: código 0; um aviso preexistente de img na página Configurações (linha deslocada), nenhum erro.
+- Runner local ajustado de 0104 para 0105 por dependência explícita da coluna nova; guardas preservados. Demo antiga está parada, sem reativá-la nem alterar dados; nova prova usará banco sintético separado em loopback15472. Builds, regressões e inspeção em navegador ainda em execução.
+
+## Fechamento local da retomada
+
+- Change **6/6 tarefas implementadas/validadas localmente**. A pausa anterior foi encerrada pelo pedido expresso de retomada; as notas de pausa abaixo permanecem históricas. Sem sync/arquivo, commit/push, deploy ou mutação externa desta change.
+- Regressões: `test_tenant_hosts.py`, `test_photographer_signup.py` e testes do runner local → **35 passed, 1 skipped, 6 warnings em 148.53s**. Skip era somente smoke opt-in que exige demo ativa; depois de iniciar a demo, ele foi executado separadamente com PYP_RUN_LOCAL_DEMO_SMOKE=1 → **1 passed em 3.13s**. Assim, não permanece lacuna desse smoke por falta de ambiente. Avisos são de on_event preexistentes.
+- Frontend: tenant-address-panel, onboarding-panel, onboarding-gate-notice e admin-navigation → **14 passed**. ESLint focado e typecheck passaram; build Next16.4.2 compilou e gerou 26 páginas. Nenhuma alteração de dependência.
+- Ruff de serviço/rotas/resolvedor/migration/testes passou. Na revisão do runner, dois blocos de imports preexistentes foram apenas ordenados, sem mudar comportamento; testes unitários dos guardas foram repetidos após essa manutenção proporcional. Não houve remoção funcional nem limpeza fora do escopo.
+- Banco UI novo: container pyp-subdomain-ui-20261105, PostgreSQL17.11-alpine local, loopback15472, database pyp_ui_demo, tmpfs, fixtures sintéticas. Runner inicializou banco vazio pela cadeia 0090→0105 e iniciou API127.0.0.1:8000. Frontend de build iniciado em127.0.0.1:3039. Containers/bancos preexistentes preservados. Next start exibiu aviso sobre saída standalone, mas a aplicação/estáticos e navegação foram verificados; não é validação do empacotamento Docker de produção.
+- Duas contas @example.test criadas por signup HTTP real com adapters locais, sem senha via UI, sem e-mail externo nem fatores reais. Conta peer reservou marca-teste. No Chrome a conta principal foi autenticada por senha de fixture já existente e recebeu aviso no primeiro acesso. Não houve alteração de senha de usuário nem compartilhamento de credencial operacional.
+- Prova UI real: aviso levou à etapa em Configurações; marca-teste ocupado retornou indisponibilidade preservando entrada; marca-do-estudio foi reservado, exibiu check/Escolha concluída e Preparação pendente sem link público. Expandir/voltar à página confirmou persistência. Retorno ao painel confirmou ausência do aviso de escolha. Nenhum campo do cadastro completo/termos/WhatsApp foi alterado por essa prova.
+- Mobile390×844: etapa legível, endereço quebrável e sem overflow horizontal da página (viewport390, scrollWidth375; card350.67). Viewport temporário restaurado. Aba Chrome ficou aberta para inspeção local.
+- Capturas fora do Git em `C:/codex-data/visualizations/2026/11/05/tenant-subdomain-onboarding/`: first-access.jpg, name-conflict.jpg, reserved-desktop.jpg e reserved-mobile.jpg. Resultado final desktop foi visto após expansão; screenshot capturado imediatamente após o PUT mostrou quadro anterior por atraso de pintura e não foi usado como evidência final.
+- Revisão dos consumidores: geração pública e sessões cliente usam tenant_hosts; notificações tratam CanonicalHostError sem publicar link indisponível. Console/carteira exibem canonical_host como texto, sem abrir host como link operacional. Reutilizados contexto/constraint/hook, sem catálogo paralelo nem lógica obsoleta substituída. Não foram adicionados segredos, bancos ou capturas ao Git.
+- `git diff --check` e validações OpenSpec strict das changes de subdomínio e DNS passaram. Diff amplo anterior foi preservado. Roteiro para ativação operacional posterior em activation-gates.md; DNSSEC continua na change de migração com gate temporal/estado próprios, sem alteração nesta retomada.
+
+## Checkpoint de pausa solicitada — 05/11/2026
+
+- Implementados somente Tenant.canonical_host_status nullable com check, migration 0105 e negativa de reserved em tenant_for_host/canonical_host_for_tenant (por consequência URLs de compra/galeria também são recusadas). NULL preserva hosts legados; ready segue o contrato existente. Não houve atribuição de host real.
+- `backend/.venv/Scripts/python.exe -m pytest tests/test_tenant_host_reservation.py -q`, executado em backend: **5 passed em 56.51s** (SQLite).
+- Mesmos testes + test_tenant_host_reservation_migration.py, com PHOTOGRAPHER_TEST_DATABASE_URL sintético em loopback: **6 passed em 29.49s** (PostgreSQL 17.11-alpine). Upgrade/downgrade vazio preservou host legado; downgrade com reserva foi recusado. Todos os processos de teste terminaram; nenhuma sessão de teste pendente.
+- Banco de teste criado no Docker Desktop, contexto desktop-linux confirmado: `pyp-subdomain-test-20261105`, imagem local postgres:17.11-alpine (ID observado 266d3c257594), porta somente 127.0.0.1:15470, database pyp_photographer_test, dados sintéticos em tmpfs. Não é o demo UI 15472. Credencial de fixture é exclusivamente sintética e consta no comando local, não em .env; nenhuma credencial operacional foi lida/alterada. Container permanece disponível para retomada; não remover recursos vizinhos nem supor que banco tmpfs sobreviva a restart.
+- Nenhuma rota de reserva, serviço de normalização/reservados, componente UI ou teste de corrida foi implementado ainda. Próxima task é 2.1, depois UI. Não marcar a change completa (2/6 tasks concluídas).
+- Lint/typecheck/build e regressões amplas desta change ainda não rodaram. Não reutilizar validações anteriores do onboarding como prova das alterações novas.
+- Pausa expressa pelo usuário por limite de tokens; detalhes em pause-handoff.md. Não continuar até pedido de retomada.
+
+## Refinamento de comunicação visual — 05/11/2026
+
+- Revisão humana: “endereço” podia ser entendido como local físico; o produto precisa dizer explicitamente link/URL da marca. O aviso deve alinhar-se ao conteúdo do painel.
+- `TenantAddressNotice` agora usa CSS Module próprio e está dentro do `main.admin-content`, com padding, espaçamento, quebra responsiva e ação em largura total em telas estreitas. O CSS global `.onboarding-gate-notice`, ainda consumido por outro gate, permaneceu inalterado.
+- Cópia da etapa e dos estados usa “Link da sua marca”, “Nome para o link da marca”, “Prévia do link da sua marca” e “Preparação do link”; a mensagem explica que se trata do endereço na web utilizado pelos clientes. Contratos de API, hostname, estado e reserva não mudaram.
+- Em 05/11, com o frontend local isolado em `127.0.0.1:3040` e backend de demonstração local, o Chrome conferiu Configurações em desktop e 390×844; o host sintético reservado foi mostrado sem link clicável. O painel foi recarregado do código atual. A conta sintética já tinha reserva, então o aviso de primeira visita ficou corretamente oculto nessa sessão; seu novo texto/CTA e link para Configurações foram verificados pelo teste do componente, mas não houve captura visual do banner com conta sem escolha.
+- Regressão direcionada `npm test -- app/admin/page.test.tsx app/admin/credits/page.test.tsx app/admin/settings/tenant-address-panel.test.tsx`: **26 testes passaram**. ESLint direcionado, `npx tsc --noEmit`, `git diff --check` e `openspec validate add-photographer-subdomain-onboarding --strict --no-interactive` passaram.
+- `npm run build` completo com Turbopack passou em cópia local isolada, sem `.env`, configurando somente na cópia a raiz de resolução Turbopack para `C:/codex-data`; 26 rotas geradas. Não alterou `.next` do frontend de demonstração. A tentativa de remover essa cópia foi bloqueada pelo review automático de segurança; ela permanece em `C:/codex-data/temp/pyp-saas-ux-build-20261105`, com `node_modules` como junction para as dependências originais, sem cópia nem alteração delas.
+- Nenhuma mudança no banco, conta sintética, senha, produção, DNS, TLS ou proxy.
+
+## Prova integrada complementar — 07/11/2026
+
+- A execução atual usou Next.js build local, FastAPI em loopback e Edge headless com dois contexts de navegador para fotógrafos e um terceiro para PlatformOwner. O e-mail de confirmação e a verificação anti-bot foram simulados no harness; pedidos externos foram bloqueados e `result.json` registrou `external_requests: 0`.
+- Dois cadastros completaram verificação de e-mail e criação de senha sem TOTP no signup. Cada tenant recebeu carteira finita e permaneceu isolado. O primeiro reservou `marca-compartilhada`; o segundo recebeu indisponibilidade sem revelar titular nem concluir parcialmente, então reservou `marca-teste-b`. As duas respostas persistidas ficaram em `reserved`, com `public_url: null` e sem link navegável.
+- No console, a conta do proprietário encontrou a conta A, suspendeu-a e reativou-a com reautenticação; durante a suspensão a carteira de A foi recusada e B permaneceu acessível. A auditoria mostrou suspensão e reativação concluídas.
+- A primeira captura do console revelou que o `GET /api/admin/onboarding/address` corretamente negado para PlatformOwner provocava um aviso global falso de “Acesso negado”. A correção em `SessionBoundary` ignora somente 403 de `GET` nesse caminho opcional; a API continua negando a leitura, enquanto 401 e outros 403 seguem observados. `frontend/app/session-boundary.test.tsx`: **35 passaram**; ESLint focado, `npx tsc --noEmit` e `npm run build` (26 rotas) passaram. A prova de navegador repetida após a correção: **1 passou, 6 avisos preexistentes depreciação FastAPI em 64,23 s**; o screenshot `owner-console.png` não contém o aviso falso.
+- O schema PostgreSQL da fixture foi removido pelo teardown (`client_isolation_*`: zero restante); portas 8000 e 3039 ficaram livres. O container de teste dedicado permaneceu healthy, sem ser iniciado, parado ou recriado nesta repetição. Evidência fora do Git: `C:/codex-data/test-runs/saas-signup-journey-20261107-153127/`, incluindo `result.json`, cadastros, conflito, reservas e console.
+- A captura confirma somente uma reserva local pendente de ativação: nenhum wildcard DNS, TLS, proxy ou domínio real foi alterado. Não houve e-mail externo, chamada financeira, produção, deploy, commit ou sync/archive. A revisão humana posterior continua exigida antes de sincronizar/arquivar.
+- Após a revisão humana e aprovação expressa do proprietário em 07/11/2026, o delta `tenant-subdomain-onboarding` foi sincronizado para `openspec/specs/tenant-subdomain-onboarding/spec.md`. A comparação conferiu os seis requisitos e cenários; `openspec validate --specs` passou (31 capabilities, 0 falhas) e `openspec validate add-photographer-subdomain-onboarding --strict` passou. Arquivada em `openspec/changes/archive/2026-11-07-add-photographer-subdomain-onboarding`, sem ação operacional/remota.

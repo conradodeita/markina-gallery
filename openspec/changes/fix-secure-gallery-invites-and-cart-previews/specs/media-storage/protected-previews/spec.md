@@ -4,7 +4,7 @@
 
 ### Requirement: Prévia protegida de foto selecionada no carrinho canônico
 
-O carrinho da cliente autenticada SHALL apresentar a prévia protegida disponível de cada foto selecionada na galeria canônica pela rota operacional autorizada. O frontend SHALL aceitar somente rotas locais de prévia protegida previstas para galeria canônica, galeria legada e histórico da própria cliente; SHALL NOT buscar originais, rotas administrativas, URLs externas ou caminhos manipulados como alternativa. O backend SHALL manter a autorização por cliente, galeria e pasta em cada requisição de mídia.
+O carrinho autenticado SHALL mostrar a prévia protegida da foto selecionada usando apenas rotas locais previstas para galeria canônica/legada ou histórico da própria cliente. Frontend SHALL NOT recorrer a originais, rotas administrativas, URLs externas ou caminhos manipulados; o backend SHALL autorizar cliente, galeria e pasta em cada requisição de mídia.
 
 #### Scenario: Cliente revisa compra com cobrança
 

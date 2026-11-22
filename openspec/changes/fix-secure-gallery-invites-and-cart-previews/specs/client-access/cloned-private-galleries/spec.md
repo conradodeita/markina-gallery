@@ -4,7 +4,7 @@
 
 ### Requirement: Origem segura dos links de capacidade da galeria
 
-O sistema SHALL compor todo link de capacidade entregue ao fotógrafo, geral ou individual, usando a origem pública confiável configurada para o ambiente, independentemente do esquema e do host presentes na requisição administrativa. Em homologação e produção, essa origem SHALL usar HTTPS e SHALL ser válida antes de o sistema devolver um link com token. O sistema SHALL recusar origem ausente ou insegura nesses ambientes, sem substituir por HTTP ou por cabeçalhos encaminhados. Em desenvolvimento/teste local, HTTP para uma origem local SHALL continuar permitido.
+Links de capacidade SHALL usar a origem pública confiável configurada, nunca host ou esquema da requisição. Em homologação e produção, somente uma origem HTTPS válida pode gerar token; origem ausente ou insegura SHALL ser recusada sem fallback. Desenvolvimento/teste local MAY usar HTTP para origem local válida.
 
 #### Scenario: Convite servido atrás de proxy TLS
 

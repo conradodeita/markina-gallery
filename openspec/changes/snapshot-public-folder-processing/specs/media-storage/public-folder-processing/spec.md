@@ -4,7 +4,7 @@
 
 ### Requirement: Configuração própria pronta para processamento por pasta
 
-Cada pasta de conteúdo, pública ou privada, SHALL ter configuração própria para ajuste automático de prévias e reconhecimento facial. Ao criar uma pasta, o sistema SHALL iniciar o ajuste automático ligado e SHALL iniciar a permissão facial como ativa, sem copiar configurações da galeria ou de outra pasta. Pastas públicas SHALL iniciar em 50%/0,0 EV e pastas privadas SHALL iniciar em 75%/0,0 EV. Os gates globais, de galeria, de autorização e privacidade facial SHALL continuar aplicáveis às pastas públicas.
+Cada pasta de conteúdo SHALL ter configuração própria, sem herdar valores da galeria ou de outra pasta. Ajuste automático e permissão facial SHALL iniciar ativos; pastas públicas SHALL usar 50%/0,0 EV e privadas 75%/0,0 EV. Gates globais, da galeria, de autorização e de privacidade facial SHALL continuar aplicáveis.
 
 #### Scenario: Nova pasta pública sem herança da galeria
 

@@ -27,7 +27,7 @@ from app.preview_adjustment.service import enqueue as enqueue_preview
 class FolderProcessingInput(BaseModel):
     preview_mode: str = Field(pattern="^(custom|off)$")
     facial_mode: str = Field(pattern="^(on|off)$")
-    preview_strength: int = Field(ge=10, le=75, strict=True)
+    preview_strength: int = Field(ge=10, le=100, strict=True)
     preview_exposure_tenths: int = Field(ge=-20, le=20, strict=True)
 
 
