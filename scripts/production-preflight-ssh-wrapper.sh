@@ -16,8 +16,8 @@ readonly PREVIEW_MIGRATION_INVENTORY_BLOB_SHA="1296ccb0e0f6295bc07b30837fc5043e7
 readonly APP_ENV_INVENTORY_BLOB_SHA="8a460514b25ee26355e5252815096940b5736083"
 readonly APP_BASE_IMAGE_EXPORT_BLOB_SHA="988ca208646836ecb965b80ec91c2ada9a38dc37"
 readonly BACKUP_ARTIFACT_BLOB_SHA="af6ae65732b94a52ecbcadb7cb0ebf9b455af296"
-readonly BACKUP_INVENTORY_BLOB_SHA="694aad2a94fe4ae2db3b15a4d15fddc074291476"
-readonly BACKUP_INSTALLER_BLOB_SHA="0b96e8257720aba015ea01a1eaa37ba17dd9dfb7"
+readonly BACKUP_INVENTORY_BLOB_SHA="ae8c4dc8113f033bf2416109ff29cb650e67a7a6"
+readonly BACKUP_INSTALLER_BLOB_SHA="efd7299e1817dd516222b413d419a48d8dbd29b7"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
@@ -86,8 +86,8 @@ module.__file__ = "platform_backup_runtime_inventory.py"
 sys.modules[module.__name__] = module
 exec(compile(base64.b64decode(sys.argv[1]), module.__file__, "exec"), module.__dict__)
 operation, args = sys.argv[2], sys.argv[3:]
-if operation == "inventory":
-    raise SystemExit(module.main())
+if operation == "inventory" and len(args) == 1:
+    raise SystemExit(module.main(args[0]))
 if operation == "diagnose" and not args:
     raise SystemExit(module.diagnostic_main())
 if operation == "assert-installed" and len(args) == 2:
@@ -103,7 +103,7 @@ PY
 )"
   case "$backup_mode" in
     inventory)
-      sudo -n /usr/bin/python3.10 -B -c "$inventory_bootstrap" "$inventory_b64" inventory </dev/null
+      sudo -n /usr/bin/python3.10 -B -c "$inventory_bootstrap" "$inventory_b64" inventory "$backup_sha" </dev/null
       exit 0
       ;;
     diagnose)
@@ -152,7 +152,7 @@ PY
         "$inventory_b64" assert-installed "$backup_sha" "$backup_digest" >/dev/null \
         || fail "runtime instalado diverge da revisão aprovada"
       inventory_report="$(sudo -n /usr/bin/python3.10 -B -c "$inventory_bootstrap" \
-        "$inventory_b64" inventory </dev/null)" || fail "inventário do backup falhou"
+        "$inventory_b64" inventory "$backup_sha" </dev/null)" || fail "inventário do backup falhou"
       actual_fingerprint="$(printf '%s\n' "$inventory_report" | sed -nE 's/^backup_runtime_fingerprint=([0-9a-f]{64})$/\1/p' | tail -n1)"
       [[ "$actual_fingerprint" == "$backup_fingerprint" ]] || fail "fingerprint diverge do preflight aprovado"
       printf '%s\n' "$inventory_report"

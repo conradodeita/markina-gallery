@@ -108,6 +108,28 @@ class RuntimeInstallTests(unittest.TestCase):
                 require_root=(os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0),
             )
 
+    def test_cli_binds_every_inventory_read_to_approved_source_sha(self) -> None:
+        inventory_result = {"sentinel": "synthetic"}
+        with patch.object(installer, "collect_inventory", return_value=inventory_result) as collect, \
+                patch.object(installer, "install_verified_bundle", return_value={"status": "installed_inert"}) as install, \
+                patch.object(installer, "_read_stdin", return_value=self.bundle), \
+                patch("builtins.print"):
+            status = installer.main([
+                "--sha", self.sha,
+                "--bundle-sha256", self.bundle_sha,
+                "--approval-fingerprint", self.fingerprint,
+            ])
+
+        self.assertEqual(status, 0)
+        install.assert_called_once()
+        self.assertEqual(install.call_args.kwargs["source_sha"], self.sha)
+        self.assertEqual(install.call_args.kwargs["bundle_sha256"], self.bundle_sha)
+        inventory_provider = install.call_args.kwargs["inventory_provider"]
+        self.assertIs(inventory_provider(), inventory_result)
+        self.assertIs(inventory_provider(), inventory_result)
+        self.assertEqual(collect.call_count, 2)
+        collect.assert_called_with(bridge_sha=self.sha)
+
     def test_verified_install_is_versioned_inert_and_keeps_rollback_receipt(self) -> None:
         if os.name != "posix":
             self.skipTest("systemd-style filesystem transaction requires POSIX")
