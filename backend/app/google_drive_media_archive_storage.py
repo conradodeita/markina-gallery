@@ -34,7 +34,7 @@ _DRIVE_ID = re.compile(r"[A-Za-z0-9_-]{1,256}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _MIME_TYPE = re.compile(r"[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+\Z")
 _METADATA_FIELDS = "id,name,mimeType,size,parents,appProperties,trashed"
-_LIST_FIELDS = f"nextPageToken,files({_METADATA_FIELDS})"
+_LIST_FIELDS = f"incompleteSearch,nextPageToken,files({_METADATA_FIELDS})"
 
 
 class StreamingDriveTransport(DriveTransport, Protocol):
@@ -86,7 +86,7 @@ class GoogleDriveMediaArchiveStorage:
         sha256: str,
         stream: BinaryIO,
     ) -> ArchiveRemoteObject:
-        key_hash = self._validate_object_key(object_key)
+        key_hash, gallery_id, folder_id, cycle_id = self._validate_object_key(object_key)
         if (
             not isinstance(mime_type, str)
             or not _MIME_TYPE.fullmatch(mime_type)
@@ -98,14 +98,28 @@ class GoogleDriveMediaArchiveStorage:
             raise GoogleDriveMediaArchiveError("Os dados do objeto de mídia são inválidos.")
 
         self._verify_source(stream, size_bytes=size_bytes, expected_sha256=sha256)
-        tenant_folder_id = self._tenant_folder(create=True)
-        if tenant_folder_id is None:
-            raise GoogleDriveMediaArchiveError("A pasta de mídia do tenant não ficou disponível.")
-        existing = self._find_object(tenant_folder_id, key_hash)
+        cycle_folder_id = self._media_folder_path(
+            gallery_id=gallery_id,
+            folder_id=folder_id,
+            cycle_id=cycle_id,
+            create=True,
+        )
+        if cycle_folder_id is None:
+            raise GoogleDriveMediaArchiveError("A pasta do ciclo de mídia não ficou disponível.")
+        existing = self._find_object(
+            cycle_folder_id,
+            key_hash,
+            gallery_id=gallery_id,
+            folder_id=folder_id,
+            cycle_id=cycle_id,
+        )
         if existing:
             return self._validate_object_resource(
                 existing,
-                tenant_folder_id=tenant_folder_id,
+                cycle_folder_id=cycle_folder_id,
+                gallery_id=gallery_id,
+                folder_id=folder_id,
+                cycle_id=cycle_id,
                 key_hash=key_hash,
                 expected_size=size_bytes,
                 expected_mime=mime_type,
@@ -115,13 +129,17 @@ class GoogleDriveMediaArchiveStorage:
         app_properties = {
             "pyp_media_namespace": MEDIA_NAMESPACE,
             "pyp_media_tenant": str(self._tenant_id),
+            "pyp_media_kind": "object",
+            "pyp_media_gallery": gallery_id,
+            "pyp_media_folder": folder_id,
+            "pyp_media_cycle": cycle_id,
             "pyp_media_object": key_hash,
             "pyp_media_sha256": sha256,
         }
         try:
             receipt = upload_drive_file(
                 access_token=self._access_token,
-                parent_folder_id=tenant_folder_id,
+                parent_folder_id=cycle_folder_id,
                 name=key_hash,
                 mime_type=mime_type,
                 size_bytes=size_bytes,
@@ -209,7 +227,7 @@ class GoogleDriveMediaArchiveStorage:
             return
         raise self._response_error(response, "Não foi possível excluir o objeto de mídia.")
 
-    def _validate_object_key(self, object_key: str) -> str:
+    def _validate_object_key(self, object_key: str) -> tuple[str, str, str, str]:
         if not isinstance(object_key, str) or len(object_key) != 184:
             raise GoogleDriveMediaArchiveError("A chave do objeto de mídia é inválida.")
         parts = object_key.split("/")
@@ -225,12 +243,18 @@ class GoogleDriveMediaArchiveStorage:
             raise GoogleDriveMediaArchiveError(
                 "A chave do objeto não pertence ao tenant configurado.", code="authorization",
             )
-        return hashlib.sha256(object_key.encode("ascii")).hexdigest()
+        return (
+            hashlib.sha256(object_key.encode("ascii")).hexdigest(),
+            str(ids[1]),
+            str(ids[2]),
+            str(ids[3]),
+        )
 
     @staticmethod
     def _verify_source(stream: BinaryIO, *, size_bytes: int, expected_sha256: str) -> None:
         try:
-            if not stream.seekable():
+            seekable = getattr(stream, "seekable", None)
+            if not callable(seekable) or not seekable():
                 raise GoogleDriveMediaArchiveError("A fonte de mídia precisa permitir releitura.")
             stream.seek(0)
             digest = hashlib.sha256()
@@ -246,42 +270,69 @@ class GoogleDriveMediaArchiveStorage:
                 if total > size_bytes:
                     raise GoogleDriveMediaArchiveError("O tamanho da fonte não corresponde ao manifesto.")
                 digest.update(data)
-            stream.seek(0)
         except GoogleDriveMediaArchiveError:
             raise
-        except (OSError, TypeError, ValueError):
+        except (AttributeError, OSError, TypeError, ValueError):
             raise GoogleDriveMediaArchiveError("Não foi possível conferir a fonte de mídia.") from None
         if total != size_bytes or digest.hexdigest() != expected_sha256:
             raise GoogleDriveMediaArchiveError(
                 "A fonte de mídia não corresponde ao manifesto.", code="conflict",
             )
 
-    def _tenant_folder(self, *, create: bool) -> str | None:
-        tenant = str(self._tenant_id)
+    def _folder_properties(
+        self,
+        *,
+        kind: str,
+        gallery_id: str | None = None,
+        folder_id: str | None = None,
+        cycle_id: str | None = None,
+    ) -> dict[str, str]:
+        properties = {
+            "pyp_media_namespace": MEDIA_NAMESPACE,
+            "pyp_media_tenant": str(self._tenant_id),
+            "pyp_media_kind": kind,
+        }
+        if gallery_id is not None:
+            properties["pyp_media_gallery"] = gallery_id
+        if folder_id is not None:
+            properties["pyp_media_folder"] = folder_id
+        if cycle_id is not None:
+            properties["pyp_media_cycle"] = cycle_id
+        return properties
+
+    def _ensure_folder(
+        self,
+        *,
+        parent_id: str,
+        name: str,
+        properties: dict[str, str],
+        create: bool,
+    ) -> str | None:
         query = (
-            f"'{self._media_root_id}' in parents and mimeType = '{DRIVE_FOLDER_MIME}' "
-            f"and name = '{tenant}' and trashed = false and "
-            f"appProperties has {{ key='pyp_media_namespace' and value='{MEDIA_NAMESPACE}' }} and "
-            f"appProperties has {{ key='pyp_media_tenant' and value='{tenant}' }}"
+            f"'{parent_id}' in parents and mimeType = '{DRIVE_FOLDER_MIME}' "
+            f"and name = '{name}' and trashed = false"
         )
         files = self._list_files(query)
         if len(files) > 1:
             raise GoogleDriveMediaArchiveError(
-                "Há mais de uma pasta remota para o tenant; reconciliação necessária.", code="conflict",
+                "Há mais de uma pasta remota para o caminho; reconciliação necessária.",
+                code="conflict",
             )
         if files:
-            return self._validate_folder(files[0])
+            return self._validate_folder(
+                files[0],
+                parent_id=parent_id,
+                name=name,
+                properties=properties,
+            )
         if not create:
             return None
 
         payload = {
-            "name": tenant,
+            "name": name,
             "mimeType": DRIVE_FOLDER_MIME,
-            "parents": [self._media_root_id],
-            "appProperties": {
-                "pyp_media_namespace": MEDIA_NAMESPACE,
-                "pyp_media_tenant": tenant,
-            },
+            "parents": [parent_id],
+            "appProperties": properties,
         }
         try:
             response = self._transport.post(
@@ -295,48 +346,128 @@ class GoogleDriveMediaArchiveStorage:
         if response.status_code not in {200, 201}:
             raise self._response_error(response, "Não foi possível preparar a pasta de mídia.")
         resource = self._json_resource(response)
-        return self._validate_folder(resource)
+        return self._validate_folder(
+            resource,
+            parent_id=parent_id,
+            name=name,
+            properties=properties,
+        )
 
-    def _validate_folder(self, resource: dict[str, Any]) -> str:
+    def _tenant_folder(self, *, create: bool) -> str | None:
+        return self._ensure_folder(
+            parent_id=self._media_root_id,
+            name=str(self._tenant_id),
+            properties=self._folder_properties(kind="tenant"),
+            create=create,
+        )
+
+    def _media_folder_path(
+        self,
+        *,
+        gallery_id: str,
+        folder_id: str,
+        cycle_id: str,
+        create: bool,
+    ) -> str | None:
+        tenant_folder_id = self._tenant_folder(create=create)
+        if tenant_folder_id is None:
+            return None
+        gallery_folder_id = self._ensure_folder(
+            parent_id=tenant_folder_id,
+            name=gallery_id,
+            properties=self._folder_properties(kind="gallery", gallery_id=gallery_id),
+            create=create,
+        )
+        if gallery_folder_id is None:
+            return None
+        content_folder_id = self._ensure_folder(
+            parent_id=gallery_folder_id,
+            name=folder_id,
+            properties=self._folder_properties(
+                kind="folder", gallery_id=gallery_id, folder_id=folder_id,
+            ),
+            create=create,
+        )
+        if content_folder_id is None:
+            return None
+        return self._ensure_folder(
+            parent_id=content_folder_id,
+            name=cycle_id,
+            properties=self._folder_properties(
+                kind="cycle", gallery_id=gallery_id, folder_id=folder_id,
+                cycle_id=cycle_id,
+            ),
+            create=create,
+        )
+
+    def _validate_folder(
+        self,
+        resource: dict[str, Any],
+        *,
+        parent_id: str,
+        name: str,
+        properties: dict[str, str],
+    ) -> str:
         folder_id = resource.get("id")
         app_properties = resource.get("appProperties")
         if (
             not isinstance(folder_id, str)
             or not _DRIVE_ID.fullmatch(folder_id)
-            or resource.get("name") != str(self._tenant_id)
+            or resource.get("name") != name
             or resource.get("mimeType") != DRIVE_FOLDER_MIME
-            or resource.get("parents") != [self._media_root_id]
+            or resource.get("parents") != [parent_id]
             or resource.get("trashed") is not False
             or not isinstance(app_properties, dict)
-            or app_properties.get("pyp_media_namespace") != MEDIA_NAMESPACE
-            or app_properties.get("pyp_media_tenant") != str(self._tenant_id)
+            or any(app_properties.get(key) != value for key, value in properties.items())
         ):
             raise GoogleDriveMediaArchiveError(
-                "A pasta remota não corresponde ao tenant e à raiz de mídia.", code="authorization",
+                "A pasta remota não corresponde à hierarquia autorizada.",
+                code="authorization",
             )
         return folder_id
 
-    def _find_object(self, tenant_folder_id: str, key_hash: str) -> dict[str, Any] | None:
-        tenant = str(self._tenant_id)
+    def _find_object(
+        self,
+        cycle_folder_id: str,
+        key_hash: str,
+        *,
+        gallery_id: str,
+        folder_id: str,
+        cycle_id: str,
+    ) -> dict[str, Any] | None:
         query = (
-            f"'{tenant_folder_id}' in parents and trashed = false and "
-            f"appProperties has {{ key='pyp_media_namespace' and value='{MEDIA_NAMESPACE}' }} and "
-            f"appProperties has {{ key='pyp_media_tenant' and value='{tenant}' }} and "
-            f"appProperties has {{ key='pyp_media_object' and value='{key_hash}' }}"
+            f"'{cycle_folder_id}' in parents and trashed = false and "
+            f"(name = '{key_hash}' or appProperties has "
+            f"{{ key='pyp_media_object' and value='{key_hash}' }})"
         )
         files = self._list_files(query)
-        if len(files) > 1:
+        matches = [
+            item for item in files
+            if item.get("name") == key_hash
+            or (
+                isinstance(item.get("appProperties"), dict)
+                and item["appProperties"].get("pyp_media_object") == key_hash
+            )
+        ]
+        if len(matches) > 1:
             raise GoogleDriveMediaArchiveError(
                 "Há mais de um objeto remoto para a chave; reconciliação necessária.", code="conflict",
             )
-        return files[0] if files else None
+        if not matches:
+            return None
+        self._validate_object_resource(
+            matches[0],
+            cycle_folder_id=cycle_folder_id,
+            gallery_id=gallery_id,
+            folder_id=folder_id,
+            cycle_id=cycle_id,
+            key_hash=key_hash,
+        )
+        return matches[0]
 
     def _owned_object(self, remote_id: str) -> tuple[ArchiveRemoteObject, str] | None:
         if not isinstance(remote_id, str) or not _DRIVE_ID.fullmatch(remote_id):
             raise GoogleDriveMediaArchiveError("O identificador remoto é inválido.")
-        tenant_folder_id = self._tenant_folder(create=False)
-        if tenant_folder_id is None:
-            return None
         url = f"{DRIVE_FILES_URL}/{quote(remote_id, safe='')}"
         try:
             response = self._transport.get(
@@ -351,13 +482,44 @@ class GoogleDriveMediaArchiveStorage:
         if response.status_code != 200:
             raise self._response_error(response, "Não foi possível consultar o objeto de mídia.")
         resource = self._json_resource(response)
-        return self._validate_object_resource(resource, tenant_folder_id=tenant_folder_id)
+        app_properties = resource.get("appProperties")
+        if (
+            not isinstance(app_properties, dict)
+            or app_properties.get("pyp_media_namespace") != MEDIA_NAMESPACE
+            or app_properties.get("pyp_media_tenant") != str(self._tenant_id)
+        ):
+            raise GoogleDriveMediaArchiveError(
+                "O objeto remoto não corresponde ao namespace do tenant.", code="authorization",
+            )
+        gallery_id = self._uuid_property(app_properties, "pyp_media_gallery")
+        folder_id = self._uuid_property(app_properties, "pyp_media_folder")
+        cycle_id = self._uuid_property(app_properties, "pyp_media_cycle")
+        cycle_folder_id = self._media_folder_path(
+            gallery_id=gallery_id,
+            folder_id=folder_id,
+            cycle_id=cycle_id,
+            create=False,
+        )
+        if cycle_folder_id is None:
+            raise GoogleDriveMediaArchiveError(
+                "A hierarquia remota do objeto não está completa.", code="authorization",
+            )
+        return self._validate_object_resource(
+            resource,
+            cycle_folder_id=cycle_folder_id,
+            gallery_id=gallery_id,
+            folder_id=folder_id,
+            cycle_id=cycle_id,
+        )
 
     def _validate_object_resource(
         self,
         resource: dict[str, Any],
         *,
-        tenant_folder_id: str,
+        cycle_folder_id: str,
+        gallery_id: str,
+        folder_id: str,
+        cycle_id: str,
         key_hash: str | None = None,
         expected_size: int | None = None,
         expected_mime: str | None = None,
@@ -373,11 +535,15 @@ class GoogleDriveMediaArchiveStorage:
         owned = (
             isinstance(file_id, str)
             and _DRIVE_ID.fullmatch(file_id)
-            and resource.get("parents") == [tenant_folder_id]
+            and resource.get("parents") == [cycle_folder_id]
             and resource.get("trashed") is False
             and isinstance(app_properties, dict)
             and app_properties.get("pyp_media_namespace") == MEDIA_NAMESPACE
             and app_properties.get("pyp_media_tenant") == str(self._tenant_id)
+            and app_properties.get("pyp_media_kind") == "object"
+            and app_properties.get("pyp_media_gallery") == gallery_id
+            and app_properties.get("pyp_media_folder") == folder_id
+            and app_properties.get("pyp_media_cycle") == cycle_id
         )
         if not owned:
             raise GoogleDriveMediaArchiveError(
@@ -426,15 +592,30 @@ class GoogleDriveMediaArchiveStorage:
         resource = self._json_resource(response)
         files = resource.get("files")
         if (
-            not isinstance(files, list)
+            resource.get("incompleteSearch") is not False
+            or not isinstance(files, list)
             or any(not isinstance(item, dict) for item in files)
             or len(files) > 2
-            or resource.get("nextPageToken")
+            or resource.get("nextPageToken") not in (None, "")
         ):
             raise GoogleDriveMediaArchiveError(
                 "A consulta do catálogo de mídia foi ambígua.", code="conflict",
             )
         return files
+
+    @staticmethod
+    def _uuid_property(app_properties: dict[str, Any], key: str) -> str:
+        value = app_properties.get(key)
+        try:
+            parsed = UUID(value) if isinstance(value, str) else None
+        except (AttributeError, ValueError):
+            parsed = None
+        if parsed is None or str(parsed) != value:
+            raise GoogleDriveMediaArchiveError(
+                "O objeto remoto não identifica um caminho de mídia válido.",
+                code="authorization",
+            )
+        return value
 
     @staticmethod
     def _json_resource(response: object) -> dict[str, Any]:

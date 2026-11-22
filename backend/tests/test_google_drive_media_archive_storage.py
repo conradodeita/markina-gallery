@@ -28,7 +28,11 @@ OBJECT_KEY = (
 )
 ROOT_ID = "synthetic-media-root"
 TENANT_FOLDER_ID = "synthetic-tenant-folder"
+GALLERY_FOLDER_ID = "synthetic-gallery-folder"
+CONTENT_FOLDER_ID = "synthetic-content-folder"
+CYCLE_FOLDER_ID = "synthetic-cycle-folder"
 FILE_ID = "synthetic-media-file"
+GALLERY_ID, FOLDER_ID, CYCLE_ID = OBJECT_KEY.split("/")[1:4]
 
 
 class FakeResponse:
@@ -99,23 +103,79 @@ def tenant_folder_resource():
         "appProperties": {
             "pyp_media_namespace": MEDIA_NAMESPACE,
             "pyp_media_tenant": str(TENANT_ID),
+            "pyp_media_kind": "tenant",
         },
     }
 
 
-def file_resource(payload: bytes, *, tenant_folder_id=TENANT_FOLDER_ID, object_key=OBJECT_KEY):
+def gallery_folder_resource():
+    return {
+        "id": GALLERY_FOLDER_ID,
+        "name": GALLERY_ID,
+        "mimeType": DRIVE_FOLDER_MIME,
+        "parents": [TENANT_FOLDER_ID],
+        "trashed": False,
+        "appProperties": {
+            "pyp_media_namespace": MEDIA_NAMESPACE,
+            "pyp_media_tenant": str(TENANT_ID),
+            "pyp_media_kind": "gallery",
+            "pyp_media_gallery": GALLERY_ID,
+        },
+    }
+
+
+def content_folder_resource():
+    return {
+        "id": CONTENT_FOLDER_ID,
+        "name": FOLDER_ID,
+        "mimeType": DRIVE_FOLDER_MIME,
+        "parents": [GALLERY_FOLDER_ID],
+        "trashed": False,
+        "appProperties": {
+            "pyp_media_namespace": MEDIA_NAMESPACE,
+            "pyp_media_tenant": str(TENANT_ID),
+            "pyp_media_kind": "folder",
+            "pyp_media_gallery": GALLERY_ID,
+            "pyp_media_folder": FOLDER_ID,
+        },
+    }
+
+
+def cycle_folder_resource():
+    return {
+        "id": CYCLE_FOLDER_ID,
+        "name": CYCLE_ID,
+        "mimeType": DRIVE_FOLDER_MIME,
+        "parents": [CONTENT_FOLDER_ID],
+        "trashed": False,
+        "appProperties": {
+            "pyp_media_namespace": MEDIA_NAMESPACE,
+            "pyp_media_tenant": str(TENANT_ID),
+            "pyp_media_kind": "cycle",
+            "pyp_media_gallery": GALLERY_ID,
+            "pyp_media_folder": FOLDER_ID,
+            "pyp_media_cycle": CYCLE_ID,
+        },
+    }
+
+
+def file_resource(payload: bytes, *, parent_folder_id=CYCLE_FOLDER_ID, object_key=OBJECT_KEY):
     key_hash = hashlib.sha256(object_key.encode("ascii")).hexdigest()
     return {
         "id": FILE_ID,
         "name": key_hash,
         "mimeType": "image/jpeg",
         "size": str(len(payload)),
-        "parents": [tenant_folder_id],
+        "parents": [parent_folder_id],
         "trashed": False,
         "md5Checksum": hashlib.md5(payload, usedforsecurity=False).hexdigest(),
         "appProperties": {
             "pyp_media_namespace": MEDIA_NAMESPACE,
             "pyp_media_tenant": str(TENANT_ID),
+            "pyp_media_kind": "object",
+            "pyp_media_gallery": GALLERY_ID,
+            "pyp_media_folder": FOLDER_ID,
+            "pyp_media_cycle": CYCLE_ID,
             "pyp_media_object": key_hash,
             "pyp_media_sha256": hashlib.sha256(payload).hexdigest(),
         },
@@ -123,22 +183,47 @@ def file_resource(payload: bytes, *, tenant_folder_id=TENANT_FOLDER_ID, object_k
 
 
 def queue_folder_lookup(transport: SyntheticDriveTransport, resource=None):
-    transport.respond("GET", FakeResponse(200, {"files": [resource] if resource else []}))
+    transport.respond(
+        "GET",
+        FakeResponse(200, {"incompleteSearch": False, "files": [resource] if resource else []}),
+    )
+
+
+def queue_existing_path(transport: SyntheticDriveTransport):
+    for resource in (
+        tenant_folder_resource(),
+        gallery_folder_resource(),
+        content_folder_resource(),
+        cycle_folder_resource(),
+    ):
+        queue_folder_lookup(transport, resource)
+
+
+def queue_new_path(transport: SyntheticDriveTransport):
+    resources = (
+        tenant_folder_resource(),
+        gallery_folder_resource(),
+        content_folder_resource(),
+        cycle_folder_resource(),
+    )
+    for _ in resources:
+        queue_folder_lookup(transport)
+    for resource in resources:
+        transport.respond("POST", FakeResponse(200, resource))
 
 
 def queue_owned_file_lookup(transport: SyntheticDriveTransport, resource):
-    queue_folder_lookup(transport, tenant_folder_resource())
     transport.respond("GET", FakeResponse(200, resource))
+    queue_existing_path(transport)
 
 
-def test_upload_uses_private_tenant_folder_and_hash_properties(monkeypatch):
+def test_upload_builds_private_media_hierarchy_and_hash_properties(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     payload = b"synthetic media bytes"
     digest = hashlib.sha256(payload).hexdigest()
     transport = SyntheticDriveTransport()
+    queue_new_path(transport)
     queue_folder_lookup(transport)
-    transport.respond("POST", FakeResponse(200, tenant_folder_resource()))
-    transport.respond("GET", FakeResponse(200, {"files": []}))
     transport.respond(
         "POST",
         FakeResponse(
@@ -164,9 +249,17 @@ def test_upload_uses_private_tenant_folder_and_hash_properties(monkeypatch):
     properties = upload_start[2]["json"]["appProperties"]
     assert properties["pyp_media_namespace"] == MEDIA_NAMESPACE
     assert properties["pyp_media_tenant"] == str(TENANT_ID)
+    assert properties["pyp_media_kind"] == "object"
+    assert properties["pyp_media_gallery"] == GALLERY_ID
+    assert properties["pyp_media_folder"] == FOLDER_ID
+    assert properties["pyp_media_cycle"] == CYCLE_ID
     assert properties["pyp_media_object"] == hashlib.sha256(OBJECT_KEY.encode("ascii")).hexdigest()
     assert properties["pyp_media_sha256"] == digest
     assert OBJECT_KEY not in repr(upload_start[2]["json"])
+    assert upload_start[2]["json"]["parents"] == [CYCLE_FOLDER_ID]
+    assert [call[2]["json"]["name"] for call in transport.calls if call[0] == "POST" and call[1] == DRIVE_FILES_URL] == [
+        str(TENANT_ID), GALLERY_ID, FOLDER_ID, CYCLE_ID,
+    ]
     assert all(call[2]["headers"]["Authorization"] == "Bearer synthetic-access-token" for call in transport.calls)
 
 
@@ -174,8 +267,8 @@ def test_idempotent_retry_returns_same_file_and_rejects_changed_content(monkeypa
     monkeypatch.setenv("APP_ENV", "production")
     original = b"original synthetic bytes"
     transport = SyntheticDriveTransport()
-    queue_folder_lookup(transport, tenant_folder_resource())
-    transport.respond("GET", FakeResponse(200, {"files": [file_resource(original)]}))
+    queue_existing_path(transport)
+    queue_folder_lookup(transport, file_resource(original))
 
     result = adapter(transport).upload_object(
         object_key=OBJECT_KEY,
@@ -189,10 +282,10 @@ def test_idempotent_retry_returns_same_file_and_rejects_changed_content(monkeypa
 
     changed = b"different synthetic content"
     changed_transport = SyntheticDriveTransport()
-    queue_folder_lookup(changed_transport, tenant_folder_resource())
+    queue_existing_path(changed_transport)
     changed_resource = file_resource(original)
     changed_resource["size"] = str(len(changed))
-    changed_transport.respond("GET", FakeResponse(200, {"files": [changed_resource]}))
+    queue_folder_lookup(changed_transport, changed_resource)
     with pytest.raises(GoogleDriveMediaArchiveError) as error:
         adapter(changed_transport).upload_object(
             object_key=OBJECT_KEY,
@@ -208,15 +301,21 @@ def test_idempotent_retry_returns_same_file_and_rejects_changed_content(monkeypa
 def test_duplicate_tenant_folder_or_object_fails_closed():
     duplicate_folder = SyntheticDriveTransport()
     folder = tenant_folder_resource()
-    duplicate_folder.respond("GET", FakeResponse(200, {"files": [folder, folder]}))
+    duplicate_folder.respond("GET", FakeResponse(200, file_resource(b"owned")))
+    duplicate_folder.respond(
+        "GET",
+        FakeResponse(200, {"incompleteSearch": False, "files": [folder, folder]}),
+    )
     with pytest.raises(GoogleDriveMediaArchiveError) as folder_error:
         adapter(duplicate_folder).read_object(remote_id=FILE_ID)
     assert folder_error.value.code == "conflict"
 
     duplicate_object = SyntheticDriveTransport()
-    queue_folder_lookup(duplicate_object, tenant_folder_resource())
+    queue_existing_path(duplicate_object)
     resource = file_resource(b"duplicate")
-    duplicate_object.respond("GET", FakeResponse(200, {"files": [resource, resource]}))
+    duplicate_object.respond(
+        "GET", FakeResponse(200, {"incompleteSearch": False, "files": [resource, resource]}),
+    )
     with pytest.raises(GoogleDriveMediaArchiveError) as object_error:
         adapter(duplicate_object).upload_object(
             object_key=OBJECT_KEY,
@@ -227,6 +326,92 @@ def test_duplicate_tenant_folder_or_object_fails_closed():
         )
     assert object_error.value.code == "conflict"
     assert all(call[0] not in {"POST", "PUT"} for call in duplicate_object.calls)
+
+
+@pytest.mark.parametrize(
+    "response_payload",
+    [
+        {"incompleteSearch": True, "files": []},
+        {"incompleteSearch": False, "files": [], "nextPageToken": "synthetic-next"},
+        {"files": []},
+    ],
+)
+@pytest.mark.parametrize("object_search", [False, True])
+def test_incomplete_or_paginated_search_never_authorizes_write(response_payload, object_search):
+    transport = SyntheticDriveTransport()
+    if object_search:
+        queue_existing_path(transport)
+    transport.respond("GET", FakeResponse(200, response_payload))
+
+    with pytest.raises(GoogleDriveMediaArchiveError) as error:
+        adapter(transport).upload_object(
+            object_key=OBJECT_KEY,
+            mime_type="image/jpeg",
+            size_bytes=len(b"synthetic"),
+            sha256=hashlib.sha256(b"synthetic").hexdigest(),
+            stream=BytesIO(b"synthetic"),
+        )
+
+    assert error.value.code == "conflict"
+    assert all(call[0] not in {"POST", "PUT"} for call in transport.calls)
+    list_call = next(call for call in transport.calls if call[0] == "GET")
+    assert "incompleteSearch" in list_call[2]["params"]["fields"]
+
+
+@pytest.mark.parametrize("operation", ["read", "delete"])
+def test_incomplete_hierarchy_search_never_attests_ownership_or_deletes(operation):
+    transport = SyntheticDriveTransport()
+    transport.respond("GET", FakeResponse(200, file_resource(b"owned")))
+    transport.respond("GET", FakeResponse(200, {"incompleteSearch": True, "files": []}))
+
+    with pytest.raises(GoogleDriveMediaArchiveError) as error:
+        if operation == "read":
+            adapter(transport).read_object(remote_id=FILE_ID)
+        else:
+            adapter(transport).delete_object(remote_id=FILE_ID)
+
+    assert error.value.code == "conflict"
+    assert all(call[0] != "DELETE" for call in transport.calls)
+
+
+def test_folder_with_incompatible_properties_is_not_adopted_or_duplicated():
+    transport = SyntheticDriveTransport()
+    foreign_folder = tenant_folder_resource()
+    foreign_folder["appProperties"]["pyp_media_tenant"] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    queue_folder_lookup(transport, foreign_folder)
+
+    with pytest.raises(GoogleDriveMediaArchiveError) as error:
+        adapter(transport).upload_object(
+            object_key=OBJECT_KEY,
+            mime_type="image/jpeg",
+            size_bytes=1,
+            sha256=hashlib.sha256(b"x").hexdigest(),
+            stream=BytesIO(b"x"),
+        )
+
+    assert error.value.code == "authorization"
+    assert all(call[0] not in {"POST", "PUT"} for call in transport.calls)
+
+
+def test_object_with_incompatible_path_properties_is_not_reused():
+    payload = b"synthetic existing object"
+    resource = file_resource(payload)
+    resource["appProperties"]["pyp_media_cycle"] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    transport = SyntheticDriveTransport()
+    queue_existing_path(transport)
+    queue_folder_lookup(transport, resource)
+
+    with pytest.raises(GoogleDriveMediaArchiveError) as error:
+        adapter(transport).upload_object(
+            object_key=OBJECT_KEY,
+            mime_type="image/jpeg",
+            size_bytes=len(payload),
+            sha256=hashlib.sha256(payload).hexdigest(),
+            stream=BytesIO(payload),
+        )
+
+    assert error.value.code == "authorization"
+    assert all(call[0] not in {"POST", "PUT"} for call in transport.calls)
 
 
 def test_upload_rejects_cross_tenant_key_and_mismatched_local_source_without_http():
@@ -247,6 +432,23 @@ def test_upload_rejects_cross_tenant_key_and_mismatched_local_source_without_htt
             size_bytes=1,
             sha256="0" * 64,
             stream=BytesIO(b"x"),
+        )
+    assert transport.calls == []
+
+
+def test_upload_rejects_source_without_seekable_contract_with_sanitized_error():
+    class ReaderWithoutSeekable:
+        def read(self, _size=-1):
+            return b"x"
+
+    transport = SyntheticDriveTransport()
+    with pytest.raises(GoogleDriveMediaArchiveError, match="permitir releitura"):
+        adapter(transport).upload_object(
+            object_key=OBJECT_KEY,
+            mime_type="image/jpeg",
+            size_bytes=1,
+            sha256=hashlib.sha256(b"x").hexdigest(),
+            stream=ReaderWithoutSeekable(),
         )
     assert transport.calls == []
 
@@ -276,9 +478,17 @@ def test_read_and_download_stream_only_owned_bytes_and_check_digest():
         adapter(corrupted).download_object(remote_id=FILE_ID, destination=destination)
     assert destination.getvalue() == b""
 
+    truncated = SyntheticDriveTransport()
+    queue_owned_file_lookup(truncated, resource)
+    truncated.respond("STREAM_GET", FakeResponse(200, chunks=[payload[:-1]]))
+    destination = BytesIO()
+    with pytest.raises(GoogleDriveMediaArchiveError, match="não corresponde"):
+        adapter(truncated).download_object(remote_id=FILE_ID, destination=destination)
+    assert destination.getvalue() == payload[:-1]
+
 
 def test_delete_refuses_foreign_parent_and_is_idempotent_for_missing_file():
-    foreign = file_resource(b"foreign", tenant_folder_id="another-tenant-folder")
+    foreign = file_resource(b"foreign", parent_folder_id="another-tenant-folder")
     transport = SyntheticDriveTransport()
     queue_owned_file_lookup(transport, foreign)
     with pytest.raises(GoogleDriveMediaArchiveError) as error:
@@ -287,7 +497,6 @@ def test_delete_refuses_foreign_parent_and_is_idempotent_for_missing_file():
     assert all(call[0] != "DELETE" for call in transport.calls)
 
     missing = SyntheticDriveTransport()
-    queue_folder_lookup(missing, tenant_folder_resource())
     missing.respond("GET", FakeResponse(404, {"error": {"message": "private detail"}}))
     adapter(missing).delete_object(remote_id=FILE_ID)
     assert all(call[0] != "DELETE" for call in missing.calls)

@@ -1,6 +1,6 @@
 # Retomada do trabalho — arquivo frio
 
-Atualizado em 15/11/2026: `add-gallery-media-archive` está em 54/55 tasks; somente 1.4 permanece aberta. O resumo e a regra de acesso abaixo foram reconciliados com as specs e tasks atuais. O gate global do primeiro push continua separado deste change. Task 1.4 é pós-release/pré-tenants: configurar e ensaiar a identidade e raiz reais do Drive após release autorizado, primeiro somente com mídia sintética do proprietário, antes de liberar qualquer outro tenant. Não há autorização implícita de deploy/migration/push. Evidências e limites em `validation.md`.
+Atualizado em 22/11/2026: `add-gallery-media-archive` está em 56/57 tasks; somente a task operacional 1.4 permanece aberta. O resumo e a regra de acesso abaixo foram reconciliados com as specs e tasks atuais. O gate global do primeiro push continua separado deste change. Task 1.4 é pós-release/pré-tenants: configurar e ensaiar a identidade e raiz reais do Drive após release autorizado, primeiro somente com mídia sintética do proprietário, antes de liberar qualquer outro tenant. Não há autorização implícita de deploy/migration/push. Evidências e limites em `validation.md`.
 
 ## Decisões recentes
 

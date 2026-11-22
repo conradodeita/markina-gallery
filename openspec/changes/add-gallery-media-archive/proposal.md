@@ -22,6 +22,7 @@ Pastas expiradas continuam ocupando o disco local, enquanto remover a mídia pod
 - Remover cópia fria somente mediante solicitação explícita validada e operação auditada, confirmada antes de concluir; não haverá expurgo automático por idade ou encerramento de conta na primeira versão.
 - Definir a política de retenção final em change futura.
 - Fazer a configuração e o teste reais do Drive somente depois da entrada autorizada do sistema em produção, começando pelo proprietário como fotógrafo; os demais tenants só recebem sinal verde depois que o fluxo real de arquivo e recuperação passar.
+- Endurecer a validação local do adaptador Drive: materializar a hierarquia aprovada por UUID, falhar fechado em buscas incompletas/ambíguas e provar a composição sintética com o executor sem duplicar a medição do stream.
 
 ## Capabilities
 
@@ -39,3 +40,4 @@ Pastas expiradas continuam ocupando o disco local, enquanto remover a mídia pod
 - Integração com as pastas/fotos, seleções, pedidos, créditos, card do tenant e painel do proprietário.
 - Google Drive como armazenamento frio privado; a identidade e a raiz próprias para mídia permanecem separadas do backup do banco. O tenant do proprietário terá a mesma cobertura de arquivo e recuperação dos demais, com sua isenção de créditos já aprovada.
 - A implementação local usa storage e transporte sintéticos. O adaptador de mídia para Drive pode ser desenvolvido e validado por testes com transporte HTTP sintético, sem credenciais reais nem chamadas de rede; sua configuração e operação real ficam para depois da entrada autorizada em produção, num primeiro estágio restrito ao proprietário. Os tenants permanecem bloqueados até o teste passar. Nenhuma chamada real, migration, remoção física ou alteração de produção é autorizada por esta etapa local.
+- A validação do adaptador reutiliza `upload_drive_file` sem alterar seu contrato compartilhado com `WorkspaceDriveBackupStore`; o executor mantém o controle do snapshot, dos bytes transferidos e da renovação de lease.

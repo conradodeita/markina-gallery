@@ -86,7 +86,7 @@ Quando uma solicitação explícita e validada determinar a exclusão de mídia 
 
 ### Requirement: Arquivo frio mantém isolamento por tenant
 
-O armazenamento de mídia fria SHALL organizar cada tenant em subpasta própria identificada por UUID sob a raiz dedicada. A hierarquia SHALL NOT substituir a autorização: o servidor MUST conferir o tenant e o ownership dos registros antes de resolver, listar, transferir ou restaurar objetos. O sistema SHALL NOT entregar links diretos do Drive ao fotógrafo ou cliente.
+O armazenamento de mídia fria SHALL manter objetos privados e tenant-scoped. A hierarquia remota SHALL NOT substituir autorização: o servidor MUST conferir tenant e ownership antes de resolver, listar, transferir ou restaurar. O sistema SHALL NOT entregar links diretos do Drive ao fotógrafo ou cliente.
 
 #### Scenario: Tenant acessa operação de seu arquivo
 
@@ -97,6 +97,56 @@ O armazenamento de mídia fria SHALL organizar cada tenant em subpasta própria 
 
 - **WHEN** um tenant solicita objeto, pasta ou operação vinculada a outro tenant, mesmo que informe identificador válido
 - **THEN** o sistema nega a operação antes de consultar ou revelar metadados do objeto remoto
+
+#### Scenario: Objeto é resolvido na hierarquia aprovada
+
+- **WHEN** o backend transfere um objeto cujo tenant, galeria, pasta, ciclo e objeto foram validados localmente
+- **THEN** resolve cada pasta filha sob o pai remoto validado, usando somente o UUID do respectivo nível e `appProperties` privadas coerentes
+- **AND** confere a pasta do ciclo como pai do objeto antes de aceitar metadados ou bytes
+
+### Requirement: Hierarquia remota do arquivo frio usa UUIDs
+
+O armazenamento SHALL organizar os objetos sob raiz → tenant → galeria → pasta → ciclo. Cada nível SHALL usar UUID canônico, manter o pai esperado e registrar `appProperties` privadas coerentes. Arquivos SHALL ficar sob a pasta do ciclo. Nomes de marca, cliente, telefone, e-mail ou filename MUST NOT ser usados em nomes remotos.
+
+#### Scenario: Cadeia remota validada
+
+- **WHEN** o adapter cria ou resolve o caminho remoto para um objeto autorizado
+- **THEN** cada pasta filha fica sob o pai correto e seu UUID/confirmação privada corresponde ao registro local
+- **AND** o objeto fica sob o ciclo associado à galeria e pasta autorizadas
+
+### Requirement: Busca do catálogo Drive completa e não ambígua
+
+O adaptador SHALL solicitar o indicador `incompleteSearch` em toda busca de arquivos e SHALL aceitar a resposta somente quando ele for explicitamente `false`, `files` tiver formato válido e não houver paginação inesperada. Busca incompleta, indicador ausente/inválido, página inesperada, duplicidade ou metadados incompatíveis MUST falhar fechado e gerar erro sanitizado. O resultado MUST NOT comprovar ausência, autorizar upload, atestar ownership ou confirmar exclusão.
+
+#### Scenario: Busca incompleta não comprova ausência
+
+- **WHEN** o Drive retorna `files=[]` e `incompleteSearch=true` durante busca de pasta ou retry de objeto
+- **THEN** o adaptador falha com conflito sanitizado antes de criar pasta, iniciar upload ou declarar objeto ausente
+
+#### Scenario: Busca incompleta não permite concluir exclusão
+
+- **WHEN** o Drive retorna busca incompleta ao resolver o tenant ou a cadeia de ownership de um objeto para exclusão
+- **THEN** o adaptador falha fechado e não envia pedido de exclusão
+
+#### Scenario: Paginação ou duplicidade inesperada
+
+- **WHEN** a busca inclui `nextPageToken`, excede o limite consultado ou retorna múltiplos objetos/pastas para uma identidade única
+- **THEN** o adaptador exige reconciliação e não envia nem remove objeto remoto
+
+### Requirement: Composição do executor com o adaptador Drive preserva a medição
+
+O adapter SHALL permitir que o executor verifique e envie um stream sem duplicar a medição de tamanho/SHA-256. Rewind ao byte zero SHALL reiniciar a medição; leituras SHALL renovar o lease e usar memória limitada. Sucesso em retry exige readback integral.
+
+#### Scenario: Novo upload pela composição real
+
+- **WHEN** o executor envia uma fonte sintética pelo adaptador Google Drive
+- **THEN** o upload consome bytes a partir do início, tamanho e SHA-256 conferem uma única passagem de upload e a renovação do lease continua ativa
+
+#### Scenario: Retry após perda da confirmação
+
+- **WHEN** o upload remoto foi concluído, a confirmação se perdeu e uma nova chamada idempotente usa a mesma chave
+- **THEN** o adaptador encontra e valida o mesmo objeto sem iniciar outro upload
+- **AND** quando a execução recebe esse objeto, o executor lê os bytes integralmente e só então conclui o ciclo com tamanho e SHA-256 do snapshot
 
 ### Requirement: A configuração real do Drive ocorre após a entrada em produção
 
