@@ -47,6 +47,50 @@ flock -n "$release_lock" || fail "outro release está em andamento"
 git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main || fail "main aprovada indisponível"
 [[ "$(git rev-parse origin/main)" == "$support_sha" ]] || fail "referência local diverge da main aprovada"
 
+inventory_source="$(mktemp)"
+temporary=""
+staging=""
+rollback=""
+cleanup() {
+  [[ -z "$temporary" ]] || rm -f -- "$temporary" >/dev/null 2>&1 || true
+  rm -f -- "$inventory_source" >/dev/null 2>&1 || true
+  local protected_artifacts=()
+  [[ -z "$staging" ]] || protected_artifacts+=("$staging")
+  [[ -z "$rollback" ]] || protected_artifacts+=("$rollback")
+  if ((${#protected_artifacts[@]} > 0)); then
+    sudo -n rm -f -- "${protected_artifacts[@]}" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+read_approved_inventory_source() {
+  local approved_sha="$1"
+  local destination="$2"
+  local module_path="scripts/platform_backup_runtime_inventory.py"
+  local expected_blob actual_blob
+  expected_blob="$(git rev-parse "$approved_sha:$module_path" 2>/dev/null)" || return 1
+  [[ "$expected_blob" =~ ^[0-9a-f]{40}$ ]] || return 1
+  git show "$approved_sha:$module_path" > "$destination" 2>/dev/null || return 1
+  actual_blob="$(git hash-object -- "$destination" 2>/dev/null)" || return 1
+  [[ "$actual_blob" == "$expected_blob" ]]
+}
+
+read_approved_inventory_source "$support_sha" "$inventory_source" \
+  || fail "módulo de diagnóstico aprovado indisponível ou inválido"
+inventory_b64="$(base64 -w0 -- "$inventory_source")"
+diagnostic_bootstrap="$(cat <<'PY'
+import base64
+import sys
+import types
+
+module = types.ModuleType("platform_backup_runtime_inventory")
+module.__file__ = "platform_backup_runtime_inventory.py"
+sys.modules[module.__name__] = module
+exec(compile(base64.b64decode(sys.argv[1]), module.__file__, "exec"), module.__dict__)
+raise SystemExit(module.diagnostic_main())
+PY
+)"
+
 current_inventory="$(SSH_ORIGINAL_COMMAND="MARKINA_APP_TARGET_SHA=$support_sha" "$WRAPPER")" \
   || fail "preflight read-only falhou"
 current_fingerprint="$(sed -nE 's/^approval_fingerprint=([0-9a-f]{64})$/\1/p' <<<"$current_inventory" | tail -n1)"
@@ -63,11 +107,6 @@ sudo -n test -f "$WRAPPER" && sudo -n test ! -L "$WRAPPER" || fail "wrapper atua
 temporary="$(mktemp)"
 staging="/usr/local/sbin/.markina-gallery-preflight-ssh-wrapper.$support_sha.new"
 rollback="/usr/local/sbin/.markina-gallery-preflight-ssh-wrapper.$support_sha.rollback"
-cleanup() {
-  rm -f -- "$temporary"
-  sudo -n rm -f -- "$staging" "$rollback" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
 raw_url="https://raw.githubusercontent.com/$REPOSITORY/$support_sha/scripts/production-preflight-ssh-wrapper.sh"
 curl --location --fail --silent --show-error --proto '=https' --proto-redir '=https' --tlsv1.2 \
   "$raw_url" -o "$temporary" || fail "wrapper aprovado indisponível"
@@ -104,23 +143,6 @@ if SSH_ORIGINAL_COMMAND="id" "$WRAPPER" >/dev/null 2>&1; then
   fail "wrapper aceitou comando arbitrário"
 fi
 
-inventory_source="$PROJECT_ROOT/scripts/platform_backup_runtime_inventory.py"
-inventory_blob="$(git rev-parse "$support_sha:scripts/platform_backup_runtime_inventory.py")"
-[[ "$(git hash-object -- "$inventory_source")" == "$inventory_blob" ]] \
-  || fail "módulo de diagnóstico diverge da main aprovada"
-inventory_b64="$(base64 -w0 -- "$inventory_source")"
-diagnostic_bootstrap="$(cat <<'PY'
-import base64
-import sys
-import types
-
-module = types.ModuleType("platform_backup_runtime_inventory")
-module.__file__ = "platform_backup_runtime_inventory.py"
-sys.modules[module.__name__] = module
-exec(compile(base64.b64decode(sys.argv[1]), module.__file__, "exec"), module.__dict__)
-raise SystemExit(module.diagnostic_main())
-PY
-)"
 backup_diagnostic="$(sudo -n /usr/bin/python3.10 -B -c "$diagnostic_bootstrap" "$inventory_b64")" \
   || {
     restore_previous_wrapper
