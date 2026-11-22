@@ -26,3 +26,7 @@ O backup PostgreSQL cifrado já foi enviado ao Workspace, relido e restaurado em
 ## Impact
 
 Seletor autenticado da pasta, chamador de backup, configuração protegida, instalação e operação protegidas do runtime, agendamento exclusivo da Markina, workflow do wrapper com restauração pós-instalação por recibo e procedimentos de teste, recuperação e rollback. A restauração usa somente cópias fixas root-only e mantém uma cópia verificável da versão ativa; não substitui o rollback interno do instalador, que cobre falhas durante a própria instalação. O Google Picker requer uma chave de navegador e o número do projeto Google Cloud; restringir a chave à origem oficial do app e às APIs necessárias. Não requer rota pública, migration, alteração de DNS ou ampliação do escopo OAuth.
+
+## Estado e limites da aprovação
+
+O proprietário aprovou a revisão da proposta restore-wrapper em 22/11/2026, somente para implementação e testes locais de 3.2u e CI na mesma PR. A aprovação não autoriza push antes da revisão do coordenador, merge, dispatch, acesso ao host/SSH, instalação/restauração no servidor, Drive, backup real ou timer. A conclusão de 3.2u ainda exige revisão humana do diff, merge autorizado e CI verde da main no SHA exato.
