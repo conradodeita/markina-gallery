@@ -7,39 +7,43 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.acervo_context import require_active_owner
-from app.auth import InfinitePaySettings, ParentGallery, PhotoFolder, Tenant
+from app.auth import ParentGallery, PhotoFolder, Tenant
 from app.global_pix import checkout_pix
-from app.infinitepay_settings import configuration_payload
 from app.pix import PixCodeError
 
 PAYMENT_REQUIRED_MESSAGE = (
-    "Pagamento obrigatório exige ao menos uma forma de pagamento disponível na sua conta. "
-    "Configure o PIX ou habilite cartão em Configurações, ou desmarque Pagamento obrigatório."
+    "Pagamento obrigatório exige um meio de pagamento configurado na sua conta. "
+    "Configure PIX ou Mercado Pago em Configurações ou desmarque Pagamento obrigatório."
 )
 
 
-def lock_payment_account(db: Session, tenant_id: UUID) -> None:
-    require_active_owner(db, tenant_id)
+def lock_payment_account(db: Session, tenant_id: UUID, *, reconciliation: bool = False) -> None:
+    if reconciliation:
+        from app.tenancy import bind_financial_reconciliation
+        bind_financial_reconciliation(db, tenant_id)
+    else:
+        require_active_owner(db, tenant_id)
     db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update()
               .execution_options(populate_existing=True))
+    if not reconciliation:
+        require_active_owner(db, tenant_id)
 
 
-def payment_methods(db: Session, *, tenant_id: UUID) -> dict:
+def payment_methods(db: Session, *, tenant_id: UUID, client_id: UUID | None = None) -> dict:
     require_active_owner(db, tenant_id)
     try:
         checkout_pix(db, tenant_id=tenant_id)
         pix_available = True
     except PixCodeError:
         pix_available = False
-    settings = db.scalar(select(InfinitePaySettings).where(
-        InfinitePaySettings.tenant_id == tenant_id,
-    ).execution_options(populate_existing=True))
-    card_available = configuration_payload(settings)["checkout_available"]
+    from app.mercadopago_settings import effective_mercadopago
+
+    card_available = effective_mercadopago(db, tenant_id, client_id=client_id) is not None
     return {
         "pix_available": pix_available,
         "card_available": card_available,
         "available": pix_available or card_available,
-        "default_method": "pix" if pix_available else "card" if card_available else None,
+        "default_method": "pix" if pix_available else "mercadopago" if card_available else None,
     }
 
 

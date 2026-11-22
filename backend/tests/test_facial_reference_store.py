@@ -8,7 +8,11 @@ import pytest
 from PIL import Image
 
 from app.facial.crypto import FacialCipher
-from app.facial.reference_store import FacialReferenceError, FacialReferenceStore
+from app.facial.reference_store import (
+    FacialReferenceError,
+    FacialReferenceStore,
+    delete_reference_file,
+)
 
 
 def _jpeg(width: int = 40, height: int = 30) -> bytes:
@@ -130,3 +134,31 @@ def test_reference_locator_cannot_cross_request_gallery_or_escape_root(
         data_version="reference-v1",
     ) is False
     assert outside.read_text(encoding="utf-8") == "preservar"
+
+
+def test_closure_deletes_reference_and_partial_file_without_following_symlinks(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "facial-temporary"
+    root.mkdir()
+    request_id = uuid4()
+    reference = root / f"{request_id}.reference"
+    partial = root / f"{request_id}.part"
+    reference.write_bytes(b"ciphertext")
+    partial.write_bytes(b"partial ciphertext")
+
+    assert delete_reference_file(root, request_id) is True
+    assert not reference.exists() and not partial.exists()
+    assert delete_reference_file(root, request_id) is False
+
+    outside = tmp_path / "outside.reference"
+    outside.write_bytes(b"preserve")
+    link_id = uuid4()
+    link = root / f"{link_id}.reference"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink indisponível neste ambiente.")
+    with pytest.raises(FacialReferenceError, match="inválido"):
+        delete_reference_file(root, link_id)
+    assert outside.read_bytes() == b"preserve"

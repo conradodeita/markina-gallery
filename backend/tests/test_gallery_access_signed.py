@@ -55,13 +55,11 @@ from app.private_membership import (
     block_private_membership,
     ensure_private_membership,
 )
-from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin, fresh_totp_code
 
 
 @pytest.fixture(autouse=True)
-def clean_database(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("GALLERY_CAPABILITY_SIGNING_KEY", raising=False)
-    monkeypatch.delenv("AUTH_PII_FINGERPRINT_SALT", raising=False)
+def clean_database():
     engine.dispose()
     with engine.connect() as connection:
         if engine.dialect.name == "sqlite":
@@ -77,6 +75,8 @@ def clean_database(monkeypatch: pytest.MonkeyPatch):
 def test_signing_configuration_requires_dedicated_strong_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("GALLERY_CAPABILITY_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("AUTH_PII_FINGERPRINT_SALT", raising=False)
     monkeypatch.setenv("APP_ENV", "homolog")
     with pytest.raises(GalleryCapabilityConfigurationError, match="32 bytes"):
         validate_gallery_capability_signing_configuration()
@@ -200,14 +200,13 @@ def _authenticate_admin(client: TestClient) -> None:
         ))
         db.add(admin)
         db.commit()
-        secret = admin.totp_secret
     challenge = client.post(
         "/auth/admin/password",
         json={"email": "links@markina.test", "password": "senha-segura"},
     ).json()["challenge_id"]
     assert client.post(
         "/auth/admin/totp",
-        json={"challenge_id": challenge, "code": pyotp.TOTP(secret).now()},
+        json={"challenge_id": challenge, "code": fresh_totp_code(admin)},
     ).status_code == 200
 
 

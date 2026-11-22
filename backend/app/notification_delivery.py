@@ -17,6 +17,7 @@ from app.auth import (
     DerivedGallery,
     FolderClientGrant,
     GalleryClientState,
+    MercadoPagoPayment,
     NotificationDelivery,
     NotificationEvent,
     NotificationSetting,
@@ -148,6 +149,13 @@ def recipient_allowed(db, event, item) -> bool:
         order = owned_record(db, SaleOrder, event.sale_order_id, tenant_id=owner)
         if not order or order.client_id != event.client_id:
             return False
+        if event.event_key.startswith("mp-confirmed:"):
+            payment = owned_record(db, MercadoPagoPayment, order.mercadopago_payment_id,
+                                   tenant_id=owner) if order.mercadopago_payment_id else None
+            return bool(event.event_type == "payment_confirmed" and payment
+                        and event.event_key == f"mp-confirmed:{payment.id}"
+                        and payment.client_id == order.client_id
+                        and payment.state == "confirmed" and order.payment_status == "confirmed")
         if event.event_key.startswith("provider-payment-confirmed:"):
             if event.event_type != "payment_confirmed":
                 return False
@@ -190,10 +198,10 @@ def process_next_notification(channel: str, *, push_sender=None, whatsapp_provid
     with SessionLocal() as db:
         instant = now()
         stale_rows = list(db.scalars(select(NotificationDelivery).join(Tenant, Tenant.id == NotificationDelivery.tenant_id).where(
-            Tenant.status == "active",
+            Tenant.status == "active", Tenant.lifecycle != "closed",
             NotificationDelivery.channel == channel, NotificationDelivery.status == "processing",
             NotificationDelivery.lease_until <= instant,
-        ).with_for_update(of=NotificationDelivery, skip_locked=True).limit(20)))
+        ).with_for_update(of=(Tenant, NotificationDelivery), skip_locked=True).limit(20)))
         for stale in stale_rows:
             stale.status = "unknown" if channel == "whatsapp" else "queued"
             stale.last_error = "interrupted_delivery"
@@ -205,10 +213,12 @@ def process_next_notification(channel: str, *, push_sender=None, whatsapp_provid
                 mirror_payment_projection(db, event, stale)
         db.commit()
         item = db.scalar(select(NotificationDelivery).join(Tenant, Tenant.id == NotificationDelivery.tenant_id).where(
-            Tenant.status == "active",
+            Tenant.status == "active", Tenant.lifecycle != "closed",
             NotificationDelivery.channel == channel, NotificationDelivery.status == "queued",
             NotificationDelivery.next_attempt_at <= instant,
-        ).order_by(NotificationDelivery.created_at).with_for_update(of=NotificationDelivery, skip_locked=True).limit(1))
+        ).order_by(NotificationDelivery.created_at).with_for_update(
+            of=(Tenant, NotificationDelivery), skip_locked=True,
+        ).limit(1))
         if not item:
             return bool(stale_rows)
         item_id, lease_token, owner = item.id, uuid4(), item.tenant_id

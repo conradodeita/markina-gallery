@@ -133,7 +133,7 @@ def create_security_challenge(
     target: str | None = None,
     tenant_id: UUID | None = None,
 ) -> tuple[AdminSecurityChallenge, str, bool]:
-    if purpose in {"change_pix_otp", "change_infinitepay_otp"}:
+    if purpose in {"change_pix_otp", "change_payment_otp"}:
         require_security_owner(db, admin.id if admin else None, tenant_id)
         resolve_binding(db, tenant_id)
     elif admin and tenant_id is None:
@@ -194,7 +194,7 @@ def verify_security_challenge(
     tenant_id: UUID | None = None,
 ) -> AdminSecurityChallenge:
     challenge = db.get(AdminSecurityChallenge, challenge_id, populate_existing=True)
-    if purpose in {"change_pix_otp", "change_infinitepay_otp"}:
+    if purpose in {"change_pix_otp", "change_payment_otp"}:
         if not challenge or tenant_id is None or challenge.tenant_id != tenant_id:
             raise AdminAccountError("Não foi possível confirmar o código.")
         require_security_owner(db, challenge.admin_id, tenant_id)
@@ -226,7 +226,7 @@ def resend_security_challenge(
     session_id: UUID | None = None,
 ) -> AdminSecurityChallenge:
     challenge = db.get(AdminSecurityChallenge, challenge_id, populate_existing=True)
-    if purpose in {"change_pix_otp", "change_infinitepay_otp"}:
+    if purpose in {"change_pix_otp", "change_payment_otp"}:
         if not challenge or tenant_id is None or challenge.tenant_id != tenant_id:
             raise AdminAccountError("Não foi possível reenviar o código.")
         require_security_owner(db, challenge.admin_id, tenant_id)
@@ -240,7 +240,7 @@ def resend_security_challenge(
     ):
         raise AdminAccountError("Não foi possível reenviar o código.")
     recipient = _admin_whatsapp_phone(db, tenant_id=challenge.tenant_id) if challenge.admin_id else None
-    if not recipient and purpose in {"change_pix_otp", "change_infinitepay_otp"}:
+    if not recipient and purpose in {"change_pix_otp", "change_payment_otp"}:
         raise WhatsAppConfigurationError("Canal de confirmação indisponível.")
     if not recipient:
         code = f"{secrets.randbelow(1_000_000):06d}"
@@ -269,11 +269,8 @@ def reauthenticate_admin(admin: AdminUser, current_password: str) -> None:
         raise AdminAccountError("Não foi possível confirmar a credencial atual.")
 
 
-def issue_password_reset_email(db: Session, challenge: AdminSecurityChallenge) -> None:
-    if not challenge.admin_id:
-        raise AdminAccountError("Não foi possível concluir a recuperação.")
-    admin = db.get(AdminUser, challenge.admin_id)
-    if not admin or not admin.email_verified:
+def issue_password_reset_link(db: Session, admin: AdminUser) -> None:
+    if not admin.email_verified:
         raise AdminAccountError("Não foi possível concluir a recuperação.")
     token, raw_token = issue_admin_action_token(
         db, admin_id=admin.id, purpose="password_reset"
@@ -295,6 +292,15 @@ def issue_password_reset_email(db: Session, challenge: AdminSecurityChallenge) -
     )
     audit(db, "admin_security.password_reset_link.queued", pii_fingerprint(admin.email))
     db.commit()
+
+
+def issue_password_reset_email(db: Session, challenge: AdminSecurityChallenge) -> None:
+    if not challenge.admin_id:
+        raise AdminAccountError("Não foi possível concluir a recuperação.")
+    admin = db.get(AdminUser, challenge.admin_id)
+    if not admin:
+        raise AdminAccountError("Não foi possível concluir a recuperação.")
+    issue_password_reset_link(db, admin)
 
 
 def challenge_target(challenge: AdminSecurityChallenge) -> str:

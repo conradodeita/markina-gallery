@@ -1,3 +1,5 @@
+> **Decisão substitutiva de 03/11/2026 — `restore-production-facial-runtime`:** o proprietário ordenou remover a regra adicional do `AGENTS.md` que bloqueava a busca infantil em produção. A retomada do fluxo vigente usa o consentimento condicional aprovado nas changes posteriores, sem exigir representação administrativa prévia; essa decisão operacional específica substitui a pendência adicional de aprovação da task 8.5 para esta restauração. Não constitui parecer jurídico ou prova de calibração. A execução e a jornada real continuam sujeitas à evidência operacional da change de restauração.
+
 ## 1. Encerramento do benchmark e linha de base
 
 - [x] 1.1 Concluir o workflow protegido de fechamento do lote `benchmark-636-20260907-01` e registrar em `integrate-private-facial-filter` a prova agregada de purge, flags seguras, worker inativo, portas e healthchecks, sem marcar conclusão antes da evidência ARM.
@@ -116,7 +118,7 @@
   - Bloqueio 2026-09-08: não existe ainda SHA integral publicável desta change, inventário imediatamente anterior do host, subdomínio/binding de produção nem autorização explícita para deploy. Produção não foi acessada; a flag segura permanece o único estado permitido no primeiro deploy.
 - [ ] 8.4 Ativar canary somente para a allowlist aprovada, observar os SLOs pelo período definido e validar indexação, consulta adulta, retenção, purge e rollback antes de qualquer ampliação.
   - Bloqueio 2026-09-08: depende do deploy 8.3, do teste ARM 6.4, da calibração 6.6 e de allowlist/janela/aprovação humanas específicas. Nenhum canary foi ativado.
-- [ ] 8.5 Habilitar o fluxo infantil somente após aprovação jurídica/humana da representação e do consentimento; manter esse escopo desligado e registrar o bloqueio enquanto qualquer gate estiver pendente.
-  - Bloqueio 2026-09-08: o gate técnico exige representação persistida, termos/consentimento correspondentes e vínculo vigente, mas a aprovação jurídica/humana de produção ainda não existe. O escopo infantil permanece desligado; nenhuma flag isolada o habilita.
+- [ ] 8.5 Habilitar o fluxo infantil vigente com a autorização operacional específica do proprietário registrada em `restore-production-facial-runtime`, preservando consentimento condicional, vínculo e controles técnicos; registrar a evidência real de execução antes de marcar esta task.
+  - O bloqueio histórico de 08/09/2026 foi substituído pelas decisões posteriores sobre consentimento e pela ordem expressa de 03/11/2026 (`owner-minor-production-unblock-20261103`). A restauração autorizada ainda precisa registrar ativação e jornada autenticada; nenhum parecer jurídico, representação ou teste inexistente será declarado.
 - [ ] 8.6 Promover `canary → limited → general` somente com evidência e aprovação em cada etapa, ou reverter ao estado anterior ao primeiro alerta crítico; sincronizar specs principais e arquivar a change apenas após revisão humana final.
   - Bloqueio 2026-09-08: nenhuma etapa de produção foi iniciada; promoção, sincronização da spec principal e arquivamento permanecem proibidos até evidência das etapas anteriores e revisão humana final.

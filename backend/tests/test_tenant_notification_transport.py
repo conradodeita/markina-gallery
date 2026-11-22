@@ -2,6 +2,7 @@
 
 import base64
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from hashlib import sha256
 
@@ -19,6 +20,7 @@ from app.auth import (
     WhatsAppChannelSettings,
     WhatsAppDelivery,
     WhatsAppDeliveryAttempt,
+    WhatsAppTenantCredential,
     WhatsAppWebhookReceipt,
     now,
 )
@@ -31,17 +33,23 @@ from app.messaging import (
 )
 from app.notification_settings import enqueue_event, setting_for
 from app.whatsapp_binding import photographer_phone, provider_for, resolve_binding, webhook_owner
-from app.whatsapp_channel import configure_expected_phone
+from app.whatsapp_channel import channel_settings, configure_expected_phone
 from app.whatsapp_webhook import process_whatsapp_webhook
 from tests.test_tenant_client_auth import challenge, request
 from tests.test_tenant_client_auth import client_db as _client_db
-from tests.test_tenant_client_auth import graph as _graph
 from tests.test_tenant_client_auth import links as _links
 from tests.test_tenant_client_navigation import cookie
 from tests.test_tenant_commerce import commerce as _commerce
 from tests.test_tenant_commerce import reported
+from tests.test_tenant_ownership_schema import build_graph
 
-client_db, graph, links, commerce = _client_db, _graph, _links, _commerce
+client_db, links, commerce = _client_db, _links, _commerce
+
+
+@pytest.fixture
+def graph(client_db):
+    """Uma conta por tenant; o primeiro fotógrafo é o proprietário sintético."""
+    return build_graph(client_db, owner_is_first_admin=True)
 
 
 class Recorder(SandboxWhatsAppProvider):
@@ -341,6 +349,182 @@ def test_provider_contextual_A_nao_pode_enviar_B(client_db, graph, transports):
     with pytest.raises(WhatsAppConfigurationError):
         provider_for(client_db, tenant_id=graph[1]["tenant"].id, adapter=owned)
     assert adapter.calls == []
+
+
+def test_autoprovisionamento_whatsapp_cifrado_idempotente_e_isolado_A_B(
+    client_db, graph, monkeypatch,
+):
+    from app.integration_secrets import IntegrationCipher, SecretEnvelope
+    from app.messaging import EvolutionWhatsAppProvider
+    from app.whatsapp_tenant_credentials import provision_tenant_credential
+
+    key = base64.b64encode(b"synthetic-whatsapp-credential-key"[:32]).decode()
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INTEGRATION_SECRET_ENV", "development")
+    monkeypatch.setenv("INTEGRATION_SECRET_ACTIVE_KEY_ID", "test")
+    monkeypatch.setenv("INTEGRATION_SECRET_KEYS", json.dumps({"test": key}))
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "development")
+    monkeypatch.setenv("WHATSAPP_API_URL", "https://synthetic-evolution.invalid")
+    monkeypatch.setenv("WHATSAPP_API_KEY", "synthetic-global-api-key")
+    monkeypatch.setenv("WHATSAPP_WEBHOOK_URL", "https://synthetic-app.invalid/internal/whatsapp/webhook")
+    monkeypatch.setenv("WHATSAPP_TENANT_BINDINGS", "{}")
+    captured = []
+
+    def fake_request(self, method, path, *, payload=None, query=None, sending_message=False):
+        del query, sending_message
+        captured.append((self.instance, self.webhook_secret, method, path, payload))
+        if path == "instance/fetchInstances":
+            return []
+        if path == "instance/create":
+            return {"instance": {"status": "connecting"}}
+        if path.startswith("message/sendText/"):
+            number = payload["number"]
+            return {"key": {"id": f"synthetic-{number}", "remoteJid": f"{number}@s.whatsapp.net"}}
+        return {"ok": True}
+
+    monkeypatch.setattr(EvolutionWhatsAppProvider, "_request_json", fake_request)
+    credentials = []
+    providers = []
+    for index, row in enumerate(graph):
+        tenant_id = row["tenant"].id
+        phone = f"+551199999001{index}"
+        credential, _settings, provider = provision_tenant_credential(
+            client_db, tenant_id=tenant_id, expected_phone_e164=phone,
+        )
+        client_db.commit()
+        secret = IntegrationCipher().decrypt(
+            SecretEnvelope.from_payload(credential.webhook_secret_envelope),
+            tenant_id=tenant_id,
+            credential_id=credential.id,
+        )
+        assert secret not in str(credential.webhook_secret_envelope)
+        assert secret != "synthetic-global-api-key"
+        credentials.append((credential, secret))
+        providers.append(provider)
+
+    assert credentials[0][0].instance_name != credentials[1][0].instance_name
+    assert credentials[0][1] != credentials[1][1]
+    for provider in providers:
+        provider.ensure_instance()
+        result = provider.send_transactional(
+            "+5511999990010", "mensagem sintética", idempotency_key="same-key",
+        )
+        assert result.provider_status == "accepted"
+    assert {item[0] for item in captured} == {item[0].instance_name for item in credentials}
+    assert len([item for item in captured if item[3].startswith("webhook/set/")]) == 2
+    sends = [item for item in captured if item[3].startswith("message/sendText/")]
+    assert len(sends) == 2
+    assert {item[0] for item in sends} == {item[0].instance_name for item in credentials}
+
+    payload = {"instance": credentials[0][0].instance_name, "event": "CONNECTION_UPDATE"}
+    assert webhook_owner(client_db, payload, credentials[0][1]) == graph[0]["tenant"].id
+    with pytest.raises(HTTPException) as exc:
+        webhook_owner(client_db, payload, credentials[1][1])
+    assert exc.value.status_code == 403
+
+    credential_id = credentials[0][0].id
+    encrypted = credentials[0][0].webhook_secret_envelope
+    again, _settings, _provider = provision_tenant_credential(
+        client_db, tenant_id=graph[0]["tenant"].id,
+        expected_phone_e164="+5511999990010",
+    )
+    assert again.id == credential_id
+    assert again.webhook_secret_envelope == encrypted
+    client_db.commit()
+    assert client_db.scalar(select(func.count()).select_from(WhatsAppTenantCredential)) == 2
+
+
+def test_autoprovisionamento_recupera_colisao_dentro_do_savepoint(
+    client_db, graph, monkeypatch,
+):
+    from uuid import uuid4
+
+    import app.whatsapp_tenant_credentials as credentials_module
+    from app.integration_secrets import IntegrationCipher
+    from app.whatsapp_tenant_credentials import provision_tenant_credential
+
+    tenant_id = graph[0]["tenant"].id
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INTEGRATION_SECRET_ENV", "development")
+    monkeypatch.setenv("INTEGRATION_SECRET_ACTIVE_KEY_ID", "test")
+    monkeypatch.setenv(
+        "INTEGRATION_SECRET_KEYS",
+        json.dumps({"test": base64.b64encode(b"synthetic-whatsapp-credential-key"[:32]).decode()}),
+    )
+    monkeypatch.setenv("WHATSAPP_PROVIDER", "evolution")
+    monkeypatch.setenv("WHATSAPP_CREDENTIAL_ENV", "development")
+    monkeypatch.setenv("WHATSAPP_API_URL", "https://synthetic-evolution.invalid")
+    monkeypatch.setenv("WHATSAPP_API_KEY", "synthetic-global-api-key")
+    monkeypatch.setenv("WHATSAPP_WEBHOOK_URL", "https://synthetic-app.invalid/internal/whatsapp/webhook")
+    monkeypatch.setenv("WHATSAPP_TENANT_BINDINGS", "{}")
+
+    credential_id = uuid4()
+    envelope = IntegrationCipher().for_environment("development").encrypt(
+        "synthetic-webhook-secret",
+        tenant_id=tenant_id,
+        credential_id=credential_id,
+    ).payload()
+    existing = WhatsAppTenantCredential(
+        id=credential_id,
+        tenant_id=tenant_id,
+        environment="development",
+        instance_name=f"pyp-{tenant_id.hex}",
+        webhook_secret_envelope=envelope,
+    )
+    client_db.add(existing)
+    client_db.commit()
+
+    real_lookup = credentials_module.credential_for_tenant
+    calls = 0
+
+    def lookup_with_concurrent_winner(db, *, tenant_id):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None  # Simula leitura anterior à vitória da requisição concorrente.
+        return real_lookup(db, tenant_id=tenant_id)
+
+    monkeypatch.setattr(credentials_module, "credential_for_tenant", lookup_with_concurrent_winner)
+
+    credential, settings, provider = provision_tenant_credential(
+        client_db,
+        tenant_id=tenant_id,
+        expected_phone_e164="+5511999990010",
+    )
+
+    assert credential.id == credential_id
+    assert settings.expected_phone_e164 == "+5511999990010"
+    assert provider.instance == existing.instance_name
+    assert calls >= 2
+    assert client_db.scalar(select(func.count()).select_from(WhatsAppTenantCredential)) == 1
+
+
+def test_criacao_concorrente_de_estado_whatsapp_reutiliza_linha_unica(
+    client_db, graph, links, transports,
+):
+    if client_db.bind.dialect.name != "postgresql":
+        pytest.skip("A corrida multiwriter requer PostgreSQL.")
+    tenant_id = graph[0]["tenant"].id
+    factory = sessionmaker(bind=client_db.bind, expire_on_commit=False)
+    from threading import Barrier
+
+    barrier = Barrier(2)
+
+    def ensure_settings():
+        with factory() as session:
+            barrier.wait(timeout=5)
+            row = channel_settings(session, tenant_id=tenant_id)
+            session.commit()
+            return row.id
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ids = list(pool.map(lambda _index: ensure_settings(), range(2)))
+    assert ids[0] == ids[1]
+    assert client_db.scalar(select(func.count()).select_from(WhatsAppChannelSettings).where(
+        WhatsAppChannelSettings.tenant_id == tenant_id,
+        WhatsAppChannelSettings.environment == "development",
+    )) == 1
 
 
 def test_compatibilidade_canal_legado_exige_unica_conta_ativa(client_db, monkeypatch):

@@ -20,6 +20,7 @@ from app.auth import (
     expired,
 )
 from app.client_identity import ClientIdentityConflict, resolve_client_by_phone
+from app.folder_access import folder_browsing_clause
 from app.parent_registration import link_client_to_parent
 
 
@@ -213,11 +214,17 @@ def require_public_gallery_browsing(
     return result.parent
 
 
-def authorized_canonical_photos(parent_gallery_id: UUID, client_id: UUID):
+def authorized_canonical_photos(
+    parent_gallery_id: UUID,
+    client_id: UUID,
+    *,
+    include_expired: bool = False,
+    include_unavailable: bool = False,
+):
     """Consulta única de fotos liberadas no público efetivo da cliente."""
 
     owner = select(Client.tenant_id).join(Tenant, Tenant.id == Client.tenant_id).where(
-        Client.id == client_id, Tenant.status == "active",
+        Client.id == client_id, Tenant.status == "active", Tenant.lifecycle != "closed",
     ).scalar_subquery()
     own_parent = select(ParentGallery.id).where(
         ParentGallery.id == parent_gallery_id, ParentGallery.tenant_id == owner,
@@ -257,7 +264,7 @@ def authorized_canonical_photos(parent_gallery_id: UUID, client_id: UUID):
             PhotoFolder.tenant_id == owner,
             PhotoAsset.parent_gallery_id == parent_gallery_id,
             PhotoAsset.derived_gallery_id.is_(None),
-            PhotoAsset.available,
+            True if include_unavailable else PhotoAsset.available,
             PhotoFolder.parent_gallery_id == parent_gallery_id,
             PhotoFolder.derived_gallery_id.is_(None),
             PhotoFolder.status == "released",
@@ -268,26 +275,60 @@ def authorized_canonical_photos(parent_gallery_id: UUID, client_id: UUID):
                 PhotoFolder.audience_scope.is_(None),  # pastas comuns legadas
                 and_(PhotoFolder.audience_scope == "selected", granted),
             ),
+            True if include_expired else folder_browsing_clause(client_id),
         )
     )
 
 
+def authorized_canonical_folders(parent_gallery_id: UUID, client_id: UUID):
+    """Pastas do acervo público efetivo, incluindo vencidas para exibir estado."""
+    folder_ids = authorized_canonical_photos(
+        parent_gallery_id,
+        client_id,
+        include_expired=True,
+        include_unavailable=True,
+    ).with_only_columns(PhotoAsset.folder_id).distinct()
+    return select(PhotoFolder).where(PhotoFolder.id.in_(folder_ids))
+
+
 def authorized_canonical_photo(
-    db: Session, *, parent_gallery_id: UUID, client_id: UUID, photo_id: UUID
+    db: Session,
+    *,
+    parent_gallery_id: UUID,
+    client_id: UUID,
+    photo_id: UUID,
+    include_expired: bool = False,
+    include_unavailable: bool = False,
 ) -> PhotoAsset | None:
     return db.scalar(
-        authorized_canonical_photos(parent_gallery_id, client_id).where(PhotoAsset.id == photo_id)
+        authorized_canonical_photos(
+            parent_gallery_id,
+            client_id,
+            include_expired=include_expired,
+            include_unavailable=include_unavailable,
+        ).where(PhotoAsset.id == photo_id)
     )
 
 
 def require_authorized_canonical_photo(
-    db: Session, *, parent_gallery_id: UUID, client_id: UUID, photo_id: UUID
+    db: Session,
+    *,
+    parent_gallery_id: UUID,
+    client_id: UUID,
+    photo_id: UUID,
+    include_expired: bool = False,
+    include_unavailable: bool = False,
 ) -> tuple[ParentGallery, PhotoAsset]:
     parent = require_public_gallery_browsing(
         db, parent_gallery_id=parent_gallery_id, client_id=client_id
     )
     photo = authorized_canonical_photo(
-        db, parent_gallery_id=parent_gallery_id, client_id=client_id, photo_id=photo_id
+        db,
+        parent_gallery_id=parent_gallery_id,
+        client_id=client_id,
+        photo_id=photo_id,
+        include_expired=include_expired,
+        include_unavailable=include_unavailable,
     )
     if not photo:
         raise CanonicalPhotoAccessDenied("Foto indisponível.")

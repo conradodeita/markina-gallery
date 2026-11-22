@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import csv
 import json
@@ -11,7 +12,7 @@ import secrets
 import unicodedata
 from collections import defaultdict
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from html import escape
 from io import BytesIO, StringIO
@@ -22,23 +23,31 @@ from urllib.parse import quote, urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from PIL import Image, ImageOps
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import String, and_, cast, delete, func, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
+from sqlalchemy import String, and_, cast, delete, func, literal, or_, select, union_all, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.responses import (
     FileResponse,
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
-    RedirectResponse,
 )
 
-from app import infinitepay_settings
+from app import credit_history, media_archive_billing, photographer_credits
 from app.acervo_context import (
     client_tenant_id,
     namespaced_upload_key,
@@ -80,6 +89,9 @@ from app.auth import (
     AdminActionToken,
     AdminPasswordInput,
     AdminSecurityChallenge,
+    AdminTotpRecoveryCode,
+    AdminTotpRecoveryCodesInput,
+    AdminTotpVerification,
     AdminUser,
     AuthChallenge,
     AuthSession,
@@ -96,30 +108,41 @@ from app.auth import (
     DerivedGalleryPhoto,
     DerivedGalleryPhotoOrigin,
     EmailDelivery,
-    FacialEmbeddingExperimentSetting,
     FacialJob,
     FolderClientGrant,
+    FolderProcessingSettings,
     GalleryAccessCapability,
     GalleryClientState,
     GalleryLifecycleOperation,
     GalleryMembershipNotificationOutbox,
     GalleryReopeningNotificationOutbox,
     GalleryReopeningRequest,
+    MediaArchiveCycle,
+    MediaArchiveNotice,
+    MediaArchiveObject,
     MediaDerivative,
     MediaJob,
+    MercadoPagoCreditPurchase,
     ParentGallery,
     ParentGalleryRegistration,
     PaymentCommunication,
     PaymentConfirmationCorrection,
     PaymentGroup,
     PaymentNotificationOutbox,
+    PhotoAnalysis,
     PhotoAsset,
     PhotoComment,
+    PhotoCreditOperation,
     PhotoFaceEmbedding,
     PhotoFavorite,
     PhotoFolder,
+    PhotographerCreditEntry,
+    PhotographerCreditPackage,
+    PhotographerSignup,
+    PhotographerTermsVersion,
     PhotoSelection,
     PhotoView,
+    PlatformAdminEvent,
     PriceRule,
     PrivateUploadBatch,
     PrivateUploadBatchAsset,
@@ -127,7 +150,6 @@ from app.auth import (
     ProgressivePricingTier,
     ProviderPayment,
     PushSubscription,
-    RawDevelopmentJob,
     Role,
     SaleOrder,
     SaleOrderItem,
@@ -258,6 +280,23 @@ from app.facial.status import (
     retry_all_failed_index_jobs,
     retry_failed_index_jobs,
 )
+from app.folder_access import (
+    folder_browsing_clause,
+    folder_effective_expiries_by_id,
+    folder_effective_expiry,
+    folder_media_access_by_id,
+    folder_media_is_local,
+    folder_media_state,
+    folder_media_state_by_id,
+    folder_media_states_by_id,
+    folder_media_writes_allowed,
+    folder_reopening_allowed,
+    folder_selected_media_preview_allowed,
+    gallery_media_writes_allowed,
+    historical_folder_media_state_by_id,
+    public_folder_deadline_renewable,
+)
+from app.folder_deadlines import validate_access_duration_days
 from app.folder_processing_api import register_routes as register_folder_processing_routes
 from app.gallery_access import (
     consume_gallery_capability,
@@ -300,6 +339,18 @@ from app.membership_notifications import (
     enqueue_membership_notification,
     mark_membership_notification_read,
 )
+from app.mercadopago_projection import (
+    financial_fields as mercadopago_fields,
+)
+from app.mercadopago_projection import (
+    financial_status as mercadopago_financial_status,
+)
+from app.mercadopago_projection import (
+    mercadopago_for_orders,
+)
+from app.mercadopago_projection import (
+    purchase_groups as mercadopago_purchase_groups,
+)
 from app.messaging import (
     WhatsAppConfigurationError,
     WhatsAppDeliveryError,
@@ -330,6 +381,7 @@ from app.order_delivery import (
     set_delivery,
     validate_album_url,
 )
+from app.order_visibility import visible_sale_order_condition
 from app.parent_registration import link_client_to_parent
 from app.payment_availability import (
     PAYMENT_REQUIRED_MESSAGE,
@@ -338,7 +390,6 @@ from app.payment_availability import (
     payment_methods,
     require_payment_method,
 )
-from app.payment_provider import PaymentCheckRequest, operational_provider
 from app.payment_templates import (
     DEFAULT_PAYMENT_TEMPLATES,
     preview_payment_template_migration,
@@ -381,13 +432,13 @@ from app.private_upload_batches import (
     folder_batch_for,
 )
 from app.product_brand import PRODUCT_NAME
-from app.provider_checkout import issue_provider_payment, prepare_provider_payment
-from app.provider_confirmation import apply_payment_check
+from app.provider_payment_history import cart_recovery_statuses
 from app.public_gallery_access import (
     CanonicalPhotoAccessDenied,
     PublicGalleryAccessDenied,
     active_capability_by_id,
     apply_public_gallery_access,
+    authorized_canonical_folders,
     authorized_canonical_photo,
     authorized_canonical_photos,
     client_otp_delivery_allowed,
@@ -411,7 +462,6 @@ from app.push_subscriptions import (
 from app.push_subscriptions import (
     fingerprint as push_fingerprint,
 )
-from app.raw_development.api import register_routes as register_raw_development_routes
 from app.storage_metrics import measure_owned_photo_storage
 from app.tenancy import (
     TenantContextError,
@@ -419,6 +469,14 @@ from app.tenancy import (
     require_admin_tenant,
 )
 from app.tenant_hosts import tenant_for_host
+from app.totp_crypto import TotpSecretError
+from app.totp_recovery import (
+    create_recovery_codes,
+    hash_recovery_code,
+    recovery_code_selector,
+    verify_recovery_code_hash,
+)
+from app.totp_verification import matching_unused_totp_step
 from app.unified_checkout import (
     cart_payload,
     communication_join,
@@ -438,10 +496,23 @@ from app.whatsapp_channel import (
     refresh_channel,
     start_channel_pairing,
 )
+from app.whatsapp_tenant_credentials import provision_tenant_credential
 from app.whatsapp_webhook import process_whatsapp_webhook
 
 app = FastAPI(title=f"{PRODUCT_NAME} API", version="0.2.0")
 logger = logging.getLogger(__name__)
+
+
+@app.exception_handler(RequestValidationError)
+async def protect_credential_validation_input(request: Request, exc: RequestValidationError):
+    if request.url.path.removeprefix("/api").startswith(("/admin/settings/payment-providers", "/library/mercadopago",
+                                    "/mercadopago/", "/admin/platform/console", "/admin/platform/credit-grants",
+                                    "/admin/platform/credit-packages", "/admin/platform/credit-purchases", "/auth/photographer-signup",
+                                    "/auth/photographer-closure-identity", "/auth/photographer-access-recovery",
+                                    "/admin/onboarding", "/admin/security/totp", "/admin/whatsapp/channel")):
+        return JSONResponse({"detail": "Confira os dados da solicitação."}, status_code=422,
+                            headers={"Cache-Control": "private, no-store"})
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.middleware("http")
@@ -565,6 +636,8 @@ class ParentGalleryInput(BaseModel):
 
 
 class ParentGallerySettingsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=200)
     event_name: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=5_000)
@@ -582,7 +655,6 @@ class ParentGallerySettingsInput(BaseModel):
         pattern=r"^(top-left|top-center|top-right|middle-left|middle-center|middle-right|bottom-left|bottom-center|bottom-right)$",
     )
     sales_message: str | None = Field(default=None, max_length=5_000)
-    selection_duration_days: int | None = Field(default=None, ge=1, le=3_650)
     favorites_enabled: bool | None = None
     comments_enabled: bool | None = None
 
@@ -618,14 +690,95 @@ class PhotoAssetInput(BaseModel):
     display_name: str | None = Field(default=None, max_length=512)
     storage_key: str = Field(min_length=1, max_length=1_024)
     upload_batch_id: UUID | None = None
+    allow_duplicate_content: bool = False
+
+
+class PhotographerCreditPackageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    credit_quantity: int = Field(ge=1, le=2_147_483_647)
+    price_cents: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    currency_code: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    active: bool = False
+    current_password: SecretStr
+    totp_code: SecretStr
+
+    @model_validator(mode="after")
+    def validate_package_configuration(self):
+        if (self.price_cents is None) != (self.currency_code is None):
+            raise ValueError("Preço e moeda devem ser informados em conjunto.")
+        if self.active and self.price_cents is None:
+            raise ValueError("Pacote sem preço não pode ser ativado.")
+        return self
+
+
+class MediaArchiveRecoveryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    duration_days: Literal[7, 14, 30]
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class PhotographerCreditGrantInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    tenant_id: UUID
+    quantity: int = Field(ge=1, le=2_147_483_647)
+    idempotency_key: str = Field(min_length=1, max_length=240)
+    reference: str = Field(min_length=1, max_length=240)
+    current_password: SecretStr
+    totp_code: SecretStr
+
+
+class PhotographerCreditRevocationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    tenant_id: UUID
+    quantity: int = Field(ge=1, le=2_147_483_647)
+    idempotency_key: str = Field(min_length=1, max_length=240)
+    reference: str = Field(min_length=1, max_length=240)
+    current_password: SecretStr
+    totp_code: SecretStr
+
+
+class PhotographerCreditReviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    decision: Literal["release", "restrict"]
+    reason: str = Field(min_length=1, max_length=500)
+    current_password: SecretStr
+    totp_code: SecretStr
+
+
+FolderAccessDurationDays = Annotated[int, Field(ge=1), AfterValidator(validate_access_duration_days)]
 
 
 class PhotoFolderInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
+    access_duration_days: FolderAccessDurationDays
+
+
+class PhotoFolderDeadlineInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    access_duration_days: FolderAccessDurationDays
 
 
 class PhotoFolderRenameInput(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class GalleryClientAccessInput(BaseModel):
@@ -793,19 +946,20 @@ class GalleryReopeningRequestInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     idempotency_key: str = Field(min_length=12, max_length=128)
+    folder_id: UUID
 
 
 class GalleryReopeningDecisionInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: Literal["approved", "refused"]
-    selection_expires_at: datetime | None = None
+    access_duration_days: FolderAccessDurationDays | None = None
 
     @model_validator(mode="after")
     def require_future_expiry_for_approval(self):
-        if self.decision == "approved" and self.selection_expires_at is None:
-            raise ValueError("Informe o novo prazo para aprovar a reabertura.")
-        if self.decision == "refused" and self.selection_expires_at is not None:
+        if self.decision == "approved" and self.access_duration_days is None:
+            raise ValueError("Informe uma duração em dias para aprovar a reabertura.")
+        if self.decision == "refused" and self.access_duration_days is not None:
             raise ValueError("A recusa não recebe um novo prazo.")
         return self
 
@@ -874,7 +1028,6 @@ class GalleryPricingInput(BaseModel):
 class ParentGallerySalesInput(GalleryPricingInput):
     payment_required: bool = True
     sales_message: str | None = Field(default=None, max_length=5_000)
-    selection_duration_days: int | None = Field(default=None, ge=1, le=3_650)
     favorites_enabled: bool = False
     comments_enabled: bool = False
 
@@ -890,11 +1043,6 @@ class FacialPolicyInput(BaseModel):
     quality_version: str = Field(min_length=1, max_length=120)
     calibration_version: str = Field(min_length=1, max_length=120)
     similarity_threshold_milli: int = Field(ge=0, le=1000)
-
-
-class FacialEmbeddingExperimentInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool
 
 
 class FacialIndexRetryInput(BaseModel):
@@ -915,6 +1063,7 @@ class AdminSecurityCodeInput(BaseModel):
 class AdminPasswordResetInput(BaseModel):
     token: str = Field(min_length=32, max_length=256)
     new_password: str = Field(min_length=1, max_length=128)
+    second_factor_code: str | None = Field(default=None, min_length=6, max_length=64)
 
 
 class AdminPasswordChallengeInput(BaseModel):
@@ -1055,7 +1204,15 @@ def require_derived_gallery_mutable(
     return gallery
 
 
-def assigned_photo_for_gallery(db: Session, gallery_id: UUID, photo_id: UUID, *, tenant_id: UUID) -> None:
+def assigned_photo_for_gallery(
+    db: Session,
+    gallery_id: UUID,
+    photo_id: UUID,
+    *,
+    tenant_id: UUID,
+    client_id: UUID,
+    allow_expired: bool = False,
+) -> None:
     require_active_owner(db, tenant_id)
     private_owned = db.scalar(
         select(PhotoAsset.id)
@@ -1068,6 +1225,7 @@ def assigned_photo_for_gallery(db: Session, gallery_id: UUID, photo_id: UUID, *,
             PhotoFolder.derived_gallery_id == gallery_id,
             PhotoFolder.status == "released",
             PhotoFolder.purpose == "content",
+            True if allow_expired else folder_browsing_clause(client_id),
         )
     )
     if private_owned:
@@ -1084,15 +1242,11 @@ def assigned_photo_for_gallery(db: Session, gallery_id: UUID, photo_id: UUID, *,
             DerivedGalleryPhoto.photo_asset_id == photo_id,
             PhotoFolder.status == "released",
             PhotoFolder.purpose == "content",
+            True if allow_expired else folder_browsing_clause(client_id),
         )
     )
     if not assigned:
         raise HTTPException(status_code=404, detail="Foto não encontrada na galeria.")
-
-
-def require_selection_window(gallery: DerivedGallery) -> None:
-    if gallery.selection_expires_at and expired(gallery.selection_expires_at):
-        raise HTTPException(status_code=403, detail="O prazo para novas seleções expirou.")
 
 
 def protected_preview_response(path, filename: str) -> FileResponse:
@@ -1211,6 +1365,55 @@ def admin_whatsapp_channel(request: Request, db: Session = Depends(db_session)) 
         settings.last_checked_at = now()
         db.commit()
     return whatsapp_admin_payload(db, settings)
+
+
+@app.post("/admin/whatsapp/channel/provision")
+def provision_admin_whatsapp_channel(
+    payload: WhatsAppChannelInput,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+) -> dict:
+    require_same_origin(request)
+    session = require_admin(request)
+    owner = directory_tenant_id(db, request)
+    signup = db.scalar(select(PhotographerSignup.id).where(
+        PhotographerSignup.reserved_admin_id == session.subject_id,
+        PhotographerSignup.activated_tenant_id == owner,
+        PhotographerSignup.state == "active",
+    ))
+    if not signup:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    try:
+        credential, settings, provider = provision_tenant_credential(
+            db, tenant_id=owner, expected_phone_e164=payload.expected_phone_e164,
+        )
+        db.commit()  # Persiste identidade idempotente antes de chamar o serviço remoto.
+        db.refresh(credential)
+        from app.auth import WhatsAppTenantCredential
+
+        locked = db.scalar(select(WhatsAppTenantCredential).where(
+            WhatsAppTenantCredential.id == credential.id,
+            WhatsAppTenantCredential.tenant_id == owner,
+        ).with_for_update())
+        if locked is None:
+            raise WhatsAppConfigurationError("Instância WhatsApp indisponível.")
+        provider = provider_for(db, tenant_id=owner)
+        provider.ensure_instance()
+        settings.status = "pending_pairing"
+        settings.last_error = None
+        settings.last_checked_at = now()
+        audit(db, "whatsapp.tenant_instance_provisioned", str(settings.id), tenant_id=owner)
+        db.commit()
+        response.headers["Cache-Control"] = "private, no-store"
+        return whatsapp_admin_payload(db, settings)
+    except (WhatsAppConfigurationError, WhatsAppDeliveryError):
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível preparar o canal WhatsApp. Tente novamente.",
+            headers={"Cache-Control": "private, no-store"},
+        ) from None
 
 
 @app.patch("/admin/whatsapp/channel")
@@ -1497,7 +1700,7 @@ def _registered_client_for_gallery(
 @app.post("/auth/client/challenge", status_code=status.HTTP_202_ACCEPTED)
 def client_challenge(
     payload: ClientLinkChallengeInput, request: Request, db: Session = Depends(db_session)
-) -> dict[str, str]:
+) -> dict[str, str | bool]:
     phone = normalize_e164(payload.phone)
     client_name = " ".join((payload.full_name or "").split())
     # Proteção global precede resolução para cobrir também links inválidos.
@@ -1560,6 +1763,7 @@ def client_challenge(
         return {
             "challenge_id": str(uuid4()),
             "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp.",
+            "show_private_gallery_notice": parent.access_mode == "invite_only",
         }
     deliver = (True if purchase_reauthentication else
                client_otp_delivery_allowed(db, parent=parent, phone_e164=phone, capability=capability))
@@ -1585,6 +1789,7 @@ def client_challenge(
     return {
         "challenge_id": str(challenge.id),
         "message": "Se os dados puderem receber acesso, enviaremos um código pelo WhatsApp.",
+        "show_private_gallery_notice": bool(parent and parent.access_mode == "invite_only"),
     }
 
 
@@ -1894,7 +2099,8 @@ def client_verify(
 
 @app.post("/auth/admin/password", status_code=status.HTTP_202_ACCEPTED)
 def admin_password(
-    payload: AdminPasswordInput, request: Request, db: Session = Depends(db_session)
+    payload: AdminPasswordInput, request: Request, response: Response,
+    db: Session = Depends(db_session)
 ) -> dict[str, str]:
     email = payload.email.strip().lower()
     enforce_rate_limit(
@@ -1912,18 +2118,31 @@ def admin_password(
         db.commit()
         raise neutral_error()
     try:
-        tenant = require_admin_tenant(db, admin.id)
+        tenant = require_admin_tenant(db, admin.id, platform_scope=True)
     except TenantContextError as exc:
         audit(db, "admin_password.context_rejected", str(admin.id))
         db.commit()
         raise neutral_error() from exc
+    signup_account = db.scalar(select(PhotographerSignup).where(
+        PhotographerSignup.reserved_admin_id == admin.id,
+        PhotographerSignup.activated_tenant_id == tenant.id,
+        PhotographerSignup.state == "active",
+    ))
+    from app.system_monitor.models import PlatformOwner
+    owner_account = db.scalar(select(PlatformOwner.admin_user_id).where(PlatformOwner.admin_user_id == admin.id))
+    if signup_account and not admin.totp_enabled and owner_account is None:
+        create_session(db, response, Role.ADMIN, admin.id, tenant_id=tenant.id, platform_scope=True)
+        detach_previous_identity(db, request, "admin", admin.id)
+        audit(db, "admin.redirected", str(admin.id))
+        db.commit()
+        return {"destination": "/admin"}
     challenge, _ = create_challenge(db, "admin_totp", str(admin.id), tenant_id=tenant.id)
     return {"challenge_id": str(challenge.id), "message": "Continue com o código do autenticador."}
 
 
 @app.post("/auth/admin/totp")
 def admin_totp(
-    payload: ChallengeVerification,
+    payload: AdminTotpVerification,
     request: Request,
     response: Response,
     db: Session = Depends(db_session),
@@ -1934,29 +2153,118 @@ def admin_totp(
         raise neutral_error()
     try:
         admin_id = UUID(challenge.subject)
-        tenant = require_admin_tenant(db, admin_id)
+        tenant = require_admin_tenant(db, admin_id, platform_scope=True)
         if challenge.tenant_id != tenant.id:
             raise TenantContextError("Acesso negado.")
     except (ValueError, TenantContextError) as exc:
         audit(db, "admin_totp.context_rejected", str(challenge.id))
         db.commit()
         raise neutral_error() from exc
-    admin = db.get(AdminUser, admin_id, populate_existing=True)
+    try:
+        admin = db.scalar(select(AdminUser).where(AdminUser.id == admin_id).with_for_update())
+    except TotpSecretError:
+        db.rollback()
+        audit(db, "admin_totp.key_unavailable", challenge.subject, tenant_id=tenant.id)
+        db.commit()
+        raise neutral_error() from None
     enforce_rate_limit(
         db, "admin_totp", challenge.subject, request.client.host if request.client else "unknown"
     )
-    if not admin or not admin.email_verified or not pyotp.TOTP(admin.totp_secret).verify(payload.code, valid_window=1):
+    recovery_code = None
+    matched_step = None
+    if admin and admin.email_verified:
+        if payload.code.isdigit():
+            matched_step = matching_unused_totp_step(
+                admin.totp_secret, payload.code, admin.totp_last_used_step, valid_window=1
+            )
+        else:
+            recovery_codes = list(db.scalars(select(AdminTotpRecoveryCode).where(
+                AdminTotpRecoveryCode.admin_user_id == admin.id,
+                AdminTotpRecoveryCode.code_selector == recovery_code_selector(payload.code),
+                AdminTotpRecoveryCode.used_at.is_(None),
+                AdminTotpRecoveryCode.revoked_at.is_(None),
+            ).order_by(AdminTotpRecoveryCode.id).with_for_update()))
+            recovery_code = next((item for item in recovery_codes
+                                  if verify_recovery_code_hash(item.code_hash, payload.code)), None)
+    if matched_step is None and recovery_code is None:
         challenge.attempts += 1
         audit(db, "admin_totp.failed", challenge.subject, tenant_id=tenant.id)
         db.commit()
         raise neutral_error()
     challenge.used_at = now()
+    if matched_step is not None:
+        admin.totp_last_used_step = matched_step
+    if recovery_code is not None:
+        recovery_code.used_at = now()
+        audit(db, "admin_totp_recovery.used", challenge.subject, tenant_id=tenant.id)
     audit(db, "admin_totp.validated", challenge.subject, tenant_id=tenant.id)
-    create_session(db, response, Role.ADMIN, admin.id, tenant_id=tenant.id)
+    create_session(db, response, Role.ADMIN, admin.id, tenant_id=tenant.id, platform_scope=True)
     detach_previous_identity(db, request, "admin", admin.id)
     audit(db, "admin.redirected", str(admin.id))
     db.commit()
-    return {"destination": "/admin"}
+    return {"destination": "/admin/platform" if tenant.lifecycle == "closed" else "/admin"}
+
+
+@app.post("/admin/security/totp/recovery-codes")
+def issue_admin_totp_recovery_codes(
+    payload: AdminTotpRecoveryCodesInput,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    require_same_origin(request)
+    session = current_session(request, Role.ADMIN)
+    try:
+        active_admin_for_session(db, session)
+        admin = db.scalar(select(AdminUser).where(
+            AdminUser.id == session.subject_id
+        ).with_for_update())
+    except (AdminAccountError, TotpSecretError):
+        db.rollback()
+        raise HTTPException(status_code=403, detail="Acesso negado.") from None
+    if not admin or not admin.email_verified:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    enforce_rate_limit(
+        db, "admin_totp_recovery_issue", str(admin.id),
+        request.client.host if request.client else "unknown",
+    )
+    try:
+        reauthenticate_admin(admin, payload.current_password)
+        if payload.second_factor_code.isdigit():
+            matched_step = matching_unused_totp_step(
+                admin.totp_secret, payload.second_factor_code,
+                admin.totp_last_used_step, valid_window=1,
+            )
+            if matched_step is None:
+                raise AdminAccountError("Não foi possível confirmar o segundo fator.")
+            admin.totp_last_used_step = matched_step
+        else:
+            raise AdminAccountError("A regeneração exige um passo TOTP ainda não utilizado.")
+    except (AdminAccountError, TotpSecretError):
+        audit(db, "admin_totp_recovery.issue_rejected", str(admin.id), tenant_id=session.tenant_id)
+        db.commit()
+        raise neutral_error() from None
+
+    timestamp = now()
+    db.execute(update(AdminTotpRecoveryCode).where(
+        AdminTotpRecoveryCode.admin_user_id == admin.id,
+        AdminTotpRecoveryCode.used_at.is_(None),
+        AdminTotpRecoveryCode.revoked_at.is_(None),
+    ).values(revoked_at=timestamp))
+    codes = create_recovery_codes()
+    db.add_all([
+        AdminTotpRecoveryCode(
+            admin_user_id=admin.id,
+            code_selector=recovery_code_selector(code),
+            code_hash=hash_recovery_code(code),
+        )
+        for code in codes
+    ])
+    audit(db, "admin_totp_recovery.issued", str(admin.id), tenant_id=session.tenant_id)
+    db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"codes": codes, "message": "Guarde estes códigos agora. Eles não serão exibidos novamente."}
 
 
 @app.post("/auth/admin/recovery/challenge", status_code=status.HTTP_202_ACCEPTED)
@@ -2051,18 +2359,61 @@ def admin_recovery_verify(
 @app.post("/auth/admin/recovery/reset")
 def admin_recovery_reset(
     payload: AdminPasswordResetInput,
+    request: Request,
     response: Response,
     db: Session = Depends(db_session),
 ) -> dict[str, str]:
+    enforce_rate_limit(db, "admin_recovery_reset", token_hash(payload.token),
+                       request.client.host if request.client else "unknown")
+    db.commit()
     item = db.scalar(
         select(AdminActionToken).where(
             AdminActionToken.token_hash == token_hash(payload.token),
             AdminActionToken.purpose == "password_reset",
         )
     )
-    admin = db.get(AdminUser, item.admin_id) if item else None
+    admin = db.get(AdminUser, item.admin_id, with_for_update=True) if item else None
     if not item or item.used_at or expired(item.expires_at) or not admin:
         raise HTTPException(status_code=400, detail="O link não está mais disponível.")
+    signup_origin = db.scalar(select(PhotographerSignup.id).where(
+        PhotographerSignup.reserved_admin_id == admin.id,
+        PhotographerSignup.state == "active",
+    ))
+    matched_step = None
+    recovery_code = None
+    if signup_origin is not None:
+        active_signup_tenant = db.scalar(select(Tenant.id).join(
+            TenantAdmin, TenantAdmin.tenant_id == Tenant.id,
+        ).join(PhotographerSignup, PhotographerSignup.activated_tenant_id == Tenant.id).where(
+            PhotographerSignup.id == signup_origin,
+            Tenant.status == "active",
+            TenantAdmin.admin_user_id == admin.id,
+            TenantAdmin.active.is_(True),
+        ))
+        if active_signup_tenant is None:
+            raise neutral_error()
+        from app.system_monitor.models import PlatformOwner
+        owner_account = db.scalar(select(PlatformOwner.admin_user_id).where(PlatformOwner.admin_user_id == admin.id))
+        has_totp = bool(admin.totp_enabled or owner_account is not None)
+        if has_totp:
+            factor = payload.second_factor_code or ""
+            if re.fullmatch(r"\d{6}", factor):
+                matched_step = matching_unused_totp_step(
+                    admin.totp_secret, factor, admin.totp_last_used_step, valid_window=1,
+                )
+            elif re.fullmatch(r"[A-Za-z0-9_-]{24}", factor):
+                candidates = db.scalars(select(AdminTotpRecoveryCode).where(
+                    AdminTotpRecoveryCode.admin_user_id == admin.id,
+                    AdminTotpRecoveryCode.code_selector == recovery_code_selector(factor),
+                    AdminTotpRecoveryCode.used_at.is_(None),
+                    AdminTotpRecoveryCode.revoked_at.is_(None),
+                ).with_for_update())
+                recovery_code = next((code for code in candidates
+                                      if verify_recovery_code_hash(code.code_hash, factor)), None)
+            if matched_step is None and recovery_code is None:
+                raise neutral_error()
+        elif payload.second_factor_code:
+            raise neutral_error()
     try:
         validate_admin_password(
             payload.new_password,
@@ -2074,12 +2425,17 @@ def admin_recovery_reset(
     consumed = consume_admin_action_token(db, raw_token=payload.token, purpose="password_reset")
     if not consumed:
         raise HTTPException(status_code=400, detail="O link não está mais disponível.")
+    if matched_step is not None:
+        admin.totp_last_used_step = matched_step
+    if recovery_code is not None:
+        recovery_code.used_at = now()
+        audit(db, "admin_totp_recovery.used", str(admin.id))
     change_admin_password(
         db, admin, payload.new_password, audit_event="admin_security.password_reset.completed"
     )
     db.commit()
     response.delete_cookie(getenv("SESSION_COOKIE_NAME", "markina_session"), path="/")
-    return {"message": "Senha redefinida. Entre novamente com senha e autenticador."}
+    return {"message": "Senha redefinida. Entre novamente com sua senha."}
 
 
 @app.post("/auth/admin/email/confirm")
@@ -2132,7 +2488,7 @@ def confirm_admin_email(
 
 @app.get("/auth/destination")
 def destination(request: Request, return_to: str | None = Query(default=None, max_length=512)) -> dict[str, str]:
-    session = current_session(request, invalid_session_status=401)
+    session = current_session(request, invalid_session_status=401, platform_scope=True)
     if session.role == Role.ADMIN.value:
         return {"destination": "/admin"}
     with SessionLocal() as db:
@@ -2148,7 +2504,7 @@ def destination(request: Request, return_to: str | None = Query(default=None, ma
 @app.get("/auth/identity")
 def authenticated_identity(request: Request, db: Session = Depends(db_session)) -> dict[str, str]:
     """Retorna somente a identidade própria da sessão autenticada e seu tenant."""
-    session = current_session(request, invalid_session_status=401)
+    session = current_session(request, invalid_session_status=401, platform_scope=True)
     if session.role == Role.ADMIN.value:
         admin = db.get(AdminUser, session.subject_id)
         if not admin or not admin.email_verified:
@@ -2240,18 +2596,28 @@ def admin_email_channel(request: Request, db: Session = Depends(db_session)) -> 
 
 @app.get("/admin/security/summary")
 def admin_security_summary(
-    request: Request, db: Session = Depends(db_session)
+    request: Request, response: Response, db: Session = Depends(db_session)
 ) -> dict[str, object]:
     session = current_session(request, Role.ADMIN)
     try:
         admin = active_admin_for_session(db, session)
     except AdminAccountError:
         raise HTTPException(status_code=403, detail="Acesso negado.") from None
+    response.headers["Cache-Control"] = "private, no-store"
     whatsapp = channel_settings(db, tenant_id=directory_tenant_id(db, request))
+    recovery_codes_available = db.scalar(select(func.count()).select_from(
+        AdminTotpRecoveryCode
+    ).where(
+        AdminTotpRecoveryCode.admin_user_id == admin.id,
+        AdminTotpRecoveryCode.used_at.is_(None),
+        AdminTotpRecoveryCode.revoked_at.is_(None),
+    )) or 0
     return {
         "email_masked": mask_email(admin.email),
         "whatsapp_status": whatsapp.status,
         "email_channel": email_channel_payload(),
+        "recovery_codes_available": recovery_codes_available,
+        "totp_enabled": bool(admin.totp_enabled),
     }
 
 
@@ -2342,125 +2708,6 @@ def admin_global_pix_confirm(
     audit(db, "pix.global_updated", f"{admin.id}:{settings.id}:{settings.version}", tenant_id=session.tenant_id)
     db.commit()
     return pix_payload(settings, editable=True)
-
-
-@app.get("/admin/settings/infinitepay")
-def admin_infinitepay(request: Request, db: Session = Depends(db_session)) -> dict:
-    session = current_session(request, Role.ADMIN)
-    active_admin_for_session(db, session)
-    return infinitepay_settings.configuration_payload(
-        infinitepay_settings.load_configuration(db, tenant_id=session.tenant_id))
-
-
-@app.post("/admin/settings/infinitepay/challenge", status_code=status.HTTP_202_ACCEPTED)
-def admin_infinitepay_challenge(
-    payload: infinitepay_settings.ConfigurationChallengeInput, request: Request,
-    db: Session = Depends(db_session),
-) -> dict:
-    require_same_origin(request)
-    session = current_session(request, Role.ADMIN)
-    admin = active_admin_for_session(db, session)
-    enforce_rate_limit(db, "admin_change_infinitepay", str(admin.id),
-                       request.client.host if request.client else "unknown")
-    try:
-        reauthenticate_admin(admin, payload.current_password)
-    except AdminAccountError:
-        audit(db, "admin_security.change_infinitepay.reauthentication_failed", str(admin.id),
-              tenant_id=session.tenant_id)
-        db.commit()
-        raise neutral_error() from None
-    db.scalar(select(Tenant).where(Tenant.id == session.tenant_id).with_for_update())
-    settings = infinitepay_settings.load_configuration(db, tenant_id=session.tenant_id)
-    try:
-        infinitepay_settings.check_version(settings, payload.expected_version)
-    except infinitepay_settings.ConfigurationConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    target = infinitepay_settings.canonical_proposal(
-        payload.configuration, payload.expected_version, payload.checkout_ready, payload.card_enabled,
-    )
-    try:
-        challenge, _code, queued = create_security_challenge(
-            db, purpose="change_infinitepay_otp", subject_fingerprint=pii_fingerprint(str(admin.id)),
-            admin=admin, session_id=session.id, target=target, tenant_id=session.tenant_id,
-        )
-    except (AdminSecurityConfigurationError, WhatsAppConfigurationError):
-        db.rollback()
-        raise HTTPException(status_code=503, detail="Confirmação segura temporariamente indisponível.") from None
-    if not queued:
-        challenge.used_at = now()
-        challenge.encrypted_target = None
-        db.commit()
-        raise HTTPException(status_code=409, detail="Canal WhatsApp indisponível para confirmação.")
-    return {"challenge_id": str(challenge.id), "expires_at": challenge.expires_at.isoformat(),
-            "proposal": json.loads(target),
-            "message": "Código de confirmação enviado ao WhatsApp administrativo do Pick-your-Pic."}
-
-
-def _infinitepay_challenge_for_session(db: Session, session: AuthSession, admin: AdminUser,
-                                     challenge_id: UUID) -> AdminSecurityChallenge:
-    db.scalar(select(Tenant).where(Tenant.id == session.tenant_id).with_for_update())
-    stored = db.scalar(select(AdminSecurityChallenge).where(
-        AdminSecurityChallenge.id == challenge_id,
-        AdminSecurityChallenge.tenant_id == session.tenant_id,
-    ).with_for_update())
-    if (not stored or stored.admin_id != admin.id or stored.session_id != session.id
-            or stored.purpose != "change_infinitepay_otp"):
-        raise neutral_error()
-    return stored
-
-
-@app.post("/admin/settings/infinitepay/confirm")
-def admin_infinitepay_confirm(
-    payload: infinitepay_settings.ConfigurationConfirmInput, request: Request,
-    db: Session = Depends(db_session),
-) -> dict:
-    require_same_origin(request)
-    session = current_session(request, Role.ADMIN)
-    admin = active_admin_for_session(db, session)
-    _infinitepay_challenge_for_session(db, session, admin, payload.challenge_id)
-    try:
-        challenge = verify_security_challenge(
-            db, challenge_id=payload.challenge_id, purpose="change_infinitepay_otp",
-            code=payload.code, session_id=session.id, tenant_id=session.tenant_id,
-        )
-        target = challenge_target(challenge)
-        if challenge.target_fingerprint != pii_fingerprint(target.strip().casefold()):
-            raise AdminAccountError("Proposta indisponível.")
-        settings = infinitepay_settings.apply_proposal(db, tenant_id=session.tenant_id,
-                                                     admin_id=admin.id, target=target)
-    except (AdminAccountError, AdminSecurityConfigurationError):
-        db.rollback()
-        raise neutral_error() from None
-    except infinitepay_settings.ConfigurationConflict as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    challenge.encrypted_target = None
-    audit(db, "infinitepay.configuration_updated", f"{settings.id}:{settings.version}", tenant_id=session.tenant_id)
-    db.commit()
-    return infinitepay_settings.configuration_payload(settings)
-
-
-@app.post("/admin/settings/infinitepay/resend", status_code=status.HTTP_202_ACCEPTED)
-def admin_infinitepay_resend(
-    payload: infinitepay_settings.ConfigurationResendInput, request: Request,
-    db: Session = Depends(db_session),
-) -> dict:
-    require_same_origin(request)
-    session = current_session(request, Role.ADMIN)
-    admin = active_admin_for_session(db, session)
-    enforce_rate_limit(db, "admin_resend_infinitepay", str(admin.id),
-                       request.client.host if request.client else "unknown")
-    _infinitepay_challenge_for_session(db, session, admin, payload.challenge_id)
-    try:
-        challenge = resend_security_challenge(db, challenge_id=payload.challenge_id,
-            purpose="change_infinitepay_otp", tenant_id=session.tenant_id, session_id=session.id)
-    except AdminAccountError:
-        db.rollback()
-        raise neutral_error() from None
-    except (AdminSecurityConfigurationError, WhatsAppConfigurationError):
-        db.rollback()
-        raise HTTPException(status_code=503, detail="Confirmação segura temporariamente indisponível.") from None
-    return {"challenge_id": str(challenge.id), "expires_at": challenge.expires_at.isoformat()}
 
 
 @app.post("/admin/security/password/challenge", status_code=status.HTTP_202_ACCEPTED)
@@ -2785,15 +3032,16 @@ def public_branding_asset(
 
 @app.get("/admin/validation-summary")
 def admin_validation_summary(
-    request: Request, db: Session = Depends(db_session)
+    request: Request, response: Response, db: Session = Depends(db_session)
 ) -> dict[str, object]:
     """Resumo seguro para o painel visual do fotógrafo."""
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
-    jobs = list(db.scalars(select(MediaJob).where(MediaJob.tenant_id == tenant_id)))
-    job_states: defaultdict[str, int] = defaultdict(int)
-    for job in jobs:
-        job_states[job.status] += 1
+    response.headers["Cache-Control"] = "private, no-store"
+    job_states = dict(db.execute(
+        select(MediaJob.status, func.count()).where(MediaJob.tenant_id == tenant_id)
+        .group_by(MediaJob.status)
+    ).all())
     legacy_gallery_count = db.scalar(select(func.count(DerivedGallery.id)).where(DerivedGallery.tenant_id == tenant_id)) or 0
     active_import_folders = (
         select(PhotoFolder.id.label("folder_id"))
@@ -2819,6 +3067,75 @@ def admin_validation_summary(
     galleries = list(db.scalars(select(ParentGallery).where(ParentGallery.tenant_id == tenant_id).where(
         ParentGallery.lifecycle_status != "deleted"
     ).order_by(ParentGallery.created_at.desc()).limit(5)))
+    selection_parent_id = func.coalesce(
+        PhotoSelection.parent_gallery_id, DerivedGallery.parent_gallery_id
+    )
+    selection_scope_id = func.coalesce(
+        DerivedGallery.id, PhotoSelection.parent_gallery_id
+    )
+    selection_scope_name = func.coalesce(
+        DerivedGallery.name, ParentGallery.name, "Galeria removida"
+    )
+    recent_selection_rows = list(db.execute(
+        select(
+            selection_scope_id.label("scope_id"),
+            selection_scope_name.label("scope_name"),
+            ParentGallery.id.label("parent_gallery_id"),
+            ParentGallery.name.label("parent_gallery_name"),
+            Client.id.label("client_id"),
+            Client.full_name.label("client_name"),
+            func.count(PhotoSelection.id).label("selected_count"),
+            GalleryClientState.selection_started_at.label("selection_started_at"),
+            func.max(PhotoSelection.created_at).label("last_selected_at"),
+        )
+        .join(PhotoAsset, PhotoAsset.id == PhotoSelection.photo_asset_id)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .outerjoin(DerivedGallery, DerivedGallery.id == PhotoSelection.derived_gallery_id)
+        .join(Client, Client.id == PhotoSelection.client_id)
+        .outerjoin(ParentGallery, ParentGallery.id == selection_parent_id)
+        .outerjoin(
+            GalleryClientState,
+            and_(
+                PhotoSelection.parent_gallery_id.is_not(None),
+                GalleryClientState.tenant_id == tenant_id,
+                GalleryClientState.parent_gallery_id == selection_parent_id,
+                GalleryClientState.client_id == PhotoSelection.client_id,
+            ),
+        )
+        .where(
+            PhotoSelection.tenant_id == tenant_id,
+            PhotoAsset.tenant_id == tenant_id,
+            PhotoFolder.tenant_id == tenant_id,
+            Client.tenant_id == tenant_id,
+            or_(DerivedGallery.id.is_(None), DerivedGallery.tenant_id == tenant_id),
+            or_(ParentGallery.id.is_(None), ParentGallery.tenant_id == tenant_id),
+            selection_scope_id.is_not(None),
+            selection_parent_id.is_not(None),
+        )
+        .group_by(
+            selection_scope_id,
+            selection_scope_name,
+            ParentGallery.id,
+            ParentGallery.name,
+            Client.id,
+            Client.full_name,
+            GalleryClientState.selection_started_at,
+        )
+        .order_by(
+            func.max(PhotoSelection.created_at).desc(),
+            selection_scope_id,
+            Client.id,
+        )
+        .limit(5)
+    ))
+
+    def summary_timestamp(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)  # noqa: UP017 -- compatibilidade com Python 3.10
+        return value.astimezone(timezone.utc).isoformat()  # noqa: UP017 -- compatibilidade com Python 3.10
+
     storage = measure_owned_photo_storage(db, tenant_id=tenant_id)
     return {
         "environment": getenv("APP_ENV", "development"),
@@ -2829,31 +3146,23 @@ def admin_validation_summary(
             "available": storage.available,
         },
         "counts": {
-            "clients": len(list(db.scalars(select(Client.id).where(Client.tenant_id == tenant_id)))),
-            "parent_galleries": len(
-                list(
-                    db.scalars(
-                        select(ParentGallery.id).where(ParentGallery.tenant_id == tenant_id).where(ParentGallery.lifecycle_status != "deleted")
-                    )
-                )
-            ),
+            "clients": db.scalar(select(func.count(Client.id)).where(
+                Client.tenant_id == tenant_id,
+            )) or 0,
+            "parent_galleries": db.scalar(select(func.count(ParentGallery.id)).where(
+                ParentGallery.tenant_id == tenant_id, ParentGallery.lifecycle_status != "deleted",
+            )) or 0,
             "derived_galleries": legacy_gallery_count,
             "imports": dict(job_states),
             "folders_with_active_imports": active_import_folder_count,
             "photos_in_folders_with_active_imports": active_import_photo_count,
-            "folders_preparing": len(
-                list(db.scalars(select(PhotoFolder.id).where(PhotoFolder.tenant_id == tenant_id).where(PhotoFolder.status == "preparing")))
-            ),
-            "folders_released": len(
-                list(
-                    db.scalars(
-                        select(PhotoFolder.id).where(PhotoFolder.tenant_id == tenant_id).where(
-                            PhotoFolder.status == "released",
-                            PhotoFolder.purpose == "content",
-                        )
-                    )
-                )
-            ),
+            "folders_preparing": db.scalar(select(func.count(PhotoFolder.id)).where(
+                PhotoFolder.tenant_id == tenant_id, PhotoFolder.status == "preparing",
+            )) or 0,
+            "folders_released": db.scalar(select(func.count(PhotoFolder.id)).where(
+                PhotoFolder.tenant_id == tenant_id, PhotoFolder.status == "released",
+                PhotoFolder.purpose == "content",
+            )) or 0,
         },
         "recent_galleries": [
             {
@@ -2864,7 +3173,609 @@ def admin_validation_summary(
             }
             for gallery in galleries[:5]
         ],
+        "recent_selections": [
+            {
+                "scope_id": str(row.scope_id),
+                "client": {"id": str(row.client_id), "name": row.client_name},
+                "gallery": {"id": str(row.scope_id), "name": row.scope_name},
+                "parent_gallery": {
+                    "id": str(row.parent_gallery_id), "name": row.parent_gallery_name,
+                },
+                "selected_count": int(row.selected_count),
+                "selection_started_at": summary_timestamp(row.selection_started_at),
+                "last_selected_at": summary_timestamp(row.last_selected_at),
+            }
+            for row in recent_selection_rows
+        ],
     }
+
+
+def _require_credit_owner(request: Request, db: Session, response: Response) -> AuthSession:
+    from app.system_monitor.access import is_owner
+
+    session = require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    if not is_owner(db, session.subject_id):
+        audit(db, "credit.owner_access_denied", str(session.subject_id))
+        db.commit()
+        raise HTTPException(403, "Acesso não autorizado.")
+    return session
+
+
+def _credit_owner_response(db: Session, request: Request, session: AuthSession, result: dict):
+    from app.platform_console import revalidate_owner_before_commit
+
+    # A serialização também consulta dados privados, inclusive durante replay.
+    revalidate_owner_before_commit(db, request, session)
+    return result
+
+
+def _credit_mutation_evidence(action: str, payload, *, grant_entry_id: UUID | None = None) -> str:
+    canonical = {
+        "action": action,
+        "tenant_id": str(payload.tenant_id),
+        "quantity": payload.quantity,
+        "idempotency_key": payload.idempotency_key,
+        "reference": payload.reference,
+        "grant_entry_id": str(grant_entry_id) if grant_entry_id else None,
+    }
+    return sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _credit_owner_mutation(
+    *, request: Request, response: Response, db: Session, payload,
+    action: str, grant_entry_id: UUID | None = None,
+):
+    """Reautentica, serializa, audita e confirma uma mutação financeira do proprietário."""
+    require_same_origin(request)
+    session = _require_credit_owner(request, db, response)
+    from app import platform_console
+
+    platform_console.require_console_owner(db, session)
+    admin = db.scalar(select(AdminUser).where(AdminUser.id == session.subject_id)
+                      .with_for_update().execution_options(populate_existing=True))
+    if admin is None:
+        raise HTTPException(403, "Acesso não autorizado.", headers={"Cache-Control": "private, no-store"})
+
+    evidence = _credit_mutation_evidence(action, payload, grant_entry_id=grant_entry_id)
+    previous = db.scalar(select(PlatformAdminEvent).where(
+        PlatformAdminEvent.request_id == payload.request_id,
+    ).with_for_update())
+    if previous is not None:
+        if (previous.actor_admin_id, previous.tenant_id, previous.action, previous.evidence_sha256) != (
+            session.subject_id, payload.tenant_id, action, evidence,
+        ):
+            db.add(PlatformAdminEvent(
+                actor_admin_id=session.subject_id,
+                tenant_id=payload.tenant_id if db.get(Tenant, payload.tenant_id) else None,
+                object_id=payload.tenant_id,
+                action="console.access_denied",
+                result="denied",
+            ))
+            db.commit()
+            raise HTTPException(409, "Identificador já utilizado em outra operação.",
+                                headers={"Cache-Control": "private, no-store"})
+        entry = db.scalar(select(PhotographerCreditEntry).where(
+            PhotographerCreditEntry.id == previous.object_id,
+            PhotographerCreditEntry.tenant_id == payload.tenant_id,
+            PhotographerCreditEntry.global_owner_admin_id == session.subject_id,
+        ))
+        if entry is None:
+            raise HTTPException(409, "Operação financeira precisa de reconciliação.",
+                                headers={"Cache-Control": "private, no-store"})
+        return session, entry, True
+
+    enforce_rate_limit(db, f"platform_{action.replace('.', '_')}", str(session.subject_id),
+                       request.client.host if request.client else "unknown")
+    try:
+        step = platform_console.reauthenticate_console_owner(admin, payload)
+    except AdminAccountError:
+        db.add(PlatformAdminEvent(
+            actor_admin_id=session.subject_id,
+            tenant_id=payload.tenant_id if db.get(Tenant, payload.tenant_id) else None,
+            object_id=payload.tenant_id,
+            action="console.access_denied",
+            result="denied",
+        ))
+        db.commit()
+        raise HTTPException(403, "Não foi possível confirmar a operação.",
+                            headers={"Cache-Control": "private, no-store"}) from None
+    except TotpSecretError:
+        db.rollback()
+        raise HTTPException(503, "Autenticador temporariamente indisponível.",
+                            headers={"Cache-Control": "private, no-store"}) from None
+
+    try:
+        if action == "credit.granted":
+            entry = photographer_credits.grant_credits(
+                db, session.subject_id, payload.tenant_id, payload.quantity,
+                payload.idempotency_key, payload.reference,
+            )
+        else:
+            entry = photographer_credits.revoke_grant(
+                db, session.subject_id, payload.tenant_id, grant_entry_id,
+                payload.quantity, payload.idempotency_key, payload.reference,
+            )
+    except HTTPException:
+        db.rollback()
+        admin = db.scalar(select(AdminUser).where(AdminUser.id == session.subject_id)
+                          .with_for_update().execution_options(populate_existing=True))
+        if admin is not None:
+            admin.totp_last_used_step = step
+        db.add(PlatformAdminEvent(
+            actor_admin_id=session.subject_id,
+            tenant_id=payload.tenant_id if db.get(Tenant, payload.tenant_id) else None,
+            object_id=payload.tenant_id,
+            action="console.access_denied",
+            result="denied",
+        ))
+        db.commit()
+        raise
+
+    admin.totp_last_used_step = step
+    db.add(PlatformAdminEvent(
+        request_id=payload.request_id,
+        actor_admin_id=session.subject_id,
+        object_id=entry.id,
+        tenant_id=payload.tenant_id,
+        action=action,
+        evidence_sha256=evidence,
+        result="success",
+        created_at=now(),
+    ))
+    db.flush()
+    platform_console.revalidate_owner_before_commit(db, request, session)
+    db.commit()
+    return session, entry, False
+
+
+def _owner_credit_catalog_mutation(
+    *, request: Request, response: Response, db: Session, payload,
+    tenant_id: UUID | None, action: str, evidence: str, apply, lookup,
+):
+    """Step-up e auditoria atômicos para catálogo e revisão financeira global."""
+    require_same_origin(request)
+    session = _require_credit_owner(request, db, response)
+    from app import platform_console
+
+    platform_console.require_console_owner(db, session)
+    admin = db.scalar(select(AdminUser).where(AdminUser.id == session.subject_id)
+                      .with_for_update().execution_options(populate_existing=True))
+    if admin is None:
+        raise HTTPException(403, "Acesso não autorizado.", headers={"Cache-Control": "private, no-store"})
+
+    previous = db.scalar(select(PlatformAdminEvent).where(
+        PlatformAdminEvent.request_id == payload.request_id,
+    ).with_for_update())
+    if previous is not None:
+        if (previous.actor_admin_id, previous.tenant_id, previous.action, previous.evidence_sha256) != (
+            session.subject_id, tenant_id, action, evidence,
+        ):
+            db.add(PlatformAdminEvent(
+                actor_admin_id=session.subject_id,
+                tenant_id=tenant_id if tenant_id and db.get(Tenant, tenant_id) else None,
+                object_id=tenant_id,
+                action="console.access_denied",
+                result="denied",
+            ))
+            db.commit()
+            raise HTTPException(409, "Identificador já utilizado em outra operação.",
+                                headers={"Cache-Control": "private, no-store"})
+        record = lookup(db, previous.object_id)
+        if record is None:
+            raise HTTPException(409, "Operação precisa de reconciliação.",
+                                headers={"Cache-Control": "private, no-store"})
+        return session, record, True
+
+    enforce_rate_limit(db, f"platform_{action.replace('.', '_')}", str(session.subject_id),
+                       request.client.host if request.client else "unknown")
+    try:
+        step = platform_console.reauthenticate_console_owner(admin, payload)
+    except AdminAccountError:
+        db.add(PlatformAdminEvent(
+            actor_admin_id=session.subject_id,
+            tenant_id=tenant_id if tenant_id and db.get(Tenant, tenant_id) else None,
+            object_id=tenant_id,
+            action="console.access_denied",
+            result="denied",
+        ))
+        db.commit()
+        raise HTTPException(403, "Não foi possível confirmar a operação.",
+                            headers={"Cache-Control": "private, no-store"}) from None
+    except TotpSecretError:
+        db.rollback()
+        raise HTTPException(503, "Autenticador temporariamente indisponível.",
+                            headers={"Cache-Control": "private, no-store"}) from None
+
+    try:
+        record = apply(db, session.subject_id)
+    except (HTTPException, CheckoutError) as exc:
+        db.rollback()
+        admin = db.scalar(select(AdminUser).where(AdminUser.id == session.subject_id)
+                          .with_for_update().execution_options(populate_existing=True))
+        if admin is not None:
+            admin.totp_last_used_step = step
+        db.add(PlatformAdminEvent(
+            actor_admin_id=session.subject_id,
+            tenant_id=tenant_id if tenant_id and db.get(Tenant, tenant_id) else None,
+            object_id=tenant_id,
+            action="console.access_denied",
+            result="denied",
+        ))
+        db.commit()
+        if isinstance(exc, CheckoutError):
+            raise HTTPException(409, detail=str(exc)) from None
+        raise
+
+    admin.totp_last_used_step = step
+    db.add(PlatformAdminEvent(
+        request_id=payload.request_id,
+        actor_admin_id=session.subject_id,
+        object_id=record.id,
+        tenant_id=tenant_id,
+        action=action,
+        evidence_sha256=evidence,
+        result="success",
+        created_at=now(),
+    ))
+    db.flush()
+    platform_console.revalidate_owner_before_commit(db, request, session)
+    db.commit()
+    return session, record, False
+
+
+@app.get("/admin/credits/capabilities")
+def admin_credit_capabilities(
+    request: Request, response: Response, db: Session = Depends(db_session),
+) -> dict[str, bool]:
+    from app.system_monitor.access import is_owner
+
+    response.headers["Cache-Control"] = "private, no-store"
+    session = require_admin(request)
+    return {"manage_packages": is_owner(db, session.subject_id)}
+
+
+@app.get("/admin/credits/wallet")
+def admin_credit_wallet(request: Request, response: Response, db: Session = Depends(db_session)):
+    tenant_id = directory_tenant_id(db, request)
+    response.headers["Cache-Control"] = "private, no-store"
+    snapshot = photographer_credits.wallet_snapshot(db, tenant_id)
+    return {"wallet": snapshot, "entries": photographer_credits.list_entries(db, tenant_id)}
+
+
+@app.get("/admin/media-archive/recovery-pricing")
+def admin_media_archive_recovery_pricing(
+    request: Request, response: Response, db: Session = Depends(db_session),
+):
+    session = require_admin(request)
+    tenant_id = directory_tenant_id(db, request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return media_archive_billing.recovery_pricing_payload(db, tenant_id, session.subject_id)
+
+
+@app.get("/admin/media-archive/recovery-candidates")
+def admin_media_archive_recovery_candidates(
+    request: Request,
+    response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(db_session),
+):
+    require_admin(request)
+    tenant_id = directory_tenant_id(db, request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return {"items": media_archive_billing.list_recovery_candidates(db, tenant_id, limit=limit)}
+
+
+@app.get("/admin/media-archive/recoveries")
+def admin_media_archive_recoveries(
+    request: Request, response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(db_session),
+):
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return {"items": media_archive_billing.list_tenant_recoveries(db, tenant_id, limit=limit)}
+
+
+@app.post("/admin/media-archive/cycles/{cycle_id}/recovery", status_code=202)
+def admin_request_media_archive_recovery(
+    cycle_id: UUID,
+    payload: MediaArchiveRecoveryInput,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+):
+    require_same_origin(request)
+    session = require_admin(request)
+    tenant_id = directory_tenant_id(db, request)
+    response.headers["Cache-Control"] = "private, no-store"
+    result = media_archive_billing.request_recovery(
+        db,
+        tenant_id=tenant_id,
+        actor_admin_id=session.subject_id,
+        cycle_id=cycle_id,
+        duration_days=payload.duration_days,
+        idempotency_key=payload.idempotency_key,
+    )
+    db.commit()
+    return result
+
+
+@app.get("/admin/credits/history")
+def admin_credit_history(
+    request: Request, response: Response,
+    limit: int = Query(default=30, ge=1, le=30), offset: int = Query(default=0, ge=0, le=100_000),
+    as_of: datetime | None = None, db: Session = Depends(db_session),
+):
+    tenant_id = directory_tenant_id(db, request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return credit_history.history_page(db, tenant_id, limit=limit, offset=offset, as_of=as_of)
+
+
+@app.get("/admin/credits/history/folders/{folder_id}")
+def admin_credit_folder_history(
+    folder_id: UUID, request: Request, response: Response,
+    limit: int = Query(default=20, ge=1, le=30), offset: int = Query(default=0, ge=0, le=100_000),
+    as_of: datetime | None = None, db: Session = Depends(db_session),
+):
+    tenant_id = directory_tenant_id(db, request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return credit_history.folder_entry_page(db, tenant_id, folder_id, limit=limit, offset=offset, as_of=as_of)
+
+
+@app.get("/admin/credits/packages")
+def admin_active_credit_packages(
+    request: Request, response: Response, db: Session = Depends(db_session),
+):
+    from app.system_monitor.access import is_owner
+
+    response.headers["Cache-Control"] = "private, no-store"
+    session = require_admin(request)
+    tenant_id = directory_tenant_id(db, request)
+    if is_owner(db, session.subject_id):
+        raise HTTPException(status_code=403, detail="Catálogo disponível para fotógrafos ativos.")
+    wallet = photographer_credits.wallet_snapshot(db, tenant_id)
+    if wallet["mode"] != "finite":
+        raise HTTPException(status_code=403, detail="Catálogo disponível para fotógrafos ativos.")
+    return {"items": photographer_credits.list_active_packages(db)}
+
+
+@app.get("/admin/photo-assets/{photo_id}/credit-operation")
+def admin_photo_credit_operation(
+    photo_id: UUID, request: Request, response: Response, db: Session = Depends(db_session),
+):
+    """Expõe ao próprio tenant o estado mínimo da operação de crédito de uma foto."""
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
+    if photo is None:
+        raise HTTPException(status_code=404, detail="Foto não encontrada.")
+
+    folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=tenant_id)
+    is_content = bool(folder and folder.purpose == "content")
+    operation = db.scalar(select(PhotoCreditOperation).where(
+        PhotoCreditOperation.tenant_id == tenant_id,
+        PhotoCreditOperation.photo_asset_id_snapshot == photo.id,
+    )) if is_content else None
+    return {
+        "wallet": photographer_credits.wallet_snapshot(db, tenant_id),
+        "applicable": is_content,
+        "operation": None if operation is None else {
+            "status": operation.status,
+            "quantity": operation.quantity,
+            "updated_at": operation.updated_at,
+        },
+    }
+
+
+@app.get("/admin/credits/entries")
+def admin_credit_entries(
+    request: Request, response: Response, limit: int = Query(default=30, ge=1, le=100),
+    db: Session = Depends(db_session),
+):
+    tenant_id = directory_tenant_id(db, request)
+    response.headers["Cache-Control"] = "private, no-store"
+    return {"items": photographer_credits.list_entries(db, tenant_id, limit=limit)}
+
+
+@app.get("/admin/platform/credit-packages")
+def admin_credit_packages(
+    request: Request, response: Response, db: Session = Depends(db_session),
+):
+    session = _require_credit_owner(request, db, response)
+    return {"items": photographer_credits.list_packages(db, session.subject_id)}
+
+
+@app.post("/admin/platform/credit-packages")
+def admin_create_credit_package(
+    payload: PhotographerCreditPackageInput,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+):
+    values = payload.model_dump(exclude={"request_id", "current_password", "totp_code"})
+    evidence = sha256(json.dumps({"action": "credit.package_created", **values},
+                                 sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=False).encode("utf-8")).hexdigest()
+    session, package, replayed = _owner_credit_catalog_mutation(
+        request=request, response=response, db=db, payload=payload, tenant_id=None,
+        action="credit.package_created", evidence=evidence,
+        apply=lambda session_db, owner_id: photographer_credits.create_package(
+            session_db, owner_id, **values,
+        ),
+        lookup=lambda session_db, object_id: session_db.get(PhotographerCreditPackage, object_id),
+    )
+    return _credit_owner_response(db, request, session, {
+        **photographer_credits.package_payload(package), "replayed": replayed,
+    })
+
+
+@app.put("/admin/platform/credit-packages/{package_id}")
+def admin_update_credit_package(
+    package_id: UUID,
+    payload: PhotographerCreditPackageInput,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+):
+    values = payload.model_dump(exclude={"request_id", "current_password", "totp_code"})
+    evidence = sha256(json.dumps({"action": "credit.package_updated", "package_id": str(package_id),
+                                 **values}, sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=False).encode("utf-8")).hexdigest()
+    session, package, replayed = _owner_credit_catalog_mutation(
+        request=request, response=response, db=db, payload=payload, tenant_id=None,
+        action="credit.package_updated", evidence=evidence,
+        apply=lambda session_db, owner_id: photographer_credits.update_package(
+            session_db, owner_id, package_id, **values,
+        ),
+        lookup=lambda session_db, object_id: session_db.get(PhotographerCreditPackage, object_id),
+    )
+    return _credit_owner_response(db, request, session, {
+        **photographer_credits.package_payload(package), "replayed": replayed,
+    })
+
+
+@app.get("/admin/platform/credit-tenants")
+def admin_credit_tenants(
+    request: Request, response: Response, db: Session = Depends(db_session),
+):
+    session = _require_credit_owner(request, db, response)
+    return {"items": photographer_credits.list_credit_tenants(db, session.subject_id)}
+
+
+@app.get("/admin/platform/credit-tenants/search")
+def admin_search_credit_tenants(
+    request: Request,
+    response: Response,
+    query: str = Query(default="", max_length=254),
+    mode: Literal["all", "alphabetical", "recent"] | None = None,
+    limit: int = Query(default=10, ge=1, le=20),
+    offset: int = Query(default=0, ge=0, le=100_000),
+    db: Session = Depends(db_session),
+):
+    session = _require_credit_owner(request, db, response)
+    return photographer_credits.browse_credit_tenants(
+        db, session.subject_id, query=query, mode=mode, limit=limit, offset=offset,
+    )
+
+
+@app.get("/admin/platform/credit-tenants/{tenant_id}")
+def admin_credit_tenant_detail(
+    tenant_id: UUID,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+):
+    session = _require_credit_owner(request, db, response)
+    result = photographer_credits.credit_tenant_detail(db, session.subject_id, tenant_id)
+    result["media_archive_recoveries"] = media_archive_billing.list_owner_recoveries(
+        db, session.subject_id, tenant_id,
+    )
+    return result
+
+
+
+
+@app.get("/admin/platform/credit-tenants/{tenant_id}/history")
+def admin_owner_credit_history(
+    tenant_id: UUID, request: Request, response: Response,
+    limit: int = Query(default=30, ge=1, le=30), offset: int = Query(default=0, ge=0, le=100_000),
+    as_of: datetime | None = None, db: Session = Depends(db_session),
+):
+    _require_credit_owner(request, db, response)
+    return credit_history.history_page(db, tenant_id, limit=limit, offset=offset, as_of=as_of)
+
+
+@app.get("/admin/platform/credit-tenants/{tenant_id}/history/folders/{folder_id}")
+def admin_owner_credit_folder_history(
+    tenant_id: UUID, folder_id: UUID, request: Request, response: Response,
+    limit: int = Query(default=20, ge=1, le=30), offset: int = Query(default=0, ge=0, le=100_000),
+    as_of: datetime | None = None, db: Session = Depends(db_session),
+):
+    _require_credit_owner(request, db, response)
+    return credit_history.folder_entry_page(db, tenant_id, folder_id, limit=limit, offset=offset, as_of=as_of)
+
+
+@app.get("/admin/platform/credit-purchases/reviews")
+def admin_credit_purchase_reviews(
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+):
+    session = _require_credit_owner(request, db, response)
+    from app.mercadopago_credit_purchases import financial_review_queue
+
+    try:
+        return {"items": financial_review_queue(db, session.subject_id)}
+    except CheckoutError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
+
+
+@app.post("/admin/platform/credit-purchases/{purchase_id}/review")
+def admin_review_credit_purchase(
+    purchase_id: UUID,
+    payload: PhotographerCreditReviewInput,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+):
+    from app.mercadopago_credit_purchases import resolve_credit_purchase_review
+    purchase = db.get(MercadoPagoCreditPurchase, purchase_id)
+    tenant_id = purchase.tenant_id if purchase else None
+    evidence = sha256(json.dumps({
+        "action": "credit.purchase_reviewed", "purchase_id": str(purchase_id),
+        "decision": payload.decision, "reason": payload.reason,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+    session, purchase, replayed = _owner_credit_catalog_mutation(
+        request=request, response=response, db=db, payload=payload, tenant_id=tenant_id,
+        action="credit.purchase_reviewed", evidence=evidence,
+        apply=lambda session_db, owner_id: resolve_credit_purchase_review(
+            session_db, owner_admin_id=owner_id, purchase_id=purchase_id,
+            decision=payload.decision, reason=payload.reason,
+        ),
+        lookup=lambda session_db, object_id: session_db.get(MercadoPagoCreditPurchase, object_id),
+    )
+    result = photographer_credits.credit_tenant_detail(db, session.subject_id, purchase.tenant_id)
+    return _credit_owner_response(db, request, session, {**result, "replayed": replayed})
+
+
+@app.post("/admin/platform/credit-grants")
+def admin_grant_photographer_credits(
+    payload: PhotographerCreditGrantInput,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+):
+    session, entry, _replayed = _credit_owner_mutation(
+        request=request, response=response, db=db, payload=payload, action="credit.granted",
+    )
+    return _credit_owner_response(db, request, session, {
+        "entry": photographer_credits.entry_payload(entry),
+        "wallet": photographer_credits.wallet_snapshot(db, payload.tenant_id),
+        "replayed": _replayed,
+    })
+
+
+@app.post("/admin/platform/credit-grants/{grant_entry_id}/revoke")
+def admin_revoke_photographer_credits(
+    grant_entry_id: UUID,
+    payload: PhotographerCreditRevocationInput,
+    request: Request,
+    response: Response,
+    db: Session = Depends(db_session),
+):
+    session, entry, _replayed = _credit_owner_mutation(
+        request=request, response=response, db=db, payload=payload, action="credit.revoked",
+        grant_entry_id=grant_entry_id,
+    )
+    return _credit_owner_response(db, request, session, {
+        "entry": photographer_credits.entry_payload(entry),
+        "wallet": photographer_credits.wallet_snapshot(db, payload.tenant_id),
+        "replayed": _replayed,
+    })
 
 
 @app.get("/admin/installation-capabilities")
@@ -2917,101 +3828,6 @@ def admin_facial_observability(
         "metrics": [asdict(metric) for metric in metrics],
         "alerts": [asdict(alert) for alert in alerts],
     }
-
-
-def _facial_embedding_experiment_payload(db: Session, setting: FacialEmbeddingExperimentSetting | None):
-    from datetime import UTC, timedelta
-
-    from app.facial.gemma_provider import GEMMA_MODEL_ID, GEMMA_MODEL_REVISION
-
-    current = now()
-    worker_seen = setting.worker_last_seen_at if setting else None
-    if worker_seen is not None and worker_seen.tzinfo is None:
-        worker_seen = worker_seen.replace(tzinfo=UTC)
-    worker_ready = bool(worker_seen and timedelta(0) <= current - worker_seen <= timedelta(seconds=45))
-    model_id = GEMMA_MODEL_ID
-    model_version_prefix = f"embeddinggemma-2-{GEMMA_MODEL_REVISION[:12]}"
-    indexed_faces = db.scalar(select(func.count()).select_from(PhotoFaceEmbedding).where(
-        PhotoFaceEmbedding.model_id == model_id,
-        PhotoFaceEmbedding.model_version.startswith(model_version_prefix),
-    )) or 0
-    job_counts = {
-        state: int(db.scalar(select(func.count()).select_from(FacialJob).where(
-            FacialJob.kind == "index_gemma", FacialJob.status == state,
-        )) or 0)
-        for state in ("queued", "processing", "completed", "failed", "cancelled")
-    }
-    return {
-        "enabled": bool(setting and setting.enabled),
-        "mode": "shadow",
-        "model_id": "google/embeddinggemma-2",
-        "model_revision": GEMMA_MODEL_REVISION,
-        "worker_ready": worker_ready,
-        "worker_last_seen_at": worker_seen.isoformat() if worker_seen else None,
-        "indexed_faces": int(indexed_faces),
-        "jobs": job_counts,
-        "serving_engine": (
-            model_id if setting is not None and setting.enabled else "opencv-yunet-sface"
-        ),
-        "gallery_fallback": "opencv-yunet-sface",
-        "backfill_enabled": False,
-    }
-
-
-@app.get("/admin/facial-engine-experiment")
-def admin_facial_engine_experiment(
-    request: Request, response: Response, db: Session = Depends(db_session)
-) -> dict[str, object]:
-    require_installation_operator(request)
-    response.headers["Cache-Control"] = "private, no-store"
-    setting = db.get(FacialEmbeddingExperimentSetting, 1, populate_existing=True)
-    return _facial_embedding_experiment_payload(db, setting)
-
-
-@app.patch("/admin/facial-engine-experiment")
-def update_admin_facial_engine_experiment(
-    payload: FacialEmbeddingExperimentInput,
-    request: Request,
-    response: Response,
-    db: Session = Depends(db_session),
-) -> dict[str, object]:
-    session = require_admin(request)
-    require_installation_operator(request)
-    require_same_origin(request)
-    response.headers["Cache-Control"] = "private, no-store"
-    setting = db.get(FacialEmbeddingExperimentSetting, 1, with_for_update=True)
-    if payload.enabled:
-        try:
-            facial_runtime = facial_settings_from_environment(verify_runtime_assets=False)
-        except FacialConfigurationError:
-            facial_runtime = None
-        if facial_runtime is None or not facial_runtime.enabled:
-            raise HTTPException(status_code=409, detail="O processamento facial global está desligado.")
-        if facial_runtime.environment.lower() in {"prod", "production"}:
-            raise HTTPException(
-                status_code=409,
-                detail="Gemma só pode ser selecionado em homologação privada autorizada.",
-            )
-        state = _facial_embedding_experiment_payload(db, setting)
-        if not state["worker_ready"]:
-            raise HTTPException(status_code=409, detail="O worker Gemma local não está pronto.")
-    if setting is None:
-        setting = FacialEmbeddingExperimentSetting(singleton=1)
-        db.add(setting)
-    setting.enabled = payload.enabled
-    if payload.enabled and setting.enabled_since is None:
-        setting.enabled_since = now()
-    setting.mode = "shadow"
-    setting.updated_by_admin_id = session.subject_id
-    setting.updated_at = now()
-    audit(
-        db,
-        "facial.embedding_experiment_updated",
-        f"enabled:{str(payload.enabled).lower()};scope:new_galleries;"
-        "purpose:private_engine_comparison",
-    )
-    db.commit()
-    return _facial_embedding_experiment_payload(db, setting)
 
 
 @app.get("/admin/clients")
@@ -3277,7 +4093,7 @@ def parent_gallery_overview(
         ):
             continue
         frozen = sum(
-            bool(gallery.selection_expires_at and expired(gallery.selection_expires_at))
+            bool(gallery_operational_status(db, gallery)["frozen"])
             for gallery in galleries
         )
         rows.append(
@@ -3361,7 +4177,7 @@ def _gallery_cover_photo(db: Session, gallery: ParentGallery) -> PhotoAsset | No
 
 def _cover_preview_url(db: Session, gallery: ParentGallery) -> str | None:
     cover = _gallery_cover_photo(db, gallery)
-    if not cover:
+    if not cover or not _cover_thumbnail_is_local(db, gallery, cover.id):
         return None
     ready = db.scalar(
         select(MediaDerivative.id).where(MediaDerivative.tenant_id == gallery.tenant_id).where(
@@ -3371,6 +4187,130 @@ def _cover_preview_url(db: Session, gallery: ParentGallery) -> str | None:
         )
     )
     return f"/admin/photo-assets/{cover.id}/preview" if ready else None
+
+
+def _archive_object_state(
+    db: Session, *, tenant_id: UUID, parent_gallery_id: UUID,
+    source_ref: str, object_type: str,
+) -> str:
+    state = db.scalar(
+        select(MediaArchiveCycle.state)
+        .join(
+            MediaArchiveObject,
+            (MediaArchiveObject.cycle_id == MediaArchiveCycle.id)
+            & (MediaArchiveObject.tenant_id == MediaArchiveCycle.tenant_id),
+        )
+        .where(
+            MediaArchiveCycle.tenant_id == tenant_id,
+            MediaArchiveCycle.parent_gallery_id == parent_gallery_id,
+            MediaArchiveObject.source_ref == source_ref,
+            MediaArchiveObject.object_type == object_type,
+        )
+        .order_by(MediaArchiveCycle.created_at.desc(), MediaArchiveCycle.id.desc())
+        .limit(1)
+    )
+    return "available" if state in (None, "local") else str(state)
+
+
+def _cover_thumbnail_state(
+    db: Session, gallery: ParentGallery, photo_id: UUID,
+) -> str:
+    return _archive_object_state(
+        db,
+        tenant_id=gallery.tenant_id,
+        parent_gallery_id=gallery.id,
+        source_ref=f"cover:{photo_id}:admin_preview",
+        object_type="cover_thumbnail",
+    )
+
+
+def _cover_thumbnail_is_local(
+    db: Session, gallery: ParentGallery, photo_id: UUID,
+) -> bool:
+    return _cover_thumbnail_state(db, gallery, photo_id) in {"available", "archiving"}
+
+
+def _local_cover_thumbnail_parent_ids(
+    db: Session, *, tenant_id: UUID, parent_ids: set[UUID],
+) -> set[UUID]:
+    if not parent_ids:
+        return set()
+    parents = list(db.scalars(select(ParentGallery).where(
+        ParentGallery.tenant_id == tenant_id,
+        ParentGallery.id.in_(parent_ids),
+        ParentGallery.cover_photo_id.is_not(None),
+    )))
+    cover_refs = {
+        (parent.id, f"cover:{parent.cover_photo_id}:admin_preview")
+        for parent in parents
+    }
+    if not cover_refs:
+        return set()
+    source_refs = {source_ref for _, source_ref in cover_refs}
+    rows = db.execute(
+        select(
+            MediaArchiveCycle.parent_gallery_id,
+            MediaArchiveObject.source_ref,
+            MediaArchiveCycle.state,
+        )
+        .join(
+            MediaArchiveCycle,
+            (MediaArchiveCycle.id == MediaArchiveObject.cycle_id)
+            & (MediaArchiveCycle.tenant_id == MediaArchiveObject.tenant_id),
+        )
+        .where(
+            MediaArchiveObject.tenant_id == tenant_id,
+            MediaArchiveObject.source_ref.in_(source_refs),
+            MediaArchiveObject.object_type == "cover_thumbnail",
+            MediaArchiveCycle.parent_gallery_id.in_(parent_ids),
+        )
+        .order_by(
+            MediaArchiveCycle.parent_gallery_id,
+            MediaArchiveObject.source_ref,
+            MediaArchiveCycle.created_at.desc(),
+            MediaArchiveCycle.id.desc(),
+        )
+    )
+    latest_states: dict[tuple[UUID, str], str] = {}
+    for parent_id, source_ref, state in rows:
+        latest_states.setdefault((parent_id, source_ref), state)
+    return {
+        parent.id
+        for parent in parents
+        if latest_states.get(
+            (parent.id, f"cover:{parent.cover_photo_id}:admin_preview"),
+            "available",
+        ) in {"available", "local", "archiving"}
+    }
+
+
+def _admin_photo_preview_available(
+    db: Session, photo: PhotoAsset, *, allow_cover_thumbnail: bool,
+) -> bool:
+    folder = db.scalar(select(PhotoFolder).where(
+        PhotoFolder.id == photo.folder_id,
+        PhotoFolder.tenant_id == photo.tenant_id,
+    ))
+    if not folder:
+        return False
+    if folder.purpose == "content" and folder_media_is_local(db, folder):
+        return True
+    gallery = owned_record(db, ParentGallery, photo.parent_gallery_id, tenant_id=photo.tenant_id)
+    if not gallery:
+        return False
+    if folder.purpose == "cover_assets":
+        return _archive_object_state(
+            db,
+            tenant_id=photo.tenant_id,
+            parent_gallery_id=gallery.id,
+            source_ref=f"photo:{photo.id}:original",
+            object_type="cover_asset",
+        ) in {"available", "archiving"}
+    if gallery.cover_photo_id != photo.id:
+        return False
+    if allow_cover_thumbnail:
+        return _cover_thumbnail_is_local(db, gallery, photo.id)
+    return False
 
 
 def _cover_derivative(db: Session, photo_id: UUID, *, tenant_id: UUID) -> MediaDerivative | None:
@@ -3565,7 +4505,6 @@ def parent_gallery_settings(
         "cover_title_position": gallery.cover_title_position,
         "payment_required": gallery.payment_required,
         "sales_message": gallery.sales_message or "",
-        "selection_duration_days": gallery.selection_duration_days,
         "favorites_enabled": gallery.favorites_enabled,
         "comments_enabled": gallery.comments_enabled,
     }
@@ -3671,9 +4610,24 @@ def set_parent_gallery_cover(
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
     gallery = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
+    gallery = db.scalar(select(ParentGallery).where(
+        ParentGallery.id == gallery.id, ParentGallery.tenant_id == tenant_id,
+    ).with_for_update())
+    if not gallery or not gallery_media_writes_allowed(
+        db, tenant_id=tenant_id, parent_gallery_id=parent_gallery_id,
+    ):
+        raise HTTPException(status_code=409, detail="A capa aguarda a conclusão do arquivamento da galeria.")
     photo = owned_record(db, PhotoAsset, payload.photo_id, tenant_id=tenant_id)
     if not photo or photo.parent_gallery_id != gallery.id:
         raise HTTPException(status_code=422, detail="A capa precisa pertencer a esta galeria.")
+    photo_folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=tenant_id)
+    if (
+        not photo_folder
+        or (photo_folder.purpose == "content" and not folder_media_is_local(db, photo_folder))
+        or (photo_folder.purpose == "cover_assets"
+            and not folder_media_writes_allowed(db, photo_folder))
+    ):
+        raise HTTPException(status_code=409, detail="A foto da capa está arquivada ou indisponível.")
     dimensions = _client_preview_derivative(db, photo.id, tenant_id=tenant_id)
     if gallery.cover_photo_id != photo.id and (
         not dimensions or not dimensions.width or not dimensions.height
@@ -3705,6 +4659,13 @@ def clear_parent_gallery_cover(
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
     gallery = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
+    gallery = db.scalar(select(ParentGallery).where(
+        ParentGallery.id == gallery.id, ParentGallery.tenant_id == tenant_id,
+    ).with_for_update())
+    if not gallery or not gallery_media_writes_allowed(
+        db, tenant_id=tenant_id, parent_gallery_id=parent_gallery_id,
+    ):
+        raise HTTPException(status_code=409, detail="A capa aguarda a conclusão do arquivamento da galeria.")
     gallery.cover_photo_id = None
     audit(db, "parent_gallery.cover_cleared", str(gallery.id), tenant_id=tenant_id)
     db.commit()
@@ -3725,12 +4686,10 @@ def parent_gallery_sales(
             "pix",
             "sales_message",
             "interactions",
-            "selection_deadline",
         ],
         "payment_required": gallery.payment_required,
         "sales_message": gallery.sales_message or "",
         "payment_methods": payment_methods(db, tenant_id=tenant_id),
-        "selection_duration_days": gallery.selection_duration_days,
         "favorites_enabled": gallery.favorites_enabled,
         "comments_enabled": gallery.comments_enabled,
         **pricing_payload(db, gallery.id, tenant_id=tenant_id),
@@ -3755,7 +4714,6 @@ def update_parent_gallery_sales(
         tiers = []
     gallery.payment_required = payload.payment_required
     gallery.sales_message = payload.sales_message.strip() if payload.sales_message else None
-    gallery.selection_duration_days = payload.selection_duration_days
     gallery.favorites_enabled = payload.favorites_enabled
     gallery.comments_enabled = payload.comments_enabled
     audit(db, "parent_gallery.sales_updated", str(gallery.id), tenant_id=tenant_id)
@@ -3791,7 +4749,9 @@ def parent_gallery_details(
                 "source": cover_folder.purpose if cover_folder else "cover_assets",
                 "status": cover_status,
                 "preview_url": f"/admin/photo-assets/{cover.id}/preview"
-                if cover_derivative
+                if cover_derivative and _admin_photo_preview_available(
+                    db, cover, allow_cover_thumbnail=True,
+                )
                 else None,
                 "width": cover_derivative.width if cover_derivative else None,
                 "height": cover_derivative.height if cover_derivative else None,
@@ -3831,8 +4791,19 @@ def register_parent_gallery_cover_photo(
     """Registra um JPEG de capa na pasta técnica sem publicá-lo como conteúdo."""
 
     tenant_id = directory_tenant_id(db, request)
-    require_admin(request)
+    from app.tenant_closure import require_new_work
+    require_new_work(db, tenant_id)
+    admin_session = require_admin(request)
+    from app.photographer_onboarding import require_upload_ready
+    require_upload_ready(db, tenant_id=tenant_id, admin_id=admin_session.subject_id)
     gallery = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
+    gallery = db.scalar(select(ParentGallery).where(
+        ParentGallery.id == gallery.id, ParentGallery.tenant_id == tenant_id,
+    ).with_for_update())
+    if not gallery or not gallery_media_writes_allowed(
+        db, tenant_id=tenant_id, parent_gallery_id=parent_gallery_id,
+    ):
+        raise HTTPException(status_code=409, detail="A capa aguarda a conclusão do arquivamento da galeria.")
     if not gallery.active:
         raise HTTPException(status_code=409, detail="A galeria está bloqueada para novas fotos.")
     folder = _cover_assets_folder(db, gallery)
@@ -4313,6 +5284,10 @@ def admin_parent_gallery_available_photos(
             )
         )
     }
+    media_states = folder_media_states_by_id(
+        db, folder_ids=set(folders), tenant_id=tenant_id,
+    )
+    photos = [photo for photo in photos if media_states.get(photo.folder_id) == "available"]
     ready_derivatives = (
         {
             derivative.photo_asset_id: derivative
@@ -4402,6 +5377,7 @@ def admin_parent_gallery_folders(
             client_names_by_folder.setdefault(folder_id, []).append(client_name)
     rows = []
     for folder in folders:
+        media_state = folder_media_state(db, folder)
         count = (
             db.scalar(
                 select(func.count())
@@ -4451,9 +5427,16 @@ def admin_parent_gallery_folders(
             "photo_count": count,
             "publication_counts": state_counts,
             "preview_url": f"/admin/photo-assets/{preview_photo_id}/watermarked-preview"
-            if preview_photo_id
+            if preview_photo_id and media_state in {"available", "archiving"}
             else None,
+            "media_state": media_state,
             "released_at": folder.released_at.isoformat() if folder.released_at else None,
+            "access_duration_days": folder.access_duration_days,
+            "can_renew_deadline": public_folder_deadline_renewable(
+                db, folder, media_state=media_state,
+            ),
+            "access_expires_at": folder.access_expires_at.isoformat()
+            if folder.access_expires_at else None,
         }
         if include_restricted and folder.audience_scope == "selected":
             folder_row["client_names"] = client_names_by_folder.get(folder.id, [])
@@ -4471,6 +5454,8 @@ def create_photo_folder(
     db: Session = Depends(db_session),
 ) -> dict[str, object]:
     tenant_id = directory_tenant_id(db, request)
+    from app.tenant_closure import require_new_work
+    require_new_work(db, tenant_id)
     require_admin(request)
     parent = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
     if not parent.active:
@@ -4494,6 +5479,7 @@ def create_photo_folder(
     folder = PhotoFolder(
         parent_gallery_id=parent_gallery_id,
         name=payload.name.strip(),
+        access_duration_days=payload.access_duration_days,
         position=position,
         purpose="content",
         audience_scope="all",
@@ -4506,7 +5492,12 @@ def create_photo_folder(
     initialize_folder_processing(db, folder)
     audit(db, "photo_folder.created", str(folder.id), tenant_id=tenant_id)
     db.commit()
-    return {"id": str(folder.id), "status": folder.status, "position": folder.position}
+    return {
+        "id": str(folder.id), "status": folder.status, "position": folder.position,
+        "access_duration_days": folder.access_duration_days,
+        "access_expires_at": folder.access_expires_at.isoformat()
+        if folder.access_expires_at else None,
+    }
 
 
 def _admin_linked_gallery_client(
@@ -4567,8 +5558,14 @@ def admin_client_restricted_folders(
         "photo_count": db.scalar(select(func.count(PhotoAsset.id)).where(PhotoAsset.tenant_id == tenant_id).where(
             PhotoAsset.folder_id == folder.id
         )) or 0,
+        "released_at": folder.released_at.isoformat() if folder.released_at else None,
+        "access_duration_days": folder.access_duration_days,
+        "access_expires_at": folder.access_expires_at.isoformat()
+        if folder.access_expires_at else None,
+        "media_state": folder_media_state(db, folder),
         "preview_url": f"/admin/photo-assets/{preview_by_folder[folder.id]}/watermarked-preview"
-        if preview_by_folder[folder.id] else None,
+        if preview_by_folder[folder.id]
+        and folder_media_state(db, folder) in {"available", "archiving"} else None,
     } for folder in folders]}
 
 
@@ -4581,6 +5578,8 @@ def create_admin_client_restricted_folder(
     request: Request, db: Session = Depends(db_session),
 ) -> dict[str, object]:
     tenant_id = directory_tenant_id(db, request)
+    from app.tenant_closure import require_new_work
+    require_new_work(db, tenant_id)
     require_admin(request)
     parent = require_parent_gallery_mutable(db, parent_gallery_id, tenant_id=tenant_id)
     if not parent.active:
@@ -4612,6 +5611,7 @@ def create_admin_client_restricted_folder(
     ))
     folder = PhotoFolder(
         parent_gallery_id=parent_gallery_id, name=payload.name.strip(),
+        access_duration_days=payload.access_duration_days,
         position=(last_position if last_position is not None else -1) + 1,
         purpose="content", audience_scope="selected",
         tenant_id=tenant_id,
@@ -4628,7 +5628,12 @@ def create_admin_client_restricted_folder(
     initialize_folder_processing(db, folder)
     audit(db, "photo_folder.restricted_created", str(folder.id), tenant_id=tenant_id)
     db.commit()
-    return {"id": str(folder.id), "status": folder.status, "position": folder.position}
+    return {
+        "id": str(folder.id), "status": folder.status, "position": folder.position,
+        "access_duration_days": folder.access_duration_days,
+        "access_expires_at": folder.access_expires_at.isoformat()
+        if folder.access_expires_at else None,
+    }
 
 
 @app.post(
@@ -4759,12 +5764,108 @@ def rename_photo_folder(
         )
     else:
         require_parent_gallery_mutable(db, folder.parent_gallery_id, tenant_id=tenant_id)
-    if folder.status == "released":
-        raise HTTPException(status_code=409, detail="Uma pasta liberada não pode ser renomeada.")
-    folder.name = payload.name.strip()
+    folder.name = payload.name
     audit(db, "photo_folder.renamed", str(folder.id), tenant_id=tenant_id)
     db.commit()
     return {"id": str(folder.id), "name": folder.name}
+
+
+@app.patch("/admin/photo-folders/{folder_id}/renew-deadline")
+def renew_public_photo_folder_deadline(
+    folder_id: UUID,
+    payload: PhotoFolderDeadlineInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    from app.folder_access import REOPENING_WINDOW
+    from app.media_archive_notices import supersede_window_notices_for_folder
+    from app.tenant_closure import require_new_work
+
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    parent_id = db.scalar(select(PhotoFolder.parent_gallery_id).where(
+        PhotoFolder.id == folder_id,
+        PhotoFolder.tenant_id == tenant_id,
+        PhotoFolder.purpose == "content",
+    ))
+    if parent_id is None:
+        raise HTTPException(404, "Pasta não encontrada.")
+    # Serializa encerramento sem bloquear KEY SHARE de FKs do arquivo frio.
+    require_new_work(db, tenant_id, no_key_update=True)
+    db.scalar(select(ParentGallery).where(
+        ParentGallery.id == parent_id, ParentGallery.tenant_id == tenant_id,
+    ).with_for_update().execution_options(populate_existing=True))
+    require_parent_gallery_mutable(db, parent_id, tenant_id=tenant_id)
+    folder = db.scalar(select(PhotoFolder).where(
+        PhotoFolder.id == folder_id, PhotoFolder.tenant_id == tenant_id,
+        PhotoFolder.parent_gallery_id == parent_id,
+    ).with_for_update().execution_options(populate_existing=True))
+    instant = now()
+    if not folder or not public_folder_deadline_renewable(db, folder, at=instant):
+        raise HTTPException(
+            409, "A renovação exige pasta pública expirada há até 30 dias e mídia disponível.",
+        )
+    try:
+        new_expiry = instant + timedelta(days=payload.access_duration_days)
+        archive_deadline = new_expiry + REOPENING_WINDOW
+    except OverflowError:
+        raise HTTPException(422, "Informe uma duração válida em dias.") from None
+    folder.access_duration_days = payload.access_duration_days
+    folder.access_expires_at = new_expiry
+    supersede_window_notices_for_folder(
+        db, tenant_id=tenant_id, folder_id=folder.id,
+        current_deadline=archive_deadline, at=instant,
+    )
+    audit(db, "photo_folder.deadline_renewed", str(folder.id), tenant_id=tenant_id)
+    db.commit()
+    return {
+        "id": str(folder.id), "access_duration_days": folder.access_duration_days,
+        "access_expires_at": new_expiry.isoformat(),
+        "released_at": folder.released_at.isoformat(), "can_renew_deadline": False,
+    }
+
+
+@app.patch("/admin/photo-folders/{folder_id}/deadline")
+def configure_photo_folder_deadline(
+    folder_id: UUID,
+    payload: PhotoFolderDeadlineInput,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    tenant_id = directory_tenant_id(db, request)
+    require_admin(request)
+    folder = db.scalar(
+        select(PhotoFolder)
+        .where(PhotoFolder.tenant_id == tenant_id, PhotoFolder.id == folder_id)
+        .with_for_update()
+    )
+    if not folder or folder.purpose != "content":
+        raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    if folder.derived_gallery_id:
+        require_derived_gallery_mutable(
+            db, folder.derived_gallery_id, allow_deleted_origin=True,
+            tenant_id=tenant_id,
+        )
+    else:
+        require_parent_gallery_mutable(db, folder.parent_gallery_id, tenant_id=tenant_id)
+    if folder.released_at is not None:
+        if folder.access_duration_days is not None or folder.access_expires_at is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="O prazo de uma pasta liberada não pode ser alterado diretamente.",
+            )
+        # Pastas legadas começam indeterminadas; seu primeiro prazo começa agora.
+        folder.access_expires_at = now() + timedelta(days=payload.access_duration_days)
+    folder.access_duration_days = payload.access_duration_days
+    audit(db, "photo_folder.deadline_configured", str(folder.id), tenant_id=tenant_id)
+    db.commit()
+    return {
+        "id": str(folder.id),
+        "access_duration_days": folder.access_duration_days,
+        "access_expires_at": folder.access_expires_at.isoformat()
+        if folder.access_expires_at else None,
+        "released_at": folder.released_at.isoformat() if folder.released_at else None,
+    }
 
 
 @app.delete("/admin/photo-folders/{folder_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -4779,6 +5880,8 @@ def delete_photo_folder(
     folder = db.scalar(select(PhotoFolder).where(PhotoFolder.tenant_id == tenant_id).where(PhotoFolder.id == folder_id).with_for_update())
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    if not folder_media_writes_allowed(db, folder):
+        raise HTTPException(status_code=409, detail="A pasta está em uma etapa de arquivo ou recuperação.")
     if folder.derived_gallery_id:
         require_derived_gallery_mutable(
             db, folder.derived_gallery_id, allow_deleted_origin=True,
@@ -4789,12 +5892,19 @@ def delete_photo_folder(
     photos = list(db.scalars(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id).where(
         PhotoAsset.folder_id == folder.id
     ).order_by(PhotoAsset.id).with_for_update()))
+    _assert_photo_credit_operations_settled(
+        db, tenant_id, [photo.id for photo in photos],
+    )
     preserve_asset_history(db, folder.parent_gallery_id, photo_ids=[photo.id for photo in photos], tenant_id=tenant_id)
     paths_to_remove: list[Path] = []
     for photo in photos:
         paths_to_remove.extend(_delete_photo_records(db, photo, tenant_id=tenant_id))
     db.flush()
     audit(db, "photo_folder.deleted", str(folder.id), tenant_id=tenant_id)
+    db.execute(delete(FolderProcessingSettings).where(
+        FolderProcessingSettings.tenant_id == tenant_id,
+        FolderProcessingSettings.folder_id == folder.id,
+    ))
     db.delete(folder)
     cleanup = enqueue_file_cleanup(db, paths_to_remove, tenant_id=tenant_id)
     db.commit()
@@ -4819,7 +5929,18 @@ def admin_photo_folder_photos(
         )
     )
     parent = owned_record(db, ParentGallery, folder.parent_gallery_id, tenant_id=tenant_id)
+    media_state = folder_media_state(db, folder)
+    media_local = media_state in {"available", "archiving"}
     rows = []
+    fingerprints = {
+        photo_id: source_fingerprint
+        for photo_id, source_fingerprint in db.execute(
+            select(PhotoAnalysis.photo_asset_id, PhotoAnalysis.source_fingerprint).where(
+                PhotoAnalysis.tenant_id == tenant_id,
+                PhotoAnalysis.photo_asset_id.in_([photo.id for photo in photos]),
+            )
+        ).all()
+    } if photos else {}
     for photo in photos:
         job = db.scalar(select(MediaJob).where(MediaJob.tenant_id == tenant_id).where(MediaJob.photo_asset_id == photo.id))
         derivative = _client_preview_derivative(db, photo.id, tenant_id=tenant_id)
@@ -4827,8 +5948,12 @@ def admin_photo_folder_photos(
             {
                 "id": str(photo.id),
                 "name": photo.display_name or photo.filename,
+                "content_fingerprint": (
+                    photographer_credits.fingerprint_from_storage_key(photo.storage_key)
+                    or fingerprints.get(photo.id)
+                ),
                 "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview"
-                if derivative
+                if derivative and media_local
                 else None,
                 "status": job.status if job else "not_imported",
                 "publication_state": _photo_publication_state(photo, job, derivative),
@@ -4836,12 +5961,15 @@ def admin_photo_folder_photos(
                 "width": derivative.width if derivative else None,
                 "height": derivative.height if derivative else None,
                 "error": job.last_error if job else None,
-                "can_delete": True,
+                "can_delete": media_state == "available",
                 "is_cover": bool(parent and parent.cover_photo_id == photo.id),
             }
         )
     return {
-        "folder": {"id": str(folder.id), "status": folder.status},
+        "folder": {
+            "id": str(folder.id), "status": folder.status,
+            "media_state": media_state,
+        },
         "total": len(rows),
         "photos": rows,
     }
@@ -4857,18 +5985,22 @@ def delete_folder_photo_asset(
 
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
-    folder = owned_record(db, PhotoFolder, folder_id, tenant_id=tenant_id)
-    if folder:
-        lock_removal_clients(db, folder.parent_gallery_id, tenant_id=tenant_id)
+    folder = db.scalar(select(PhotoFolder).where(
+        PhotoFolder.tenant_id == tenant_id, PhotoFolder.id == folder_id,
+    ).with_for_update())
+    if not folder or folder.purpose != "content":
+        raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    lock_removal_clients(db, folder.parent_gallery_id, tenant_id=tenant_id)
     photo = db.scalar(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.id == photo_id).with_for_update())
     if (
-        not folder
-        or not photo
+        not photo
         or photo.folder_id != folder.id
         or photo.parent_gallery_id != folder.parent_gallery_id
         or photo.derived_gallery_id != folder.derived_gallery_id
     ):
         raise HTTPException(status_code=404, detail="Foto não encontrada nesta pasta.")
+    if not folder_media_writes_allowed(db, folder):
+        raise HTTPException(status_code=409, detail="A pasta está em uma etapa de arquivo ou recuperação.")
     if folder.derived_gallery_id:
         require_derived_gallery_mutable(
             db, folder.derived_gallery_id, allow_deleted_origin=True,
@@ -4876,6 +6008,7 @@ def delete_folder_photo_asset(
         )
     else:
         require_parent_gallery_mutable(db, folder.parent_gallery_id, tenant_id=tenant_id)
+    _assert_photo_credit_operations_settled(db, tenant_id, [photo.id])
     preserve_asset_history(db, folder.parent_gallery_id, photo_ids=[photo.id], tenant_id=tenant_id)
     paths_to_remove = _delete_photo_records(db, photo, tenant_id=tenant_id)
     cleanup = enqueue_file_cleanup(db, paths_to_remove, tenant_id=tenant_id)
@@ -4884,11 +6017,34 @@ def delete_folder_photo_asset(
     return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"X-Asset-Cleanup": cleanup.status})
 
 
+def _assert_photo_credit_operations_settled(
+    db: Session, tenant_id: UUID, photo_ids: list[UUID],
+) -> None:
+    if not photo_ids:
+        return
+    pending = db.scalar(
+        select(PhotoCreditOperation.id)
+        .where(
+            PhotoCreditOperation.tenant_id == tenant_id,
+            PhotoCreditOperation.photo_asset_id_snapshot.in_(photo_ids),
+            PhotoCreditOperation.status.in_(("reserved", "reconciliation_required")),
+        )
+        .limit(1)
+        .with_for_update(of=PhotoCreditOperation)
+    )
+    if pending is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A foto aguarda reconciliação do upload antes de poder ser excluída.",
+        )
+
+
 def _delete_photo_records(db: Session, photo: PhotoAsset, *, tenant_id: UUID) -> list[Path]:
     """Remove registros na transação do chamador; arquivos só após commit."""
     require_active_owner(db, tenant_id)
     if photo.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    _assert_photo_credit_operations_settled(db, tenant_id, [photo.id])
     from app.preview_adjustment.cleanup import photo_files
 
     paths_to_remove = photo_files(photo.id, tenant_id=tenant_id) + historical_paths(db, [photo.id], tenant_id=tenant_id)
@@ -4919,6 +6075,11 @@ def _delete_photo_records(db: Session, photo: PhotoAsset, *, tenant_id: UUID) ->
     db.execute(delete(DerivedGalleryPhoto).where(DerivedGalleryPhoto.tenant_id == tenant_id).where(DerivedGalleryPhoto.photo_asset_id == photo.id))
     db.execute(delete(MediaDerivative).where(MediaDerivative.tenant_id == tenant_id, MediaDerivative.photo_asset_id == photo.id))
     db.execute(delete(MediaJob).where(MediaJob.tenant_id == tenant_id, MediaJob.photo_asset_id == photo.id))
+    # O ledger conserva o snapshot financeiro, mas não pode reter a foto fisicamente apagada.
+    db.execute(update(PhotoCreditOperation).where(
+        PhotoCreditOperation.tenant_id == tenant_id,
+        PhotoCreditOperation.photo_asset_id == photo.id,
+    ).values(photo_asset_id=None))
     from app.facial.purge import purge_photo_records
 
     purge_photo_records(
@@ -4984,10 +6145,15 @@ def register_folder_photo_asset(
     """Registra uma nova foto administrativa em pasta de conteúdo."""
 
     tenant_id = directory_tenant_id(db, request)
-    require_admin(request)
+    from app.tenant_closure import require_new_work
+    require_new_work(db, tenant_id)
+    admin_session = require_admin(request)
+    actor_admin_id = getattr(admin_session, "subject_id", None)
     folder = db.scalar(select(PhotoFolder).where(PhotoFolder.tenant_id == tenant_id).where(PhotoFolder.id == folder_id).with_for_update())
     if not folder or folder.purpose != "content":
         raise HTTPException(status_code=404, detail="Pasta não encontrada.")
+    if not folder_media_writes_allowed(db, folder):
+        raise HTTPException(status_code=409, detail="A pasta está em uma etapa de arquivo ou recuperação.")
     if folder.status not in {"preparing", "released"}:
         raise HTTPException(status_code=409, detail="A pasta não aceita novas fotos.")
     if folder.derived_gallery_id:
@@ -5019,6 +6185,32 @@ def register_folder_photo_asset(
             parent_id=folder.parent_gallery_id, folder_id=folder.id, gallery_id=folder.derived_gallery_id)
         existing = db.scalar(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id,
             PhotoAsset.storage_key == storage_key))
+    from app.photographer_onboarding import require_upload_ready
+    require_upload_ready(
+        db, tenant_id=tenant_id, admin_id=actor_admin_id, accepted_photo=existing,
+    )
+    fingerprint = photographer_credits.fingerprint_from_storage_key(storage_key)
+    if existing is None and fingerprint and not payload.allow_duplicate_content:
+        key_prefix = storage_key.rsplit("/", 1)[0] + "/"
+        analysis_match = select(PhotoAnalysis.photo_asset_id).where(
+            PhotoAnalysis.tenant_id == tenant_id,
+            PhotoAnalysis.photo_asset_id == PhotoAsset.id,
+            PhotoAnalysis.source_fingerprint == fingerprint,
+        ).exists()
+        prior_identical = db.scalar(select(PhotoAsset.id).where(
+            PhotoAsset.tenant_id == tenant_id,
+            PhotoAsset.folder_id == folder.id,
+            or_(
+                PhotoAsset.storage_key == f"{key_prefix}{fingerprint}.jpg",
+                PhotoAsset.storage_key.like(f"{key_prefix}{fingerprint}-%"),
+                analysis_match,
+            ),
+        ).limit(1))
+        if prior_identical is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Esta foto já existe nesta pasta. Confirme o envio de fotos repetidas para criar outra cópia.",
+            )
     if existing:
         if existing.folder_id != folder.id or existing.derived_gallery_id != folder.derived_gallery_id:
             raise HTTPException(status_code=409, detail="Arquivo já cadastrado em outro escopo.")
@@ -5034,7 +6226,23 @@ def register_folder_photo_asset(
             db.add(PrivateUploadBatchAsset(
                 batch_id=payload.upload_batch_id, photo_asset_id=existing.id, tenant_id=tenant_id,
             ))
-            db.commit()
+        if folder.purpose == "content":
+            prior_operation = db.scalar(select(PhotoCreditOperation.id).where(
+                PhotoCreditOperation.tenant_id == tenant_id,
+                PhotoCreditOperation.photo_asset_id_snapshot == existing.id,
+            ))
+            # Não aplicar cobrança retroativa a PhotoAssets legados sem operação.
+            if prior_operation is not None:
+                fingerprint = photographer_credits.fingerprint_from_storage_key(existing.storage_key)
+                try:
+                    photographer_credits.reserve_photo_credit(
+                        db, tenant_id, existing.id, existing.storage_key, fingerprint,
+                        actor_admin_id=actor_admin_id,
+                    )
+                except Exception:
+                    db.rollback()
+                    raise
+        db.commit()
         return {"id": str(existing.id), "duplicate": "false" if payload.upload_batch_id in existing_batch_ids else "true"}
     asset = PhotoAsset(
         tenant_id=tenant_id,
@@ -5043,14 +6251,24 @@ def register_folder_photo_asset(
         folder_id=folder.id,
         available=False,
         storage_key=storage_key,
-        **payload.model_dump(exclude={"upload_batch_id", "storage_key"}),
+        **payload.model_dump(exclude={"upload_batch_id", "storage_key", "allow_duplicate_content"}),
     )
     db.add(asset)
     db.flush()
     if payload.upload_batch_id:
         db.add(PrivateUploadBatchAsset(batch_id=payload.upload_batch_id, photo_asset_id=asset.id, tenant_id=tenant_id))
     audit(db, "photo_asset.registered_in_folder", str(asset.id), tenant_id=tenant_id)
-    db.commit()
+    try:
+        if folder.purpose == "content":
+            fingerprint = photographer_credits.fingerprint_from_storage_key(asset.storage_key)
+            photographer_credits.reserve_photo_credit(
+                db, tenant_id, asset.id, asset.storage_key, fingerprint,
+                actor_admin_id=actor_admin_id,
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return {"id": str(asset.id)}
 
 
@@ -5058,6 +6276,8 @@ def _publish_photo_folder(
     db: Session, folder: PhotoFolder, *, commit: bool = True
 ) -> dict[str, object]:
     require_active_owner(db, folder.tenant_id)
+    if not folder_media_writes_allowed(db, folder):
+        raise HTTPException(status_code=409, detail="A pasta está em uma etapa de arquivo ou recuperação.")
     lock_payment_account(db, folder.tenant_id)
     gallery = owned_record(db, ParentGallery, folder.parent_gallery_id, tenant_id=folder.tenant_id)
     if gallery and not can_publish_gallery(db, gallery):
@@ -5068,9 +6288,6 @@ def _publish_photo_folder(
         select(FolderClientGrant.id).where(FolderClientGrant.tenant_id == folder.tenant_id).where(FolderClientGrant.folder_id == folder.id).limit(1)
     ):
         raise HTTPException(status_code=409, detail="Atribua a pasta a uma cliente antes de publicá-la.")
-    from app.raw_development.state import pending_raw_photo_ids
-    if pending_raw_photo_ids(db, folder.id, tenant_id=folder.tenant_id):
-        raise HTTPException(status_code=409, detail="Aguarde a conversão RAW e os derivados obrigatórios antes de liberar a pasta.")
     photos = list(db.scalars(select(PhotoAsset).where(PhotoAsset.tenant_id == folder.tenant_id).where(PhotoAsset.folder_id == folder.id)))
     unpublished_ids = [photo.id for photo in photos if not photo.available]
     ready_ids = (
@@ -5090,8 +6307,10 @@ def _publish_photo_folder(
         if photo.id in ready_ids:
             photo.available = True
     if folder.status == "preparing" and ready_ids:
+        from app.folder_deadlines import start_folder_access_deadline
+
         folder.status = "released"
-        folder.released_at = now()
+        start_folder_access_deadline(folder)
     for photo in photos:
         if photo.id in ready_ids:
             analysis_preview = db.scalar(select(MediaDerivative).where(
@@ -5130,11 +6349,7 @@ def _publish_photo_folder(
         )
         if unpublished_ids
         else set()
-    ) | (set(db.scalars(select(RawDevelopmentJob.photo_asset_id).where(
-        RawDevelopmentJob.tenant_id == folder.tenant_id,
-        RawDevelopmentJob.photo_asset_id.in_(unpublished_ids),
-        RawDevelopmentJob.status.in_(("failed", "reupload_required")),
-    ))) if unpublished_ids else set())
+    )
     audit(db, "photo_folder.published", f"{folder.id}:{len(ready_ids)}", tenant_id=folder.tenant_id)
     if commit:
         db.commit()
@@ -5248,6 +6463,8 @@ def create_parent_gallery(
     payload: ParentGalleryInput, request: Request, db: Session = Depends(db_session)
 ) -> dict[str, object]:
     tenant_id = directory_tenant_id(db, request)
+    from app.tenant_closure import require_new_work
+    require_new_work(db, tenant_id)
     admin_session = current_session(request, Role.ADMIN)
     tenant = require_admin_tenant(db, admin_session.subject_id)
     _gallery_capability_origin(request)
@@ -6087,17 +7304,30 @@ def parent_gallery_clients(
     finalized = [order for order in canonical_orders if order.payment_status == "not_required"
                  and order_fulfillable(order)]
     finalized_items: dict[UUID, list[SaleOrderItem]] = defaultdict(list)
-    for item in db.scalars(select(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(
+    finalized_item_rows = list(db.scalars(select(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(
         SaleOrderItem.sale_order_id.in_([order.id for order in finalized]),
-    ).order_by(SaleOrderItem.filename_snapshot)):
+    ).order_by(SaleOrderItem.filename_snapshot))) if finalized else []
+    finalized_media_states = folder_media_states_by_id(
+        db,
+        folder_ids={item.folder_id_snapshot for item in finalized_item_rows if item.folder_id_snapshot},
+        tenant_id=tenant_id,
+    )
+    for item in finalized_item_rows:
         finalized_items[item.sale_order_id].append(item)
     for order in finalized:
         finalized_by_client[order.client_id].append({
             "id": str(order.id), "frozen_at": order.frozen_at.isoformat(),
             "delivery": delivery_payload(order),
             "items": [{"name": item.filename_snapshot,
+                       "media_state": (
+                           "available" if item.folder_id_snapshot is None
+                           else finalized_media_states.get(item.folder_id_snapshot, "unavailable")
+                       ),
                        "preview_url": f"/admin/photo-assets/{item.photo_asset_id}/preview"
-                       if item.photo_asset_id else None}
+                       if item.photo_asset_id and (
+                           item.folder_id_snapshot is None
+                           or finalized_media_states.get(item.folder_id_snapshot) in {"available", "archiving"}
+                       ) else None}
                       for item in finalized_items[order.id]],
         })
     canonical_reopening: dict[UUID, str] = {}
@@ -6131,10 +7361,6 @@ def parent_gallery_clients(
             gallery and not gallery.access_enabled
         ):
             gallery_status = "blocked"
-        elif (state and state.selection_expires_at and expired(state.selection_expires_at)) or (
-            gallery and gallery.selection_expires_at and expired(gallery.selection_expires_at)
-        ):
-            gallery_status = "expired"
         elif selected_count == 0:
             gallery_status = "no_selection"
         else:
@@ -6149,8 +7375,6 @@ def parent_gallery_clients(
             else "cancelled" if latest_canonical_order and latest_canonical_order.payment_status == "cancelled"
             else "awaiting_payment" if latest_canonical_order
             else projection.commercial_status if projection
-            else "overdue"
-            if gallery_status == "expired"
             else "no_order"
         )
         last_access_at = last_access_by_client.get(client_id)
@@ -6179,9 +7403,7 @@ def parent_gallery_clients(
                 **({"finalized_orders": finalized_by_client[client_id]} if finalized_by_client.get(client_id) else {}),
                 "financial_orders": canonical_financial_by_client.get(client_id, [])
                 + (projection.financial_orders if projection else []),
-                "selection_expires_at": state.selection_expires_at.isoformat()
-                if state and state.selection_expires_at else gallery.selection_expires_at.isoformat()
-                if gallery and gallery.selection_expires_at else None,
+                "selection_expires_at": None,
                 "last_access_at": last_access_at.isoformat() if last_access_at else None,
             }
         )
@@ -6421,15 +7643,44 @@ def selection_detail(
         galleries_by_id={gallery.id: gallery},
         tenant_id=tenant_id,
     )[(gallery.id, selected_client_id)]
+    photo_ids = {selection.photo_asset_id for selection in selected}
+    photos_by_id = {
+        photo.id: photo for photo in db.scalars(
+            select(PhotoAsset).where(
+                PhotoAsset.tenant_id == tenant_id,
+                PhotoAsset.id.in_(photo_ids),
+            )
+        )
+    } if photo_ids else {}
+    media_states = folder_media_states_by_id(
+        db,
+        folder_ids={photo.folder_id for photo in photos_by_id.values() if photo.folder_id},
+        tenant_id=tenant_id,
+    )
+    parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
+    cover_thumbnail_available = bool(
+        parent and parent.cover_photo_id
+        and _cover_thumbnail_is_local(db, parent, parent.cover_photo_id)
+    )
     photos = []
     for selection in selected:
-        photo = owned_record(db, PhotoAsset, selection.photo_asset_id, tenant_id=tenant_id)
+        photo = photos_by_id.get(selection.photo_asset_id)
         if photo:
+            media_state = (
+                media_states.get(photo.folder_id, "unavailable")
+                if photo.folder_id else "available"
+            )
+            preview_available = media_state in {"available", "archiving"} or (
+                parent is not None
+                and parent.cover_photo_id == photo.id
+                and cover_thumbnail_available
+            )
             photos.append(
                 {
                     "id": str(photo.id),
                     "filename": photo.filename,
-                    "preview_url": f"/admin/photo-assets/{photo.id}/preview",
+                    "media_state": media_state,
+                    "preview_url": f"/admin/photo-assets/{photo.id}/preview" if preview_available else None,
                     "sales_count": sales_by_photo.get(photo.id, 0),
                 }
             )
@@ -6437,9 +7688,7 @@ def selection_detail(
         "gallery": {
             "id": str(gallery.id),
             "name": gallery.name,
-            "selection_expires_at": gallery.selection_expires_at.isoformat()
-            if gallery.selection_expires_at
-            else None,
+            "selection_expires_at": None,
         },
         "client": {"id": str(owner.id), "name": owner.full_name, "phone": owner.phone_e164}
         if owner
@@ -6454,9 +7703,157 @@ def selection_detail(
     }
 
 
+def _purchase_comment_excerpt(body: str) -> str:
+    normalized = " ".join(body.split())
+    if len(normalized) > 50:
+        return normalized[:49].rstrip() + "…"
+    return normalized
+
+
+def _purchase_photo_interactions(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    purchases: list[tuple[SaleOrder, SaleOrderItem]],
+) -> dict[UUID, dict[str, object]]:
+    """Busca uma anotação e favorito por foto, respeitando o snapshot do pedido."""
+    scoped_purchases: list[tuple[SaleOrderItem, tuple[str, UUID, UUID, UUID]]] = []
+    for order, item in purchases:
+        if (
+            order.tenant_id != tenant_id
+            or item.tenant_id != tenant_id
+            or item.sale_order_id != order.id
+        ):
+            continue
+        if order.derived_gallery_id_snapshot:
+            scope = ("derived", order.derived_gallery_id_snapshot)
+        elif order.parent_gallery_id_snapshot:
+            scope = ("parent", order.parent_gallery_id_snapshot)
+        else:
+            continue
+        scoped_purchases.append(
+            (item, (scope[0], scope[1], order.client_id, item.photo_asset_id_snapshot))
+        )
+
+    interactions: dict[UUID, dict[str, object]] = {}
+    for start in range(0, len(scoped_purchases), 200):
+        batch = scoped_purchases[start : start + 200]
+        requested_keys = {key for _item, key in batch}
+        photo_ids = {key[3] for key in requested_keys}
+        client_ids = {key[2] for key in requested_keys}
+        derived_ids = {key[1] for key in requested_keys if key[0] == "derived"}
+        parent_ids = {key[1] for key in requested_keys if key[0] == "parent"}
+        scope_filters = []
+        if derived_ids:
+            scope_filters.append(PhotoComment.derived_gallery_id.in_(derived_ids))
+        if parent_ids:
+            scope_filters.append(PhotoComment.parent_gallery_id.in_(parent_ids))
+
+        latest_comments: dict[tuple[str, UUID, UUID, UUID], str] = {}
+        if scope_filters:
+            comments = db.scalars(
+                select(PhotoComment)
+                .where(
+                    PhotoComment.tenant_id == tenant_id,
+                    PhotoComment.client_id.in_(client_ids),
+                    PhotoComment.photo_asset_id.in_(photo_ids),
+                    PhotoComment.removed_at.is_(None),
+                    or_(*scope_filters),
+                )
+                .order_by(PhotoComment.created_at.desc(), PhotoComment.id.desc())
+            )
+            for comment in comments:
+                scope = (
+                    ("derived", comment.derived_gallery_id)
+                    if comment.derived_gallery_id
+                    else ("parent", comment.parent_gallery_id)
+                )
+                key = (scope[0], scope[1], comment.client_id, comment.photo_asset_id)
+                if key in requested_keys and key not in latest_comments:
+                    latest_comments[key] = _purchase_comment_excerpt(comment.body)
+
+        favorite_filters = []
+        if derived_ids:
+            favorite_filters.append(PhotoFavorite.derived_gallery_id.in_(derived_ids))
+        if parent_ids:
+            favorite_filters.append(PhotoFavorite.parent_gallery_id.in_(parent_ids))
+        favorited_keys: set[tuple[str, UUID, UUID, UUID]] = set()
+        if favorite_filters:
+            favorites = db.scalars(
+                select(PhotoFavorite).where(
+                    PhotoFavorite.tenant_id == tenant_id,
+                    PhotoFavorite.client_id.in_(client_ids),
+                    PhotoFavorite.photo_asset_id.in_(photo_ids),
+                    or_(*favorite_filters),
+                )
+            )
+            for favorite in favorites:
+                scope = (
+                    ("derived", favorite.derived_gallery_id)
+                    if favorite.derived_gallery_id
+                    else ("parent", favorite.parent_gallery_id)
+                )
+                key = (scope[0], scope[1], favorite.client_id, favorite.photo_asset_id)
+                if key in requested_keys:
+                    favorited_keys.add(key)
+
+        for item, key in batch:
+            interactions[item.id] = {
+                "comment_preview": latest_comments.get(key),
+                "favorited": key in favorited_keys,
+            }
+    return interactions
+
+
+def _purchase_photo_interaction_html(interaction: dict[str, object]) -> str:
+    markup: list[str] = []
+    if interaction.get("favorited"):
+        markup.append(
+            '<span class="interaction-favorite" aria-label="Favoritada pela cliente" '
+            'title="Favoritada pela cliente">♥</span>'
+        )
+    comment = interaction.get("comment_preview")
+    if isinstance(comment, str) and comment:
+        safe_comment = escape(comment, quote=True)
+        markup.append(
+            f'<p class="interaction-comment" role="note" '
+            f'aria-label="Comentário: {safe_comment}" title="{safe_comment}">'
+            f'{escape(comment)}</p>'
+        )
+    return "".join(markup)
+
+
 def _selection_html_preview(db: Session, item: SaleOrderItem) -> str:
     tenant_id = item.tenant_id
     require_active_owner(db, tenant_id)
+    photo = owned_record(db, PhotoAsset, item.photo_asset_id, tenant_id=tenant_id) if item.photo_asset_id else None
+    media_state = historical_folder_media_state_by_id(
+        db,
+        folder_id=item.folder_id_snapshot or (photo.folder_id if photo else None),
+        tenant_id=tenant_id,
+    ) if item.folder_id_snapshot or (photo and photo.folder_id) else "available"
+    if media_state not in {"available", "archiving"}:
+        parent = owned_record(db, ParentGallery, photo.parent_gallery_id, tenant_id=tenant_id) if photo else None
+        if not (
+            photo and parent and parent.cover_photo_id == photo.id
+            and _cover_thumbnail_is_local(db, parent, photo.id)
+        ):
+            return '<div class="preview-missing">Prévia indisponível</div>'
+        derivative = db.scalar(
+            select(MediaDerivative).where(MediaDerivative.tenant_id == tenant_id).where(
+                MediaDerivative.photo_asset_id == photo.id,
+                MediaDerivative.variant == "admin_preview",
+                MediaDerivative.status == "ready",
+            )
+        )
+        if not derivative:
+            return '<div class="preview-missing">Prévia indisponível</div>'
+        try:
+            path = safe_derivative_path(derivative)
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        except (OSError, ValueError):
+            return '<div class="preview-missing">Prévia indisponível</div>'
+        return f'<img src="data:image/jpeg;base64,{encoded}" alt="Prévia de {escape(item.filename_snapshot)}">'
     historical = db.scalar(
         select(CommercialHistoryMedia).where(CommercialHistoryMedia.tenant_id == tenant_id).where(
             CommercialHistoryMedia.tenant_id == tenant_id,
@@ -6625,6 +8022,7 @@ def export_canonical_selection(
     client_id: UUID,
     format: str,
     request: Request,
+    highlight: str | None = Query(default=None),
     db: Session = Depends(db_session),
 ) -> Response:
     tenant_id = directory_tenant_id(db, request)
@@ -6646,8 +8044,8 @@ def export_canonical_selection(
         raise HTTPException(status_code=404, detail="Cliente não pertence a esta galeria.")
 
     if format == "html":
-        purchased_items = list(db.scalars(
-            select(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id)
+        purchased_rows = list(db.execute(
+            select(SaleOrderItem, SaleOrder).where(SaleOrderItem.tenant_id == tenant_id)
             .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
             .where(
                 SaleOrder.parent_gallery_id_snapshot == parent_gallery_id,
@@ -6656,23 +8054,42 @@ def export_canonical_selection(
             )
             .order_by(SaleOrder.confirmed_at, SaleOrder.id, SaleOrderItem.filename_snapshot)
         ))
+        purchased_items = [item for item, _order in purchased_rows]
         if not purchased_items:
             raise HTTPException(status_code=409, detail="Nenhuma compra confirmada para esta cliente nesta galeria.")
-        cards = "".join(
-            '<article class="photo"><div class="preview">'
-            + _selection_html_preview(db, item)
-            + '</div><p>' + escape(item.filename_snapshot) + '</p></article>'
-            for item in purchased_items
+        interactions_by_item = _purchase_photo_interactions(
+            db,
+            tenant_id=tenant_id,
+            purchases=[(order, item) for item, order in purchased_rows],
         )
+        cards_markup: list[str] = []
+        for item, _order in purchased_rows:
+            preview_markup = _selection_html_preview(db, item)
+            interaction_markup = (
+                _purchase_photo_interaction_html(interactions_by_item.get(item.id, {}))
+                if preview_markup.lstrip().startswith("<img ")
+                else ""
+            )
+            cards_markup.append(
+                '<article class="photo"><div class="preview">'
+                + preview_markup
+                + interaction_markup
+                + '</div><p>' + escape(item.filename_snapshot) + '</p></article>'
+            )
+        cards = "".join(cards_markup)
+        accent = highlight if re.fullmatch(r"#[0-9a-fA-F]{6}", highlight or "") else "#7656d6"
         content = (
             '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>Fotos compradas</title><style>'
+            ':root{--highlight:' + accent + '}'
             'body{font-family:Arial,sans-serif;margin:24px;color:#202124}'
             '.photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}'
             '.photo{border:1px solid #ddd;border-radius:8px;overflow:hidden;break-inside:avoid}'
-            '.preview{aspect-ratio:4/3;background:#eee;display:grid;place-items:center}'
+            '.preview{position:relative;aspect-ratio:4/3;background:#eee;display:grid;place-items:center;overflow:hidden}'
             '.preview img{width:100%;height:100%;object-fit:contain}'
+            '.interaction-favorite{position:absolute;top:8px;right:8px;display:grid;place-items:center;min-width:30px;height:30px;padding:0 7px;border-radius:999px;background:var(--highlight);color:#fff;font-size:1rem;font-weight:700;box-shadow:0 1px 5px #0008}'
+            '.interaction-comment{position:absolute;left:8px;right:8px;bottom:8px;margin:0;padding:6px 8px;border-left:3px solid var(--highlight);border-radius:4px;background:rgb(17 24 39 / 86%);color:#fff;font-size:clamp(.68rem,2.4vw,.82rem);line-height:1.25;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}'
             '.photo p{padding:0 12px;overflow-wrap:anywhere}'
             '</style></head><body><main><h1>Fotos compradas</h1><p>'
             + escape(parent.name) + ' — ' + escape(owner.full_name)
@@ -6728,20 +8145,75 @@ def register_photo_asset(
     )
 
 
+def _stored_source_matches_fingerprint(path: Path, expected_fingerprint: str) -> bool | None:
+    """Retorna None quando o filesystem não permite provar a presença/ausência da fonte."""
+    return photographer_credits.source_fingerprint_state(path, expected_fingerprint)
+
+
+def _settle_photo_credit_after_write_failure(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    photo_id: UUID,
+    destination: Path,
+    payload_fingerprint: str,
+    operation: PhotoCreditOperation | None,
+    actor_admin_id: UUID | None,
+) -> None:
+    if operation is None or operation.status in {"consumed", "released"}:
+        return
+    source_is_durable = _stored_source_matches_fingerprint(destination, payload_fingerprint)
+    try:
+        if source_is_durable is True:
+            photographer_credits.consume_photo_credit(
+                db, tenant_id, photo_id, payload_fingerprint,
+                actor_admin_id=actor_admin_id,
+            )
+        else:
+            photographer_credits.release_photo_credit(
+                db,
+                tenant_id,
+                photo_id,
+                proven_pre_durable_failure=source_is_durable is False,
+                actor_admin_id=actor_admin_id,
+            )
+        db.commit()
+    except (HTTPException, SQLAlchemyError):
+        db.rollback()
+
+
 @app.put("/admin/photo-assets/{photo_id}/source", status_code=status.HTTP_202_ACCEPTED)
 async def import_photo_source(
     photo_id: UUID, request: Request, db: Session = Depends(db_session)
 ) -> dict[str, str]:
     """Recebe somente JPEG para processamento local, nunca para entrega web direta."""
     tenant_id = directory_tenant_id(db, request)
-    require_admin(request)
+    from app.tenant_closure import require_new_work
+    require_new_work(db, tenant_id)
+    admin_session = require_admin(request)
+    actor_admin_id = getattr(admin_session, "subject_id", None)
     photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
     if not photo:
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
     content_type = (request.headers.get("content-type") or "").lower()
-    folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=tenant_id)
+    parent = db.scalar(select(ParentGallery).where(
+        ParentGallery.id == photo.parent_gallery_id,
+        ParentGallery.tenant_id == tenant_id,
+    ).with_for_update())
+    if not parent:
+        raise HTTPException(status_code=409, detail="A galeria da foto não está disponível.")
+    folder = db.scalar(select(PhotoFolder).where(
+        PhotoFolder.id == photo.folder_id, PhotoFolder.tenant_id == tenant_id,
+    ).with_for_update())
     if not folder or folder.parent_gallery_id != photo.parent_gallery_id:
         raise HTTPException(status_code=409, detail="A foto não possui uma pasta válida.")
+    if not folder_media_writes_allowed(db, folder):
+        raise HTTPException(status_code=409, detail="A pasta está em uma etapa de arquivo ou recuperação.")
+    from app.photographer_onboarding import require_upload_ready
+    require_upload_ready(
+        db, tenant_id=tenant_id, admin_id=actor_admin_id,
+        accepted_photo=photo if folder.purpose == "content" else None,
+    )
     if photo.derived_gallery_id:
         if folder.derived_gallery_id != photo.derived_gallery_id:
             raise HTTPException(status_code=409, detail="A foto não possui escopo privado válido.")
@@ -6756,49 +8228,19 @@ async def import_photo_source(
     ) or (folder.purpose == "cover_assets" and folder.status == "preparing")
     if not accepts_upload:
         raise HTTPException(status_code=409, detail="A pasta não aceita novas fotos.")
-    if not content_type.startswith("image/jpeg"):
-        if content_type != "application/octet-stream":
-            raise HTTPException(status_code=415, detail="Envie uma imagem JPEG ou um RAW compatível.")
-        from app.raw_development.state import RawDevelopmentStateError, receive_raw_upload
-        try:
-            result = await receive_raw_upload(db, photo, request)
-        except RawDevelopmentStateError as exc:
-            message = str(exc)
-            status_code = 503 if "fila" in message.lower() else 413 if "limite" in message.lower() else 422
-            raise HTTPException(status_code=status_code, detail=message,
-                                headers={"Retry-After": "15"} if status_code == 503 else None) from exc
-        except (OSError, ValueError) as exc:
-            db.rollback()
-            raise HTTPException(status_code=422, detail="Arquivo RAW inválido ou indisponível.") from exc
-        audit(db, "raw_development.upload_accepted", str(photo.id), tenant_id=tenant_id)
-        db.commit()
-        return result
-    body = await read_bounded_body(request, max_bytes=25 * 1024 * 1024,
-                                   error_detail="A imagem excede o limite permitido.")
-    if not body:
-        raise HTTPException(status_code=413, detail="A imagem excede o limite permitido.")
-    try:
-        with Image.open(BytesIO(body)) as image:
-            if image.format != "JPEG":
-                raise ValueError
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail="Imagem JPEG inválida.") from exc
-    if folder.purpose == "cover_assets":
-        try:
-            with Image.open(BytesIO(body)) as image:
-                visual = ImageOps.exif_transpose(image)
-                visual.load()
-                horizontal = visual.width > visual.height
-        except (OSError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail="Imagem JPEG inválida.") from exc
-        if not horizontal:
-            raise HTTPException(
-                status_code=422,
-                detail="Envie uma capa horizontal, com largura maior que a altura.",
-            )
     destination = safe_source_path(photo)
-    batch_asset = db.scalar(select(PrivateUploadBatchAsset).where(PrivateUploadBatchAsset.tenant_id == tenant_id).where(
-        PrivateUploadBatchAsset.photo_asset_id == photo.id))
+    batch_asset = db.scalar(
+        select(PrivateUploadBatchAsset)
+        .join(PrivateUploadBatch, PrivateUploadBatch.id == PrivateUploadBatchAsset.batch_id)
+        .where(
+            PrivateUploadBatchAsset.tenant_id == tenant_id,
+            PrivateUploadBatchAsset.photo_asset_id == photo.id,
+            PrivateUploadBatch.tenant_id == tenant_id,
+            PrivateUploadBatch.status == "open",
+        )
+        .order_by(PrivateUploadBatch.created_at.desc(), PrivateUploadBatch.id.desc())
+        .limit(1)
+    )
     if batch_asset:
         try:
             batch_for(db, batch_asset.batch_id, photo.derived_gallery_id, open_only=True, tenant_id=tenant_id)
@@ -6815,30 +8257,279 @@ async def import_photo_source(
         write_source,
     )
 
-    # O mesmo lock protege reenvio e processamento. Fontes legadas não aderem retroativamente.
-    db.scalar(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.id == photo.id).with_for_update())
+    credit_operation = None
+    expected_fingerprint = (
+        photographer_credits.fingerprint_from_storage_key(photo.storage_key)
+        if folder.purpose == "content" else None
+    )
     try:
+        if folder.purpose == "content":
+            pending_operation = db.scalar(select(PhotoCreditOperation).where(
+                PhotoCreditOperation.tenant_id == tenant_id,
+                PhotoCreditOperation.photo_asset_id_snapshot == photo.id,
+            ))
+            if (
+                pending_operation
+                and pending_operation.status == "reconciliation_required"
+                and pending_operation.payload_fingerprint == expected_fingerprint
+            ):
+                durable_state = _stored_source_matches_fingerprint(
+                    destination, pending_operation.payload_fingerprint,
+                )
+                photographer_credits.reconcile_photo_credit(
+                    db,
+                    tenant_id,
+                    photo.id,
+                    pending_operation.payload_fingerprint,
+                    source_is_durable=durable_state,
+                    actor_admin_id=actor_admin_id,
+                )
+                db.commit()
+                if durable_state is None:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="O upload aguarda reconciliação da fonte armazenada.",
+                        headers={"Retry-After": "15"},
+                    )
+            credit_operation = photographer_credits.reserve_photo_credit(
+                db,
+                tenant_id,
+                photo.id,
+                photo.storage_key,
+                expected_fingerprint,
+                actor_admin_id=actor_admin_id,
+            )
+            photographer_credits.record_upload_attempt(
+                db, credit_operation, actor_admin_id=actor_admin_id,
+            )
+            if credit_operation:
+                # A reserva fica durável antes de a API começar a ler o JPEG.
+                db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+
+    try:
+        if not content_type.startswith("image/jpeg"):
+            raise HTTPException(status_code=415, detail="Envie uma imagem JPEG.")
+        body = await read_bounded_body(
+            request, max_bytes=25 * 1024 * 1024,
+            error_detail="A imagem excede o limite permitido.",
+        )
+        payload_fingerprint = sha256(body).hexdigest()
+        if expected_fingerprint is not None and payload_fingerprint != expected_fingerprint:
+            raise HTTPException(
+                status_code=409,
+                detail="A imagem não corresponde à identidade cadastrada.",
+            )
+        try:
+            with Image.open(BytesIO(body)) as image:
+                if image.format != "JPEG":
+                    raise ValueError
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail="Imagem JPEG inválida.") from exc
+        if folder.purpose == "cover_assets":
+            try:
+                with Image.open(BytesIO(body)) as image:
+                    visual = ImageOps.exif_transpose(image)
+                    visual.load()
+                    horizontal = visual.width > visual.height
+            except (OSError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Imagem JPEG inválida.") from exc
+            if not horizontal:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Envie uma capa horizontal, com largura maior que a altura.",
+                )
+    except asyncio.CancelledError:
+        db.rollback()
+        if credit_operation:
+            _settle_photo_credit_after_write_failure(
+                db,
+                tenant_id=tenant_id,
+                photo_id=photo.id,
+                destination=destination,
+                payload_fingerprint=credit_operation.payload_fingerprint,
+                operation=credit_operation,
+                actor_admin_id=actor_admin_id,
+            )
+        raise
+    except HTTPException:
+        db.rollback()
+        if credit_operation:
+            _settle_photo_credit_after_write_failure(
+                db,
+                tenant_id=tenant_id,
+                photo_id=photo.id,
+                destination=destination,
+                payload_fingerprint=credit_operation.payload_fingerprint,
+                operation=credit_operation,
+                actor_admin_id=actor_admin_id,
+            )
+        raise
+    except Exception:
+        db.rollback()
+        if credit_operation:
+            _settle_photo_credit_after_write_failure(
+                db,
+                tenant_id=tenant_id,
+                photo_id=photo.id,
+                destination=destination,
+                payload_fingerprint=credit_operation.payload_fingerprint,
+                operation=credit_operation,
+                actor_admin_id=actor_admin_id,
+            )
+        raise
+
+    # O lock do PhotoAsset cobre o estado de análise depois do recebimento; a
+    # carteira e sua operação já foram serializadas e confirmadas antes do body.
+    try:
+        db.scalar(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.id == photo.id).with_for_update())
         analysis = admit_source(db, photo, body, reindex=request.headers.get("x-facial-reindex") == "true") if folder.purpose == "content" else None
         if analysis and analysis.state != "receiving":
+            if credit_operation:
+                _settle_photo_credit_after_write_failure(
+                    db,
+                    tenant_id=tenant_id,
+                    photo_id=photo.id,
+                    destination=destination,
+                    payload_fingerprint=credit_operation.payload_fingerprint,
+                    operation=credit_operation,
+                    actor_admin_id=actor_admin_id,
+                )
             return {"status": "queued"}  # replay não recria fonte já descartada
         if analysis:
-            # Reserva durável antes do arquivo: crash deixa linha rastreável pelo TTL.
             db.commit()
+        if analysis:
             analysis = analysis_for(db, photo.id, lock=True, tenant_id=tenant_id)
             if analysis is None:
+                _settle_photo_credit_after_write_failure(
+                    db,
+                    tenant_id=tenant_id,
+                    photo_id=photo.id,
+                    destination=destination,
+                    payload_fingerprint=payload_fingerprint,
+                    operation=credit_operation,
+                    actor_admin_id=actor_admin_id,
+                )
                 raise HTTPException(status_code=409, detail="Foto indisponível para processamento.")
             if analysis.state != "receiving":
+                _settle_photo_credit_after_write_failure(
+                    db,
+                    tenant_id=tenant_id,
+                    photo_id=photo.id,
+                    destination=destination,
+                    payload_fingerprint=payload_fingerprint,
+                    operation=credit_operation,
+                    actor_admin_id=actor_admin_id,
+                )
                 return {"status": "queued"}
-        directory_tenant_id(db, request)
-        write_source(destination, body, tenant_id=tenant_id, authorize=lambda: directory_tenant_id(db, request))
-        if analysis:
-            finalize_source(db, photo)
+    except HTTPException:
+        db.rollback()
+        if credit_operation:
+            _settle_photo_credit_after_write_failure(
+                db,
+                tenant_id=tenant_id,
+                photo_id=photo.id,
+                destination=destination,
+                payload_fingerprint=credit_operation.payload_fingerprint,
+                operation=credit_operation,
+                actor_admin_id=actor_admin_id,
+            )
+        raise
     except SourceCapacityError as exc:
         db.rollback()
+        if credit_operation:
+            _settle_photo_credit_after_write_failure(
+                db,
+                tenant_id=tenant_id,
+                photo_id=photo.id,
+                destination=destination,
+                payload_fingerprint=credit_operation.payload_fingerprint,
+                operation=credit_operation,
+                actor_admin_id=actor_admin_id,
+            )
         raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "15"}) from exc
     except (ValueError, FacialConfigurationError) as exc:
         db.rollback()
+        if credit_operation:
+            _settle_photo_credit_after_write_failure(
+                db,
+                tenant_id=tenant_id,
+                photo_id=photo.id,
+                destination=destination,
+                payload_fingerprint=credit_operation.payload_fingerprint,
+                operation=credit_operation,
+                actor_admin_id=actor_admin_id,
+            )
         raise HTTPException(status_code=422, detail="Imagem ou processamento indisponível.") from exc
+
+    try:
+        directory_tenant_id(db, request)
+        folder = db.scalar(select(PhotoFolder).where(
+            PhotoFolder.id == photo.folder_id, PhotoFolder.tenant_id == tenant_id,
+        ).with_for_update())
+        if not folder or not folder_media_writes_allowed(db, folder):
+            raise HTTPException(
+                status_code=409,
+                detail="A pasta entrou em uma etapa de arquivo ou recuperação durante o upload.",
+            )
+        write_source(destination, body, tenant_id=tenant_id, authorize=lambda: directory_tenant_id(db, request))
+    except Exception as exc:
+        db.rollback()
+        _settle_photo_credit_after_write_failure(
+            db,
+            tenant_id=tenant_id,
+            photo_id=photo.id,
+            destination=destination,
+            payload_fingerprint=payload_fingerprint,
+            operation=credit_operation,
+            actor_admin_id=actor_admin_id,
+        )
+        if isinstance(exc, HTTPException):
+            raise
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=422, detail="Imagem ou processamento indisponível.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível concluir o armazenamento da imagem.",
+            headers={"Retry-After": "15"},
+        ) from exc
+
+    if credit_operation:
+        try:
+            photographer_credits.consume_photo_credit(
+                db, tenant_id, photo.id, payload_fingerprint,
+                actor_admin_id=actor_admin_id,
+            )
+            # O débito é confirmado imediatamente após o rename durável, antes de derivados.
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            try:
+                operation = db.scalar(select(PhotoCreditOperation).where(
+                    PhotoCreditOperation.tenant_id == tenant_id,
+                    PhotoCreditOperation.photo_asset_id_snapshot == photo.id,
+                ))
+                if operation and operation.status in {"reserved", "reconciliation_required"}:
+                    photographer_credits.release_photo_credit(
+                        db,
+                        tenant_id,
+                        photo.id,
+                        proven_pre_durable_failure=False,
+                        actor_admin_id=actor_admin_id,
+                    )
+                    db.commit()
+            except (HTTPException, SQLAlchemyError):
+                db.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail="A fonte foi armazenada e aguarda confirmação dos créditos.",
+                headers={"Retry-After": "15"},
+            ) from exc
+
+    if analysis:
+        finalize_source(db, photo)
     if folder.purpose == "cover_assets":
         gallery = owned_record(db, ParentGallery, photo.parent_gallery_id, tenant_id=tenant_id)
         if gallery:
@@ -6857,14 +8548,18 @@ def photo_media_status(
     """Estado de processamento usado pela interface administrativa."""
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
-    if not owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id):
+    photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
+    if not photo:
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    folder = db.scalar(select(PhotoFolder).where(
+        PhotoFolder.id == photo.folder_id,
+        PhotoFolder.tenant_id == tenant_id,
+    ))
+    archive_state = folder_media_state(db, folder) if folder else "unavailable"
     job = db.scalar(select(MediaJob).where(MediaJob.tenant_id == tenant_id).where(MediaJob.photo_asset_id == photo_id))
     if not job:
-        raw_job = db.scalar(select(RawDevelopmentJob).where(
-            RawDevelopmentJob.photo_asset_id == photo_id, RawDevelopmentJob.tenant_id == tenant_id))
-        return {"status": raw_job.status if raw_job else "not_imported"}
-    return {"status": job.status}
+        return {"status": "not_imported", "media_state": archive_state}
+    return {"status": job.status, "media_state": archive_state}
 
 
 @app.get("/admin/photo-assets/{photo_id}/facial-analysis")
@@ -6901,6 +8596,8 @@ def admin_photo_preview(
     photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
     if not photo:
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    if not _admin_photo_preview_available(db, photo, allow_cover_thumbnail=True):
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
     derivative = db.scalar(
         select(MediaDerivative).where(MediaDerivative.tenant_id == tenant_id).where(
             MediaDerivative.photo_asset_id == photo_id,
@@ -6929,6 +8626,8 @@ def admin_watermarked_photo_preview(
     photo = owned_record(db, PhotoAsset, photo_id, tenant_id=tenant_id)
     if not photo:
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    if not _admin_photo_preview_available(db, photo, allow_cover_thumbnail=False):
+        raise HTTPException(status_code=404, detail="Prévia com marca d’água indisponível.")
     derivative = db.scalar(
         select(MediaDerivative).where(MediaDerivative.tenant_id == tenant_id).where(
             MediaDerivative.photo_asset_id == photo_id,
@@ -6965,6 +8664,7 @@ def admin_purchase_history(
     if client_id:
         query = query.where(SaleOrder.client_id == client_id)
     orders = list(db.scalars(query.order_by(SaleOrder.confirmed_at.desc(), SaleOrder.created_at.desc())))
+    mp_payments = mercadopago_for_orders(db, orders, tenant_id=tenant_id)
     card_ids = {order.provider_payment_id for order in orders if order.provider_payment_id}
     card_payments = {
         payment.id: payment for payment in db.scalars(select(ProviderPayment).where(
@@ -6972,13 +8672,27 @@ def admin_purchase_history(
             ProviderPayment.id.in_(card_ids),
         ))
     } if card_ids else {}
+    order_ids = [order.id for order in orders]
+    item_rows = list(db.scalars(
+        select(SaleOrderItem).where(
+            SaleOrderItem.tenant_id == tenant_id,
+            SaleOrderItem.sale_order_id.in_(order_ids),
+        ).order_by(SaleOrderItem.sale_order_id, SaleOrderItem.filename_snapshot)
+    )) if order_ids else []
+    items_by_order: dict[UUID, list[SaleOrderItem]] = defaultdict(list)
+    for item in item_rows:
+        items_by_order[item.sale_order_id].append(item)
+    media_states = folder_media_states_by_id(
+        db,
+        folder_ids={item.folder_id_snapshot for item in item_rows if item.folder_id_snapshot},
+        tenant_id=tenant_id,
+    )
     result: list[dict[str, object]] = []
     for order in orders:
         client = owned_record(db, Client, order.client_id, tenant_id=tenant_id)
         gallery = (
             owned_record(db, DerivedGallery, order.derived_gallery_id, tenant_id=tenant_id) if order.derived_gallery_id else None
         )
-        items = db.scalars(select(SaleOrderItem).where(SaleOrderItem.tenant_id == tenant_id).where(SaleOrderItem.sale_order_id == order.id))
         result.append(
             {
                 "id": str(order.id),
@@ -6991,18 +8705,29 @@ def admin_purchase_history(
                 "total_cents": order.total_cents,
                 **({"payment_method": "credit_card" if order.provider_payment_id else "pix"}
                    if order.provider_payment_id or order.payment_group_id else {}),
+                **mercadopago_fields(order, mp_payments),
                 **({"provider_payment_state": card_payments[order.provider_payment_id].state}
                    if order.provider_payment_id in card_payments else {}),
                 "items": [
                     {
                         "photo_id": str(item.photo_asset_id_snapshot),
                         "name": item.filename_snapshot,
+                        "media_state": (
+                            "available" if item.folder_id_snapshot is None
+                            else media_states.get(item.folder_id_snapshot, "unavailable")
+                        ),
                         "preview_url": f"/admin/photo-assets/{item.photo_asset_id}/preview"
-                        if item.photo_asset_id
+                        if item.photo_asset_id and (
+                            item.folder_id_snapshot is None
+                            or media_states.get(item.folder_id_snapshot) in {"available", "archiving"}
+                        )
                         else None,
-                        "operational_media_available": item.photo_asset_id is not None,
+                        "operational_media_available": item.photo_asset_id is not None and (
+                            item.folder_id_snapshot is None
+                            or media_states.get(item.folder_id_snapshot) in {"available", "archiving"}
+                        ),
                     }
-                    for item in items
+                    for item in items_by_order.get(order.id, [])
                 ],
             }
         )
@@ -7492,7 +9217,8 @@ def admin_gallery_orders(
     orders = list(
         db.scalars(
             select(SaleOrder).where(SaleOrder.tenant_id == tenant_id)
-            .where(SaleOrder.derived_gallery_id_snapshot == gallery_id)
+            .where(SaleOrder.derived_gallery_id_snapshot == gallery_id,
+                   visible_sale_order_condition(tenant_id=tenant_id))
             .order_by(SaleOrder.created_at.desc())
         )
     )
@@ -7823,8 +9549,7 @@ def private_gallery_members(
                 "commercial_status": projection.commercial_status,
                 "reopening_status": projection.reopening_status,
                 "financial_orders": projection.financial_orders,
-                "selection_expires_at": gallery.selection_expires_at.isoformat()
-                if gallery.selection_expires_at else None,
+                "selection_expires_at": None,
             }
             for membership, client in rows
             for projection in [projections[(gallery.id, membership.client_id)]]
@@ -8130,6 +9855,92 @@ def read_admin_gallery_membership_notification(
     return {"id": str(notification.id), "status": notification.admin_status}
 
 
+@app.get("/admin/media-archive/notices")
+def list_admin_media_archive_notices(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(db_session),
+) -> dict[str, object]:
+    tenant_id = directory_tenant_id(db, request)
+
+    rows = db.execute(
+        select(MediaArchiveNotice, MediaArchiveCycle)
+        .join(
+            MediaArchiveCycle,
+            and_(
+                MediaArchiveCycle.id == MediaArchiveNotice.cycle_id,
+                MediaArchiveCycle.tenant_id == MediaArchiveNotice.tenant_id,
+            ),
+        )
+        .where(MediaArchiveNotice.tenant_id == tenant_id)
+        .order_by(MediaArchiveNotice.created_at.desc(), MediaArchiveNotice.id.desc())
+        .limit(limit)
+    ).all()
+    unread_count = db.scalar(
+        select(func.count()).select_from(MediaArchiveNotice).where(
+            MediaArchiveNotice.tenant_id == tenant_id,
+            MediaArchiveNotice.read_at.is_(None),
+            MediaArchiveNotice.superseded_at.is_(None),
+        )
+    ) or 0
+    return {
+        "items": [
+            {
+                "id": str(notice.id),
+                "notice_type": notice.notice_type,
+                "title": notice.title,
+                "body": notice.body,
+                "cycle_id": str(cycle.id),
+                "folder_id": str(cycle.folder_id),
+                "parent_gallery_id": str(cycle.parent_gallery_id),
+                "deadline_at": _media_archive_notice_timestamp(notice.deadline_at),
+                "created_at": _media_archive_notice_timestamp(notice.created_at),
+                "read_at": _media_archive_notice_timestamp(notice.read_at),
+                "superseded_at": _media_archive_notice_timestamp(notice.superseded_at),
+            }
+            for notice, cycle in rows
+        ],
+        "unread_count": int(unread_count),
+    }
+
+
+def _media_archive_notice_timestamp(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        value = value.replace(tzinfo=timezone.utc)  # noqa: UP017 -- Keep Python 3.10 runtime compatibility.
+    else:
+        value = value.astimezone(timezone.utc)  # noqa: UP017 -- Keep Python 3.10 runtime compatibility.
+    return value.isoformat()
+
+
+@app.post("/admin/media-archive/notices/{notice_id}/read")
+def read_admin_media_archive_notice(
+    notice_id: UUID,
+    request: Request,
+    db: Session = Depends(db_session),
+) -> dict[str, str | None]:
+    require_same_origin(request)
+    tenant_id = directory_tenant_id(db, request)
+    notice = db.scalar(
+        select(MediaArchiveNotice)
+        .where(
+            MediaArchiveNotice.id == notice_id,
+            MediaArchiveNotice.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    if notice is None:
+        raise HTTPException(status_code=404, detail="Aviso não encontrado.")
+    if notice.read_at is None:
+        notice.read_at = now()
+        db.commit()
+    return {
+        "id": str(notice.id),
+        "read_at": _media_archive_notice_timestamp(notice.read_at),
+    }
+
+
 @app.get("/admin/derived-galleries/{gallery_id}/upload-batches")
 def list_private_upload_batches(gallery_id: UUID, request: Request,
                                 db: Session = Depends(db_session)) -> dict:
@@ -8149,6 +9960,8 @@ def begin_private_upload_batch(gallery_id: UUID, request: Request,
     tenant_id = directory_tenant_id(db, request)
     session = require_admin(request)
     require_same_origin(request)
+    from app.photographer_onboarding import require_upload_ready
+    require_upload_ready(db, tenant_id=tenant_id, admin_id=session.subject_id, require_credit=True)
     gallery = require_derived_gallery_mutable(db, gallery_id, allow_deleted_origin=True, tenant_id=tenant_id)
     if not gallery.access_enabled:
         raise HTTPException(status_code=409, detail="A galeria privada está bloqueada.")
@@ -8180,6 +9993,8 @@ def begin_restricted_folder_upload_batch(folder_id: UUID, request: Request,
     tenant_id = directory_tenant_id(db, request)
     session = require_admin(request)
     require_same_origin(request)
+    from app.photographer_onboarding import require_upload_ready
+    require_upload_ready(db, tenant_id=tenant_id, admin_id=session.subject_id, require_credit=True)
     folder = db.scalar(select(PhotoFolder).where(
         PhotoFolder.tenant_id == tenant_id, PhotoFolder.id == folder_id,
         PhotoFolder.purpose == "content", PhotoFolder.audience_scope == "selected",
@@ -8262,6 +10077,10 @@ def admin_private_gallery_folders(
                 "status": folder.status,
                 "position": folder.position,
                 "photo_count": counts.get(folder.id, 0),
+                "released_at": folder.released_at.isoformat() if folder.released_at else None,
+                "access_duration_days": folder.access_duration_days,
+                "access_expires_at": folder.access_expires_at.isoformat()
+                if folder.access_expires_at else None,
             }
             for folder in folders
         ],
@@ -8279,6 +10098,8 @@ def create_private_gallery_folder(
     db: Session = Depends(db_session),
 ) -> dict[str, object]:
     tenant_id = directory_tenant_id(db, request)
+    from app.tenant_closure import require_new_work
+    require_new_work(db, tenant_id)
     require_admin(request)
     gallery = require_derived_gallery_mutable(db, gallery_id, allow_deleted_origin=True, tenant_id=tenant_id)
     last_position = db.scalar(
@@ -8291,6 +10112,7 @@ def create_private_gallery_folder(
         parent_gallery_id=gallery.parent_gallery_id,
         derived_gallery_id=gallery.id,
         name=payload.name.strip(),
+        access_duration_days=payload.access_duration_days,
         position=(last_position if last_position is not None else -1) + 1,
         purpose="content",
         tenant_id=tenant_id,
@@ -8299,7 +10121,12 @@ def create_private_gallery_folder(
     db.flush()
     audit(db, "private_gallery.folder_created", str(folder.id), tenant_id=tenant_id)
     db.commit()
-    return {"id": str(folder.id), "status": folder.status, "position": folder.position}
+    return {
+        "id": str(folder.id), "status": folder.status, "position": folder.position,
+        "access_duration_days": folder.access_duration_days,
+        "access_expires_at": folder.access_expires_at.isoformat()
+        if folder.access_expires_at else None,
+    }
 
 
 @app.get("/admin/derived-galleries/{gallery_id}/photos")
@@ -8327,6 +10154,12 @@ def admin_private_gallery_photos(
     photo_ids = {
         photo.id for _reference, photo, _folder in reference_rows
     } | {photo.id for photo, _folder in private_rows}
+    media_states = folder_media_states_by_id(
+        db,
+        folder_ids={folder.id for _reference, _photo, folder in reference_rows}
+        | {folder.id for _photo, folder in private_rows},
+        tenant_id=tenant_id,
+    )
     favorites_by_photo: dict[UUID, list[dict[str, str]]] = defaultdict(list)
     comments_by_photo: dict[UUID, list[dict[str, str]]] = defaultdict(list)
     commercial_states_by_photo: dict[UUID, list[dict[str, str]]] = defaultdict(list)
@@ -8471,7 +10304,9 @@ def admin_private_gallery_photos(
             "name": photo.display_name or photo.filename,
             "folder_id": str(folder.id),
             "folder_name": folder.name,
-            "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview",
+            "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview"
+            if media_states.get(folder.id) in {"available", "archiving"} else None,
+            "media_state": media_states.get(folder.id, "unavailable"),
             "origins": sorted(origins_by_reference.get(reference.id) or [reference.origin]),
             "ownership": "public_reference",
             "favorited_by": favorites_by_photo[photo.id],
@@ -8486,7 +10321,9 @@ def admin_private_gallery_photos(
             "name": photo.display_name or photo.filename,
             "folder_id": str(folder.id),
             "folder_name": folder.name,
-            "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview",
+            "preview_url": f"/admin/photo-assets/{photo.id}/watermarked-preview"
+            if media_states.get(folder.id) in {"available", "archiving"} else None,
+            "media_state": media_states.get(folder.id, "unavailable"),
             "origins": ["private_upload"],
             "ownership": "private",
             "favorited_by": favorites_by_photo[photo.id],
@@ -8610,10 +10447,16 @@ def delete_derived_gallery(
             status_code=status.HTTP_409_CONFLICT,
             detail="A Galeria pública está em exclusão. Aguarde a conclusão antes de excluir a privada.",
         )
+    photos = list(db.scalars(select(PhotoAsset).where(
+        PhotoAsset.tenant_id == tenant_id,
+        PhotoAsset.derived_gallery_id == gallery.id,
+    ).order_by(PhotoAsset.id).with_for_update()))
+    _assert_photo_credit_operations_settled(
+        db, tenant_id, [photo.id for photo in photos],
+    )
     preserve_asset_history(db, gallery.parent_gallery_id, gallery_ids=[gallery.id], tenant_id=tenant_id)
     paths = historical_paths(db, gallery_ids=[gallery.id], tenant_id=tenant_id)
-    for photo in list(db.scalars(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id).where(PhotoAsset.derived_gallery_id == gallery.id)
-                                 .order_by(PhotoAsset.id).with_for_update())):
+    for photo in photos:
         paths.extend(_delete_photo_records(db, photo, tenant_id=tenant_id))
     db.flush()
     delete_private_records(db, [gallery.id], tenant_id=tenant_id)
@@ -8630,7 +10473,31 @@ def gallery_operational_status(db: Session, gallery: DerivedGallery) -> dict[str
         db.scalars(select(PhotoSelection).where(PhotoSelection.derived_gallery_id == gallery.id))
     )
     orders = list(db.scalars(select(SaleOrder).where(SaleOrder.derived_gallery_id == gallery.id)))
-    frozen = bool(gallery.selection_expires_at and expired(gallery.selection_expires_at))
+    referenced_photo_ids = select(DerivedGalleryPhoto.photo_asset_id).where(
+        DerivedGalleryPhoto.tenant_id == gallery.tenant_id,
+        DerivedGalleryPhoto.derived_gallery_id == gallery.id,
+    )
+    folder_ids = select(PhotoAsset.folder_id).where(
+        PhotoAsset.tenant_id == gallery.tenant_id,
+        (PhotoAsset.derived_gallery_id == gallery.id)
+        | PhotoAsset.id.in_(referenced_photo_ids),
+    )
+    folders = list(db.scalars(select(PhotoFolder).where(
+        PhotoFolder.tenant_id == gallery.tenant_id,
+        PhotoFolder.id.in_(folder_ids),
+        PhotoFolder.purpose == "content",
+        PhotoFolder.status == "released",
+    )))
+    frozen = bool(folders) and all(
+        not folder_media_is_local(db, folder)
+        or (
+            (deadline := folder_effective_expiry(
+                db, folder, client_id=gallery.client_id
+            )) is not None
+            and expired(deadline)
+        )
+        for folder in folders
+    )
     return {
         "frozen": frozen,
         "blocked": not gallery.access_enabled,
@@ -8678,15 +10545,19 @@ def list_derived_galleries(
             .where(DerivedGalleryPhoto.derived_gallery_id == gallery.id)
             .limit(1)
         )
+        cover_photo = owned_record(db, PhotoAsset, cover, tenant_id=tenant_id) if cover else None
         entries.append(
             {
                 "id": str(gallery.id),
                 "name": gallery.name,
                 "parent_gallery_id": str(gallery.parent_gallery_id),
-                "selection_expires_at": gallery.selection_expires_at.isoformat()
-                if gallery.selection_expires_at
-                else None,
-                "cover_preview_url": f"/admin/photo-assets/{cover}/preview" if cover else None,
+                "selection_expires_at": None,
+                "cover_preview_url": (
+                    f"/admin/photo-assets/{cover_photo.id}/preview"
+                    if cover_photo and _admin_photo_preview_available(
+                        db, cover_photo, allow_cover_thumbnail=True,
+                    ) else None
+                ),
                 "client_count": 1,
                 "responsible_count": 1,
                 **status_data,
@@ -8710,6 +10581,7 @@ def derived_gallery_detail(
         .where(DerivedGalleryPhoto.derived_gallery_id == gallery.id)
         .limit(1)
     )
+    cover_photo = owned_record(db, PhotoAsset, cover, tenant_id=tenant_id) if cover else None
     owner = owned_record(db, Client, gallery.client_id, tenant_id=tenant_id)
     parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
     if not parent:
@@ -8753,10 +10625,13 @@ def derived_gallery_detail(
         "custom_message": parent.sales_message or "",
         "favorites_enabled": parent.favorites_enabled,
         "comments_enabled": parent.comments_enabled,
-        "selection_expires_at": gallery.selection_expires_at.isoformat()
-        if gallery.selection_expires_at
-        else None,
-        "cover_preview_url": f"/admin/photo-assets/{cover}/preview" if cover else None,
+        "selection_expires_at": None,
+        "cover_preview_url": (
+            f"/admin/photo-assets/{cover_photo.id}/preview"
+            if cover_photo and _admin_photo_preview_available(
+                db, cover_photo, allow_cover_thumbnail=True,
+            ) else None
+        ),
         "client": client_data,
         "responsible": client_data,
         "configuration_inherited": True,
@@ -8783,7 +10658,7 @@ def update_derived_gallery(
     return {"id": str(gallery.id)}
 
 
-@app.post("/admin/derived-galleries/{gallery_id}/renew")
+@app.post("/admin/derived-galleries/{gallery_id}/renew", deprecated=True)
 def renew_gallery_selection(
     gallery_id: UUID,
     payload: GalleryRenewalInput,
@@ -8792,27 +10667,51 @@ def renew_gallery_selection(
 ) -> dict[str, str]:
     tenant_id = directory_tenant_id(db, request)
     require_admin(request)
-    gallery = require_derived_gallery_mutable(db, gallery_id, tenant_id=tenant_id)
-    if expired(payload.selection_expires_at):
-        raise HTTPException(status_code=422, detail="Informe um prazo futuro.")
-    gallery.selection_expires_at = payload.selection_expires_at
-    audit(db, "derived_gallery.selection_renewed", str(gallery_id), tenant_id=tenant_id)
-    db.commit()
-    return {"id": str(gallery_id)}
+    require_derived_gallery_mutable(db, gallery_id, tenant_id=tenant_id)
+    raise HTTPException(
+        status_code=410,
+        detail="O prazo de acesso agora é configurado individualmente por pasta.",
+    )
 
 
 def _reopening_request_payload(
-    db: Session, reopening: GalleryReopeningRequest
+    db: Session,
+    reopening: GalleryReopeningRequest,
+    *,
+    related_records: tuple[
+        GalleryReopeningNotificationOutbox | None, PhotoFolder | None
+    ] | None = None,
 ) -> dict[str, object]:
-    notification = db.scalar(
-        select(GalleryReopeningNotificationOutbox).where(
-            GalleryReopeningNotificationOutbox.tenant_id == reopening.tenant_id,
-            GalleryReopeningNotificationOutbox.gallery_reopening_request_id == reopening.id
+    if related_records is None:
+        notification = db.scalar(
+            select(GalleryReopeningNotificationOutbox).where(
+                GalleryReopeningNotificationOutbox.tenant_id == reopening.tenant_id,
+                GalleryReopeningNotificationOutbox.gallery_reopening_request_id == reopening.id
+            )
         )
-    )
+        folder = db.scalar(
+            select(PhotoFolder).where(
+                PhotoFolder.tenant_id == reopening.tenant_id,
+                PhotoFolder.id == reopening.photo_folder_id,
+            )
+        ) if reopening.photo_folder_id else None
+    else:
+        notification, folder = related_records
     return {
         "id": str(reopening.id),
         "gallery_id": str(reopening.parent_gallery_id or reopening.derived_gallery_id),
+        "folder_id": str(reopening.photo_folder_id) if reopening.photo_folder_id else None,
+        "folder_name": folder.name if folder else None,
+        "folder_access_scope": (
+            "client"
+            if folder and (
+                folder.derived_gallery_id is not None
+                or folder.audience_scope == "selected"
+            )
+            else "all"
+            if folder
+            else None
+        ),
         "status": reopening.status,
         "requested_by_client_id": str(reopening.requested_by_client_id),
         "created_at": reopening.created_at.isoformat(),
@@ -8820,6 +10719,7 @@ def _reopening_request_payload(
         "approved_until": (
             reopening.approved_until.isoformat() if reopening.approved_until else None
         ),
+        "approved_duration_days": reopening.approved_duration_days,
         "notification": {
             "id": str(notification.id) if notification else None,
             "status": notification.status if notification else "skipped",
@@ -8850,6 +10750,47 @@ def list_gallery_reopening_requests(
             )
         )
     )
+    related_records: dict[
+        UUID,
+        tuple[GalleryReopeningNotificationOutbox | None, PhotoFolder | None],
+    ] = {}
+    if items:
+        request_ids = {item.id for item in items}
+        notification_by_request = {
+            item.gallery_reopening_request_id: item
+            for item in db.scalars(
+                select(GalleryReopeningNotificationOutbox).where(
+                    GalleryReopeningNotificationOutbox.tenant_id == tenant_id,
+                    GalleryReopeningNotificationOutbox.gallery_reopening_request_id.in_(request_ids),
+                )
+            )
+        }
+        folder_ids = {item.photo_folder_id for item in items if item.photo_folder_id}
+        folder_by_id = {
+            item.id: item
+            for item in db.scalars(
+                select(PhotoFolder).where(
+                    PhotoFolder.tenant_id == tenant_id,
+                    PhotoFolder.id.in_(folder_ids),
+                )
+            )
+        } if folder_ids else {}
+        related_records = {
+            item.id: (
+                notification_by_request.get(item.id),
+                folder_by_id.get(item.photo_folder_id),
+            )
+            for item in items
+        }
+    requesters = {
+        item.id: item.full_name
+        for item in db.scalars(
+            select(Client).where(
+                Client.tenant_id == tenant_id,
+                Client.id.in_({row.requested_by_client_id for row in items}),
+            )
+        )
+    } if items else {}
     galleries = {
         gallery.id: gallery
         for gallery in db.scalars(
@@ -8866,11 +10807,16 @@ def list_gallery_reopening_requests(
     return {
         "requests": [
             {
-                **_reopening_request_payload(db, item),
+                **_reopening_request_payload(
+                    db, item, related_records=related_records[item.id]
+                ),
                 "gallery_name": canonical_parents[item.parent_gallery_id].name
                 if item.parent_gallery_id in canonical_parents
                 else galleries[item.derived_gallery_id].name
                 if item.derived_gallery_id in galleries else "Galeria removida",
+                "requested_by_client_name": requesters.get(
+                    item.requested_by_client_id, "Cliente indisponível"
+                ),
             }
             for item in items
         ]
@@ -8895,25 +10841,63 @@ def decide_gallery_reopening_request(
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
     if reopening.status != "pending":
         return _reopening_request_payload(db, reopening)
-    gallery = owned_record(db, DerivedGallery, reopening.derived_gallery_id, tenant_id=tenant_id) if reopening.derived_gallery_id else None
-    canonical_state = db.scalar(select(GalleryClientState).where(GalleryClientState.tenant_id == tenant_id).where(
-        GalleryClientState.parent_gallery_id == reopening.parent_gallery_id,
-        GalleryClientState.client_id == reopening.requested_by_client_id,
-    ).with_for_update()) if reopening.parent_gallery_id else None
-    if not gallery and not canonical_state:
-        raise HTTPException(status_code=404, detail="Galeria não encontrada.")
+    reopened_folder = None
+    if payload.decision == "approved" and reopening.photo_folder_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta solicitação antiga não identifica uma pasta. Peça uma nova solicitação para a pasta.",
+        )
     if payload.decision == "approved":
-        assert payload.selection_expires_at is not None
-        if expired(payload.selection_expires_at):
-            raise HTTPException(status_code=422, detail="Informe um prazo futuro.")
-        if gallery:
-            gallery.selection_expires_at = payload.selection_expires_at
+        if reopening.photo_folder_id:
+            folder = db.scalar(
+                select(PhotoFolder).where(
+                    PhotoFolder.tenant_id == tenant_id,
+                    PhotoFolder.id == reopening.photo_folder_id,
+                ).with_for_update()
+            )
+            if not folder or not folder_media_is_local(db, folder):
+                raise HTTPException(
+                    status_code=409,
+                    detail="A mídia já está arquivada; use o fluxo de recuperação de arquivo frio.",
+                )
+            if not folder_reopening_allowed(
+                db,
+                folder,
+                client_id=reopening.requested_by_client_id,
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="O prazo para aprovar a reabertura normal desta pasta terminou.",
+                )
+            if payload.access_duration_days is None:
+                raise HTTPException(status_code=422, detail="Informe a duração em dias.")
+            approved_at = now()
+            reopened_folder = folder
+            reopening.approved_duration_days = payload.access_duration_days
+            reopening.approved_until = approved_at + timedelta(
+                days=payload.access_duration_days
+            )
         else:
-            canonical_state.selection_expires_at = payload.selection_expires_at
-        reopening.approved_until = payload.selection_expires_at
+            raise HTTPException(
+                status_code=409,
+                detail="Esta solicitação antiga não identifica uma pasta. Peça uma nova solicitação para a pasta.",
+            )
     reopening.status = payload.decision
     reopening.decided_by_admin_id = session.subject_id
     reopening.decided_at = now()
+    if payload.decision == "approved" and reopened_folder is not None:
+        from app.folder_access import folder_archive_eligible_at
+        from app.media_archive_notices import supersede_window_notices_for_folder
+
+        current_deadline = folder_archive_eligible_at(db, reopened_folder)
+        if current_deadline is not None:
+            supersede_window_notices_for_folder(
+                db,
+                tenant_id=tenant_id,
+                folder_id=reopened_folder.id,
+                current_deadline=current_deadline,
+                at=reopening.decided_at,
+            )
     audit(db, f"gallery.reopening_{payload.decision}", str(reopening.id), tenant_id=tenant_id)
     db.commit()
     return _reopening_request_payload(db, reopening)
@@ -9039,6 +11023,7 @@ def client_library(
                 PhotoFolder.tenant_id == session.tenant_id, PhotoAsset.tenant_id == session.tenant_id,
                 PhotoFolder.status == "released",
                 PhotoFolder.purpose == "content",
+                folder_browsing_clause(session.subject_id),
             )
             .distinct()
             .order_by(
@@ -9048,6 +11033,98 @@ def client_library(
             )
         ):
             folders_by_gallery[derived_gallery_id].append(folder)
+
+    public_folder_queries = [
+        authorized_canonical_folders(parent_id, session.subject_id).with_only_columns(
+            PhotoFolder.id.label("folder_id"),
+            PhotoFolder.name.label("folder_name"),
+            literal(parent_id).label("parent_gallery_id"),
+        )
+        for parent_id in {
+            UUID(str(row["id"]))
+            for row in public_rows
+            if row["gallery_status"] == "active"
+        }
+    ]
+    public_folder_names_by_parent: dict[UUID, dict[UUID, str]] = defaultdict(dict)
+    if public_folder_queries:
+        public_folder_statement = (
+            union_all(*public_folder_queries)
+            if len(public_folder_queries) > 1
+            else public_folder_queries[0]
+        )
+        for folder_id, folder_name, parent_id in db.execute(public_folder_statement):
+            public_folder_names_by_parent[parent_id][folder_id] = folder_name
+
+    active_private_gallery_ids = {
+        gallery.id
+        for gallery, membership_status in membership_rows
+        if membership_status == "active" and gallery.access_enabled
+    }
+    private_folder_names_by_gallery: dict[UUID, dict[UUID, str]] = defaultdict(dict)
+    if active_private_gallery_ids:
+        private_folder_rows = db.execute(
+            select(
+                DerivedGalleryPhoto.derived_gallery_id,
+                PhotoFolder.id,
+                PhotoFolder.name,
+            )
+            .join(PhotoAsset, PhotoAsset.id == DerivedGalleryPhoto.photo_asset_id)
+            .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+            .where(
+                DerivedGalleryPhoto.tenant_id == tenant_id,
+                DerivedGalleryPhoto.derived_gallery_id.in_(active_private_gallery_ids),
+                PhotoAsset.tenant_id == tenant_id,
+                PhotoFolder.tenant_id == tenant_id,
+                PhotoFolder.parent_gallery_id == PhotoAsset.parent_gallery_id,
+                PhotoFolder.status == "released",
+                PhotoFolder.purpose == "content",
+            )
+            .distinct()
+        )
+        for gallery_id, folder_id, folder_name in private_folder_rows:
+            private_folder_names_by_gallery[gallery_id][folder_id] = folder_name
+
+    deadline_folder_ids = {
+        folder_id
+        for folder_names in (
+            *public_folder_names_by_parent.values(),
+            *private_folder_names_by_gallery.values(),
+        )
+        for folder_id in folder_names
+    }
+    effective_deadlines = folder_effective_expiries_by_id(
+        db,
+        folder_ids=deadline_folder_ids,
+        tenant_id=tenant_id,
+        client_id=session.subject_id,
+    )
+
+    def selection_deadline_payload(folder_names: dict[UUID, str]) -> list[dict[str, str]]:
+        entries = [
+            {
+                "folder_id": str(folder_id),
+                "folder_name": folder_name,
+                "expires_at": expiry.isoformat(),
+            }
+            for folder_id, folder_name in folder_names.items()
+            if (expiry := effective_deadlines.get(folder_id)) is not None
+        ]
+        return sorted(
+            entries,
+            key=lambda entry: (
+                entry["expires_at"],
+                entry["folder_name"].casefold(),
+                entry["folder_id"],
+            ),
+        )
+
+    for public_row in public_rows:
+        parent_id = UUID(str(public_row["id"]))
+        public_row["selection_deadlines"] = selection_deadline_payload(
+            public_folder_names_by_parent.get(parent_id, {})
+        )
+
     rows: list[dict[str, object]] = []
     galleries_by_id: dict[str, DerivedGallery] = {}
     for gallery, membership_status in membership_rows:
@@ -9067,17 +11144,13 @@ def client_library(
             if membership_status == "blocked" or not gallery.access_enabled
             else "origin_removed"
             if origin_removed
-            else "expired"
-            if gallery.selection_expires_at and expired(gallery.selection_expires_at)
             else "active"
         )
         private_row = {
             "id": str(gallery.id),
             "name": gallery.name,
             "message": (parent.sales_message or "") if parent else "",
-            "selection_expires_at": gallery.selection_expires_at.isoformat()
-            if gallery.selection_expires_at
-            else None,
+            "selection_expires_at": None,
             "gallery_status": gallery_status,
             "membership_status": membership_status,
             "browse_url": f"/gallery/{gallery.id}"
@@ -9093,6 +11166,9 @@ def client_library(
                 else None,
             },
             "folders": [{"id": str(folder.id), "name": folder.name} for folder in folders],
+            "selection_deadlines": selection_deadline_payload(
+                private_folder_names_by_gallery.get(gallery.id, {})
+            ),
         }
         rows.append(private_row)
         galleries_by_id[str(gallery.id)] = gallery
@@ -9179,6 +11255,9 @@ def client_library(
             MediaDerivative.status == "ready",
         )
     )) if parent_ids else set()
+    local_cover_parents = _local_cover_thumbnail_parent_ids(
+        db, tenant_id=tenant_id, parent_ids=set(parent_ids),
+    )
     journeys: list[dict[str, object]] = []
     for parent_id in parent_order:
         public_row = public_by_parent.get(parent_id)
@@ -9237,16 +11316,18 @@ def client_library(
                 "cover_preview_url": (
                     f"{primary_url}/cover-preview"
                     if primary_url and parent and parent.id in ready_cover_parents
+                    and parent.id in local_cover_parents
                     else None
                 ),
                 "public_gallery": public_row,
                 "private_gallery": private_row,
-                "selection_expires_at": (
-                    canonical_states[UUID(parent_id)].selection_expires_at.isoformat()
-                    if UUID(parent_id) in canonical_states
-                    and canonical_states[UUID(parent_id)].selection_expires_at
-                    else private_gallery.selection_expires_at.isoformat()
-                    if private_gallery and private_gallery.selection_expires_at else None
+                "selection_expires_at": None,
+                "selection_deadlines": (
+                    public_row.get("selection_deadlines", [])
+                    if public_url and public_row
+                    else private_row.get("selection_deadlines", [])
+                    if private_url and private_row
+                    else []
                 ),
                 "selection": cart,
                 "orders": gallery_orders,
@@ -9283,7 +11364,8 @@ def _commerce_client(request: Request, db: Session) -> Client:
 
 @app.get("/library/cart")
 def unified_cart(request: Request, db: Session = Depends(db_session)) -> dict:
-    return cart_payload(db, _commerce_client(request, db))
+    client = _commerce_client(request, db)
+    return cart_payload(db, client)
 
 
 @app.post("/library/cart/prepare")
@@ -9303,93 +11385,6 @@ class ProviderCheckoutInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cart_revision: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     idempotency_key: UUID
-
-
-@app.post("/library/cart/prepare-card")
-def prepare_unified_card(request: Request, payload: ProviderCheckoutInput,
-                         db: Session = Depends(db_session)) -> dict:
-    """Freeze this client's current cart, then issue one tenant-bound card link."""
-    client = _commerce_client(request, db)
-    try:
-        payment = prepare_provider_payment(
-            db, client, cart_revision=payload.cart_revision,
-            checkout_key=str(payload.idempotency_key),
-        )
-        if payment.state == "creating":
-            callback = f"{public_app_origin()}/api/infinitepay/return"
-            provider = operational_provider(redirect_url=callback)
-            if provider is None:
-                raise CheckoutError("Checkout de cartão indisponível.")
-            try:
-                payment = issue_provider_payment(db, payment.id, provider)
-            finally:
-                close = getattr(provider, "close", None)
-                if close:
-                    close()
-        else:
-            db.commit()
-        return {
-            "id": str(payment.id), "status": payment.state,
-            "checkout_url": payment.checkout_url if payment.state == "awaiting_payment" else None,
-            "total_cents": payment.total_cents,
-        }
-    except (CheckoutError, EmailConfigurationError) as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.get("/infinitepay/return")
-def infinitepay_return(request: Request,
-                       order_nsu: str | None = Query(default=None, max_length=64),
-                       transaction_nsu: str | None = Query(default=None, max_length=200),
-                       slug: str | None = Query(default=None, max_length=512),
-                       db: Session = Depends(db_session)) -> RedirectResponse:
-    """Treat browser values only as candidates; payment_check is authoritative."""
-    destination = "/library/purchases"
-    try:
-        payment_id = UUID(order_nsu) if order_nsu else None
-        if payment_id is not None and str(payment_id) != order_nsu:
-            payment_id = None
-    except ValueError:
-        payment_id = None
-    if payment_id:
-        destination += f"#payment-{payment_id}"
-    client_ip = request.client.host if request.client else "unknown"
-    enforce_rate_limit(db, "infinitepay_return", client_ip, client_ip)
-    candidates_ok = (
-        payment_id is not None and transaction_nsu is not None and bool(transaction_nsu.strip())
-        and transaction_nsu == transaction_nsu.strip()
-        and slug is not None and bool(slug.strip()) and slug == slug.strip()
-    )
-    if candidates_ok:
-        payment = db.scalar(select(ProviderPayment).where(
-            ProviderPayment.id == payment_id,
-            ProviderPayment.provider == "infinitepay",
-        ))
-        if payment and payment.state in {"awaiting_payment", "verification_required"}:
-            try:
-                callback = f"{public_app_origin()}/api/infinitepay/return"
-                provider = operational_provider(redirect_url=callback)
-            except EmailConfigurationError:
-                logger.exception("InfinitePay return unavailable: public app origin is invalid")
-                return RedirectResponse(destination, status_code=303)
-            if provider is not None:
-                try:
-                    result = provider.check_payment(PaymentCheckRequest(
-                        payment_id=payment.id, tenant_id=payment.tenant_id,
-                        handle=payment.handle_snapshot, transaction_nsu=transaction_nsu,
-                        slug=slug, expected_total_cents=payment.total_cents,
-                    ))
-                    apply_payment_check(db, payment.id, requested_slug=slug, result=result)
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    logger.exception("InfinitePay return verification failed for payment %s", payment.id)
-                finally:
-                    close = getattr(provider, "close", None)
-                    if close:
-                        close()
-    return RedirectResponse(destination, status_code=303)
 
 
 class GroupPaymentInput(BaseModel):
@@ -9506,11 +11501,13 @@ def client_purchase_history(
                         )
                     ),
                     SaleOrder.provider_payment_id.is_not(None),
+                    SaleOrder.mercadopago_payment_id.is_not(None),
                 ),
             )
             .order_by(SaleOrder.created_at.desc())
         )
     )
+    mp_payments = mercadopago_for_orders(db, orders, tenant_id=tenant_id)
     order_ids = [order.id for order in orders]
     provider_payment_ids = {order.provider_payment_id for order in orders if order.provider_payment_id}
     provider_payments = {
@@ -9520,6 +11517,14 @@ def client_purchase_history(
             ProviderPayment.id.in_(provider_payment_ids),
         ))
     } if provider_payment_ids else {}
+    recoveries = cart_recovery_statuses(
+        db, tenant_id=tenant_id, payments=provider_payments.values()
+    )
+    orders = [
+        order for order in orders
+        if not recoveries.get(order.provider_payment_id, {}).get("historical_only")
+    ]
+    order_ids = [order.id for order in orders]
     item_rows = (
         list(
             db.scalars(
@@ -9565,37 +11570,60 @@ def client_purchase_history(
             select(ParentGallery).where(ParentGallery.tenant_id == tenant_id).where(ParentGallery.id.in_(canonical_parent_ids))
         )
     }
+    media_state_by_folder = folder_media_states_by_id(
+        db,
+        folder_ids={item.folder_id_snapshot for item in item_rows if item.folder_id_snapshot},
+        tenant_id=tenant_id,
+    )
     result: list[dict[str, object]] = []
     for order in orders:
         gallery = operational_galleries.get(order.derived_gallery_id)
         canonical_parent = canonical_parents.get(order.parent_gallery_id)
+        recovery = recoveries.get(order.provider_payment_id, {})
         item_payloads = []
         for item in items_by_order[order.id]:
             historical_media = history_by_item.get(item.id)
+            if item.folder_id_snapshot is None:
+                media_state = "available"  # itens antigos não têm escopo de pasta arquivável
+            else:
+                media_state = media_state_by_folder.get(item.folder_id_snapshot, "unavailable")
+                if media_state == "unavailable":
+                    media_state = "available"  # preserva o histórico de pastas removidas fora do arquivo frio
+            media_visible = media_state in {"available", "archiving"}
             item_payloads.append(
                 {
                     "item_id": str(item.id),
                     "photo_id": str(item.photo_asset_id_snapshot),
                     "name": item.filename_snapshot,
+                    "media_state": media_state,
                     "preview_url": f"/library/history/items/{item.id}/preview"
-                    if historical_media and historical_media.preview_storage_key
+                    if media_visible
+                    and historical_media and historical_media.preview_storage_key
                     else (
                         f"/gallery/{order.derived_gallery_id}/photos/{item.photo_asset_id}/preview"
-                        if order.derived_gallery_id and item.photo_asset_id
+                        if media_visible
+                        and order.derived_gallery_id and item.photo_asset_id
                         else f"/library/purchases/items/{item.id}/preview"
-                        if canonical_parent and item.photo_asset_id and order_fulfillable(order)
+                        if media_visible
+                        and canonical_parent and item.photo_asset_id and order_fulfillable(order)
                         else f"/public-galleries/{canonical_parent.id}/photos/{item.photo_asset_id}/preview"
-                        if canonical_parent and item.photo_asset_id
+                        if media_visible
+                        and canonical_parent and item.photo_asset_id
                         else None
                     ),
                     "delivery_url": f"/library/history/items/{item.id}/delivery"
-                    if historical_media and historical_media.delivery_storage_key
+                    if media_visible
+                    and historical_media and historical_media.delivery_storage_key
                     else None,
                     "delivery_reference_available": bool(
                         historical_media and historical_media.delivery_reference
                     ),
                 }
             )
+        has_cold_media = any(
+            item["media_state"] not in {"available", "archiving"}
+            for item in item_payloads
+        )
         result.append(
             {
                 "id": str(order.id),
@@ -9607,12 +11635,15 @@ def client_purchase_history(
                 "assets_removed": bool(order.assets_removed_at),
                 "payment_status": order.payment_status,
                 **({
-                    "payment_method": "credit_card",
+                    "payment_method": provider_payments[order.provider_payment_id].capture_method or "credit_card",
                     "provider_payment_id": str(provider_payments[order.provider_payment_id].id),
                     "provider_payment_state": provider_payments[order.provider_payment_id].state,
-                    "provider_checkout_url": provider_payments[order.provider_payment_id].checkout_url
-                    if provider_payments[order.provider_payment_id].state == "awaiting_payment" else None,
                 } if order.provider_payment_id in provider_payments else {}),
+                **({
+                    "provider_cart_reopened_at": recovery["reopened_at"],
+                    "provider_requires_reconciliation": recovery["requires_reconciliation"],
+                } if recovery.get("reopened_at") else {}),
+                **mercadopago_fields(order, mp_payments),
                 "commercial_state": (
                     "selection_finalized"
                     if order.payment_status == "not_required"
@@ -9639,7 +11670,10 @@ def client_purchase_history(
                 "confirmed_at": order.confirmed_at.isoformat() if order.confirmed_at else None,
                 "total_cents": order.total_cents if order.payment_required_snapshot else None,
                 **({"payment_required": False} if not order.payment_required_snapshot else {}),
-                "delivery_album_url": order.delivery_album_url if order_fulfillable(order) else None,
+                "delivery_album_url": (
+                    order.delivery_album_url
+                    if order_fulfillable(order) and not has_cold_media else None
+                ),
                 "items": item_payloads,
             }
         )
@@ -9659,15 +11693,21 @@ def client_purchase_history(
         group = card_groups.setdefault(str(payment_id), {
             "id": str(payment_id),
             "state": order_payload["provider_payment_state"],
-            "checkout_url": order_payload["provider_checkout_url"],
+            "capture_method": provider_payments[UUID(str(payment_id))].capture_method,
             "total_cents": 0,
             "orders": [],
         })
+        recovery = recoveries.get(UUID(str(payment_id)), {})
+        if recovery.get("reopened_at"):
+            group["cart_reopened_at"] = recovery["reopened_at"]
+            group["requires_reconciliation"] = recovery["requires_reconciliation"]
         group["orders"].append(order_payload)
         group["total_cents"] += order_payload["total_cents"]
     return {"orders": [item for item in result if not item["payment_group_id"]
-                       and not item.get("provider_payment_id")],
+                       and not item.get("provider_payment_id") and not item.get("mercadopago")],
             "payment_groups": list(groups.values()),
+            **({"mercadopago_payment_groups": mercadopago_purchase_groups(result)}
+               if any(item.get("mercadopago") for item in result) else {}),
             **({"provider_payment_groups": list(card_groups.values())} if card_groups else {}),
             "removed_movements": removed_movements_payload(db, tenant_id=tenant_id, client_id=session.subject_id)}
 
@@ -9727,6 +11767,11 @@ def client_purchased_photo_preview(
     if (not order or not photo or item.photo_asset_id_snapshot != photo.id
             or photo.parent_gallery_id != order.parent_gallery_id_snapshot):
         raise HTTPException(status_code=404, detail="Prévia indisponível.")
+    media_state = folder_media_state_by_id(
+        db, folder_id=item.folder_id_snapshot or photo.folder_id, tenant_id=tenant_id,
+    )
+    if media_state not in {"available", "archiving"}:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
     derivative = _client_preview_derivative(db, item.photo_asset_id, tenant_id=session.tenant_id)
     if not derivative or derivative.status != "ready":
         raise HTTPException(status_code=404, detail="Prévia indisponível.")
@@ -9743,6 +11788,11 @@ def client_historical_preview(
 ) -> FileResponse:
     session = current_session(request, Role.CLIENT)
     item, historical_media = _historical_item_for_client(db, item_id, session.subject_id)
+    media_state = historical_folder_media_state_by_id(
+        db, folder_id=item.folder_id_snapshot, tenant_id=session.tenant_id,
+    ) if item.folder_id_snapshot else "available"
+    if media_state not in {"available", "archiving"}:
+        raise HTTPException(status_code=404, detail="Mídia arquivada temporariamente indisponível.")
     if not historical_media.preview_storage_key:
         raise HTTPException(status_code=404, detail="Prévia histórica indisponível.")
     path = historical_media_path(historical_media.preview_storage_key, tenant_id=historical_media.tenant_id, item_id=historical_media.sale_order_item_id)
@@ -9755,6 +11805,11 @@ def client_historical_delivery(
 ) -> FileResponse:
     session = current_session(request, Role.CLIENT)
     item, historical_media = _historical_item_for_client(db, item_id, session.subject_id)
+    media_state = historical_folder_media_state_by_id(
+        db, folder_id=item.folder_id_snapshot, tenant_id=session.tenant_id,
+    ) if item.folder_id_snapshot else "available"
+    if media_state not in {"available", "archiving"}:
+        raise HTTPException(status_code=404, detail="Mídia arquivada temporariamente indisponível.")
     if not historical_media.delivery_storage_key:
         raise HTTPException(
             status_code=409,
@@ -9824,6 +11879,7 @@ def gallery_photos(
                 | (PhotoAsset.id.in_(referenced_photo_ids)),
                 PhotoFolder.status == "released",
                 PhotoFolder.purpose == "content",
+                folder_browsing_clause(session.subject_id),
             )
             .distinct()
             .order_by(PhotoAsset.created_at, PhotoAsset.filename)
@@ -9896,9 +11952,9 @@ def gallery_released_folders(
         )
         rows.append(
             {
-                "id": str(folder.id),
-                "name": folder.name,
-                "position": folder.position,
+                **_folder_access_payload(
+                    db, folder=folder, client_id=session.subject_id
+                ),
                 "photo_count": count,
             }
         )
@@ -9931,6 +11987,7 @@ def gallery_review(
                 | (PhotoAsset.id.in_(referenced_photo_ids)),
                 PhotoFolder.status == "released",
                 PhotoFolder.purpose == "content",
+                folder_browsing_clause(session.subject_id),
             )
             .distinct()
             .order_by(PhotoAsset.created_at, PhotoAsset.filename)
@@ -9990,11 +12047,8 @@ def gallery_review(
         "gallery": {
             "name": gallery.name,
             "message": parent.sales_message or "",
-            "selection_expires_at": (
-                gallery.selection_expires_at.isoformat() if gallery.selection_expires_at else None
-            ),
-            "selection_open": not gallery.selection_expires_at
-            or not expired(gallery.selection_expires_at),
+            "selection_expires_at": None,
+            "selection_open": True,
             "favorites_enabled": parent.favorites_enabled,
             "comments_enabled": parent.comments_enabled,
             "folder_display_mode": parent.folder_display_mode,
@@ -10004,7 +12058,8 @@ def gallery_review(
             "cover_title_position": parent.cover_title_position,
             "cover_preview_url": (
                 f"/gallery/{gallery_id}/cover-preview"
-                if cover_ready and cover
+                if cover_ready and cover and parent
+                and _cover_thumbnail_is_local(db, parent, cover.id)
                 else None
             ),
         },
@@ -10047,7 +12102,9 @@ def client_gallery_cover_preview(
     parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
     cover = _gallery_cover_photo(db, parent) if parent else None
     derivative = _cover_derivative(db, cover.id, tenant_id=session.tenant_id) if cover else None
-    if not cover or not derivative:
+    if not cover or not derivative or not parent or not _cover_thumbnail_is_local(
+        db, parent, cover.id
+    ):
         raise HTTPException(status_code=404, detail="Capa indisponível.")
     try:
         path = safe_derivative_path(derivative)
@@ -10058,6 +12115,96 @@ def client_gallery_cover_preview(
     return protected_preview_response(path, f"capa-{gallery_id}.jpg")
 
 
+def _client_photo_preview_is_available(
+    db: Session,
+    *,
+    photo_id: UUID,
+    folder: PhotoFolder,
+    tenant_id: UUID,
+    client_id: UUID,
+    parent_gallery_id: UUID,
+    derived_gallery_id: UUID | None,
+) -> bool:
+    """Preserva prévia pós-vencimento somente para seleção/pedido da própria cliente."""
+    current = now()
+    media_state = folder_media_state(db, folder)
+    expiry = folder_effective_expiry(db, folder, client_id=client_id)
+    if expiry is None or expiry > current:
+        return folder_selected_media_preview_allowed(
+            media_state=media_state,
+            expiry=expiry,
+            selected_at=None,
+            at=current,
+        )
+    if media_state != "available":
+        return False
+
+    if derived_gallery_id is not None:
+        selection_scope = and_(
+            PhotoSelection.derived_gallery_id == derived_gallery_id,
+            PhotoSelection.parent_gallery_id.is_(None),
+        )
+        order_scope = SaleOrder.derived_gallery_id_snapshot == derived_gallery_id
+    else:
+        selection_scope = and_(
+            PhotoSelection.parent_gallery_id == parent_gallery_id,
+            PhotoSelection.derived_gallery_id.is_(None),
+        )
+        order_scope = and_(
+            SaleOrder.parent_gallery_id_snapshot == parent_gallery_id,
+            SaleOrder.derived_gallery_id_snapshot.is_(None),
+        )
+    selection_created_at = db.scalar(
+        select(PhotoSelection.created_at).where(
+            PhotoSelection.tenant_id == tenant_id,
+            PhotoSelection.client_id == client_id,
+            PhotoSelection.photo_asset_id == photo_id,
+            selection_scope,
+        ).limit(1)
+    )
+    if folder_selected_media_preview_allowed(
+        media_state=media_state,
+        expiry=expiry,
+        selected_at=selection_created_at,
+        at=current,
+    ):
+        return True
+
+    orders = db.scalars(
+        select(SaleOrder)
+        .join(
+            SaleOrderItem,
+            and_(
+                SaleOrderItem.sale_order_id == SaleOrder.id,
+                SaleOrderItem.tenant_id == SaleOrder.tenant_id,
+            ),
+        )
+        .where(
+            SaleOrder.tenant_id == tenant_id,
+            SaleOrder.client_id == client_id,
+            SaleOrderItem.tenant_id == tenant_id,
+            SaleOrderItem.photo_asset_id_snapshot == photo_id,
+            SaleOrder.assets_removed_at.is_(None),
+            order_scope,
+        )
+        .order_by(SaleOrder.created_at.desc())
+    )
+    for order in orders:
+        order_open = (
+            order.payment_status == "pending" and order.frozen_at is not None
+        ) or (order_fulfillable(order) and order.delivery_album_url is None)
+        if folder_selected_media_preview_allowed(
+            media_state=media_state,
+            expiry=expiry,
+            selected_at=selection_created_at,
+            existing_order_created_at=order.created_at,
+            existing_order_open=order_open,
+            at=current,
+        ):
+            return True
+    return False
+
+
 @app.get("/gallery/{gallery_id}/photos/{photo_id}/preview")
 def client_photo_preview(
     gallery_id: UUID, photo_id: UUID, request: Request, db: Session = Depends(db_session)
@@ -10065,8 +12212,35 @@ def client_photo_preview(
     """Entrega somente o derivado com marca à cliente autorizada na galeria privada."""
     session = current_session(request, Role.CLIENT)
     tenant_id = session.tenant_id
-    derived_gallery_for_client(db, gallery_id, session.subject_id, allow_deleted_origin=True, tenant_id=session.tenant_id)
-    assigned_photo_for_gallery(db, gallery_id, photo_id, tenant_id=session.tenant_id)
+    gallery = derived_gallery_for_client(
+        db, gallery_id, session.subject_id, allow_deleted_origin=True,
+        tenant_id=session.tenant_id,
+    )
+    assigned_photo_for_gallery(
+        db, gallery_id, photo_id, tenant_id=session.tenant_id,
+        client_id=session.subject_id, allow_expired=True,
+    )
+    photo_folder = db.execute(
+        select(PhotoAsset, PhotoFolder)
+        .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
+        .where(
+            PhotoAsset.tenant_id == tenant_id,
+            PhotoAsset.id == photo_id,
+            PhotoFolder.tenant_id == tenant_id,
+            PhotoFolder.status == "released",
+            PhotoFolder.purpose == "content",
+        )
+    ).first()
+    if not photo_folder or not _client_photo_preview_is_available(
+        db,
+        photo_id=photo_id,
+        folder=photo_folder[1],
+        tenant_id=tenant_id,
+        client_id=session.subject_id,
+        parent_gallery_id=gallery.parent_gallery_id,
+        derived_gallery_id=gallery.id,
+    ):
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
     derivative = db.scalar(
         select(MediaDerivative).where(MediaDerivative.tenant_id == tenant_id).where(MediaDerivative.tenant_id == session.tenant_id).where(
             MediaDerivative.photo_asset_id == photo_id,
@@ -10108,8 +12282,9 @@ def select_photo(
     session = current_session(request, Role.CLIENT)
     tenant_id = session.tenant_id
     gallery = derived_gallery_for_client(db, gallery_id, session.subject_id, tenant_id=session.tenant_id)
-    require_selection_window(gallery)
-    assigned_photo_for_gallery(db, gallery_id, photo_id, tenant_id=session.tenant_id)
+    assigned_photo_for_gallery(
+        db, gallery_id, photo_id, tenant_id=session.tenant_id, client_id=session.subject_id
+    )
     private_photo = db.scalar(
         select(PhotoAsset.id).where(PhotoAsset.tenant_id == tenant_id).where(
             PhotoAsset.id == photo_id,
@@ -10208,8 +12383,7 @@ def select_photo_from_public_gallery(
         "gallery_created": result.state_created,
         "reference_created": False,
         "selection_created": result.selection_created,
-        "selection_expires_at": result.state.selection_expires_at.isoformat()
-        if result.state.selection_expires_at else None,
+        "selection_expires_at": None,
         "cart": _canonical_cart_payload(db, parent_gallery_id, session.subject_id),
     }
 
@@ -10261,6 +12435,7 @@ def unselect_photo_from_public_gallery(
         if not authorized_canonical_photo(
             db, parent_gallery_id=parent_gallery_id,
             client_id=session.subject_id, photo_id=photo_id,
+            include_expired=True, include_unavailable=True,
         ):
             raise HTTPException(status_code=404, detail="Foto indisponível.")
         try:
@@ -10289,7 +12464,14 @@ def unselect_photo_from_public_gallery(
             "gallery_closed": False,
             "cart": {"quantity": 0, "items": []},
         }
-    require_selection_window(gallery)
+    assigned_photo_for_gallery(
+        db,
+        gallery.id,
+        photo_id,
+        tenant_id=tenant_id,
+        client_id=session.subject_id,
+        allow_expired=True,
+    )
     try:
         result = remove_client_selection_and_close_if_empty(
             db,
@@ -10364,7 +12546,6 @@ def public_gallery_for_client(
     db: Session = Depends(db_session),
 ) -> dict[str, object]:
     session = current_session(request, Role.CLIENT)
-    tenant_id = session.tenant_id
     try:
         parent = require_public_gallery_browsing(
             db,
@@ -10381,10 +12562,9 @@ def public_gallery_for_client(
         parent_gallery_id=parent_gallery_id,
         client_id=session.subject_id,
     )
-    canonical_state = db.scalar(select(GalleryClientState).where(GalleryClientState.tenant_id == tenant_id).where(GalleryClientState.tenant_id == session.tenant_id).where(
-        GalleryClientState.parent_gallery_id == parent_gallery_id,
-        GalleryClientState.client_id == session.subject_id,
-    ))
+    published_terms = db.scalar(select(PhotographerTermsVersion).order_by(
+        PhotographerTermsVersion.version_number.desc(),
+    ).limit(1))
     return {
         "id": str(parent.id),
         "name": parent.name,
@@ -10405,12 +12585,8 @@ def public_gallery_for_client(
         ),
         "photos_url": f"/public-galleries/{parent.id}/photos",
         "private_gallery_id": str(private_gallery.id) if private_gallery else None,
-        "selection_expires_at": (
-            canonical_state.selection_expires_at.isoformat()
-            if canonical_state and canonical_state.selection_expires_at
-            else private_gallery.selection_expires_at.isoformat()
-            if private_gallery and private_gallery.selection_expires_at else None
-        ),
+        "selection_expires_at": None,
+        "support_contact_email": published_terms.provider_contact_email if published_terms else None,
     }
 
 
@@ -10733,8 +12909,7 @@ def select_public_gallery_facial_candidate(
         "gallery_created": result.state_created,
         "reference_created": False,
         "selection_created": result.selection_created,
-        "selection_expires_at": result.state.selection_expires_at.isoformat()
-        if result.state.selection_expires_at else None,
+        "selection_expires_at": None,
         "cart": _canonical_cart_payload(db, parent_gallery_id, session.subject_id),
     }
 
@@ -10827,6 +13002,29 @@ def public_gallery_photos(
             )
         )
     } if photos else {}
+    visible_folders = list(
+        db.scalars(
+            authorized_canonical_folders(parent_gallery_id, session.subject_id)
+            .order_by(PhotoFolder.position, PhotoFolder.created_at, PhotoFolder.id)
+        )
+    )
+    folder_counts = dict(db.execute(
+        select(PhotoAsset.folder_id, func.count(PhotoAsset.id))
+        .where(
+            PhotoAsset.tenant_id == tenant_id,
+            PhotoAsset.folder_id.in_({folder.id for folder in visible_folders}),
+        )
+        .group_by(PhotoAsset.folder_id)
+    ).all()) if visible_folders else {}
+    folder_summaries = [
+        {
+            **_folder_access_payload(
+                db, folder=folder, client_id=session.subject_id
+            ),
+            "photo_count": folder_counts.get(folder.id, 0),
+        }
+        for folder in visible_folders
+    ]
     return {
         "photos": [
             {
@@ -10844,6 +13042,7 @@ def public_gallery_photos(
             }
             for photo in photos
         ],
+        "folders": folder_summaries,
         "private_gallery_id": str(gallery.id) if gallery else None,
         "cart": _canonical_cart_payload(db, parent_gallery_id, session.subject_id)
         if canonical_selections else (
@@ -10870,7 +13069,9 @@ def public_gallery_cover_preview(
         raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
     cover = _gallery_cover_photo(db, parent)
     derivative = _cover_derivative(db, cover.id, tenant_id=session.tenant_id) if cover else None
-    if not cover or not derivative:
+    if not cover or not derivative or not _cover_thumbnail_is_local(
+        db, parent, cover.id
+    ):
         raise HTTPException(status_code=404, detail="Capa indisponível.")
     try:
         path = safe_derivative_path(derivative)
@@ -10899,9 +13100,28 @@ def public_gallery_photo_preview(
     except PublicGalleryAccessDenied as exc:
         raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
     photo = authorized_canonical_photo(
-        db, parent_gallery_id=parent_gallery_id, client_id=session.subject_id, photo_id=photo_id
+        db,
+        parent_gallery_id=parent_gallery_id,
+        client_id=session.subject_id,
+        photo_id=photo_id,
+        include_expired=True,
     )
     if not photo:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
+    folder = db.get(PhotoFolder, photo.folder_id) if photo.folder_id else None
+    if (
+        not folder
+        or folder.tenant_id != tenant_id
+        or not _client_photo_preview_is_available(
+            db,
+            photo_id=photo.id,
+            folder=folder,
+            tenant_id=tenant_id,
+            client_id=session.subject_id,
+            parent_gallery_id=parent_gallery_id,
+            derived_gallery_id=None,
+        )
+    ):
         raise HTTPException(status_code=404, detail="Prévia indisponível.")
     derivative = db.scalar(
         select(MediaDerivative).where(MediaDerivative.tenant_id == tenant_id).where(MediaDerivative.tenant_id == session.tenant_id).where(
@@ -11113,7 +13333,14 @@ def unselect_photo(
     session = current_session(request, Role.CLIENT)
     tenant_id = session.tenant_id
     gallery = derived_gallery_for_client(db, gallery_id, session.subject_id, tenant_id=session.tenant_id)
-    require_selection_window(gallery)
+    assigned_photo_for_gallery(
+        db,
+        gallery.id,
+        photo_id,
+        tenant_id=tenant_id,
+        client_id=session.subject_id,
+        allow_expired=True,
+    )
     parent_gallery_id = gallery.parent_gallery_id
     try:
         result = remove_client_selection_and_close_if_empty(
@@ -11185,24 +13412,179 @@ def client_cart(
     return _client_cart_payload(db, gallery, session.subject_id)
 
 
+def _client_folder_for_reopening(
+    db: Session,
+    *,
+    folder_id: UUID,
+    client_id: UUID,
+    parent_gallery_id: UUID,
+    derived_gallery_id: UUID | None = None,
+) -> PhotoFolder | None:
+    if derived_gallery_id:
+        private_folder = db.scalar(
+            select(PhotoFolder).where(
+                PhotoFolder.tenant_id == client_tenant_id(db, client_id),
+                PhotoFolder.id == folder_id,
+                PhotoFolder.parent_gallery_id == parent_gallery_id,
+                PhotoFolder.derived_gallery_id == derived_gallery_id,
+                PhotoFolder.status == "released",
+                PhotoFolder.purpose == "content",
+            )
+        )
+        if private_folder:
+            return private_folder
+    return db.scalar(
+        authorized_canonical_folders(parent_gallery_id, client_id).where(
+            PhotoFolder.id == folder_id
+        )
+    )
+
+
+def _latest_folder_reopening_request(
+    db: Session, *, tenant_id: UUID, folder_id: UUID, client_id: UUID
+) -> GalleryReopeningRequest | None:
+    return db.scalar(
+        select(GalleryReopeningRequest)
+        .where(
+            GalleryReopeningRequest.tenant_id == tenant_id,
+            GalleryReopeningRequest.photo_folder_id == folder_id,
+            GalleryReopeningRequest.requested_by_client_id == client_id,
+        )
+        .order_by(
+            GalleryReopeningRequest.created_at.desc(),
+            GalleryReopeningRequest.id.desc(),
+        )
+    )
+
+
+def _folder_access_payload(
+    db: Session, *, folder: PhotoFolder, client_id: UUID
+) -> dict[str, object]:
+    expiry = folder_effective_expiry(db, folder, client_id=client_id)
+    media_state = folder_media_state(db, folder)
+    media_local = media_state in {"available", "archiving"}
+    access_open = media_local and (expiry is None or not expired(expiry))
+    reopening = _latest_folder_reopening_request(
+        db,
+        tenant_id=folder.tenant_id,
+        folder_id=folder.id,
+        client_id=client_id,
+    )
+    return {
+        "id": str(folder.id),
+        "name": folder.name,
+        "position": folder.position,
+        "audience_scope": folder.audience_scope or "all",
+        "access_duration_days": folder.access_duration_days,
+        "access_expires_at": expiry.isoformat() if expiry else None,
+        "access_open": access_open,
+        "media_state": media_state,
+        "can_request_reopening": folder_reopening_allowed(
+            db, folder, client_id=client_id
+        ),
+        "reopening_request": (
+            _reopening_request_payload(db, reopening) if reopening else None
+        ),
+    }
+
+
+def _create_folder_reopening_request(
+    db: Session,
+    *,
+    folder: PhotoFolder,
+    client_id: UUID,
+    idempotency_key: str,
+) -> GalleryReopeningRequest:
+    tenant_id = folder.tenant_id
+    existing = db.scalar(
+        select(GalleryReopeningRequest)
+        .where(
+            GalleryReopeningRequest.tenant_id == tenant_id,
+            GalleryReopeningRequest.photo_folder_id == folder.id,
+            GalleryReopeningRequest.requested_by_client_id == client_id,
+            or_(
+                GalleryReopeningRequest.idempotency_key == idempotency_key,
+                GalleryReopeningRequest.status == "pending",
+            ),
+        )
+        .order_by(GalleryReopeningRequest.created_at.desc())
+    )
+    if existing:
+        return existing
+    if not folder_reopening_allowed(db, folder, client_id=client_id):
+        raise HTTPException(
+            status_code=409,
+            detail="O prazo para solicitar a reabertura normal desta pasta terminou.",
+        )
+
+    if folder.derived_gallery_id is None:
+        state = db.scalar(
+            select(GalleryClientState)
+            .where(
+                GalleryClientState.tenant_id == tenant_id,
+                GalleryClientState.parent_gallery_id == folder.parent_gallery_id,
+                GalleryClientState.client_id == client_id,
+            )
+            .with_for_update()
+        )
+        if state and state.status != "active":
+            raise HTTPException(status_code=403, detail="Acesso não autorizado.")
+        if not state:
+            state = GalleryClientState(
+                tenant_id=tenant_id,
+                parent_gallery_id=folder.parent_gallery_id,
+                client_id=client_id,
+                status="active",
+            )
+            db.add(state)
+            db.flush()
+
+    reopening = GalleryReopeningRequest(
+        tenant_id=tenant_id,
+        parent_gallery_id=folder.parent_gallery_id if folder.derived_gallery_id is None else None,
+        derived_gallery_id=folder.derived_gallery_id,
+        photo_folder_id=folder.id,
+        requested_by_client_id=client_id,
+        idempotency_key=idempotency_key,
+    )
+    db.add(reopening)
+    db.flush()
+    photographer_phone = legacy_owned_photographer_phone(db, tenant_id=tenant_id)
+    db.add(GalleryReopeningNotificationOutbox(
+        tenant_id=tenant_id,
+        gallery_reopening_request_id=reopening.id,
+        recipient_phone=photographer_phone,
+        status="queued" if photographer_phone else "skipped",
+    ))
+    audit(db, "gallery.folder_reopening_requested", str(reopening.id), tenant_id=tenant_id)
+    return reopening
+
+
 @app.get("/gallery/{gallery_id}/reopening-requests")
 def client_gallery_reopening_request(
-    gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+    gallery_id: UUID,
+    request: Request,
+    folder_id: UUID = Query(...),
+    db: Session = Depends(db_session),
 ) -> dict[str, object]:
     session = current_session(request, Role.CLIENT)
-    tenant_id = session.tenant_id
-    derived_gallery_for_client(
+    gallery = derived_gallery_for_client(
         db, gallery_id, session.subject_id, allow_deleted_origin=True,
         tenant_id=session.tenant_id,
     )
-    reopening = db.scalar(
-        select(GalleryReopeningRequest).where(GalleryReopeningRequest.tenant_id == tenant_id)
-        .where(GalleryReopeningRequest.derived_gallery_id == gallery_id)
-        .order_by(GalleryReopeningRequest.created_at.desc())
+    folder = _client_folder_for_reopening(
+        db,
+        folder_id=folder_id,
+        client_id=session.subject_id,
+        parent_gallery_id=gallery.parent_gallery_id,
+        derived_gallery_id=gallery.id,
     )
-    return {
-        "request": _reopening_request_payload(db, reopening) if reopening else None
-    }
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta indisponível.")
+    reopening = _latest_folder_reopening_request(
+        db, tenant_id=session.tenant_id, folder_id=folder.id, client_id=session.subject_id
+    )
+    return {"request": _reopening_request_payload(db, reopening) if reopening else None}
 
 
 @app.post(
@@ -11216,80 +13598,61 @@ def request_gallery_reopening(
     db: Session = Depends(db_session),
 ) -> dict[str, object]:
     session = current_session(request, Role.CLIENT)
-    tenant_id = session.tenant_id
     gallery = derived_gallery_for_client(
         db, gallery_id, session.subject_id, allow_deleted_origin=True,
         tenant_id=session.tenant_id,
     )
-    if not gallery.selection_expires_at or not expired(gallery.selection_expires_at):
-        raise HTTPException(
-            status_code=409,
-            detail="A galeria ainda está aberta para seleção.",
-        )
-    existing = db.scalar(
-        select(GalleryReopeningRequest).where(GalleryReopeningRequest.tenant_id == tenant_id)
-        .where(
-            GalleryReopeningRequest.derived_gallery_id == gallery.id,
-            (
-                (GalleryReopeningRequest.idempotency_key == payload.idempotency_key)
-                | (GalleryReopeningRequest.status == "pending")
-            ),
-        )
-        .order_by(GalleryReopeningRequest.created_at.desc())
-    )
-    if existing:
-        return _reopening_request_payload(db, existing)
-    reopening = GalleryReopeningRequest(
+    folder = _client_folder_for_reopening(
+        db,
+        folder_id=payload.folder_id,
+        client_id=session.subject_id,
+        parent_gallery_id=gallery.parent_gallery_id,
         derived_gallery_id=gallery.id,
-        requested_by_client_id=session.subject_id,
+    )
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta indisponível.")
+    reopening = _create_folder_reopening_request(
+        db,
+        folder=folder,
+        client_id=session.subject_id,
         idempotency_key=payload.idempotency_key,
-        tenant_id=tenant_id,
     )
-    db.add(reopening)
-    db.flush()
-    photographer_phone = legacy_owned_photographer_phone(db, tenant_id=tenant_id)
-    notification = GalleryReopeningNotificationOutbox(
-        gallery_reopening_request_id=reopening.id,
-        recipient_phone=photographer_phone,
-        status="queued" if photographer_phone else "skipped",
-        tenant_id=tenant_id,
-    )
-    db.add(notification)
-    audit(db, "gallery.reopening_requested", str(reopening.id), tenant_id=tenant_id)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        existing = db.scalar(
-            select(GalleryReopeningRequest).where(GalleryReopeningRequest.tenant_id == tenant_id)
-            .where(
-                GalleryReopeningRequest.derived_gallery_id == gallery_id,
-                GalleryReopeningRequest.status == "pending",
-            )
-            .order_by(GalleryReopeningRequest.created_at.desc())
+        reopening = _latest_folder_reopening_request(
+            db, tenant_id=session.tenant_id, folder_id=folder.id, client_id=session.subject_id
         )
-        if not existing:
+        if not reopening:
             raise
-        reopening = existing
     return _reopening_request_payload(db, reopening)
 
 
 @app.get("/public-galleries/{parent_gallery_id}/reopening-requests")
 def canonical_gallery_reopening_request(
-    parent_gallery_id: UUID, request: Request, db: Session = Depends(db_session)
+    parent_gallery_id: UUID,
+    request: Request,
+    folder_id: UUID = Query(...),
+    db: Session = Depends(db_session),
 ) -> dict[str, object]:
     session = current_session(request, Role.CLIENT)
-    tenant_id = session.tenant_id
     try:
         require_public_gallery_browsing(
             db, parent_gallery_id=parent_gallery_id, client_id=session.subject_id
         )
     except PublicGalleryAccessDenied as exc:
         raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
-    reopening = db.scalar(select(GalleryReopeningRequest).where(GalleryReopeningRequest.tenant_id == tenant_id).where(
-        GalleryReopeningRequest.parent_gallery_id == parent_gallery_id,
-        GalleryReopeningRequest.requested_by_client_id == session.subject_id,
-    ).order_by(GalleryReopeningRequest.created_at.desc()))
+    folder = db.scalar(
+        authorized_canonical_folders(parent_gallery_id, session.subject_id).where(
+            PhotoFolder.id == folder_id
+        )
+    )
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta indisponível.")
+    reopening = _latest_folder_reopening_request(
+        db, tenant_id=session.tenant_id, folder_id=folder.id, client_id=session.subject_id
+    )
     return {"request": _reopening_request_payload(db, reopening) if reopening else None}
 
 
@@ -11298,62 +13661,40 @@ def canonical_gallery_reopening_request(
     status_code=status.HTTP_201_CREATED,
 )
 def request_canonical_gallery_reopening(
-    parent_gallery_id: UUID, payload: GalleryReopeningRequestInput,
-    request: Request, db: Session = Depends(db_session),
+    parent_gallery_id: UUID,
+    payload: GalleryReopeningRequestInput,
+    request: Request,
+    db: Session = Depends(db_session),
 ) -> dict[str, object]:
     session = current_session(request, Role.CLIENT)
-    tenant_id = session.tenant_id
     try:
         require_public_gallery_browsing(
             db, parent_gallery_id=parent_gallery_id, client_id=session.subject_id
         )
     except PublicGalleryAccessDenied as exc:
         raise HTTPException(status_code=403, detail="Acesso não autorizado.") from exc
-    state = db.scalar(select(GalleryClientState).where(GalleryClientState.tenant_id == tenant_id).where(
-        GalleryClientState.parent_gallery_id == parent_gallery_id,
-        GalleryClientState.client_id == session.subject_id,
-        GalleryClientState.status == "active",
-    ).with_for_update())
-    if not state or not state.selection_expires_at or not expired(state.selection_expires_at):
-        raise HTTPException(status_code=409, detail="A galeria ainda está aberta para seleção.")
-    existing = db.scalar(select(GalleryReopeningRequest).where(GalleryReopeningRequest.tenant_id == tenant_id).where(
-        GalleryReopeningRequest.parent_gallery_id == parent_gallery_id,
-        GalleryReopeningRequest.requested_by_client_id == session.subject_id,
-        or_(
-            GalleryReopeningRequest.idempotency_key == payload.idempotency_key,
-            GalleryReopeningRequest.status == "pending",
-        ),
-    ).order_by(GalleryReopeningRequest.created_at.desc()))
-    if existing:
-        return _reopening_request_payload(db, existing)
-    reopening = GalleryReopeningRequest(
-        parent_gallery_id=parent_gallery_id,
-        requested_by_client_id=session.subject_id,
-        idempotency_key=payload.idempotency_key,
-        tenant_id=tenant_id,
+    folder = db.scalar(
+        authorized_canonical_folders(parent_gallery_id, session.subject_id).where(
+            PhotoFolder.id == payload.folder_id
+        )
     )
-    db.add(reopening)
-    db.flush()
-    photographer_phone = legacy_owned_photographer_phone(db, tenant_id=tenant_id)
-    db.add(GalleryReopeningNotificationOutbox(
-        gallery_reopening_request_id=reopening.id,
-        recipient_phone=photographer_phone,
-        status="queued" if photographer_phone else "skipped",
-        tenant_id=tenant_id,
-    ))
-    audit(db, "gallery.reopening_requested", str(reopening.id), tenant_id=tenant_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Pasta indisponível.")
+    reopening = _create_folder_reopening_request(
+        db,
+        folder=folder,
+        client_id=session.subject_id,
+        idempotency_key=payload.idempotency_key,
+    )
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        existing = db.scalar(select(GalleryReopeningRequest).where(GalleryReopeningRequest.tenant_id == tenant_id).where(
-            GalleryReopeningRequest.parent_gallery_id == parent_gallery_id,
-            GalleryReopeningRequest.requested_by_client_id == session.subject_id,
-            GalleryReopeningRequest.status == "pending",
-        ).order_by(GalleryReopeningRequest.created_at.desc()))
-        if not existing:
+        reopening = _latest_folder_reopening_request(
+            db, tenant_id=session.tenant_id, folder_id=folder.id, client_id=session.subject_id
+        )
+        if not reopening:
             raise
-        reopening = existing
     return _reopening_request_payload(db, reopening)
 
 
@@ -11364,7 +13705,6 @@ def checkout_gallery(
     session = current_session(request, Role.CLIENT)
     tenant_id = session.tenant_id
     gallery = derived_gallery_for_client(db, gallery_id, session.subject_id, tenant_id=session.tenant_id)
-    require_selection_window(gallery)
     client = owned_record(db, Client, session.subject_id, tenant_id=tenant_id)
     if not client:
         raise HTTPException(status_code=403, detail="Acesso negado.")
@@ -11423,7 +13763,6 @@ def communicate_payment(
             "status": existing.status,
             "message": "Comunicação aguardando revisão do fotógrafo.",
         }
-    require_selection_window(gallery)
     client = owned_record(db, Client, session.subject_id, tenant_id=tenant_id)
     if not client:
         raise HTTPException(status_code=403, detail="Acesso negado.")
@@ -11768,10 +14107,13 @@ class NotificationSettingInput(BaseModel):
 
 @app.get("/admin/notification-settings")
 def list_notification_settings(request: Request, db: Session = Depends(db_session)) -> dict:
+    from app.whatsapp_channel import notification_channel_ready
+
     tenant_id = directory_tenant_id(db, request)
+    whatsapp_editable = notification_channel_ready(db, tenant_id=tenant_id)
     settings = [setting_payload(setting_for(db, kind, tenant_id=tenant_id)) for kind in NOTIFICATION_DEFINITIONS]
     db.commit()
-    return {"settings": settings}
+    return {"settings": settings, "whatsapp_editable": whatsapp_editable}
 
 
 @app.put("/admin/notification-settings/{event_type}")
@@ -11851,7 +14193,9 @@ def admin_removed_photo_movements(
 
 PaymentFinancialFilter = Literal[
     "priority", "reported", "confirmed", "confirmed_undelivered",
-    "awaiting_payment", "not_found", "overdue", "verifying", "exception", "hold",
+    "awaiting_payment", "selection_finalized", "not_found", "verifying", "exception", "hold", "reopened",
+    "processing", "rejected", "canceled", "expired", "refunded", "partially_refunded",
+    "charged_back", "duplicate_review",
 ]
 
 
@@ -11879,6 +14223,11 @@ def admin_order_item_preview(
     )
     if not photo or not photo.available or photo.id != item.photo_asset_id_snapshot:
         raise HTTPException(status_code=404, detail="Prévia indisponível.")
+    media_state = folder_media_state_by_id(
+        db, folder_id=item.folder_id_snapshot or photo.folder_id, tenant_id=tenant_id,
+    )
+    if media_state not in {"available", "archiving"}:
+        raise HTTPException(status_code=404, detail="Prévia indisponível.")
     derivative = db.scalar(select(MediaDerivative).where(
         MediaDerivative.photo_asset_id == photo.id,
         MediaDerivative.tenant_id == tenant_id,
@@ -11903,6 +14252,8 @@ def export_payment_orders(
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = None,
     financial_status: PaymentFinancialFilter | None = None,
+    payment_provider: Literal["pix", "mercadopago", "infinitepay"] | None = None,
+    include_financial_details: bool = False,
     created_from: datetime | None = None,
     created_to: datetime | None = None,
     db: Session = Depends(db_session),
@@ -11914,12 +14265,13 @@ def export_payment_orders(
     data = _payment_dashboard_data(
         db, tenant_id=tenant_id, query=query, client_id=client_id, parent_gallery_id=parent_gallery_id,
         financial_status=financial_status, created_from=created_from, created_to=created_to,
-        export_all=True, include_selections=False,
+        export_all=True, include_selections=False, payment_provider=payment_provider,
     )
     if not data["groups"]:
         return Response(status_code=204)
     return Response(
-        payment_orders_csv(data["groups"]), media_type="text/csv; charset=utf-8",
+        payment_orders_csv(data["groups"], include_financial_details=include_financial_details),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="pick-your-pic-vendas-pagamentos.csv"',
                  "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
@@ -11931,10 +14283,8 @@ def list_payment_communications(
     query: str | None = Query(default=None, max_length=200),
     client_id: UUID | None = None,
     parent_gallery_id: UUID | None = Query(default=None),
-    financial_status: Literal[
-        "priority", "reported", "confirmed", "confirmed_undelivered", "awaiting_payment",
-        "not_found", "overdue", "verifying", "exception", "hold",
-    ] | None = Query(default=None),
+    financial_status: PaymentFinancialFilter | None = Query(default=None),
+    payment_provider: Literal["pix", "mercadopago", "infinitepay"] | None = None,
     delivery_status: Literal["none", "queued", "processing", "sent", "failed"]
     | None = Query(default=None),
     created_from: datetime | None = Query(default=None),
@@ -11948,6 +14298,7 @@ def list_payment_communications(
     return _payment_dashboard_data(
         db, tenant_id=tenant_id, query=query, client_id=client_id, parent_gallery_id=parent_gallery_id,
         financial_status=financial_status, delivery_status=delivery_status,
+        payment_provider=payment_provider,
         created_from=created_from, created_to=created_to, cursor=cursor, limit=limit,
     )
 
@@ -11955,8 +14306,10 @@ def list_payment_communications(
 def _payment_dashboard_data(
     db: Session, *, tenant_id: UUID, query=None, client_id=None, parent_gallery_id=None,
     financial_status=None, delivery_status=None, created_from=None, created_to=None,
-    cursor=None, limit=20, export_all=False, include_selections=True,
+    cursor=None, limit=20, export_all=False, include_selections=True, payment_provider=None,
 ) -> dict[str, object]:
+    if payment_provider:
+        include_selections = False
     if created_from and created_to and created_from > created_to:
         raise HTTPException(
             status_code=422,
@@ -11965,6 +14318,7 @@ def _payment_dashboard_data(
 
     order_query = (
         select(SaleOrder, Client, DerivedGallery, ParentGallery).where(or_(Client.id.is_(None), Client.tenant_id == tenant_id), or_(DerivedGallery.id.is_(None), DerivedGallery.tenant_id == tenant_id), or_(ParentGallery.id.is_(None), ParentGallery.tenant_id == tenant_id), SaleOrder.tenant_id == tenant_id)
+        .where(visible_sale_order_condition(tenant_id=tenant_id))
         .outerjoin(Client, Client.id == SaleOrder.client_id)
         .outerjoin(DerivedGallery, DerivedGallery.id == SaleOrder.derived_gallery_id)
         .outerjoin(ParentGallery, ParentGallery.id == SaleOrder.parent_gallery_id_snapshot)
@@ -12000,6 +14354,7 @@ def _payment_dashboard_data(
     order_rows = list(db.execute(order_query))
     order_ids = [order.id for order, _client, _gallery, _parent in order_rows]
     order_entities = [row[0] for row in order_rows]
+    mp_payments = mercadopago_for_orders(db, order_entities, tenant_id=tenant_id)
     card_payment_ids = {order.provider_payment_id for order in order_entities if order.provider_payment_id}
     card_payments = {
         payment.id: payment for payment in db.scalars(select(ProviderPayment).where(
@@ -12007,16 +14362,9 @@ def _payment_dashboard_data(
             ProviderPayment.id.in_(card_payment_ids),
         ))
     } if card_payment_ids else {}
-    canonical_parent_ids = {
-        order.parent_gallery_id_snapshot for order in order_entities
-        if order.parent_gallery_id and order.parent_gallery_id_snapshot
-    }
-    canonical_states = {
-        (state.parent_gallery_id, state.client_id): state
-        for state in db.scalars(select(GalleryClientState).where(GalleryClientState.tenant_id == tenant_id).where(
-            GalleryClientState.parent_gallery_id.in_(canonical_parent_ids)
-        ))
-    } if canonical_parent_ids else {}
+    recovery_statuses = cart_recovery_statuses(
+        db, tenant_id=tenant_id, payments=card_payments.values()
+    )
     communication_rows = list(db.scalars(select(PaymentCommunication).where(PaymentCommunication.tenant_id == tenant_id).where(or_(
         PaymentCommunication.sale_order_id.in_(order_ids),
         PaymentCommunication.payment_group_id.in_({order.payment_group_id for order in order_entities
@@ -12090,6 +14438,24 @@ def _payment_dashboard_data(
     items_by_order: dict[UUID, list[SaleOrderItem]] = defaultdict(list)
     for item in order_items:
         items_by_order[item.sale_order_id].append(item)
+    purchase_interactions = (
+        {}
+        if export_all
+        else _purchase_photo_interactions(
+            db,
+            tenant_id=tenant_id,
+            purchases=[
+                (order, item)
+                for order in order_entities
+                for item in items_by_order.get(order.id, [])
+            ],
+        )
+    )
+    media_state_cache = folder_media_states_by_id(
+        db,
+        folder_ids={item.folder_id_snapshot for item in order_items if item.folder_id_snapshot},
+        tenant_id=tenant_id,
+    )
     selection_query = (
         select(PhotoSelection, PhotoAsset, PhotoFolder, DerivedGallery, Client, ParentGallery).where(Client.tenant_id == tenant_id, or_(DerivedGallery.id.is_(None), DerivedGallery.tenant_id == tenant_id), or_(ParentGallery.id.is_(None), ParentGallery.tenant_id == tenant_id), PhotoAsset.tenant_id == tenant_id, PhotoFolder.tenant_id == tenant_id, PhotoSelection.tenant_id == tenant_id)
         .join(PhotoAsset, PhotoAsset.id == PhotoSelection.photo_asset_id)
@@ -12188,7 +14554,6 @@ def _payment_dashboard_data(
     prepared_orders: list[dict[str, object]] = []
     flat_by_id: dict[str, dict[str, object]] = {}
     for order, client, gallery, parent in order_rows:
-        canonical_state = canonical_states.get((order.parent_gallery_id_snapshot, order.client_id))
         order_communications = communications_by_order.get(order.id, [])
         latest_communication = order_communications[0] if order_communications else None
         order_notifications = [
@@ -12197,15 +14562,24 @@ def _payment_dashboard_data(
             for notification in notifications_by_communication.get(communication.id, [])
         ]
         provider_payment = card_payments.get(order.provider_payment_id)
-        financial_state = _payment_financial_status(order, latest_communication, gallery, provider_payment)
-        if financial_state == "awaiting_payment" and canonical_state and canonical_state.selection_expires_at and expired(canonical_state.selection_expires_at):
-            financial_state = "overdue"
+        mp_payment = mp_payments.get(order.mercadopago_payment_id)
+        recovery = recovery_statuses.get(order.provider_payment_id, {})
+        historical_only = bool(recovery.get("historical_only"))
+        financial_state = _payment_financial_status(
+            order, latest_communication, gallery, provider_payment, mp_payment)
+        if payment_provider and mercadopago_fields(order, mp_payments)["payment_provider"] != payment_provider:
+            continue
+        if financial_status == "reopened":
+            if not historical_only:
+                continue
+        elif historical_only:
+            continue
         delivery_states = {notification.status for notification in order_notifications} or {"none"}
         if financial_status == "priority" and financial_state not in {
-            "reported", "confirmed_undelivered",
+            "reported", "confirmed_undelivered", "partially_refunded", "charged_back", "duplicate_review"
         }:
             continue
-        if financial_status and financial_status != "priority" and financial_state != financial_status:
+        if financial_status and financial_status not in {"priority", "reopened"} and financial_state != financial_status:
             continue
         if delivery_status and delivery_status not in delivery_states:
             continue
@@ -12227,12 +14601,23 @@ def _payment_dashboard_data(
 
         folders: dict[str, dict[str, object]] = {}
         for item in items_by_order.get(order.id, []):
+            interaction = purchase_interactions.get(
+                item.id, {"comment_preview": None, "favorited": False}
+            )
             folder_key = str(item.folder_id_snapshot) if item.folder_id_snapshot else "unknown"
+            if item.folder_id_snapshot is None:
+                media_state = "available"  # pedidos antigos não tinham escopo de pasta arquivável
+            else:
+                media_state = media_state_cache.get(item.folder_id_snapshot, "unavailable")
+                if media_state == "unavailable":
+                    media_state = "available"
+            media_local = media_state in {"available", "archiving"}
             folder = folders.setdefault(
                 folder_key,
                 {
                     "id": str(item.folder_id_snapshot) if item.folder_id_snapshot else None,
                     "name": item.folder_name_snapshot or "Pasta não disponível",
+                    "media_state": media_state,
                     "items": [],
                 },
             )
@@ -12242,10 +14627,13 @@ def _payment_dashboard_data(
                     "photo_id": str(item.photo_asset_id_snapshot),
                     "name": item.filename_snapshot,
                     "unit_price_cents": item.unit_price_cents,
+                    "media_state": media_state,
+                    "comment_preview": interaction["comment_preview"],
+                    "favorited": interaction["favorited"],
                     "thumbnail_url": (f"/admin/orders/{order.id}/items/{item.id}/preview?size=thumbnail"
-                                      if item.photo_asset_id and not order.assets_removed_at else None),
+                                      if item.photo_asset_id and not order.assets_removed_at and media_local else None),
                     "preview_url": (f"/admin/orders/{order.id}/items/{item.id}/preview?size=preview"
-                                    if item.photo_asset_id and not order.assets_removed_at else None),
+                                    if item.photo_asset_id and not order.assets_removed_at and media_local else None),
                 }
             )
         prepared_orders.append(
@@ -12262,23 +14650,24 @@ def _payment_dashboard_data(
                     "removed": gallery is None and order.derived_gallery_id_snapshot is not None,
                 },
                 "total_cents": order.total_cents,
-                "financial_status": financial_state,
-                **({"payment_method": "credit_card" if provider_payment else "pix"}
+                "financial_status": "reopened" if historical_only else financial_state,
+                **({"payment_method": (provider_payment.capture_method or "credit_card") if provider_payment else "pix"}
                    if provider_payment or order.payment_group_id or latest_communication else {}),
                 **({"provider_payment_state": provider_payment.state,
-                    "provider_payment_id": str(provider_payment.id)} if provider_payment else {}),
+                    "provider_payment_id": str(provider_payment.id),
+                    } if provider_payment else {}),
+                **({"provider_cart_recovery": {
+                    "reopened_at": recovery["reopened_at"],
+                    "requires_reconciliation": recovery["requires_reconciliation"],
+                }} if recovery.get("reopened_at") else {}),
+                **mercadopago_fields(order, mp_payments),
                 "confirmed_at": (order.confirmed_at.isoformat()
                                  if order.payment_status == "confirmed" and order.confirmed_at
                                  else None),
                 "assets_removed": bool(order.assets_removed_at),
                 "payment_status": order.payment_status,
                 "created_at": order.created_at.isoformat(),
-                "selection_expires_at": (
-                    gallery.selection_expires_at.isoformat()
-                    if gallery and gallery.selection_expires_at
-                    else (canonical_state.selection_expires_at.isoformat()
-                          if canonical_state and canonical_state.selection_expires_at else None)
-                ),
+                "selection_expires_at": None,
                 "communications": communication_payloads,
                 "communication": communication_payloads[0] if communication_payloads else None,
                 "delivery_statuses": sorted(delivery_states),
@@ -12330,7 +14719,8 @@ def _payment_dashboard_data(
         if order_payload["financial_status"] == "reported":
             group["totals"]["reported_orders"] += 1
             group["totals"]["reported_cents"] += order_payload["total_cents"]
-        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
+        elif (order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}
+              and not (order_payload.get("mercadopago") or {}).get("test_account")):
             group["totals"]["confirmed_orders"] += 1
             group["totals"]["confirmed_cents"] += order_payload["total_cents"]
         # Compatibilidade temporária: `total_cents` passa a representar somente
@@ -12383,7 +14773,8 @@ def _payment_dashboard_data(
         if order_payload["financial_status"] == "reported":
             reported_orders += 1
             reported_cents += order_payload["total_cents"]
-        elif order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}:
+        elif (order_payload["financial_status"] in {"confirmed", "confirmed_undelivered"}
+              and not (order_payload.get("mercadopago") or {}).get("test_account")):
             confirmed_orders += 1
             confirmed_cents += order_payload["total_cents"]
         for state in order_payload["delivery_statuses"]:
@@ -12459,7 +14850,12 @@ def _payment_financial_status(
     latest_communication: PaymentCommunication | None,
     gallery: DerivedGallery | None,
     provider_payment: ProviderPayment | None = None,
+    mercadopago_payment=None,
 ) -> str:
+    if mercadopago_payment:
+        return mercadopago_financial_status(mercadopago_payment, order)
+    if order.mercadopago_payment_id:
+        return "verifying"
     if provider_payment:
         financial_state = {
             "creating": "awaiting_payment",
@@ -12473,14 +14869,15 @@ def _payment_financial_status(
         if financial_state == "confirmed" and not order.delivery_album_url:
             return "confirmed_undelivered"
         return financial_state
+    if (order.payment_status == "not_required" and order.payment_required_snapshot is False
+            and order.frozen_at is not None):
+        return "selection_finalized"
     if order.payment_status == "confirmed":
         return "confirmed" if order.delivery_album_url else "confirmed_undelivered"
     if order.payment_status == "cancelled":
         return "not_found"
     if latest_communication and latest_communication.status == "pending_review":
         return "reported"
-    if gallery and gallery.selection_expires_at and expired(gallery.selection_expires_at):
-        return "overdue"
     return "awaiting_payment"
 
 
@@ -12491,10 +14888,13 @@ def _payment_financial_priority(financial_status: str) -> int:
         "confirmed_undelivered": 2,
         "awaiting_payment": 3,
         "not_found": 4,
-        "overdue": 5,
         "verifying": 6,
         "exception": 7,
         "hold": 8,
+        "selection_finalized": 9,
+        "reopened": 9,
+        "partially_refunded": 0, "charged_back": 0, "duplicate_review": 0,
+        "processing": 6, "rejected": 7, "canceled": 8, "expired": 8, "refunded": 8,
     }.get(financial_status, 9)
 
 
@@ -12678,6 +15078,74 @@ def client_pending_order(
             .order_by(SaleOrderItem.filename_snapshot)
         )
     )
+    selection_created_at_by_photo = {
+        selection.photo_asset_id: selection.created_at
+        for selection in db.scalars(
+            select(PhotoSelection).where(
+                PhotoSelection.tenant_id == tenant_id,
+                PhotoSelection.derived_gallery_id == gallery_id,
+                PhotoSelection.client_id == session.subject_id,
+                PhotoSelection.photo_asset_id.in_(
+                    {item.photo_asset_id_snapshot for item in items}
+                ),
+            )
+        )
+    } if items else {}
+    photo_ids = {
+        item.photo_asset_id
+        for item in items
+        if item.photo_asset_id and item.folder_id_snapshot is None
+    }
+    photos_by_id = {
+        photo.id: photo for photo in db.scalars(
+            select(PhotoAsset).where(
+                PhotoAsset.tenant_id == tenant_id,
+                PhotoAsset.id.in_(photo_ids),
+            )
+        )
+    } if photo_ids else {}
+    item_folder_ids = {
+        item.folder_id_snapshot or (
+            photos_by_id[item.photo_asset_id].folder_id
+            if item.photo_asset_id in photos_by_id else None
+        )
+        for item in items
+    }
+    folder_access = folder_media_access_by_id(
+        db,
+        folder_ids={folder_id for folder_id in item_folder_ids if folder_id},
+        tenant_id=tenant_id,
+        client_id=session.subject_id,
+    )
+    media_states = {
+        folder_id: access[0] for folder_id, access in folder_access.items()
+    }
+    folder_expiries = {
+        folder_id: access[1] for folder_id, access in folder_access.items()
+    }
+    item_media_states: dict[UUID, str] = {}
+    item_previews_allowed: dict[UUID, bool] = {}
+    current_time = now()
+    for item in items:
+        photo = photos_by_id.get(item.photo_asset_id) if item.photo_asset_id else None
+        folder_id = item.folder_id_snapshot or (photo.folder_id if photo else None)
+        item_media_states[item.id] = (
+            "available" if folder_id is None and item.folder_id_snapshot is None
+            else media_states.get(folder_id, "unavailable")
+        )
+        expiry = folder_expiries.get(folder_id) if folder_id else None
+        item_previews_allowed[item.id] = folder_selected_media_preview_allowed(
+            media_state=item_media_states[item.id],
+            expiry=expiry,
+            selected_at=selection_created_at_by_photo.get(item.photo_asset_id_snapshot),
+            existing_order_created_at=(
+                order.created_at if order.frozen_at is not None else None
+            ),
+            existing_order_open=(
+                order.payment_status == "pending" and order.frozen_at is not None
+            ),
+            at=current_time,
+        )
     qr_data_url: str | None = None
     if order.pix_copy_paste_snapshot:
         try:
@@ -12704,9 +15172,10 @@ def client_pending_order(
                 "photo_id": str(item.photo_asset_id_snapshot),
                 "name": item.filename_snapshot,
                 "unit_price_cents": item.unit_price_cents,
+                "media_state": item_media_states[item.id],
                 "preview_url": (
                     f"/gallery/{gallery_id}/photos/{item.photo_asset_id_snapshot}/preview"
-                    if item.photo_asset_id is not None
+                    if item.photo_asset_id is not None and item_previews_allowed[item.id]
                     else None
                 ),
             }
@@ -12727,7 +15196,9 @@ def favorite_photo(
         raise HTTPException(
             status_code=403, detail="Favoritos não estão habilitados nesta galeria."
         )
-    assigned_photo_for_gallery(db, gallery_id, photo_id, tenant_id=session.tenant_id)
+    assigned_photo_for_gallery(
+        db, gallery_id, photo_id, tenant_id=session.tenant_id, client_id=session.subject_id
+    )
     existing = db.scalar(
         select(PhotoFavorite).where(PhotoFavorite.tenant_id == tenant_id).where(
             PhotoFavorite.derived_gallery_id == gallery_id,
@@ -12786,7 +15257,9 @@ def create_photo_comment(
         raise HTTPException(
             status_code=403, detail="Comentários não estão habilitados nesta galeria."
         )
-    assigned_photo_for_gallery(db, gallery_id, photo_id, tenant_id=session.tenant_id)
+    assigned_photo_for_gallery(
+        db, gallery_id, photo_id, tenant_id=session.tenant_id, client_id=session.subject_id
+    )
     comment = PhotoComment(
         derived_gallery_id=gallery_id,
         photo_asset_id=photo_id,
@@ -12898,6 +15371,13 @@ def remove_comment_as_admin(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+from app.mercadopago_api import register_mercadopago_routes
+
+register_mercadopago_routes(
+    app, db_session=db_session, require_same_origin=require_same_origin,
+    commerce_client=_commerce_client, admin_tenant_context=directory_tenant_id,
+)
+
 register_preview_adjustment_routes(
     app, db_session=db_session, require_admin=require_admin,
     preview_response=protected_preview_response, tenant_context=directory_tenant_id,
@@ -12906,17 +15386,37 @@ register_folder_processing_routes(
     app, db_session=db_session, require_admin=require_admin,
     require_same_origin=require_same_origin, tenant_context=directory_tenant_id,
 )
-register_raw_development_routes(
-    app, db_session=db_session, require_admin=require_admin,
-    require_same_origin=require_same_origin, tenant_context=directory_tenant_id,
-)
 
 # Opt-in monitor uses the existing engine; it never creates schema or grants.
+from app.google_drive_oauth import router as google_drive_oauth_router
+from app.google_drive_picker import router as google_drive_picker_router
+from app.photographer_access_recovery import owner_router as access_recovery_owner_router
+from app.photographer_access_recovery import public_router as access_recovery_public_router
+from app.photographer_onboarding import router as photographer_onboarding_router
+from app.photographer_signup import router as photographer_signup_router
+from app.photographer_terms import router as photographer_terms_router
+from app.photographer_totp import router as photographer_totp_router
+from app.photographer_totp_support import router as photographer_totp_support_router
+from app.platform_console import router as platform_console_router
 from app.system_monitor.routes import router as system_monitor_router
 from app.system_monitor.runtime import start_monitor, stop_monitor
 from app.system_monitor.telemetry import MonitorMiddleware
+from app.tenant_closure_api import router as tenant_closure_api_router
+from app.tenant_closure_identity import router as tenant_closure_identity_router
 
 app.include_router(system_monitor_router)
+app.include_router(platform_console_router)
+app.include_router(google_drive_oauth_router)
+app.include_router(google_drive_picker_router)
+app.include_router(photographer_signup_router)
+app.include_router(tenant_closure_identity_router)
+app.include_router(tenant_closure_api_router)
+app.include_router(photographer_terms_router)
+app.include_router(photographer_onboarding_router)
+app.include_router(photographer_totp_router)
+app.include_router(photographer_totp_support_router)
+app.include_router(access_recovery_owner_router)
+app.include_router(access_recovery_public_router)
 app.add_middleware(MonitorMiddleware)
 
 

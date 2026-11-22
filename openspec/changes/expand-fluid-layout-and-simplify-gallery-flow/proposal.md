@@ -1,6 +1,6 @@
 ## Why
 
-A revisão humana em homologação mostrou que o sistema ainda concentra quase todas as páginas em containers estreitos e mantém escolhas de capa duplicadas que carregam desnecessariamente o acervo. A jornada da cliente também apresenta uma ação de avanço sem texto visível e mistura a capa editorial com a revisão das fotos selecionadas, reduzindo clareza e aproveitamento da tela.
+A revisão humana da interface mostrou que o sistema ainda concentra quase todas as páginas em containers estreitos e mantém escolhas de capa duplicadas que carregam desnecessariamente o acervo. A jornada da cliente também apresenta uma ação de avanço sem texto visível e mistura a capa editorial com a revisão das fotos selecionadas, reduzindo clareza e aproveitamento da tela.
 
 ## What Changes
 
@@ -13,6 +13,9 @@ A revisão humana em homologação mostrou que o sistema ainda concentra quase t
 - Tornar inequívoco o CTA flutuante da cliente com texto visível `Prosseguir`, contraste e nome acessível em todos os estados.
 - Na revisão/checkout da seleção, mostrar somente as fotos escolhidas e os dados comerciais, sem renderizar a capa da galeria como item concorrente.
 - Integrar comentários ao contexto de cada foto ampliada, abaixo da mídia, em vez de exigir um seletor global de foto separado da visualização.
+- Exibir sobre as prévias de cada foto comprada o comentário mais recente da cliente (trecho de até 50 caracteres) e um indicador quando ela favoritou a foto, tanto no card correspondente em Vendas e pagamentos quanto no HTML de fotos compradas.
+- Usar somente interações da própria cliente e do escopo da galeria do pedido; aplicar no HTML exportado a cor de destaque da aparência atualmente escolhida pelo fotógrafo.
+- Reorganizar Configurações em grupos recolhíveis por finalidade e prioridade, com navegação que abre o destino, formulários preservados e o aceite completo dos Termos na última seção da página. Primeiros passos começa aberto e os demais grupos fechados.
 
 ## Capabilities
 
@@ -31,5 +34,6 @@ Nenhuma.
 - CSS global, tokens de layout, shells administrativo/cliente, página de autenticação, componentes compartilhados de página, cards, grids, diálogos e media queries.
 - Editor administrativo nas etapas 03 e 04, contrato FastAPI de detalhes/capa e testes de integração do pipeline de mídia.
 - Galeria pública/privada, barra flutuante, revisão/checkout, visualizador compartilhado e comentários por foto.
+- Payload do painel Vendas e pagamentos, sobreposição responsiva das interações em prévias autenticadas e HTML independente gerado para fotos compradas.
 - Testes frontend de componentes e rotas, testes backend de capa, lint, typecheck, build e validação visual desktop/tablet/mobile.
 - Não há migration prevista, alteração de permissões, exposição de originais, mudança de preços ou ativação de integração externa.

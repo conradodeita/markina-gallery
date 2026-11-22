@@ -19,6 +19,14 @@ afterEach(() => {
   document.head.querySelectorAll('link[data-branding-test]').forEach((element) => element.remove());
 });
 
+it("expõe o cadastro do fotógrafo somente no contexto do fotógrafo", () => {
+  render(<AuthEntry initialInvitation={{ accessToken: "", returnTo: "" }} navigate={vi.fn()} />);
+  expect(screen.queryByRole("link", { name: "Criar conta de fotógrafo" })).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: "Fotógrafo" }));
+  expect(screen.getByRole("link", { name: "Criar conta de fotógrafo" }).getAttribute("href"))
+    .toBe("/photographer-signup");
+});
+
 it.each([200, 202])("solicitação e reenvio aceitos (%s) orientam sem prometer envio ou revelar vínculo", async (status) => {
   const fetchMock = vi.fn((input: string | URL | Request) => {
     const url = String(input);
@@ -29,6 +37,7 @@ it.each([200, 202])("solicitação e reenvio aceitos (%s) orientam sem prometer 
   });
   vi.stubGlobal("fetch", fetchMock);
   render(<AuthEntry initialInvitation={{ accessToken: fixtureToken, returnTo: "/public-galleries/own-gallery" }} navigate={vi.fn()} />);
+  expect(screen.getByText(/Use este acesso somente para suas fotos/)).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Nome completo"), { target: { value: "Cliente Sintética" } });
   fireEvent.change(screen.getByLabelText("WhatsApp"), { target: { value: "11987654321" } });
   fireEvent.submit(screen.getByRole("button", { name: "Receber código" }).closest("form")!);
@@ -42,6 +51,23 @@ it.each([200, 202])("solicitação e reenvio aceitos (%s) orientam sem prometer 
 });
 
 describe("entrada com identidade configurável", () => {
+  it.each([undefined, "/admin/settings", "//external.example.test"])("entra sem TOTP quando o servidor emite sessão e preserva retorno seguro %s", async (returnTo) => {
+    const navigate = vi.fn();
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => Promise.resolve(
+      String(input) === "/api/auth/admin/password"
+        ? new Response(JSON.stringify({ destination: "/admin" }), { status: 202 })
+        : new Response(null, { status: 401 }),
+    )));
+    render(<AuthEntry recoveryContext={returnTo === undefined ? undefined : "admin"}
+      initialInvitation={{ accessToken: "", returnTo: returnTo ?? "" }} navigate={navigate} />);
+    if (returnTo === undefined) fireEvent.click(screen.getByRole("tab", { name: "Fotógrafo" }));
+    fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "photographer@example.test" } });
+    fireEvent.change(screen.getByLabelText("Senha"), { target: { value: "synthetic-unused-password" } });
+    fireEvent.submit(screen.getByLabelText("Senha").closest("form")!);
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(returnTo === "/admin/settings" ? returnTo : "/admin"));
+    expect(screen.queryByLabelText("Código do autenticador ou de recuperação")).toBeNull();
+  });
+
   it("reautentica cadastro existente no subdomínio e conserva a compra solicitada", async () => {
     const orderId = "0f581c42-08aa-4305-9bfb-55f803d1cfc6";
     const returnTo = `/library/purchases#order-${orderId}`;
@@ -80,10 +106,10 @@ describe("entrada com identidade configurável", () => {
     fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "photographer@example.test" } });
     fireEvent.change(screen.getByLabelText("Senha"), { target: { value: "synthetic-unused-password" } });
     fireEvent.submit(screen.getByLabelText("Senha").closest("form")!);
-    await screen.findByLabelText("Código do autenticador");
+    await screen.findByLabelText("Código do autenticador ou de recuperação");
     expect(navigate).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Código do autenticador"), { target: { value: "123456" } });
-    fireEvent.submit(screen.getByLabelText("Código do autenticador").closest("form")!);
+    fireEvent.change(screen.getByLabelText("Código do autenticador ou de recuperação"), { target: { value: "123456" } });
+    fireEvent.submit(screen.getByLabelText("Código do autenticador ou de recuperação").closest("form")!);
     await waitFor(() => expect(navigate).toHaveBeenCalledWith(returnTo === "/admin/settings" ? returnTo : "/admin"));
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/auth/client/"))).toBe(false);
   });
@@ -174,8 +200,8 @@ describe("entrada com identidade configurável", () => {
     const view = render(<AuthEntry initialInvitation={{ accessToken: "syntheticB", returnTo: "" }} />);
     await screen.findByRole("heading", { name: "Fotógrafo B" });
     expect(fetchMock).toHaveBeenCalledWith("/api/branding?access_token=syntheticB", expect.objectContaining({ cache: "no-store" }));
-    expect(document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')?.getAttribute("href"))
-      .toBe("/api/branding/app-icon?access_token=syntheticB&size=180");
+    await waitFor(() => expect(document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')?.getAttribute("href"))
+      .toBe("/api/branding/app-icon?access_token=syntheticB&size=180"));
     view.unmount();
     expect(document.querySelector('link[rel="icon"]')).toBeNull();
     expect(document.querySelector('link[rel="apple-touch-icon"]')).toBeNull();
@@ -367,7 +393,7 @@ describe("entrada com identidade configurável", () => {
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("/auth/destination")) return Promise.resolve(new Response(null, { status: 401 }));
-      if (url.includes("/auth/client/challenge")) return Promise.resolve(new Response(JSON.stringify({ challenge_id: "reauth-challenge", message: "Código enviado." }), { status: 202 }));
+      if (url.includes("/auth/client/challenge")) return Promise.resolve(new Response(JSON.stringify({ challenge_id: "reauth-challenge", message: "Código enviado.", show_private_gallery_notice: true }), { status: 202 }));
       if (url.includes("/auth/client/verify")) return Promise.resolve(new Response(JSON.stringify({ destination: `/public-galleries/${galleryId}` }), { status: 200 }));
       return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
     });
@@ -377,6 +403,10 @@ describe("entrada com identidade configurável", () => {
     fireEvent.change(screen.getByLabelText("Nome completo"), { target: { value: "Pessoa autorizada" } });
     fireEvent.change(screen.getByLabelText("WhatsApp"), { target: { value: "11987654321" } });
     fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
+    await screen.findByRole("heading", { name: "Galeria privada" });
+    expect(screen.getByText("Esta galeria é privada. Para acessar, peça ao fotógrafo um convite individual.")).toBeTruthy();
+    expect(screen.queryByLabelText("Código de acesso")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Já tenho um convite" }));
     await screen.findByLabelText("Código de acesso");
     expect(fetchMock).toHaveBeenCalledWith("/api/auth/client/challenge", expect.objectContaining({
       body: JSON.stringify({ full_name: "Pessoa autorizada", phone: "+5511987654321", return_to: `/public-galleries/${galleryId}`, parent_gallery_id: galleryId }),
@@ -487,5 +517,23 @@ describe("entrada com identidade configurável", () => {
 
     expect(await screen.findByRole("heading", { name: "Confira seu e-mail" })).toBeTruthy();
     expect(screen.getByText(/não realiza login automático/i)).toBeTruthy();
+  });
+
+  it("oferece link por e-mail para conta criada pelo website sem revelar elegibilidade", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input).includes("/branding")) return Promise.resolve(new Response(null, { status: 500 }));
+      return Promise.resolve(new Response(JSON.stringify({ message: "Se a conta estiver apta, enviaremos um link de uso único ao e-mail informado." }), { status: 202 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthEntry />);
+    fireEvent.click(screen.getByRole("tab", { name: "Fotógrafo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Esqueci minha senha" }));
+    fireEvent.change(screen.getByLabelText("E-mail administrativo"), { target: { value: "web@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Receber link por e-mail" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/photographer-signup/recovery/email-link",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ email: "web@example.test" }) }),
+    ));
+    expect(await screen.findByRole("heading", { name: "Confira seu e-mail" })).toBeTruthy();
   });
 });

@@ -7,6 +7,8 @@ type SecuritySummary = {
   email_masked: string;
   whatsapp_status: string;
   email_channel: { status: string; mode?: string };
+  recovery_codes_available: number;
+  totp_enabled?: boolean;
 };
 
 type Flow = "idle" | "password-code" | "email-code" | "email-sent" | "session-ended";
@@ -39,13 +41,17 @@ export default function SecurityPanel() {
   const [pendingPassword, setPendingPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [recoveryDownloaded, setRecoveryDownloaded] = useState(false);
+  const [recoveryFormOpen, setRecoveryFormOpen] = useState(false);
 
   useEffect(() => {
     fetch("/api/admin/security/summary", { credentials: "same-origin" })
       .then(async (response) => {
         if (!response.ok) throw new Error();
         const payload = await response.json();
-        if (typeof payload.email_masked !== "string" || typeof payload.email_channel?.status !== "string") throw new Error();
+        if (typeof payload.email_masked !== "string" || typeof payload.email_channel?.status !== "string"
+          || typeof payload.recovery_codes_available !== "number") throw new Error();
         setSummary(payload);
       })
       .catch(() => setLoadError(true));
@@ -56,6 +62,50 @@ export default function SecurityPanel() {
     setChallengeId("");
     setPendingPassword("");
     setMessage("");
+  }
+
+  async function issueRecoveryCodes(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setMessage("");
+    const data = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/admin/security/totp/recovery-codes", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: data.get("currentPassword"), second_factor_code: data.get("secondFactorCode") }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(payload.codes) || !payload.codes.every((code: unknown) => typeof code === "string")) {
+        setMessage(await detail(response, "Não foi possível gerar os códigos de recuperação."));
+        return;
+      }
+      setRecoveryCodes(payload.codes);
+      setRecoveryDownloaded(false);
+      setRecoveryFormOpen(false);
+      setSummary((current) => current ? { ...current, recovery_codes_available: payload.codes.length } : current);
+      setMessage("Guarde os códigos agora. Eles não serão exibidos novamente.");
+    } catch {
+      setMessage("Não foi possível gerar os códigos de recuperação.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function downloadRecoveryCodes() {
+    if (!recoveryCodes.length || recoveryDownloaded) return;
+    const content = `Pick-your-Pic — códigos de recuperação TOTP\nGuarde este arquivo offline e em local privado. Cada código só pode ser usado uma vez.\n\n${recoveryCodes.join("\n")}\n`;
+    const objectUrl = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = "pickyourpic-codigos-recuperacao.txt";
+    anchor.hidden = true;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+    setRecoveryDownloaded(true);
   }
 
   async function startPasswordChange(event: FormEvent<HTMLFormElement>) {
@@ -161,11 +211,41 @@ export default function SecurityPanel() {
             <div><span>E-mail atual</span><strong>{summary.email_masked}</strong></div>
             <div><span>WhatsApp administrativo</span><strong>{channelLabel(summary.whatsapp_status)}</strong></div>
             <div><span>E-mail transacional</span><strong>{channelLabel(summary.email_channel.status)}</strong></div>
+            <div><span>Códigos de recuperação</span><strong>{summary.recovery_codes_available} disponíveis</strong></div>
           </div>
           {summary.whatsapp_status !== "ready" ? <p className="security-warning">Conecte o WhatsApp administrativo antes de alterar senha ou e-mail.</p> : null}
           {summary.email_channel.status !== "ready" ? <p className="security-warning">O e-mail transacional ainda não está pronto para entregas externas.</p> : null}
         </>
       )}
+
+      {summary?.totp_enabled !== false ? <section aria-labelledby="totp-recovery-title">
+        <h3 id="totp-recovery-title">Recuperação do autenticador</h3>
+        {recoveryCodes.length ? (
+          <div role="status">
+            <p>Guarde este lote em um local privado. A tela não o exibirá novamente.</p>
+            <ol aria-label="Códigos de recuperação">
+              {recoveryCodes.map((code) => <li key={code}><code>{code}</code></li>)}
+            </ol>
+            <button type="button" className="secondary" onClick={downloadRecoveryCodes} disabled={recoveryDownloaded}>
+              {recoveryDownloaded ? "Lote baixado" : "Baixar lote uma vez"}
+            </button>
+            <button type="button" className="secondary" onClick={() => { setRecoveryCodes([]); setRecoveryDownloaded(false); }}>Fechar e limpar da tela</button>
+          </div>
+        ) : recoveryFormOpen ? (
+          <form className="gallery-settings-form" onSubmit={issueRecoveryCodes}>
+            <label>Senha atual<input name="currentPassword" type="password" autoComplete="current-password" required /></label>
+            <label>Código TOTP atual<input name="secondFactorCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required /></label>
+            <small>O lote anterior será invalidado após a confirmação. Os novos códigos aparecerão uma vez nesta tela.</small>
+            <button className="primary" disabled={loading}>{loading ? "Gerando…" : "Gerar 10 códigos"}</button>
+            <button type="button" className="secondary" onClick={() => setRecoveryFormOpen(false)}>Cancelar</button>
+          </form>
+        ) : (
+          <>
+            <p>Os códigos são alternativas de uso único para entrar se você perder acesso ao autenticador.</p>
+            <button type="button" className="secondary" onClick={() => setRecoveryFormOpen(true)}>Gerar ou regenerar códigos</button>
+          </>
+        )}
+      </section> : null}
 
       {flow === "session-ended" ? (
         <div className="security-result" role="status"><strong>{message}</strong><p>Todas as sessões foram encerradas por segurança.</p><Link className="primary account-action-link" href="/">Entrar novamente</Link></div>

@@ -4,13 +4,34 @@ import re
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
 
 from app.acervo_context import require_active_owner
 from app.auth import Client, NotificationDelivery, NotificationEvent, SaleOrder, audit, now
 from app.notification_settings import enqueue_event
 
 EVENT_TYPE = "order_delivery_ready"
+
+
+def unresolved_order_condition():
+    """Obrigação comercial comum à elegibilidade de arquivo e encerramento."""
+    return or_(
+        and_(SaleOrder.payment_status == "pending", SaleOrder.frozen_at.is_not(None)),
+        and_(fulfillable_order_condition(), SaleOrder.delivery_album_url.is_(None)),
+    )
+
+
+def suspend_delivery_access(db, *, order):
+    """Mantém URL histórica; revisa a capacidade e cancela avisos ainda não enviados."""
+    order.delivery_revision += 1
+    db.execute(update(NotificationDelivery).where(
+        NotificationDelivery.tenant_id == order.tenant_id,
+        NotificationDelivery.event_id.in_(select(NotificationEvent.id).where(
+            NotificationEvent.tenant_id == order.tenant_id,
+            NotificationEvent.sale_order_id == order.id,
+            NotificationEvent.event_type.in_((EVENT_TYPE, "payment_confirmed")))),
+        NotificationDelivery.status == "queued",
+    ).values(status="cancelled", last_error="financial_review"))
 
 
 def validate_album_url(value: str | None) -> str | None:
@@ -24,16 +45,18 @@ def validate_album_url(value: str | None) -> str | None:
         return None
     try:
         url = urlsplit(value)
-        from app.tenant_hosts import normalize_canonical_host
-
-        normalize_canonical_host(url.hostname or "")
-        has_share_target = url.path not in {"", "/"} or bool(url.query or url.fragment)
+        hostname = (url.hostname or "").lower()
+        valid_google_photos_path = (
+            hostname == "photos.app.goo.gl" and re.fullmatch(r"/[^/]+/?", url.path)
+        ) or (
+            hostname == "photos.google.com" and re.fullmatch(r"/share/[^/]+/?", url.path)
+        )
         if (len(value) > 2048 or url.scheme != "https" or url.username is not None
                 or url.password is not None or url.port not in {None, 443}
-                or not has_share_target or re.search(r"\s", value)):
+                or not valid_google_photos_path or re.search(r"\s", value)):
             raise ValueError()
     except ValueError as exc:
-        raise ValueError("Informe um link HTTPS público de compartilhamento do álbum (até 2048 caracteres).") from exc
+        raise ValueError("Informe um link HTTPS válido de compartilhamento do Google Photos (até 2048 caracteres).") from exc
     return value
 
 

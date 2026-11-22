@@ -30,7 +30,7 @@ O processamento SHALL usar fila bloqueante de baixa prioridade, concorrência e 
 
 ### Requirement: Operação reversível e verificável
 
-Deploy SHALL exigir inventário, backup, migration aditiva, modelos verificados por hash, feature flag desligada e smoke inicial sem dados pessoais. Uma carga real de adultos ou menores em homologação SHALL começar somente após autorização humana explícita da execução e registro de responsável, origem, finalidade, quantidade, identificador interno e retenção do lote, sob acesso autenticado, criptografia e exclusão controlada. Rollback SHALL desligar novas operações e preservar estruturas para limpeza controlada, sem down migration destrutiva nem perda de histórico comercial.
+Deploy facial SHALL exigir inventário, backup, migration aditiva, modelos verificados por hash e smoke sem dados pessoais. A flag permanece desligada em ambiente novo/não autorizado e preserva o estado de ambiente já autorizado, inclusive `true` em produção. Carga real em homologação requer autorização explícita, lote documentado, acesso autenticado, criptografia e exclusão controlada. Rollback interrompe novas operações e preserva estruturas/histórico, sem down migration destrutiva.
 
 #### Scenario: Carga real controlada em homologação
 

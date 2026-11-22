@@ -36,7 +36,7 @@ O sistema SHALL permitir alterar o nome da cliente e trocar seu telefone na mesm
 
 ### Requirement: Exclusão distingue operação de histórico comercial
 
-O sistema SHALL classificar o inventário da cliente em dependências operacionais removíveis e histórico comercial protegido. Vínculos, estados individuais e referências residuais de galerias já removidas, sessões, convites, seleções sem pedido, favoritos, comentários, visualizações, buscas faciais transitórias e galerias privadas sem histórico SHALL NOT, isoladamente, impedir a exclusão; pedidos, pagamentos, entregas e seus snapshots SHALL impedir a exclusão definitiva. A exclusão SHALL remover referências operacionais remanescentes à identidade dentro da mesma transação, preservando tombstones e auditorias de galerias e sem alterar dados de terceiros.
+O sistema SHALL separar dados operacionais removíveis do histórico comercial. Vínculos, estados/referências de galerias removidas, sessões, convites, seleções sem pedido, favoritos, comentários, visualizações, buscas faciais transitórias e privadas sem histórico SHALL NOT bloquear exclusão isoladamente. Pedidos, pagamentos, entregas e snapshots SHALL bloqueá-la. A transação remove referências identitárias, preserva tombstones/auditorias e não afeta terceiros.
 
 #### Scenario: Cliente sintética com privada sem compra
 

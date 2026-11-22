@@ -6,7 +6,7 @@
 
 # Pick-your-Pic — Especificação de Execução para Claude Code
 
-> **Decisão substitutiva — `unify-gallery-client-collections`:** galeria autenticada única com pastas comuns ou atribuídas a clientes. Estado de seleção, prazo, compra e histórico é individual por galeria + cliente; nenhuma seleção nova cria galeria privada derivada. “Coleção” reúne as pastas autorizadas, Carrinho mantém revisão/PIX e Compras mantém pedidos/entregas. Referências abaixo à criação, navegação ou importação para galeria privada são legado substituído; APIs e snapshots antigos permanecem somente para compatibilidade até migração inventariada fora de homologação. A limpeza autorizada de dados de teste vale apenas para homologação.
+> **Decisão substitutiva — `unify-gallery-client-collections`:** galeria autenticada única com pastas comuns ou atribuídas a clientes. Estado de seleção, prazo, compra e histórico é individual por galeria + cliente; nenhuma seleção nova cria galeria privada derivada. “Coleção” reúne as pastas autorizadas, Carrinho mantém revisão/PIX e Compras mantém pedidos/entregas. Referências abaixo à criação, navegação ou importação para galeria privada são legado substituído; APIs e snapshots antigos permanecem somente para compatibilidade até migração inventariada fora de homologação. A limpeza e os workflows remotos de homologação foram encerrados em 18/11/2026; esse procedimento não é mais executável.
 
 ## 1. Mandato e resultado esperado
 
@@ -77,7 +77,7 @@ O próximo executor deve conseguir retomar o trabalho lendo apenas o repositóri
 
 ### Pós-MVP, porém preparar interfaces e dados
 
-- Infinity Pay por cartão, por meio de um `PaymentProvider` e webhooks assinados.
+- Cartão: indisponível durante a transição para o Mercado Pago Orders API; não reativar InfinitePay.
 - Busca facial: implementar apenas depois de um spike de compatibilidade ARM, licença comercial, desempenho e precisão.
 - Múltiplos administradores, impressos, laboratórios, produtos físicos e edição dentro da plataforma.
 
@@ -261,7 +261,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - Reservar 25% do disco local para banco, sistema, fila e processamento. Alertar e bloquear novas importações ao atingir 75% de ocupação configurável.
 - Tela de armazenamento: total/usado/livre, uso por evento, média por JPEG e estimativa de fotos restantes baseada em média real.
 - Importações idempotentes por hash e retomáveis após queda. Exibir arquivos importados, duplicados, pendentes e falhos com tentativa individual.
-- Fazer backup diário cifrado do PostgreSQL no Drive e validar restauração em homologação.
+- Fazer backup diário cifrado do PostgreSQL no Drive e validar restauração somente em CI isolada com dados sintéticos.
 
 ## 9. Integrações por adaptadores
 
@@ -270,7 +270,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - Gates de implantação/segredos e validação Android/iPhone permanecem humanos. Consulte `docs/transactional-notifications.md`; transporte desabilitado por padrão, sem alterar `.env` automaticamente.
 
 - `WhatsAppProvider`: OTP, mensagens transacionais, lembretes, status e erro. Inicialmente Evolution API; não acoplar regras de negócio ao fornecedor.
-- `PaymentProvider`: PIX manual no MVP; Infinity Pay posterior com criação de cobrança, webhook assinado e reconciliação.
+- `PaymentProvider`: PIX manual ativo; checkout de cartão indisponível durante a transição para o Mercado Pago.
 - `DriveStorageProvider`: upload resumível, checksum, retentativa exponencial, restauração e deleção controlada.
 - `EmailProvider`: SMTP transacional para verificação e recuperação de senha.
 - `FaceRecognitionProvider`: implementação somente depois de spike aprovado, sempre protegida por feature flag desligada por padrão. A habilitação de dados reais é uma decisão operacional externa e aprovada; uma vez habilitado o ambiente, galerias ativas são indexadas automaticamente, sem declaração manual do fotógrafo.
@@ -280,7 +280,7 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 - Fotos escolares e dados biométricos exigem minimização, transparência, consentimento específico do cliente/responsável para a referência enviada e fluxo de exclusão. O checkbox pertence à consulta da cliente, não à rotina de upload do fotógrafo; não tratar isso como texto decorativo.
 - Termo versionado, aceite auditável, finalidade explícita, expiração de referência facial e exclusão de embedding devem existir antes da feature ir a produção.
 - Feedback facial remove o resultado daquela consulta e pode criar revisão humana; nunca retreinar/aplicar associação automaticamente a partir de um único feedback.
-- Homologação privada pode usar dados reais de adultos e crianças quando o lote for enviado pelo administrador/fotógrafo e estiver vinculado a autorização humana explícita por execução, origem e finalidade documentadas, acesso autenticado, proteção criptográfica, retenção mínima e exclusão controlada. Essa autorização não se estende à produção nem ao fluxo infantil comum.
+- Não há homologação nem validações remotas intermediárias. CI usa dados sintéticos; uso e rollout em produção seguem consentimento vigente, proteção criptográfica, retenção mínima, gates específicos e aprovação humana.
 
 ## 11. Ordem de implementação
 
@@ -292,10 +292,10 @@ Criar migrations, índices e constraints. Todos os dados operacionais importante
 6. Implementar regras de preço, checkout, pedidos, PIX manual e painel operacional de produção.
 7. Implementar entrega por link Google Photos, WhatsApp e portal “Minhas entregas”.
 8. Implementar Drive, arquivamento, métricas de armazenamento, backups e central de pendências.
-9. Fortalecer testes, limites, proteção visual, observabilidade e deploy de homologação.
+9. Fortalecer testes, limites, proteção visual, observabilidade e o deploy protegido de produção.
 10. Executar spike facial isolado; só então decidir tecnologia, licença e rollout.
 
-Não iniciar a fase facial antes de o restante estar funcional e validado em homologação.
+Executar validações automatizadas em CI com dados sintéticos; qualquer mudança operacional facial em produção exige aprovação e gates próprios.
 
 ## 12. Critérios mínimos de aceite
 
@@ -309,14 +309,15 @@ Não iniciar a fase facial antes de o restante estar funcional e validado em hom
 - Prévia não contém EXIF/GPS, respeita resolução/proteção configurada e não expõe originais.
 - Disco, importações, mensagens e pagamentos com falha aparecem na Central de Pendências.
 - Testes automatizados cobrem autenticação, autorização, cálculo de faixas, bloqueio de recompra, transições de pedido, importação idempotente e entrega.
-- Homologação e produção usam bancos, segredos e integrações diferentes.
+- CI usa serviços efêmeros e dados sintéticos, sem secrets operacionais; produção mantém recursos e segredos isolados.
 
 ## 13. Entregáveis do executor
 
 - Código versionado no repositório GitHub privado fornecido pelo proprietário.
 - Diretório `openspec/` consistente, com specs base consolidadas e mudanças arquivadas após cada entrega aceita.
-- `README.md` de desenvolvimento, `DEPLOY.md` de homologação/produção e `.env.example` sem segredos.
+- `README.md` de desenvolvimento, `DEPLOY.md` de produção e `.env.example` sem segredos.
 - Docker Compose, migrations, testes e scripts seguros de backup/restauração.
 - Documento de decisões técnicas e limitações conhecidas.
 - Checklist de deploy e rollback.
 - Relatório do spike facial antes de qualquer ativação da feature.
+> **Decisão de pagamentos — `retire-infinitepay-checkout`:** a InfinitePay foi aposentada para novas compras. O único pagamento disponível no Pick-your-Pic é o PIX manual configurado pelo fotógrafo. Checkout de cartão fica indisponível até a change independente do Mercado Pago Orders API. Compras InfinitePay anteriores continuam somente para consulta; preserve seus registros e identificadores financeiros.

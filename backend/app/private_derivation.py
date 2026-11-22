@@ -17,7 +17,6 @@ from app.auth import (
     ParentGalleryRegistration,
     PhotoAsset,
     PhotoSelection,
-    expired,
 )
 from app.checkout import (
     client_photo_is_frozen,
@@ -185,8 +184,6 @@ def derive_client_selection(
         raise PrivateDerivationError("O acesso desta cliente à galeria privada está bloqueado.")
     if not gallery.access_enabled:
         raise PrivateDerivationError("A galeria privada está bloqueada.")
-    if gallery.selection_expires_at and expired(gallery.selection_expires_at):
-        raise PrivateDerivationError("O prazo de seleção expirou.")
     if client_photo_is_frozen(
         db, gallery_id=gallery.id, client_id=client.id, photo_id=photo.id
     ):

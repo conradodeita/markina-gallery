@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from math import cos, hypot, radians, sin
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -47,6 +47,27 @@ def safe_source_path(photo: PhotoAsset) -> Path:
     except ValueError as exc:
         raise ValueError("Caminho de mídia inválido.") from exc
     media_namespace(candidate.relative_to(source_root()).as_posix(), photo.tenant_id)
+    return candidate
+
+
+def safe_source_path_from_credit_snapshot(storage_key: str, tenant_id) -> Path:
+    """Resolve somente uma chave tenant-namespaced preservada pela operação financeira."""
+    prefix = f"tenants/{tenant_id}/"
+    key = PurePosixPath(storage_key)
+    if (
+        not storage_key.startswith(prefix)
+        or "\\" in storage_key
+        or key.is_absolute()
+        or any(part in {".", ".."} for part in storage_key.split("/"))
+    ):
+        raise ValueError("Caminho de mídia inválido.")
+    root = source_root()
+    candidate = (root.joinpath(*key.parts)).resolve()
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Caminho de mídia inválido.") from exc
+    media_namespace(relative.as_posix(), tenant_id)
     return candidate
 
 
@@ -244,11 +265,27 @@ def watermark(image: Image.Image, settings: BrandingSettings | None = None) -> I
 def require_media_photo(db: Session, photo: PhotoAsset) -> PhotoAsset:
     owner = photo.tenant_id
     fresh = owned_record(db, PhotoAsset, photo.id, tenant_id=owner)
-    parent = owned_record(db, ParentGallery, photo.parent_gallery_id, tenant_id=owner) if fresh else None
-    folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=owner) if fresh else None
+    parent = db.scalar(
+        select(ParentGallery)
+        .where(
+            ParentGallery.id == photo.parent_gallery_id,
+            ParentGallery.tenant_id == owner,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ) if fresh else None
+    folder = db.scalar(
+        select(PhotoFolder)
+        .where(PhotoFolder.id == photo.folder_id, PhotoFolder.tenant_id == owner)
+        .with_for_update()
+    ) if fresh else None
     private = owned_record(db, DerivedGallery, photo.derived_gallery_id, tenant_id=owner) if fresh and photo.derived_gallery_id else None
     if not fresh or not parent or not parent.active or parent.lifecycle_status != "active" or not folder or (photo.derived_gallery_id and not private):
         raise ValueError("Mídia indisponível.")
+    from app.folder_access import folder_media_writes_allowed
+
+    if not folder_media_writes_allowed(db, folder):
+        raise ValueError("A pasta está em uma etapa de arquivamento e não aceita novas gravações.")
     return fresh
 
 
@@ -376,8 +413,10 @@ def generate_derivatives(
             if parent and can_publish_gallery(db, parent):
                 photo.available = True
                 if folder.status == "preparing":
+                    from app.folder_deadlines import start_folder_access_deadline
+
                     folder.status = "released"
-                    folder.released_at = now()
+                    start_folder_access_deadline(folder)
             elif folder.status == "preparing":
                 photo.available = False
         facial_analysis_preview = next(

@@ -1,0 +1,76 @@
+.panel {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--mk-border);
+  color: var(--mk-ink);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.panel :is(h3, h4, p) { margin: 0; }
+.heading { display: grid; gap: .5rem; }
+.heading h3 { font-size: clamp(1.15rem, 2vw, 1.4rem); letter-spacing: -.02em; }
+.heading p { color: var(--mk-ink-muted); max-width: 65ch; }
+.eyebrow { color: var(--mk-brand-strong); font-size: .73rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.panel .steps { display: grid; gap: .75rem; margin: 0; padding: 0; list-style: none; }
+.panel .steps li { display: flex; align-items: flex-start; gap: .75rem; padding: 1rem; background: var(--mk-surface-subtle); }
+.steps li > span { display: grid; place-items: center; width: 1.8rem; height: 1.8rem; flex: 0 0 auto; border-radius: 50%; background: var(--mk-brand-soft); color: var(--mk-brand-strong); font-size: .85rem; font-weight: 700; }
+.steps li div { display: grid; gap: .25rem; }
+.steps small { color: var(--mk-ink-muted); line-height: 1.5; }
+.guidance { color: var(--mk-ink-muted); }
+.guidance p + p { margin-top: .75rem; }
+.badge { width: fit-content; max-width: 100%; padding: .35rem .65rem; border-radius: .5rem; background: var(--mk-info-soft); color: var(--mk-ink); font-size: .85rem; font-weight: 700; }
+.panel li[data-state="email_verified"] { border-color: var(--mk-success); }
+.panel li[data-state="email_verified"] .badge, .panel li[data-state="completed"] .badge { background: var(--mk-success-soft); color: var(--mk-success); }
+.panel li[data-state="expired"] .badge { color: var(--mk-ink-muted); }
+.panel li > small { color: var(--mk-ink-muted); }
+.factor { padding: .75rem; border-left: 3px solid var(--mk-brand); background: var(--mk-surface-subtle); font-size: .9rem; }
+.panel summary { cursor: pointer; min-height: 44px; padding-block: .65rem; font-weight: 600; }
+.panel summary:focus-visible { outline: 3px solid var(--mk-focus); outline-offset: 3px; border-radius: .25rem; }
+.panel details[open] > summary { margin-bottom: .75rem; }
+.panel > p { max-width: 75ch; color: var(--mk-ink-muted); }
+.panel form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  min-width: 0;
+  padding: clamp(1rem, 2vw, 1.5rem);
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-md);
+  background: var(--mk-surface-subtle);
+}
+.panel label { display: grid; gap: .5rem; min-width: 0; font-weight: 600; }
+.factorPanel form > label:has(select) { grid-column: 1 / -1; }
+.panel label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: flex-start;
+  gap: .75rem;
+  font-weight: 400;
+}
+.panel input[type="checkbox"] { flex: 0 0 auto; width: 1.15rem; height: 1.15rem; margin-top: .25rem; }
+.panel :is(input:not([type="checkbox"]), select) {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: .75rem;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface);
+  color: var(--mk-ink);
+  font: inherit;
+}
+.panel button { min-height: 44px; width: 100%; white-space: normal; }
+.panel ul { display: grid; gap: 1rem; padding: 0; margin: 0; list-style: none; }
+.panel li { display: grid; gap: .75rem; padding: 1rem; border: 1px solid var(--mk-border); border-radius: var(--mk-radius-md); }
+.panel [role="status"] { padding: 1rem; border-radius: var(--mk-radius-sm); background: var(--mk-info-soft); color: var(--mk-ink); }
+.panel.statusForm { padding: 1.5rem; border: 1px solid var(--mk-border); border-radius: var(--mk-radius-md); background: var(--mk-surface-subtle); }
+.statusForm > :is(h3, p, button, label:has(input[type="checkbox"])) { grid-column: 1 / -1; }
+@media (min-width: 768px) {
+  .panel .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .panel.statusForm { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .panel form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .panel form > :is(p, button, label:has(input[type="checkbox"])) { grid-column: 1 / -1; }
+  .panel button { width: fit-content; max-width: 100%; }
+}

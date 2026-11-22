@@ -1,0 +1,399 @@
+name: Operador protegido do backup global
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Preparar inventário/diagnóstico ou executar uma etapa aprovada
+        required: true
+        type: choice
+        options: [inventory, diagnose, install, bind-and-rehearse, reconcile]
+      approval_fingerprint:
+        description: Fingerprint revisada (vazia em inventory/diagnose)
+        required: false
+        type: string
+        default: ''
+      approval_bundle_sha256:
+        description: SHA-256 do pacote ARM64 (vazio em inventory/diagnose)
+        required: false
+        type: string
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: production-platform-backup-runtime
+  cancel-in-progress: false
+
+jobs:
+  code-evidence:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Conferir CI verde do SHA exato da main
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"
+
+  runtime-artifact:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation != 'diagnose' }}
+    needs: [code-evidence]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      bundle_sha256: ${{ steps.build.outputs.bundle_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Montar pacote ARM64 reprodutível do SHA aprovado
+        id: build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          output="$RUNNER_TEMP/pyp-platform-backup-runtime.tar.gz"
+          result="$(bash scripts/build_platform_backup_runtime.sh "$GITHUB_SHA" "$output")"
+          printf '%s\n' "$result" | tee -a "$GITHUB_STEP_SUMMARY"
+          digest="$(sed -nE 's/^bundle_sha256=([0-9a-f]{64})$/\1/p' <<<"$result" | tail -n1)"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          echo "bundle_sha256=$digest" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pyp-platform-backup-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/pyp-platform-backup-runtime.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  preflight:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation != 'diagnose' }}
+    needs: [code-evidence, runtime-artifact]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    outputs:
+      fingerprint: ${{ steps.inventory.outputs.fingerprint }}
+      connection_binding: ${{ steps.inventory.outputs.connection_binding }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inventariar somente o projeto e os recursos sem alterar estado
+        id: inventory
+        shell: bash
+        env:
+          SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          SSH_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+          EXPECTED_BUNDLE: ${{ needs.runtime-artifact.outputs.bundle_sha256 }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -Eeuo pipefail
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || { echo "Configuração protegida ausente: $name" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"; known_file="$(mktemp)"; output="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file" "$output"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          target="$SSH_USER@$SSH_HOST"
+          options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
+          ssh "${options[@]}" "$target" "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$GITHUB_SHA" </dev/null | tee "$output" | tee -a "$GITHUB_STEP_SUMMARY"
+          fingerprint="$(sed -nE 's/^backup_runtime_fingerprint=([0-9a-f]{64})$/\1/p' "$output" | tail -n1)"
+          preconditions="$(sed -nE 's/^backup_runtime_install_preconditions=(pass|fail)$/\1/p' "$output" | tail -n1)"
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ && -n "$EXPECTED_BUNDLE" ]]
+          if [[ "$OPERATION" != inventory && "$preconditions" != pass ]]; then
+            echo 'O inventário não atende às precondições para a operação solicitada' >&2
+            exit 1
+          fi
+          echo "bundle_sha256=$EXPECTED_BUNDLE" >> "$GITHUB_STEP_SUMMARY"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          binding="$(printf '%s' "$SSH_HOST|$SSH_PORT|$SSH_USER" | sha256sum | awk '{print $1}')"
+          echo "connection_binding=$binding" >> "$GITHUB_OUTPUT"
+
+  diagnose:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'diagnose' }}
+    needs: [code-evidence]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Consultar contagens agregadas pelo canal read-only protegido
+        shell: bash
+        env:
+          SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          SSH_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || { echo "Configuração protegida ausente: $name" >&2; exit 1; }
+          done
+          key_file="$RUNNER_TEMP/backup-diagnostic-key"
+          known_file="$RUNNER_TEMP/backup-diagnostic-known-hosts"
+          output="$RUNNER_TEMP/backup-diagnostic-output"
+          transport_error="$RUNNER_TEMP/backup-diagnostic-transport-error"
+          normal_output="$RUNNER_TEMP/backup-normal-inventory-output"
+          normal_error="$RUNNER_TEMP/backup-normal-inventory-error"
+          trap 'rm -f "$key_file" "$known_file" "$output" "$transport_error" "$normal_output" "$normal_error"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          target="$SSH_USER@$SSH_HOST"
+          options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
+          if ! ssh "${options[@]}" "$target" "MARKINA_PLATFORM_BACKUP_DIAGNOSE_SHA=$GITHUB_SHA" </dev/null >"$output" 2>"$transport_error"; then
+            python - "$output" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+          lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+          allowed = {
+              "diagnostic_container_list_failed", "diagnostic_container_list_invalid",
+              "diagnostic_container_inspect_failed", "diagnostic_container_inventory_invalid",
+              "diagnostic_compose_list_failed", "diagnostic_compose_list_invalid",
+              "diagnostic_inventory_changed",
+              "inventory_error", "inventory_io_failed", "inventory_command_failed",
+          }
+          match = re.fullmatch(r"platform-backup-runtime: container diagnostics failed \(([a-z0-9_]+)\)", lines[0]) if len(lines) == 1 else None
+          print(f"backup_runtime_diagnostic_failed={match.group(1) if match and match.group(1) in allowed else 'transport_or_output_error'}")
+          PY
+            exit 1
+          fi
+          python - "$output" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          import sys
+          from pathlib import Path
+          prefix = "backup_runtime_container_diagnostics="
+          lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+          if len(lines) != 1 or not lines[0].startswith(prefix):
+              raise SystemExit("backup_runtime_diagnostic_output_invalid")
+          data = json.loads(lines[0][len(prefix):])
+          if (type(data) is not dict or set(data) != {"schema_version", "roles"}
+            or type(data.get("schema_version")) is not int or data["schema_version"] != 2):
+              raise SystemExit("backup_runtime_diagnostic_output_invalid")
+          roles = data["roles"]
+          if type(roles) is not dict or set(roles) != {"api", "web", "db"}:
+              raise SystemExit("backup_runtime_diagnostic_output_invalid")
+          fields = {
+              "label_records", "compose_records", "matched_records",
+              "label_only_records", "compose_only_records", "running", "stopped", "unknown",
+          }
+          for role in roles.values():
+              if type(role) is not dict or set(role) != fields:
+                  raise SystemExit("backup_runtime_diagnostic_output_invalid")
+              if any(type(value) is not int or not 0 <= value <= 512 for value in role.values()):
+                  raise SystemExit("backup_runtime_diagnostic_output_invalid")
+              if (role["label_records"] != role["matched_records"] + role["label_only_records"]
+                or role["compose_records"] != role["matched_records"] + role["compose_only_records"]
+                or role["label_records"] != role["running"] + role["stopped"] + role["unknown"]):
+                  raise SystemExit("backup_runtime_diagnostic_output_invalid")
+          print(prefix + json.dumps(data, sort_keys=True, separators=(",", ":")))
+          PY
+          if ssh "${options[@]}" "$target" "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$GITHUB_SHA" </dev/null >"$normal_output" 2>"$normal_error"; then
+            normal_status=0
+          else
+            normal_status=$?
+          fi
+          python - "$normal_output" "$normal_status" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+          if sys.argv[2] == "0":
+              prefixes = (
+                  "backup_runtime_inventory_summary=",
+                  "backup_runtime_fingerprint=",
+                  "backup_runtime_install_preconditions=",
+              )
+              if len(lines) != 3 or any(not line.startswith(prefix) for line, prefix in zip(lines, prefixes)):
+                  print("backup_runtime_normal_inventory=invalid_output")
+                  raise SystemExit(1)
+              try:
+                  inventory = json.loads(lines[0][len(prefixes[0]):])
+              except json.JSONDecodeError:
+                  print("backup_runtime_normal_inventory=invalid_output")
+                  raise SystemExit(1)
+              containers = inventory.get("containers") if type(inventory) is dict else None
+              if (type(inventory) is not dict or set(inventory) != {
+                      "schema_version", "checkout_sha", "containers", "database_schema", "disk_var_lib", "units",
+                  } or type(inventory.get("schema_version")) is not int
+                  or inventory.get("schema_version") != 1
+                  or type(containers) is not dict or set(containers) != {"api", "web", "db"}
+                  or type(inventory.get("checkout_sha")) is not str
+                  or not re.fullmatch(r"[0-9a-f]{40}", inventory["checkout_sha"])
+                  or type(inventory.get("database_schema")) is not str
+                  or not re.fullmatch(r"[A-Za-z0-9_]{1,64}", inventory["database_schema"])
+                  or type(inventory.get("disk_var_lib")) is not dict
+                  or set(inventory["disk_var_lib"]) != {"available_kib", "use_percent"}
+                  or type(inventory["disk_var_lib"].get("available_kib")) is not int
+                  or type(inventory["disk_var_lib"].get("use_percent")) is not int
+                  or type(inventory.get("units")) is not dict
+                  or set(inventory["units"]) != {"service", "timer"}
+                  or not re.fullmatch(r"[0-9a-f]{64}", lines[1][len(prefixes[1]):])
+                  or lines[2][len(prefixes[2]):] not in {"pass", "fail"}):
+                  print("backup_runtime_normal_inventory=invalid_output")
+                  raise SystemExit(1)
+              for container in containers.values():
+                  if (type(container) is not dict or set(container) != {"state", "running", "health"}
+                      or type(container.get("state")) is not str
+                      or container.get("state") not in {"running", "exited", "created", "restarting"}
+                      or type(container.get("running")) is not bool
+                      or type(container.get("health")) is not str
+                      or container.get("health") not in {"healthy", "unhealthy", "starting", "none"}):
+                      print("backup_runtime_normal_inventory=invalid_output")
+                      raise SystemExit(1)
+              for unit in inventory["units"].values():
+                  if (type(unit) is not dict or set(unit) != {"load", "enabled", "active"}
+                      or any(type(value) is not str for value in unit.values())):
+                      print("backup_runtime_normal_inventory=invalid_output")
+                      raise SystemExit(1)
+              if (inventory["disk_var_lib"]["available_kib"] < 0
+                  or not 0 <= inventory["disk_var_lib"]["use_percent"] <= 100):
+                  print("backup_runtime_normal_inventory=invalid_output")
+                  raise SystemExit(1)
+              print("backup_runtime_normal_inventory=success")
+              print("backup_runtime_install_preconditions=" + lines[2][len(prefixes[2]):])
+          else:
+              sys.path.insert(0, str(Path("scripts").resolve()))
+              import platform_backup_runtime_inventory as runtime_inventory
+
+              allowed = runtime_inventory.SAFE_INVENTORY_ERROR_CODES | {
+                  "inventory_error", "inventory_io_failed", "inventory_command_failed",
+              }
+              match = (re.fullmatch(r"platform-backup-runtime: inventory failed \(([a-z0-9_]+)\)", lines[0])
+                       if len(lines) == 1 else None)
+              if not match or match.group(1) not in allowed:
+                  print("backup_runtime_normal_inventory=unexpected_failure")
+                  raise SystemExit(1)
+              print("backup_runtime_normal_inventory=failed (" + match.group(1) + ")")
+          PY
+
+  operate:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation != 'inventory' && inputs.operation != 'diagnose' }}
+    needs: [code-evidence, runtime-artifact, preflight]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Revalidar SHA, CI, fingerprint e destino SSH aprovado
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUESTED_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+          REQUESTED_BUNDLE: ${{ inputs.approval_bundle_sha256 }}
+          INVENTORY_FINGERPRINT: ${{ needs.preflight.outputs.fingerprint }}
+          INVENTORY_CONNECTION: ${{ needs.preflight.outputs.connection_binding }}
+          SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          BUNDLE_SHA256: ${{ needs.runtime-artifact.outputs.bundle_sha256 }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"
+          [[ "$REQUESTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT" ]]
+          [[ "$REQUESTED_BUNDLE" =~ ^[0-9a-f]{64}$ && "$REQUESTED_BUNDLE" == "$BUNDLE_SHA256" ]]
+          binding="$(printf '%s' "$SSH_HOST|$SSH_PORT|$SSH_USER" | sha256sum | awk '{print $1}')"
+          [[ "$binding" == "$INVENTORY_CONNECTION" ]]
+      - uses: actions/download-artifact@v4
+        with:
+          name: pyp-platform-backup-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/pyp-platform-backup-runtime
+      - name: Validar novamente o pacote antes de enviá-lo ao forced command
+        if: ${{ inputs.operation == 'install' }}
+        env:
+          BUNDLE_SHA256: ${{ needs.runtime-artifact.outputs.bundle_sha256 }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bundle="$RUNNER_TEMP/pyp-platform-backup-runtime/pyp-platform-backup-runtime.tar.gz"
+          [[ "$(sha256sum "$bundle" | awk '{print $1}')" == "$BUNDLE_SHA256" ]]
+      - name: Executar somente o modo protegido solicitado
+        shell: bash
+        env:
+          OPERATION: ${{ inputs.operation }}
+          APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+          BUNDLE_SHA256: ${{ needs.runtime-artifact.outputs.bundle_sha256 }}
+          SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          SSH_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          key_file="$(mktemp)"; known_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          target="$SSH_USER@$SSH_HOST"
+          options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
+          case "$OPERATION" in
+            install)
+              command="MARKINA_PLATFORM_BACKUP_INSTALL_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_FINGERPRINT=${APPROVAL_FINGERPRINT}"
+              bundle="$RUNNER_TEMP/pyp-platform-backup-runtime/pyp-platform-backup-runtime.tar.gz"
+              ssh "${options[@]}" "$target" "$command" < "$bundle" | tee -a "$GITHUB_STEP_SUMMARY"
+              ;;
+            bind-and-rehearse)
+              command="MARKINA_PLATFORM_BACKUP_BIND_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_FINGERPRINT=${APPROVAL_FINGERPRINT}"
+              ssh "${options[@]}" "$target" "$command" </dev/null | tee -a "$GITHUB_STEP_SUMMARY"
+              ;;
+            reconcile)
+              command="MARKINA_PLATFORM_BACKUP_RECONCILE_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_FINGERPRINT=${APPROVAL_FINGERPRINT}"
+              ssh "${options[@]}" "$target" "$command" </dev/null | tee -a "$GITHUB_STEP_SUMMARY"
+              ;;
+            *) echo 'Modo operacional inválido' >&2; exit 1 ;;
+          esac
+      - name: Confirmar pós-estado somente de leitura
+        shell: bash
+        env:
+          SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          SSH_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+          OPERATION: ${{ inputs.operation }}
+          BUNDLE_SHA256: ${{ needs.runtime-artifact.outputs.bundle_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          key_file="$(mktemp)"; known_file="$(mktemp)"; output="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file" "$output"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          target="$SSH_USER@$SSH_HOST"
+          options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
+          ssh "${options[@]}" "$target" "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$GITHUB_SHA" </dev/null | tee "$output" | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -q '"active":"inactive"' "$output"
+          grep -q '"enabled":"disabled"\|"enabled":"static"\|"enabled":"unknown"' "$output"
+          grep -q 'backup_runtime_install_preconditions=pass' "$output"
+          if [[ "$OPERATION" == install ]]; then
+            grep -q "releases/$GITHUB_SHA" "$output"
+          fi

@@ -1,16 +1,52 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
-import { isRawFilename, jpegStorageKey, uploadJpeg, uploadPhotoSource } from "./upload-jpeg";
+import { confirmDuplicateJpegs, isJpegFilename, jpegFingerprint, jpegFingerprintFromStorageKey, jpegStorageKey, uploadJpeg } from "./upload-jpeg";
 
-afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
-it("retoma conteúdo idêntico na mesma pasta sem duplicar o ativo", async () => {
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  window.history.replaceState({}, "", "/");
+});
+it("separa uma nova intenção de upload sem perder a identidade do conteúdo", async () => {
   vi.stubGlobal("crypto", webcrypto);
   const file = new File(["synthetic-jpeg"], "foto.jpg");
   Object.defineProperty(file, "arrayBuffer", {value: async () => new TextEncoder().encode("synthetic-jpeg").buffer});
-  const first = await jpegStorageKey("gallery", "folder", file);
-  expect(await jpegStorageKey("gallery", "folder", file)).toBe(first);
-  expect(await jpegStorageKey("gallery", "another-folder", file)).not.toBe(first);
-  expect(first).toMatch(/^gallery\/folder\/[a-f0-9]{64}\.jpg$/);
+  const first = await jpegStorageKey("gallery", "folder", file, "00000000-0000-4000-8000-000000000001");
+  expect(await jpegStorageKey("gallery", "folder", file, "00000000-0000-4000-8000-000000000001")).toBe(first);
+  const deliberateResend = await jpegStorageKey("gallery", "folder", file, "00000000-0000-4000-8000-000000000002");
+  expect(deliberateResend).not.toBe(first);
+  expect(await jpegFingerprint(file)).toBe(jpegFingerprintFromStorageKey(first));
+  expect(jpegFingerprintFromStorageKey("gallery/folder/" + "a".repeat(64) + ".jpg")).toBe("a".repeat(64));
+  expect(await jpegStorageKey("gallery", "another-folder", file, "00000000-0000-4000-8000-000000000001")).not.toBe(first);
+  expect(first).toMatch(/^gallery\/folder\/[a-f0-9]{64}-[a-f0-9-]{36}\.jpg$/);
+});
+it("pede confirmação de duplicadas e, ao recusar, mantém só arquivos novos", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const duplicate = new File(["already-here"], "duplicate.jpg");
+  const fresh = new File(["new-content"], "fresh.jpg");
+  const duplicateHash = await jpegFingerprint(duplicate);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const result = await confirmDuplicateJpegs([duplicate, fresh], (file) => file, [duplicateHash]);
+  expect(result.items.map((file) => file.name)).toEqual(["fresh.jpg"]);
+  expect(result.duplicateCount).toBe(1);
+  expect(result.duplicateIndexes).toEqual([0]);
+  expect(result.skippedCount).toBe(1);
+  expect(result.confirmed).toBe(false);
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("1 crédito(s) adicional(is)"));
+  confirm.mockRestore();
+});
+
+it("confirma todas as duplicadas quando o fotógrafo escolhe enviá-las", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const duplicate = new File(["already-here"], "duplicate.jpg");
+  const duplicateHash = await jpegFingerprint(duplicate);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const result = await confirmDuplicateJpegs([duplicate], (file) => file, [duplicateHash]);
+  expect(result.items).toEqual([duplicate]);
+  expect(result.duplicateIndexes).toEqual([0]);
+  expect(result.confirmed).toBe(true);
+  expect(result.skippedCount).toBe(0);
 });
 it("respeita backpressure e reenvia ao mesmo ativo", async () => {
   vi.useFakeTimers();
@@ -71,24 +107,25 @@ it("propaga erro de upload medido sem declarar sucesso", async () => {
     .rejects.toThrow("Falha sintética");
 });
 
-it("identifica ARW e envia a mesma fonte pela rota autenticada como octet-stream", async () => {
-  const fetch = vi.fn().mockResolvedValue({ ok: true });
-  vi.stubGlobal("fetch", fetch);
-  const file = new File(["raw"], "evento.ARW");
-  expect(isRawFilename(file.name)).toBe(true);
-  await uploadPhotoSource("/api/source", file);
-  expect(fetch).toHaveBeenCalledWith("/api/source", expect.objectContaining({
-    method: "PUT",
-    headers: { "content-type": "application/octet-stream" },
-    body: file,
-  }));
+it("notifica o gate de onboarding sem transformar a resposta em sucesso", async () => {
+  window.history.replaceState({}, "", "/admin/galleries/source-a?token=not-forwarded");
+  const onGate = vi.fn();
+  window.addEventListener("photographer-onboarding-required", onGate, { once: true });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    detail: { code: "photographer_onboarding_required", settings_url: "/admin/settings" },
+  }), { status: 409 })));
+
+  await expect(uploadJpeg("/api/source", new File(["jpeg"], "foto.jpg")))
+    .rejects.toThrow("Complete as etapas pendentes em Configurações");
+  expect(onGate).toHaveBeenCalledOnce();
+  expect((onGate.mock.calls[0][0] as CustomEvent).detail).toEqual({ returnTo: "/admin/galleries/source-a" });
 });
 
-it("calcula a identidade RAW em blocos, sem carregar o arquivo inteiro", async () => {
-  vi.stubGlobal("crypto", webcrypto);
-  const file = new File(["raw-payload"], "evento.ARW");
-  const wholeFileRead = vi.spyOn(file, "arrayBuffer");
-  const storageKey = await jpegStorageKey("gallery", "folder", file);
-  expect(storageKey).toMatch(/^gallery\/folder\/[a-f0-9]{64}\.jpg$/);
-  expect(wholeFileRead).not.toHaveBeenCalled();
+it("rejeita fonte que não seja JPEG antes do envio", async () => {
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const file = new File(["raw"], "evento.ARW");
+  expect(isJpegFilename(file.name)).toBe(false);
+  await expect(uploadJpeg("/api/source", file)).rejects.toThrow("Envie um arquivo JPEG.");
+  expect(fetch).not.toHaveBeenCalled();
 });

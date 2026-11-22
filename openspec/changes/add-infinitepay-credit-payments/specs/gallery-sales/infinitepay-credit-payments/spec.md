@@ -19,6 +19,20 @@ O sistema SHALL resolver a configuração InfinitePay pela conta ativa da sessã
 - **WHEN** a cliente de B abre uma compra e somente A possui InfinitePay configurada
 - **THEN** o cartão permanece indisponível para B, sem usar a InfiniteTag de A
 
+### Requirement: Credencial InfinitePay em cofre por fotógrafo
+
+A integração SHALL resolver a API Key por UUID de tenant através de binding de segredo server-side, com aliases únicos e ambiente de credencial compatível. A chave MUST NOT ser persistida em tabela de negócio, mostrada a clientes/fotógrafos, registrada em logs ou incluída em payloads. Somente o serviço API que chama a InfinitePay SHALL receber o segredo. Checkout SHALL permanecer indisponível quando o binding estiver ausente ou inválido.
+
+#### Scenario: Checkout autenticado
+- **WHEN** uma conta ativa possui binding próprio e chave configurada no ambiente do servidor
+- **THEN** `/links` e `/payment_check` enviam `X-Api-Key` apenas à origem oficial da InfinitePay
+- **AND** nenhuma chamada usa a chave ou InfiniteTag de outro tenant
+
+#### Scenario: Binding ausente ou inválido
+- **WHEN** o fotógrafo não possui chave ou o binding não corresponde ao ambiente atual
+- **THEN** novas emissões de cartão são recusadas antes da reserva e nenhuma chamada externa é feita
+- **AND** PIX manual continua disponível conforme sua própria configuração
+
 ### Requirement: Alteração do recebedor protegida
 
 Criar, substituir, ativar ou remover configuração SHALL exigir reautenticação e confirmação sensível vinculadas à sessão, conta e proposta, com expiração, limite de tentativas e auditoria minimizada. O sistema MUST NOT solicitar senha, OTP de acesso à InfinitePay ou dados de cartão. InfiniteTag informada SHALL ser identificada como dado declarado, sem afirmar titularidade comprovada só por seu formato.
@@ -34,7 +48,7 @@ Criar, substituir, ativar ou remover configuração SHALL exigir reautenticaçã
 
 ### Requirement: Ativação declarada e confirmação por consulta autoritativa
 
-O cartão SHALL permanecer indisponível até o fotógrafo confirmar, na alteração sensível vinculada à sua sessão e conta, que conferiu a InfiniteTag recebedora, habilitou Checkout Integrado e cartão e desligou PIX na conta InfinitePay correspondente. Essa autodeclaração MUST NOT ser apresentada como prova remota de titularidade. A confirmação financeira SHALL usar `payment_check` iniciado pelo retorno do checkout e exigir correspondência de conta, compra, transação e valor. Parâmetros do navegador MUST NOT, sozinhos, confirmar pagamento. Webhook SHALL permanecer fora do fluxo inicial enquanto seu contrato de assinatura não for conhecido.
+O cartão SHALL exigir autodeclaração sensível do fotógrafo sobre a conta e os meios habilitados. Essa declaração MUST NOT provar titularidade. A confirmação SHALL depender de `payment_check` correlacionado à conta, compra, transação e valor; dados do navegador MUST NOT confirmar pagamento. Webhook SHALL permanecer indisponível até haver contrato de assinatura documentado.
 
 #### Scenario: Retorno sem consulta autoritativa
 - **WHEN** a cliente retorna com identificadores, mas o servidor não consegue confirmar `paid`, método e valor via `payment_check`
@@ -46,12 +60,16 @@ O cartão SHALL permanecer indisponível até o fotógrafo confirmar, na altera�
 
 ### Requirement: InfinitePay exclusivamente para cartão de crédito
 
-O fluxo InfinitePay SHALL oferecer somente crédito, com dados preenchidos no checkout hospedado pelo provedor. O sistema SHALL validar `credit_card` na confirmação. Um retorno de PIX SHALL ficar em exceção para conciliação, sem confirmar compra ou acionar automaticamente nova cobrança. Recusar um PIX depois de recebido MUST NOT ser apresentado como prova de checkout exclusivo de crédito.
+O fluxo InfinitePay SHALL oferecer somente crédito em checkout hospedado e validar `credit_card` na confirmação. Um retorno PIX SHALL ficar em exceção, sem confirmar a compra nem iniciar cobrança automática. PIX SHALL continuar no fluxo manual. A change MUST NOT habilitar PIX no link InfinitePay enquanto o domínio aceitar somente cartão.
 
 #### Scenario: Opção externa validada
 - **WHEN** a cliente escolhe cartão em uma conta habilitada
 - **THEN** o checkout externo permite crédito e não oferece PIX
 - **AND** PAN, CVV e validade não passam pelo Pick-your-Pic
+
+#### Scenario: Link de pagamento único
+- **WHEN** o backend cria um checkout InfinitePay
+- **THEN** define `payment_methods_enabled=["credit_card"]` e `single_payment=true` com a autenticação documentada
 
 #### Scenario: Método divergente
 - **WHEN** a consulta autoritativa informa `pix` para uma tentativa de cartão
@@ -59,7 +77,7 @@ O fluxo InfinitePay SHALL oferecer somente crédito, com dados preenchidos no ch
 
 ### Requirement: Configuração individual da conta Checkout Integrado
 
-Cada fotógrafo SHALL configurar e habilitar o Checkout Integrado em sua própria conta InfinitePay, usando a InfiniteTag dessa mesma conta no PickYourPic. Para usar o fluxo exclusivo de cartão, o fotógrafo SHALL manter cartão habilitado e PIX desligado nas configurações de meios de pagamento da InfinitePay. O proprietário confirmou que essa preferência também remove PIX dos links de API. Antes de liberar recebimento real, o sistema SHALL verificar em um link hospedado, sem concluir pagamento, que PIX não é oferecido; as demais garantias de segurança e confirmação continuam obrigatórias.
+Cada fotógrafo SHALL usar sua própria InfiniteTag e manter cartão ligado e PIX desligado na conta InfinitePay. Antes de liberar recebimento real, SHALL verificar em checkout hospedado, sem pagar, que o link não oferece PIX. A configuração da conta MUST NOT substituir essa verificação.
 
 #### Scenario: Cada fotógrafo configura sua própria conta
 - **WHEN** o fotógrafo configura o recebimento InfinitePay no PickYourPic
@@ -88,7 +106,7 @@ A revisão SHALL oferecer os meios utilizáveis da conta proprietária. PIX SHAL
 
 ### Requirement: Habilitação explícita de cartão por fotógrafo
 
-Cada fotógrafo SHALL poder habilitar ou desabilitar a oferta de cartão aos clientes em Configurações, independentemente de manter seus dados InfinitePay salvos. A disponibilidade para novos checkouts SHALL exigir configuração ativa/pronta e `card_enabled=true`; o valor inicial SHALL ser falso. A alteração SHALL usar a confirmação sensível existente e incrementar a versão da configuração. Desabilitar cartão MUST NOT cancelar, ocultar ou liberar fotos de links de checkout já emitidos que ainda possam ser pagos.
+Cada fotógrafo SHALL poder habilitar cartão sob confirmação sensível e versionada. Novos checkouts SHALL exigir configuração pronta e `card_enabled=true`, inicialmente falso. Desabilitar MUST NOT cancelar, ocultar ou liberar reservas de links já emitidos que ainda possam ser pagos.
 
 #### Scenario: Cartão desabilitado
 - **WHEN** o fotógrafo desabilita cartão em Configurações
@@ -107,7 +125,7 @@ Cada fotógrafo SHALL poder habilitar ou desabilitar a oferta de cartão aos cli
 
 ### Requirement: Compra de cartão imutável e restrita ao proprietário
 
-Antes de emitir cobrança, o sistema SHALL validar autorização, prazo, elegibilidade e revisão no servidor e congelar conta, cliente, recebedor/versionamento, composição, valores em centavos e condições comerciais. Uma compra MUST NOT combinar fotógrafos. Fotos com cobrança externa ainda pagável SHALL ficar protegidas contra outra cobrança, sem perda do restante do carrinho.
+Antes de emitir cobrança, o sistema SHALL validar autorização, prazo, elegibilidade e revisão no servidor e congelar conta, cliente, recebedor/versionamento, composição, valores em centavos e condições comerciais. Uma compra MUST NOT combinar fotógrafos. Fotos com cobrança ainda pagável SHALL permanecer protegidas, salvo reabertura administrativa explícita conforme payment-cart-recovery.
 
 #### Scenario: Carrinho de outra conta
 - **WHEN** a preparação contém pedido, configuração ou item pertencente a outro fotógrafo
@@ -123,7 +141,7 @@ Antes de emitir cobrança, o sistema SHALL validar autorização, prazo, elegibi
 
 ### Requirement: Emissão idempotente e recuperação conservadora
 
-Repetição ou concorrência SHALL reutilizar a mesma tentativa para a mesma compra. Timeout após possível aceitação externa SHALL produzir estado de verificação, sem criar outro link cegamente. O sistema SHALL permitir retomar compras pendentes. Cancelar localmente ou mudar para PIX MUST NOT liberar fotos enquanto o link antigo ainda puder receber pagamento.
+Repetição ou concorrência SHALL reutilizar a mesma tentativa para a mesma compra. Timeout após possível aceitação externa SHALL produzir verificação, sem novo link automático. O sistema SHALL permitir retomar compras pendentes. Liberação local de fotos ainda pagáveis MUST NOT ocorrer pela cliente ou por automação; somente reabertura administrativa explícita conforme payment-cart-recovery pode fazê-la, sem declarar cancelamento remoto.
 
 #### Scenario: Clique repetido
 - **WHEN** a cliente repete a solicitação de cartão para a mesma revisão
@@ -142,11 +160,30 @@ Repetição ou concorrência SHALL reutilizar a mesma tentativa para a mesma com
 - **WHEN** a InfinitePay confirma que o checkout não foi criado e a tentativa assume `failed_before_issue`
 - **THEN** o sistema restaura no carrinho os mesmos itens comerciais elegíveis e permite à cliente iniciar uma nova tentativa de cartão
 - **AND** não mantém a interface presa à tentativa encerrada nem duplica pedido ou seleção
-- **AND** essa retomada MUST NOT ser oferecida para `verification_required`, timeout, resposta inválida ou outro resultado incerto
+- **AND** essa retomada automática MUST NOT ser oferecida para `verification_required`, timeout, resposta inválida ou outro resultado incerto
 
 #### Scenario: Troca de meio após emissão
 - **WHEN** a cliente tenta pagar por PIX fotos de uma cobrança de cartão ainda pagável
 - **THEN** o sistema explica o impedimento e oferece retomada ou conciliação da compra existente
+
+#### Scenario: Recuperação administrativa expressamente autorizada
+- **WHEN** o fotógrafo confirma reabertura de compra sem retorno ou falha inconclusiva nos termos de payment-cart-recovery
+- **THEN** a recuperação é auditada e transacional, preserva o histórico e não declara recebimento ou cancelamento remoto
+- **AND** compras confirmadas e negativas claras continuam seguindo seus contratos próprios
+
+### Requirement: Diagnóstico mínimo de respostas de emissão
+
+O sistema SHALL persistir na tentativa uma categoria técnica normalizada para falhas de transporte e respostas HTTP/JSON/URL da criação de checkout, sem persistir corpo bruto, cabeçalhos, credenciais ou dados pessoais. Essas categorias são observabilidade, MUST NOT ser tratadas como prova de que a InfinitePay não criou uma cobrança e MUST NOT liberar reserva ou permitir nova cobrança por si só.
+
+#### Scenario: Resposta HTTP rejeitada
+- **WHEN** a API de criação responde com status HTTP não-2xx
+- **THEN** a tentativa conserva estado incerto e registra o código HTTP de forma limitada
+- **AND** não armazena o corpo da resposta
+
+#### Scenario: Resposta sem URL utilizável
+- **WHEN** a API responde sem campo `url`, com JSON inválido ou com URL fora dos destinos permitidos
+- **THEN** a tentativa conserva estado incerto e registra somente a categoria correspondente
+- **AND** mantém os itens reservados até reconciliação autoritativa
 
 ### Requirement: Confirmação autoritativa da transação
 

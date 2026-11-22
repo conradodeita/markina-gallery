@@ -54,3 +54,7 @@ Gitleaks 8.24.3 sinalizou somente a chave sintética `delivery-correction-1`, us
 Validação da correção: 15 testes passaram em 14,55 s (cenário que falhou e módulo `test_order_delivery.py`) usando o Python do projeto e banco SQLite temporário isolado. Ruff completo aprovado e diff sem erros de whitespace. Executável oficial gitleaks 8.24.3, baixado para temporários locais e conferido pelo SHA-256 publicado: varredura Git de 300 commits, 11,26 MB, sem vazamentos. Artefatos/logs permanecem em `.codex-tmp/`, fora do commit. Não houve alteração no código de produção, frontend ou migration.
 
 Preparar novo commit apenas com teste, exceção exata e continuidade desta change. Fazer push no mesmo PR e parar novamente para o proprietário confirmar CI, sem merge/deploy.
+
+### Disputas reais de entrega em PostgreSQL — 15/11/2026
+
+`test_order_delivery_concurrency.py`: **2 passed**, zero skips/falhas, 18,83 s. O primeiro disputa registro de entrega com correção financeira e exige link oculto da cliente após a correção; o segundo disputa reenvios com o mesmo UUID e exige um único evento compartilhado. JUnit `C:/codex-data/local-review/prepush-order-delivery-races-20261115.xml`. O schema `cart_<UUID>` é criado/removido somente no PostgreSQL17.11 sintético `127.0.0.1:15470/pyp_photographer_test` autorizado. Nenhum álbum aberto/criado, envio externo ou pagamento real. Sem alteração funcional, sem repetição da suíte backend completa.

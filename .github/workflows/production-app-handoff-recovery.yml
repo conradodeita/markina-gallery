@@ -1,0 +1,150 @@
+name: Inventariar e recuperar transição API/web
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Diagnóstico somente leitura ou recuperação explicitamente aprovada
+        type: choice
+        required: true
+        options: [diagnose-legacy, recover-legacy, diagnose, recover]
+      approval_fingerprint:
+        description: Fingerprint próprio da recuperação emitido pelo diagnóstico
+        type: string
+        required: false
+        default: ''
+      witness_fingerprint:
+        description: Fingerprint do registro dos históricos (somente recover-legacy)
+        type: string
+        required: false
+        default: ''
+
+permissions: {}
+
+jobs:
+  code-evidence:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exigir gates de código verdes do SHA exato
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-handoff-recovery
+
+  recovery-inventory:
+    needs: [code-evidence]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    outputs:
+      fingerprint: ${{ steps.inventory.outputs.fingerprint }}
+      witness_fingerprint: ${{ steps.inventory.outputs.witness_fingerprint }}
+      connection_binding: ${{ steps.inventory.outputs.connection_binding }}
+    steps:
+      - name: Consultar interfaces SSH fixas sem mutação
+        id: inventory
+        shell: bash
+        env:
+          OPERATION: ${{ inputs.operation }}
+          HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          for name in HOST PORT USER KEY KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || { echo "Configuração protegida ausente: $name" >&2; exit 1; }
+          done
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$PORT" =~ ^[0-9]{1,5}$ ]] || exit 1
+          case "$OPERATION" in
+            diagnose-legacy|recover-legacy) command="MARKINA_APP_HANDOFF_LEGACY_RECOVERY_SHA=$GITHUB_SHA"; field=legacy_recovery_fingerprint ;;
+            diagnose|recover) command="MARKINA_APP_HANDOFF_RECOVERY_SHA=$GITHUB_SHA"; field=recovery_fingerprint ;;
+            *) exit 1 ;;
+          esac
+          key_file="$(mktemp)"; known_file="$(mktemp)"; output="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file" "$output"' EXIT
+          printf '%s\n' "$KEY" > "$key_file"; printf '%s\n' "$KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          readonly_ssh() {
+            ssh -i "$key_file" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file" \
+              "$USER@$HOST" "$1" </dev/null
+          }
+          readonly_ssh "$command" | tee "$output" | tee -a "$GITHUB_STEP_SUMMARY"
+          fingerprint="$(sed -nE "s/^$field=([0-9a-f]{64})$/\1/p" "$output")"
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || { echo 'Fingerprint ausente/ambíguo' >&2; exit 1; }
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          if [[ "$OPERATION" == *-legacy ]]; then
+            readonly_ssh "MARKINA_APP_HANDOFF_WITNESSES_SHA=$GITHUB_SHA" | tee "$output" | tee -a "$GITHUB_STEP_SUMMARY"
+            witnesses="$(sed -nE 's/^witness_fingerprint=([0-9a-f]{64})$/\1/p' "$output")"
+            [[ "$witnesses" =~ ^[0-9a-f]{64}$ ]] || exit 1
+            echo "witness_fingerprint=$witnesses" >> "$GITHUB_OUTPUT"
+          fi
+          binding="$(printf '%s\0' "$HOST" "$PORT" "$USER" | sha256sum | awk '{print $1}')"
+          echo "connection_binding=$binding" >> "$GITHUB_OUTPUT"
+
+  recover:
+    if: ${{ inputs.operation == 'recover' || inputs.operation == 'recover-legacy' }}
+    needs: [code-evidence, recovery-inventory]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Revalidar CI, aprovação e destino antes da recuperação
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPERATION: ${{ inputs.operation }}
+          REQUESTED_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+          INVENTORY_FINGERPRINT: ${{ needs.recovery-inventory.outputs.fingerprint }}
+          REQUESTED_WITNESSES: ${{ inputs.witness_fingerprint }}
+          INVENTORY_WITNESSES: ${{ needs.recovery-inventory.outputs.witness_fingerprint }}
+          PREFLIGHT_CONNECTION_BINDING: ${{ needs.recovery-inventory.outputs.connection_binding }}
+          HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          USER: ${{ vars.PRODUCTION_SSH_USER }}
+          KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-handoff-recovery
+          [[ "$REQUESTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT" ]] || exit 1
+          [[ "$PORT" =~ ^[0-9]{1,5}$ && "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          for name in HOST PORT USER KEY KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || { echo "Configuração protegida ausente: $name" >&2; exit 1; }
+          done
+          binding="$(printf '%s\0' "$HOST" "$PORT" "$USER" | sha256sum | awk '{print $1}')"
+          [[ "$binding" == "$PREFLIGHT_CONNECTION_BINDING" ]] || { echo 'Destino diverge do inventário' >&2; exit 1; }
+          case "$OPERATION" in
+            recover-legacy)
+              [[ "$REQUESTED_WITNESSES" =~ ^[0-9a-f]{64}$ && "$REQUESTED_WITNESSES" == "$INVENTORY_WITNESSES" ]] || exit 1
+              mode=handoff-legacy-recover
+              ;;
+            recover) [[ -z "$REQUESTED_WITNESSES" ]]; mode=handoff-recover ;;
+            *) exit 1 ;;
+          esac
+          key_file="$(mktemp)"; known_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file"' EXIT
+          printf '%s\n' "$KEY" > "$key_file"; printf '%s\n' "$KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          execute_fixed_mode() {
+            ssh -i "$key_file" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file" \
+              "$USER@$HOST" "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='https://markina.pickyourpic.com.br' bash -s -- --mode '$1' --sha '$GITHUB_SHA' --approval-fingerprint '$2'" \
+              < scripts/deploy-prod-app-services.sh | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          if [[ "$OPERATION" == recover-legacy ]]; then
+            execute_fixed_mode handoff-witness-register "$REQUESTED_WITNESSES"
+          fi
+          execute_fixed_mode "$mode" "$REQUESTED_FINGERPRINT"

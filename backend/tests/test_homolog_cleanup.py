@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app import homolog_cleanup
 from app.auth import (
     AdminSecurityChallenge,
+    AdminTotpRecoveryCode,
     AdminUser,
     AssetFileCleanup,
     AuditEvent,
@@ -38,12 +39,15 @@ from app.auth import (
     SaleOrderItem,
     SessionLocal,
     Tenant,
+    TenantClosureRequest,
     WhatsAppChannelSettings,
     WhatsAppDelivery,
     engine,
 )
 from app.homolog_cleanup import (
     CONFIRMATION,
+    OPERATIONAL_TABLES,
+    PRESERVED_TABLES,
     WITHOUT_BACKUP_CONFIRMATION,
     execute,
     inventory,
@@ -60,6 +64,111 @@ def test_inventory_requires_homolog_environment(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("APP_ENV", "production")
     with SessionLocal() as db, pytest.raises(RuntimeError, match="homologação"):
         inventory(db)
+
+
+def test_admin_totp_recovery_codes_are_preserved_by_homolog_cleanup() -> None:
+    table = AdminTotpRecoveryCode.__tablename__
+    assert table in PRESERVED_TABLES
+    assert table not in OPERATIONAL_TABLES
+
+
+def test_wallet_e_historico_financeiro_sao_preservados_na_limpeza() -> None:
+    for table in (
+        "tenant_credit_wallet", "photographer_credit_package", "photographer_credit_entry",
+        "photo_credit_operation", "photo_credit_operation_event",
+        "photographer_credit_allocation_event",
+        "mercadopago_credit_purchase", "mercadopago_credit_purchase_event",
+    ):
+        assert table in PRESERVED_TABLES
+        assert table not in OPERATIONAL_TABLES
+
+
+def test_perfis_aceites_totp_e_credenciais_whatsapp_sao_preservados() -> None:
+    for table in (
+        "admin_totp_enrollment", "photographer_business_profile",
+        "photographer_terms_acceptance", "whatsapp_tenant_credential",
+    ):
+        assert table in PRESERVED_TABLES
+        assert table not in OPERATIONAL_TABLES
+
+
+def test_inventory_counts_retained_saas_history_without_reading_identity(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setattr(
+        homolog_cleanup,
+        "media_roots",
+        lambda: {name: tmp_path / name for name in homolog_cleanup.EXPECTED_MEDIA_ROOTS},
+    )
+    with SessionLocal() as db:
+        admin = fixture_admin(
+            AdminUser(email=f"retained-history-{uuid4()}@example.test", password_hash="synthetic")
+        )
+        db.add(admin)
+        db.flush()
+        closure = TenantClosureRequest(
+            tenant_id=FIXTURE_TENANT_ID, requested_by=admin.id, request_id=uuid4(),
+            terms_version="synthetic", terms_sha256="a" * 64, balance_snapshot=0,
+        )
+        db.add(closure)
+        db.commit()
+        identity = closure.id
+        result = inventory(db)
+        assert result["preserved"]["tenant_closure_request"] == 1
+        assert db.get(TenantClosureRequest, identity) is not None
+        assert str(identity) not in str(result) and admin.email not in str(result)
+        # Não deixar histórico sintético contaminar o teste PostgreSQL seguinte.
+        db.delete(closure)
+        db.delete(admin)
+        db.commit()
+    for table in homolog_cleanup.SAAS_RETAINED_HISTORY_TABLES:
+        assert table in PRESERVED_TABLES and table not in OPERATIONAL_TABLES
+
+
+def test_execute_blocks_retained_history_before_media_or_deletes(monkeypatch):
+    from types import SimpleNamespace
+
+    from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
+
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setattr(homolog_cleanup, "require_single_tenant", lambda _db: None)
+    monkeypatch.setattr(homolog_cleanup, "require_known_schema", lambda _db: None)
+    monkeypatch.setattr(homolog_cleanup, "media_roots", lambda: pytest.fail("Não acessar mídia"))
+    dialect = postgresql_dialect()
+    db = MagicMock()
+    db.bind = SimpleNamespace(dialect=dialect)
+    db.connection.return_value = SimpleNamespace(get_execution_options=dict, dialect=dialect)
+    db.scalar.return_value = 1
+    with pytest.raises(RuntimeError, match="histórico de arquivo e encerramento"):
+        execute(db, CONFIRMATION)
+    statements = [str(call.args[0]) for call in db.execute.call_args_list]
+    assert len(statements) == 2 and all(statement.startswith("LOCK TABLE") for statement in statements)
+    assert "tenant_closure_request" in statements[1] and statements[1].endswith("IN SHARE MODE")
+    db.commit.assert_not_called()
+
+
+def test_execute_blocks_credit_wallet_history_before_media_or_deletes(monkeypatch):
+    from types import SimpleNamespace
+
+    from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
+
+    monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setattr(homolog_cleanup, "require_single_tenant", lambda _db: None)
+    monkeypatch.setattr(homolog_cleanup, "require_known_schema", lambda _db: None)
+    monkeypatch.setattr(homolog_cleanup, "has_mercadopago_financial_history", lambda _db: False)
+    monkeypatch.setattr(homolog_cleanup, "has_credit_wallet_history", lambda _db: True)
+    monkeypatch.setattr(homolog_cleanup, "media_roots", lambda: pytest.fail("Não acessar mídia"))
+    dialect = postgresql_dialect()
+    db = MagicMock()
+    db.bind = SimpleNamespace(dialect=dialect)
+    db.connection.return_value = SimpleNamespace(get_execution_options=dict, dialect=dialect)
+    db.scalar.return_value = None
+    with pytest.raises(RuntimeError, match="histórico de créditos"):
+        execute(db, CONFIRMATION)
+    statements = [str(call.args[0]) for call in db.execute.call_args_list]
+    assert len(statements) == 3 and all(statement.startswith("LOCK TABLE") for statement in statements)
+    assert "photo_credit_operation_event" in statements[2]
+    assert statements[2].endswith("IN EXCLUSIVE MODE")
+    db.commit.assert_not_called()
 
 
 def test_inventory_returns_only_counts_without_pii(
@@ -281,6 +390,7 @@ def test_execute_on_postgresql_removes_operational_data_and_preserves_admin_conf
 ) -> None:
     Base.metadata.create_all(engine)
     monkeypatch.setenv("APP_ENV", "homolog")
+    monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "homolog")
     roots = tuple(tmp_path / name for name in (
         "source", "derivatives", "history", "facial-references", "raw-staging"
     ))

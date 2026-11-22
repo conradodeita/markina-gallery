@@ -190,7 +190,7 @@ export function FolderProcessingPanel({ folderId, folderName, uploading = false 
       <h4>Ajuste automático das prévias</h4>
       {configuration?.enabled === false ? <p>O ajuste está desligado para esta pasta. Alterar os parâmetros o ativa.</p> : null}
       {configuration ? <div className="folder-preview-controls">
-        <label>Intensidade: {configuration.strength}%<input aria-label="Intensidade do ajuste" type="range" min={10} max={75} step={5} value={configuration.strength}
+        <label>Intensidade: {configuration.strength}%<input aria-label="Intensidade do ajuste" type="range" min={10} max={100} step={5} value={configuration.strength}
           onChange={(event) => change({ strength: Number(event.target.value), exposure_tenths: configuration.exposure_tenths })} /></label>
         <label>Exposição: {(configuration.exposure_tenths / 10).toFixed(1)} EV<input aria-label="Exposição do ajuste" type="range" min={-20} max={20} step={1} value={configuration.exposure_tenths}
           onChange={(event) => change({ strength: configuration.strength, exposure_tenths: Number(event.target.value) })} /></label>

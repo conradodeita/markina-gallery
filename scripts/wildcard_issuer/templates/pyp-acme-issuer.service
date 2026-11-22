@@ -1,0 +1,28 @@
+[Unit]
+Description=Pick-your-Pic isolated wildcard issuer
+ConditionPathExists=/etc/pyp-acme-issuer/issuer.json
+
+[Service]
+Type=oneshot
+User=pyp-acme
+Group=pyp-acme
+UMask=0077
+LoadCredential=envelope-key:/etc/pyp-acme-issuer/private/envelope-key
+RuntimeDirectory=pyp-acme-issuer
+RuntimeDirectoryMode=0700
+ExecStart=/opt/pyp-acme-issuer/bin/python3 -B /opt/pyp-acme-issuer/scripts/wildcard_operational_service.py issuer
+LimitCORE=0
+LimitFSIZE=16777216
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock
+ReadWritePaths=/var/lib/pyp-acme-issuer /run/pyp-acme-issuer
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemorySwapMax=0
+TimeoutStartSec=600
+
+# Sem [Install]: copiar este template não habilita serviço ou timer.

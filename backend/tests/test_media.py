@@ -43,7 +43,7 @@ from app.worker import (
     process_next_media_job,
     process_next_payment_notification,
 )
-from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin
+from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin, fixture_unmetered_owner
 
 
 @pytest.fixture(autouse=True)
@@ -424,14 +424,15 @@ def test_admin_imports_jpeg_to_private_source_and_queues_processing(tmp_path, mo
     source_root = tmp_path / "source"
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(source_root))
     with SessionLocal() as db:
-        admin = fixture_admin(AdminUser(
+        admin = AdminUser(
             email="foto@markina.test",
             password_hash=password_hasher.hash("senha-segura"),
             email_verified=True,
             totp_secret="test-secret",
-        ))
+        )
+        fixture_unmetered_owner(db, admin)
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Evento")
-        db.add_all([admin, parent])
+        db.add(parent)
         db.flush()
         folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Rodada 1")
         db.add(folder)
@@ -470,7 +471,9 @@ def test_admin_imports_jpeg_to_private_source_and_queues_processing(tmp_path, mo
             headers={"content-type": "image/jpeg"},
         )
         assert response.status_code == 202
-        assert client.get(f"/admin/photo-assets/{photo_id}/media-status").json() == {"status": "queued"}
+        assert client.get(f"/admin/photo-assets/{photo_id}/media-status").json() == {
+            "status": "queued", "media_state": "available",
+        }
         assert client.get("/media/source/privado/foto.jpg").status_code == 404
     assert (source_root / "privado" / "foto.jpg").is_file()
     with SessionLocal() as db:

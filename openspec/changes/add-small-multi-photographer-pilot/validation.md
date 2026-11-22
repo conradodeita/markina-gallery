@@ -432,3 +432,33 @@ Regressões PostgreSQL `test_tenant_notification_transport.py` + `test_tenant_pr
 CI inicial do PR #138 (`37298617915`): frontend, gitleaks e OpenSpec passaram. A suíte backend terminou com **1.222 passed, 20 skipped, 1 failed**; o job de deploy foi skipped. A única falha foi `test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos`: a fixture migrava até `20260930_0070`, mas `require_known_schema` valida também a tabela `installation_operator`, presente desde `20261001_0071`. A falha é da preparação do schema de teste; o contrato do inventário não foi relaxado.
 
 A fixture foi ajustada para migrar até `20261001_0071`, o schema atual exigido pelo inventário. Validação local após a correção: `backend/tests/test_tenant_photographer_migration.py::test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos` junto com `backend/tests/test_homolog_cleanup.py`: **10 passed, 2 skipped**; ambos os casos de integração PostgreSQL foram skipped localmente por ausência de `PHOTOGRAPHER_TEST_DATABASE_URL`. CI completo do PR ainda precisa ser repetido; até que passe, 8.3m permanece pendente. Nenhum merge/deploy ou cleanup foi executado.
+
+Retomada local em `origin/main=6af538ecd5c46da7691fa973c33869f263945a25` (31/10/2026): `scripts/test_maintain_homolog_policy.py` passou (`maintain-homolog policy: ok`), confirmando o default inventory e o bloqueio de execute multitenant. `openspec validate add-small-multi-photographer-pilot --strict --json` falhou por 11 avisos de requisitos >500 caracteres em specs aceitas; não foram reescritos por esta retomada. A correção local da fixture de CI e o rerun integral do PR continuam pendentes; nenhuma operação de homologação foi executada.
+
+## Continuação local — inventário multitenant e gates do workflow — 06/11/2026
+
+- `backend/app/homolog_cleanup.py` ainda não classificava quatro tabelas introduzidas pelo onboarding atual. `require_known_schema` recusava o inventário antes de contar dados: `admin_totp_enrollment`, `photographer_business_profile`, `photographer_terms_acceptance` e `whatsapp_tenant_credential`. As quatro foram classificadas como preservadas, sem adicionar qualquer tabela ao conjunto destrutivo.
+- Regressão `test_perfis_aceites_totp_e_credenciais_whatsapp_sao_preservados` protege essas categorias. A suíte focada também cobre contagens agregadas sem UUID/PII em duas contas, recusa de `execute` multitenant, confirmação literal e schema desconhecido.
+- `scripts/test_maintain_homolog_policy.py` passou (`maintain-homolog policy: ok`); a política agora verifica que a ref default/main cai no job de recusa e não lê segredos nem inicia SSH. O modo remoto segue restrito a `develop`.
+- Comando: `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_homolog_cleanup.py backend/tests/test_tenant_photographer_migration.py::test_inventario_multitenant_agrega_contagens_sem_identificar_fotografos -q --tb=short` — **15 passed, 2 skipped em 3,56 s**. Os skips são cenários PostgreSQL-only sem banco descartável configurado.
+- Ruff nos três arquivos Python afetados: **All checks passed**. `openspec validate add-small-multi-photographer-pilot --strict --json`: válido, 0 avisos. `git diff --check`: exit 0; Git reportou apenas aviso de normalização CRLF em dois arquivos preexistentes não relacionados.
+- O CI remoto completo do PR #138 continua pendente e este checkpoint não executou CI, limpeza, merge, deploy, migration ou acesso ao servidor. A task 8.3m permanece aberta até o gate de CI documentado ser satisfeito.
+
+## Fechamento de 8.3m — CI remoto reconciliado — 07/11/2026
+
+- Consulta somente-leitura pelo GitHub CLI confirmou o PR #138 `fix: inventário de manutenção multitenant` como merged em 05/10/2026. Head `7ca50f40357b6c74429f5a355cf6f69554bb99cc`; merge `ea259a64e4e83f5f7bbb4bed76647f92ce325508`.
+- CI #37301792621 concluiu backend, frontend, OpenSpec e Gitleaks com sucesso; `deploy-homolog` ficou skipped. A lista de arquivos do PR inclui o inventário multitenant, testes, política de workflow e artefatos `add-small-multi-photographer-pilot` desta task.
+- `git merge-base --is-ancestor <merge> HEAD` confirmou que a integração está no HEAD deste worktree. A task 8.3m foi encerrada com base no gate de CI que faltava.
+- Esta verificação não disparou CI, limpeza, deploy, migration ou alteração remota. O ensaio real de homologação e revisão humana permanecem nas tasks 8.2–8.4.
+
+## Regressão do produtor após contrato estrito de edição — 10/11/2026
+
+`test_origem_recebe_contexto_e_edicao_preserva_proprietario` ainda esperava aceitar `tenant_id` extra no corpo da edição. O contrato atual de settings usa `extra=forbid`; o teste agora exige 422 e ausência de alteração para a tentativa de impor owner, seguido de edição válida 200 e recusa 403 após revogação. Apenas teste alterado, mantendo a negativa de isolamento e sem flexibilizar a API. Os dois módulos de busca/produtores passaram **12 testes**, com Ruff aprovado; repetição integrada Linux permanece pendente. Nenhuma operação de produção foi executada.
+
+## Reconciliacao atual do inventario estatico — 2026-11-15 21:00:36 -03:00
+
+O gerador foi atualizado para classificar o catalogo atual de fontes, modelos e rotas: 438 arquivos, 136 tabelas, 359 rotas, 7.215 sitios, 326 referencias de estado/cache e 734 chamadas de gate. A leitura de prefixos `APIRouter` registra rotas completas; endpoints dos harnesses em `scripts/` ficam no grupo T.
+
+Verificacao estatica: `python openspec/changes/add-small-multi-photographer-pilot/inventory_ownership.py` e `python openspec/changes/add-small-multi-photographer-pilot/inventory_ownership.py --check` concluidos com as mesmas contagens; `git diff --check` sem achados. O snapshot gerado esta em `ownership-inventory.md`.
+
+Este inventario e estatico: nao executa testes de aplicacao, nao prova isolamento em runtime e nao atualiza o estado de producao. Os numeros 79 tabelas/205 arquivos/243 rotas/3.350 sitios da reconciliacao final de 01/10 continuam historicos e nao foram reescritos como se fossem atuais. Nenhum teste de aplicacao, servico, banco ou operacao remota foi executado neste fechamento.

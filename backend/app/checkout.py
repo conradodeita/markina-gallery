@@ -20,6 +20,11 @@ from app.auth import (
     audit,
     now,
 )
+from app.folder_access import (
+    folder_media_is_local,
+    folder_selection_checkout_allowed,
+    lock_selected_content_folders,
+)
 from app.gallery_pricing import GalleryPricingError, quote_parent_gallery
 from app.global_pix import checkout_pix
 from app.pix import PixCodeError
@@ -101,7 +106,12 @@ def client_photo_is_frozen_any(db: Session, *, client_id, photo_id) -> bool:
 
 
 def selected_photos(
-    db: Session, *, gallery: DerivedGallery | GalleryClientState, client: Client
+    db: Session,
+    *,
+    gallery: DerivedGallery | GalleryClientState,
+    client: Client,
+    include_expired: bool = False,
+    include_unavailable: bool = False,
 ):
     """Fotos selecionadas ainda autorizadas; também usadas quando não há cotação."""
     tenant_id = client_tenant_id(db, client.id)
@@ -113,7 +123,12 @@ def selected_photos(
             PhotoSelection.client_id == client.id,
         )))
         photos = list(db.scalars(
-            authorized_canonical_photos(gallery.parent_gallery_id, client.id).where(
+            authorized_canonical_photos(
+                gallery.parent_gallery_id,
+                client.id,
+                include_expired=include_expired,
+                include_unavailable=include_unavailable,
+            ).where(
                 PhotoAsset.id.in_({row.photo_asset_id for row in selections})
             )
         ))
@@ -137,7 +152,7 @@ def selected_photos(
             .join(PhotoFolder, PhotoFolder.id == PhotoAsset.folder_id)
             .where(
                 PhotoAsset.id.in_(photo_ids),
-                PhotoAsset.available,
+                True if include_unavailable else PhotoAsset.available,
                 (PhotoAsset.derived_gallery_id == gallery.id)
                 | (PhotoAsset.id.in_(referenced_photo_ids)),
                 PhotoFolder.status == "released",
@@ -151,7 +166,8 @@ def selected_photos(
 
 def _checkout_material(
     db: Session, *, gallery: DerivedGallery | GalleryClientState,
-    client: Client, resolve_pix: bool = True
+    client: Client, resolve_pix: bool = True,
+    existing_order: SaleOrder | None = None,
 ):
     tenant_id = client_tenant_id(db, client.id)
     if isinstance(gallery, GalleryClientState):
@@ -161,12 +177,65 @@ def _checkout_material(
             )
         except PublicGalleryAccessDenied as exc:
             raise CheckoutError("O acesso a esta galeria está indisponível.") from exc
-    selections, photos = selected_photos(db, gallery=gallery, client=client)
+    selections, photos = selected_photos(
+        db, gallery=gallery, client=client, include_expired=True
+    )
     if not selections:
         raise CheckoutError("A seleção está vazia.")
     photo_ids = {selection.photo_asset_id for selection in selections}
     if {photo.id for photo in photos} != photo_ids:
         raise CheckoutError("A seleção contém fotos indisponíveis.")
+    folders_by_id = {
+        folder.id: folder
+        for folder in db.scalars(
+            select(PhotoFolder).where(PhotoFolder.tenant_id == tenant_id).where(
+                PhotoFolder.id.in_({photo.folder_id for photo in photos})
+            )
+        )
+    }
+    photos_by_id = {photo.id: photo for photo in photos}
+    existing_order_items = set()
+    if existing_order is not None:
+        if (
+            existing_order.tenant_id != tenant_id
+            or existing_order.client_id != client.id
+            or existing_order.payment_status != "pending"
+            or existing_order.frozen_at is not None
+            or existing_order.assets_removed_at is not None
+            or (
+                existing_order.parent_gallery_id != gallery.parent_gallery_id
+                if isinstance(gallery, GalleryClientState)
+                else existing_order.derived_gallery_id != gallery.id
+            )
+        ):
+            raise CheckoutError("Pedido indisponível neste contexto.")
+        existing_order_items = set(db.scalars(
+            select(SaleOrderItem.photo_asset_id_snapshot).where(
+                SaleOrderItem.tenant_id == tenant_id,
+                SaleOrderItem.sale_order_id == existing_order.id,
+            )
+        ))
+    for selection in selections:
+        photo = photos_by_id[selection.photo_asset_id]
+        folder = folders_by_id.get(photo.folder_id)
+        if (
+            not folder
+            or not folder_media_is_local(db, folder)
+            or not folder_selection_checkout_allowed(
+                db,
+                folder,
+                client_id=client.id,
+                selected_at=selection.created_at,
+                existing_order_created_at=(
+                    existing_order.created_at
+                    if existing_order is not None and photo.id in existing_order_items
+                    else None
+                ),
+            )
+        ):
+            raise CheckoutError(
+                "Há fotos vencidas ou indisponíveis. Solicite a reabertura da pasta ou a recuperação da mídia."
+            )
     already_frozen = db.scalar(
         select(SaleOrderItem.id).where(SaleOrderItem.tenant_id == tenant_id)
         .join(SaleOrder, SaleOrder.id == SaleOrderItem.sale_order_id)
@@ -197,14 +266,6 @@ def _checkout_material(
         settings = checkout_pix(db, tenant_id=client.tenant_id) if resolve_pix and parent.payment_required else None
     except PixCodeError as exc:
         raise CheckoutError(str(exc)) from exc
-    folders_by_id = {
-        folder.id: folder
-        for folder in db.scalars(
-            select(PhotoFolder).where(PhotoFolder.tenant_id == tenant_id).where(
-                PhotoFolder.id.in_({photo.folder_id for photo in photos})
-            )
-        )
-    }
     return selections, photos, parent, commercial_quote, settings, folders_by_id
 
 
@@ -238,11 +299,7 @@ def _synchronize_order(
         **commercial_quote.snapshot,
         "terms": {
             "payment_confirmation": "manual_by_photographer" if parent.payment_required else "not_required",
-            "selection_expires_at": (
-                gallery.selection_expires_at.isoformat()
-                if gallery.selection_expires_at
-                else None
-            ),
+            "selection_expires_at": None,
         },
     }
     order.sales_message_snapshot = parent.sales_message
@@ -304,7 +361,12 @@ def remove_canonical_cart_selection(
         PhotoSelection.parent_gallery_id == parent_gallery_id,
         PhotoSelection.client_id == client_id,
         PhotoSelection.photo_asset_id.in_(
-            authorized_canonical_photos(parent_gallery_id, client_id)
+            authorized_canonical_photos(
+                parent_gallery_id,
+                client_id,
+                include_expired=True,
+                include_unavailable=True,
+            )
             .with_only_columns(PhotoAsset.id)
         ),
     )
@@ -371,13 +433,20 @@ def create_pending_checkout(
             .order_by(SaleOrder.created_at.desc())
             .with_for_update()
         )
+    try:
+        lock_selected_content_folders(
+            db, tenant_id=tenant_id, client_id=client.id,
+        )
+    except ValueError as exc:
+        raise CheckoutError(str(exc)) from exc
     parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
     if parent and not parent.payment_required:
         raise CheckoutError("Finalize a seleção sem cobrança pelo carrinho.")
     if existing and existing.payment_group_id:
         raise CheckoutError("Este pedido integra o carrinho único. Revise em /library/cart.")
     material = _checkout_material(db, gallery=gallery, client=client,
-                                  resolve_pix=not (existing and existing.pix_copy_paste_snapshot))
+                                  resolve_pix=not (existing and existing.pix_copy_paste_snapshot),
+                                  existing_order=existing)
     created = existing is None
     order = existing or SaleOrder(
         derived_gallery_id=gallery.id,
@@ -447,7 +516,8 @@ def synchronize_editable_draft(
         return order
     try:
         material = _checkout_material(db, gallery=gallery, client=client,
-                                      resolve_pix=not order.pix_copy_paste_snapshot)
+                                      resolve_pix=not order.pix_copy_paste_snapshot,
+                                      existing_order=order)
     except CheckoutError:
         # O carrinho continua autoritativo e o rascunho divergente deixa de ser
         # oferecido pela projeção até um novo Prosseguir válido sincronizá-lo.
@@ -464,6 +534,8 @@ def freeze_pending_checkout(
 ) -> SaleOrder:
     """Congela o retrato corrente quando a cliente comunica o pagamento."""
     tenant_id = client_tenant_id(db, client.id)
+    from app.payment_availability import lock_payment_account
+    lock_payment_account(db, tenant_id)
 
     lock_client_commerce(db, gallery_id=gallery.id, client_id=client.id)
     order = db.scalar(
@@ -479,13 +551,20 @@ def freeze_pending_checkout(
         raise CheckoutError("Pedido indisponível para comunicação.")
     if order.payment_group_id:
         raise CheckoutError("Informe o pagamento único pela revisão em /library/cart.")
+    if order.mercadopago_payment_id or order.provider_payment_id:
+        raise CheckoutError("Este pedido depende da confirmação do provedor.")
     if order.frozen_at is not None:
         return order
+    try:
+        lock_selected_content_folders(db, tenant_id=tenant_id, client_id=client.id)
+    except ValueError as exc:
+        raise CheckoutError(str(exc)) from exc
     parent = owned_record(db, ParentGallery, gallery.parent_gallery_id, tenant_id=tenant_id)
     if parent and not parent.payment_required:
         raise CheckoutError("A revisão mudou. Finalize a seleção sem cobrança pelo carrinho.")
     material = _checkout_material(db, gallery=gallery, client=client,
-                                  resolve_pix=not order.pix_copy_paste_snapshot)
+                                  resolve_pix=not order.pix_copy_paste_snapshot,
+                                  existing_order=order)
     selections = material[0]
     _synchronize_order(
         db, order=order, gallery=gallery, client=client, material=material

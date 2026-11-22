@@ -24,6 +24,10 @@ const nextConfig = {
         source: "/admin/verify-email",
         headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
       },
+      {
+        source: "/photographer-access-recovery",
+        headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
+      },
     ];
   },
 };

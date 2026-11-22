@@ -20,7 +20,13 @@ it("abre álbum seguro e suspende botão depois da correção financeira", () =>
   expect(screen.getByRole("link", { name: "Fotos disponíveis" })).toBeTruthy();
 });
 
-it.each([null, "https://attacker.invalid/album", "javascript:alert(1)", "https://photos.app.goo.gl.attacker.invalid/album"])("sem link válido não oferece destino: %s", (url) => {
+it("aceita o link completo de compartilhamento do Google Photos", () => {
+  const url = "https://photos.google.com/share/Synthetic?key=AccessToken";
+  render(<LibraryOrderCard order={{ ...order, delivery_album_url: url }} />);
+  expect(screen.getByRole("link", { name: "Fotos disponíveis" }).getAttribute("href")).toBe(url);
+});
+
+it.each([null, "https://attacker.invalid/album", "https://drive.google.com/file/d/Ab12/view", "javascript:alert(1)", "https://photos.app.goo.gl.attacker.invalid/album", "https://photos.google.com/other/album"])("sem link Google Photos válido não oferece destino: %s", (url) => {
   render(<LibraryOrderCard order={{ ...order, delivery_album_url: url }} />);
   expect(screen.queryByRole("link")).toBeNull();
   expect(screen.getByRole("button", { name: "Fotos indisponíveis" })).toHaveProperty("disabled", true);

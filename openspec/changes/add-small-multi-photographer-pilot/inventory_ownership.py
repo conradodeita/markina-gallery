@@ -14,13 +14,21 @@ OUTPUT = CHANGE / "ownership-inventory.md"
 # R: proprietário persistido; D: filho com proprietário derivado e integridade;
 # I: infraestrutura técnica; M: registro misto, exige discriminador de contexto.
 TABLE_GROUPS = {
-    ("I", "A"): "AdminUser Tenant AdminActionToken EmailDelivery EmailDeliveryAttempt",
+    ("I", "A"): (
+        "AdminUser AdminTotpRecoveryCode Tenant AdminActionToken EmailDelivery EmailDeliveryAttempt "
+        "PhotographerSignup PhotographerTermsDraft PhotographerTermsVersion"
+    ),
     ("I", "O"): (
         "InstallationOperator FacialEmbeddingExperimentSetting PlatformOwner MonitorGrant "
-        "MonitorBucket MonitorSample MonitorWorker MonitorActivity MonitorIncident MonitorTransition"
+        "MonitorBucket MonitorSample MonitorWorker MonitorActivity MonitorIncident MonitorTransition "
+        "MediaArchiveRecoveryPricing MediaArchiveCoordinator PhotographerCreditPackage"
     ),
     ("D", "A"): "TenantAdmin",
-    ("M", "A"): "AdminSecurityChallenge AuthChallenge AuthSession AuditEvent",
+    ("M", "A"): (
+        "AdminSecurityChallenge AuthChallenge AuthSession AuditEvent PlatformAdminEvent "
+        "GoogleDriveOAuthAttempt AdminTotpEnrollment PhotographerAccessRecovery"
+    ),
+    ("R", "A"): "PhotographerBusinessProfile PhotographerTermsAcceptance",
     ("R", "C"): "Client ClientDeletionReceipt",
     ("D", "C"): "ClientPhone",
     ("R", "G"): "GalleryAccess ParentGallery PhotoAsset DerivedGallery",
@@ -29,30 +37,46 @@ TABLE_GROUPS = {
         "DerivedGalleryMembership DerivedGalleryPhoto DerivedGalleryPhotoOrigin "
         "GalleryAccessCapability PrivateUploadBatch PrivateUploadBatchAsset"
     ),
-    ("R", "S"): "PaymentGroup ProviderPayment SaleOrder RemovedPhotoMovement CommercialHistoryMedia",
+    ("R", "S"): (
+        "PaymentGroup ProviderPayment SaleOrder RemovedPhotoMovement CommercialHistoryMedia "
+        "MercadoPagoPayment TenantCreditWallet PhotoCreditOperation PhotographerCreditEntry"
+    ),
     ("D", "S"): (
         "PhotoSelection PhotoFavorite PhotoView PhotoComment SaleOrderItem "
         "PaymentCommunication PaymentConfirmationCorrection GalleryReopeningRequest "
-        "ProviderPaymentAttempt ProviderPaymentReceipt ProviderPaymentCorrection"
+        "ProviderPaymentAttempt ProviderPaymentReceipt ProviderPaymentCorrection MercadoPagoWebhook "
+        "MediaArchiveRecoveryCreditReservation MercadoPagoCreditPurchaseEvent "
+        "PhotographerCreditAllocationEvent PhotoCreditOperationEvent "
+        "MediaArchiveRecoveryCreditAllocationEvent"
     ),
+    ("M", "S"): "MercadoPagoCreditPurchase",
     ("R", "K"): (
-        "BrandingSettings GlobalPixSettings InfinitePaySettings PaymentMessageTemplate ProgressivePricingPreset "
-        "WhatsAppChannelSettings PreviewAdjustmentSettings NotificationSetting"
+        "BrandingSettings GlobalPixSettings PaymentMessageTemplate ProgressivePricingPreset "
+        "WhatsAppChannelSettings PreviewAdjustmentSettings NotificationSetting GoogleDriveConnection "
+        "MercadoPagoAccount WhatsAppTenantCredential"
     ),
     ("D", "K"): (
         "PriceRule PixCheckoutSettings ProgressivePricingTier GalleryPreviewSettings "
-        "FolderProcessingSettings"
+        "FolderProcessingSettings PaymentPreferences"
     ),
-    ("R", "L"): "AssetFileCleanup GalleryLifecycleOperation",
+    ("R", "L"): (
+        "AssetFileCleanup GalleryLifecycleOperation TenantClosureRequest TenantClosureRecoveryBatch "
+        "TenantClosureMediaDeletionBatch TenantClosureIdentityVerification MediaArchiveCycle "
+        "MediaArchiveOperation MediaArchiveRecoveryRequest"
+    ),
+    ("D", "L"): (
+        "TenantClosureRecoveryItem TenantClosureMediaDeletionItem MediaArchiveObject MediaArchiveEvent "
+        "MediaArchiveSpaceReservation"
+    ),
     ("R", "N"): (
         "GalleryMembershipNotificationOutbox WhatsAppDelivery WhatsAppWebhookReceipt "
         "PushSubscription NotificationEvent"
     ),
     ("D", "N"): (
         "PaymentNotificationOutbox GalleryReopeningNotificationOutbox "
-        "WhatsAppDeliveryAttempt NotificationMilestone NotificationDelivery"
+        "WhatsAppDeliveryAttempt NotificationMilestone NotificationDelivery MediaArchiveNotice"
     ),
-    ("R", "P"): "MediaJob",
+    ("R", "P"): "MediaJob RawDevelopmentSettings RawDevelopmentJob",
     ("D", "P"): "MediaDerivative PreviewAdjustment",
     ("R", "F"): (
         "FacialCalibrationApproval FacialRolloutOperation FacialJob FacialSearchRequest"
@@ -60,36 +84,61 @@ TABLE_GROUPS = {
     ("D", "F"): (
         "GalleryFacialPolicy FacialRollout FacialLegalRepresentation PhotoAnalysis "
         "PhotoFaceEmbedding FacialSearchSnapshotItem FacialSearchCandidate "
-        "FacialSearchNotificationOutbox"
+        "FacialSearchNotificationOutbox FacialSearchConsentProof"
     ),
 }
 MODELS = {name: group for group, names in TABLE_GROUPS.items() for name in names.split()}
 
 MODULE_GROUPS = {
-    "O": "installation_operator provision_installation_operator",
-    "A": "auth admin_account admin_security tenancy seed_admin provision_photographer",
+    "O": (
+        "installation_operator provision_installation_operator statistics_report "
+        "google_drive_client google_drive_storage"
+    ),
+    "A": (
+        "auth admin_account admin_security tenancy seed_admin provision_photographer "
+        "totp_crypto totp_migration totp_verification photographer_signup platform_console "
+        "google_drive_oauth photographer_access_recovery photographer_cpf "
+        "photographer_onboarding photographer_terms photographer_totp photographer_totp_support "
+        "photographer_turnstile rotate_totp_keys totp_recovery private_fields"
+    ),
     "C": "client_identity",
     "G": (
         "gallery_access public_gallery_access parent_registration private_derivation "
-        "private_membership private_upload_batches gallery_visuals gallery_cover_readiness acervo_context"
+        "private_membership private_upload_batches gallery_visuals gallery_cover_readiness acervo_context "
+        "folder_access folder_deadlines private_folder_overview"
     ),
     "S": (
         "checkout client_commerce unified_checkout canonical_selection commercial_projection provider_checkout "
-        "commercial_history order_delivery pricing pix provider_confirmation"
+        "commercial_history order_delivery pricing pix provider_confirmation credit_history order_visibility "
+        "mercadopago_api mercadopago_checkout mercadopago_credit_purchases mercadopago_projection "
+        "mercadopago_provider mercadopago_webhook photographer_credits payment_export media_archive_billing"
     ),
-    "K": "global_pix infinitepay_settings payment_provider gallery_pricing payment_templates notification_settings branding_context",
+    "K": (
+        "global_pix infinitepay_settings payment_provider gallery_pricing payment_templates "
+        "notification_settings branding_context app_env_transition mercadopago_settings payment_availability"
+    ),
     "L": (
         "asset_removal client_lifecycle commercial_removal commercial_retention gallery_cleanup "
-        "gallery_lifecycle homolog_cleanup private_gallery_lifecycle"
+        "gallery_lifecycle homolog_cleanup private_gallery_lifecycle "
+        "media_archive_executor media_archive_guards media_archive_manifest media_archive_notices "
+        "media_archive_scheduler media_archive_staging media_archive_storage media_archive_worker "
+        "tenant_closure tenant_closure_api tenant_closure_identity tenant_closure_obligations "
+        "tenant_closure_recovery tenant_media_deletion tenant_profile_retention"
     ),
     "N": (
         "email_delivery membership_notifications messaging notification_contract "
         "notification_delivery notification_events push_subscriptions web_push "
-        "whatsapp_channel whatsapp_delivery whatsapp_webhook whatsapp_binding"
+        "whatsapp_channel whatsapp_delivery whatsapp_webhook whatsapp_binding "
+        "environment_transition_channels whatsapp_tenant_credentials"
     ),
-    "P": "media folder_processing folder_processing_api",
-    "I": "product_brand public_origin",
-    "X": "main worker historical_media ownership_schema storage_metrics",
+    "P": "media folder_processing folder_processing_api raw_development",
+    "I": "product_brand public_origin schema_revision_check",
+    "X": (
+        "main worker historical_media ownership_schema storage_metrics "
+        "combined_environment_transition environment_transition_bundle "
+        "environment_transition_inventory environment_transition_runtime integration_secrets "
+        "photographer_subdomain tenant_hosts"
+    ),
 }
 MODULES = {name: group for group, names in MODULE_GROUPS.items() for name in names.split()}
 SQL_NAMES = {"select", "insert", "update", "delete", "text"}
@@ -123,6 +172,8 @@ def module_group(path: Path) -> str:
     relative = path.relative_to(ROOT).as_posix()
     if "/capacity_observability/" in relative or "/system_monitor/" in relative:
         return "O"
+    if relative.startswith("backend/app/platform_backup/"):
+        return "O"
     if "/facial/" in relative:
         return "F"
     if "/preview_adjustment/" in relative:
@@ -143,6 +194,38 @@ def owner_function(functions: list, node: ast.AST) -> str:
     return max(matches, key=lambda item: item.lineno).name if matches else "<módulo>"
 
 
+def api_router_prefixes(tree: ast.AST) -> dict[str, str]:
+    prefixes = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            value = node.value
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            value = node.value
+            targets = [node.target]
+        else:
+            continue
+        if not isinstance(value, ast.Call) or ast.unparse(value.func).rsplit(".", 1)[-1] != "APIRouter":
+            continue
+        prefix = next((keyword.value.value for keyword in value.keywords
+                       if keyword.arg == "prefix" and isinstance(keyword.value, ast.Constant)), "")
+        for target in targets:
+            if isinstance(target, ast.Name):
+                prefixes[target.id] = prefix
+    return prefixes
+
+
+def join_router_prefix(prefix: str, route: str) -> str:
+    if not prefix:
+        return route or "/"
+    base = prefix.rstrip("/")
+    if not route:
+        return base or "/"
+    if route == "/":
+        return base + "/" if base else "/"
+    return (base + "/" + route.lstrip("/")) if base else "/" + route.lstrip("/")
+
+
 def route_group(route: str, method: str) -> tuple[str, str]:
     if route == "/health":
         return "I", "I"
@@ -152,6 +235,20 @@ def route_group(route: str, method: str) -> tuple[str, str]:
         return "I", "O"
     if route.startswith("/admin/system-monitor") or route == "/admin/facial-engine-experiment":
         return "I", "O"
+    if route.startswith("/admin/platform/drive") or route.startswith("/admin/platform/console"):
+        return "I", "O"
+    if route.startswith("/admin/platform/terms"):
+        return "I", "A"
+    if route.startswith("/admin/platform/credit"):
+        return "I", "O"
+    if route.startswith("/admin/media-archive") or route.startswith("/admin/closure"):
+        return "R", "L"
+    if route.startswith("/admin/credits"):
+        return "R", "S"
+    if route.startswith("/library/mercadopago") or route.startswith("/mercadopago/webhooks/"):
+        return "R", "S"
+    if route.startswith("/admin/onboarding"):
+        return "R", "A"
     if route.startswith("/auth/"):
         return "M", "A"
     if route == "/admin" or route.startswith(("/admin/security/", "/admin/email/")):
@@ -217,6 +314,7 @@ def render() -> tuple[str, Counter]:
             # Shell/frontend: chamadas e efeitos são revisados por arquivo, sem parser Python.
             continue
         tree = ast.parse(source, filename=relative)
+        router_prefixes = api_router_prefixes(tree)
         functions = [node for node in ast.walk(tree)
                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
         for node in ast.walk(tree):
@@ -248,10 +346,18 @@ def render() -> tuple[str, Counter]:
                         and decorator.func.attr in HTTP_METHODS and decorator.args
                         and isinstance(decorator.args[0], ast.Constant)):
                     route = str(decorator.args[0].value)
+                    router = decorator.func.value
+                    if isinstance(router, ast.Name):
+                        prefix = router_prefixes.get(router.id, "")
+                        if prefix:
+                            route = join_router_prefix(prefix, route)
                     dependencies = sorted({ast.unparse(arg) for call in ast.walk(node.args)
                                            if isinstance(call, ast.Call)
                                            and ast.unparse(call.func) == "Depends" for arg in call.args})
-                    scope, case = route_group(route, decorator.func.attr)
+                    if relative.startswith("scripts/"):
+                        scope, case = "T", "T"  # Rotas do harness local não são rotas de serviço.
+                    else:
+                        scope, case = route_group(route, decorator.func.attr)
                     routes.append(f"| `{decorator.func.attr.upper()} {route}` | {scope}/{case} | "
                                   f"`{relative}:{node.lineno}` / `{node.name}` | "
                                   f"{', '.join(dependencies) or 'sem Depends na assinatura'} | ver matriz |")

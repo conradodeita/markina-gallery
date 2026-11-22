@@ -72,6 +72,12 @@ O sistema SHALL permitir que o administrador autenticado consulte seu e-mail mas
 - **WHEN** o link de verificação do novo endereço é consumido dentro do prazo
 - **THEN** o sistema promove atomicamente o novo e-mail verificado, revoga sessões e tokens administrativos pendentes, exige novo login e envia aviso sanitizado ao endereço anterior
 
+#### Scenario: Falha ao consultar a confirmação do novo e-mail
+
+- **WHEN** a confirmação explícita falha por rede ou retorna erro HTTP
+- **THEN** a tela SHALL encerrar o estado de carregamento e mostrar feedback sem anunciar sucesso, mantendo o token somente em memória para uma nova ação explícita
+- **AND** a tela não reenvia a confirmação automaticamente e continua sem expor o token no URL ou persistir em storage
+
 #### Scenario: Link de troca inválido ou vencido
 
 - **WHEN** o link de verificação não é válido, expirou, já foi usado ou foi substituído por pedido posterior

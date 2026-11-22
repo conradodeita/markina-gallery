@@ -6,13 +6,24 @@ import pytest
 import sqlalchemy as sa
 
 from app import auth
+from tests.payment_migration_fixtures import payment_migration_database as _migration_database
 from tests.tenant_fixtures import insert_legacy_model
 from tests.test_global_pix_migration import alembic
-from tests.test_tenant_infinitepay_migration import migration_database as _migration_database
 
 migration_database = _migration_database
 SOURCE = "20261012_0075"
 TARGET = "20261012_0076"
+# Contrato histórico de 0076: a credencial só é acrescentada em 0085.
+PAYMENT_COLUMNS_0076 = {
+    "id", "tenant_id", "client_id", "provider", "checkout_key", "cart_revision", "total_cents",
+    "handle_snapshot", "configuration_version", "verification_profile", "state", "revision_number",
+    "checkout_url", "provider_transaction_nsu", "confirmed_at", "created_at", "updated_at",
+}
+PAYMENT_FOREIGN_KEYS_0076 = {
+    (("tenant_id",), "tenant", ("id",)),
+    (("client_id",), "client", ("id",)),
+    (("client_id", "tenant_id"), "client", ("id", "tenant_id")),
+}
 
 
 @pytest.mark.parametrize("legacy", [False, True])
@@ -41,13 +52,15 @@ def test_schema_e_rollback_vazio_preservam_colunas_legadas(migration_database, l
         inspector = sa.inspect(conn)
         for name in ("provider_payment", "provider_payment_attempt", "provider_payment_receipt"):
             target = auth.Base.metadata.tables[name]
-            assert {c["name"] for c in inspector.get_columns(name)} == set(target.c.keys())
+            columns = PAYMENT_COLUMNS_0076 if name == "provider_payment" else set(target.c.keys())
+            assert {c["name"] for c in inspector.get_columns(name)} == columns
             assert {tuple(u["column_names"]) for u in inspector.get_unique_constraints(name)} == {
                 tuple(c.name for c in u.columns) for u in target.constraints if isinstance(u, sa.UniqueConstraint)}
-            assert {(tuple(f["constrained_columns"]), f["referred_table"], tuple(f["referred_columns"]))
-                    for f in inspector.get_foreign_keys(name)} == {
+            foreign_keys = PAYMENT_FOREIGN_KEYS_0076 if name == "provider_payment" else {
                 (tuple(e.parent.name for e in f.elements), f.referred_table.name, tuple(e.column.name for e in f.elements))
                 for f in target.foreign_key_constraints}
+            assert {(tuple(f["constrained_columns"]), f["referred_table"], tuple(f["referred_columns"]))
+                    for f in inspector.get_foreign_keys(name)} == foreign_keys
     alembic(url, "downgrade", SOURCE)
     with engine.connect() as conn:
         assert list(conn.execute(order.select())) == before

@@ -12,6 +12,7 @@ from app.auth import (
     Base,
     FacialCalibrationApproval,
     ParentGallery,
+    Tenant,
 )
 from app.facial.calibration import (
     FacialCalibrationError,
@@ -66,6 +67,9 @@ def test_production_rollout_requires_matching_human_calibration_approval() -> No
     Base.metadata.create_all(engine)
     settings = _settings()
     with Session(engine) as db:
+        if db.get(Tenant, FIXTURE_TENANT_ID) is None:
+            db.add(Tenant(id=FIXTURE_TENANT_ID, status="active"))
+            db.flush()
         gallery = ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=uuid4(), name="Evento produção")
         admin = fixture_admin(AdminUser(
             id=uuid4(),

@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import literal, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -28,6 +29,7 @@ from app.auth import (
 from app.client_identity import require_identity_tenant
 from app.notification_contract import DEFINITIONS, whatsapp_event_gate_open
 from app.payment_templates import DEFAULT_PAYMENT_TEMPLATES, PLACEHOLDER, validate_template
+from app.whatsapp_channel import notification_channel_ready
 
 
 @contextmanager
@@ -146,8 +148,19 @@ def render_whatsapp_text(event_type: str, body: str, values: dict[str, str], lim
     return rendered
 
 
-def setting_for(db: Session, event_type: str, *, tenant_id: UUID) -> NotificationSetting:
-    require_identity_tenant(db, tenant_id)
+def _require_event_tenant(db: Session, event_type: str, tenant_id: UUID, financial_reconciliation: bool):
+    if financial_reconciliation:
+        tenant = db.get(Tenant, tenant_id, populate_existing=True)
+        if (event_type != "payment_confirmed" or not tenant or tenant.status not in {"active", "suspended"}
+                or tenant_id not in db.info.get("tenant_financial_reconciliation", ())):
+            raise ValueError("Contexto financeiro de aviso indisponível.")
+    else:
+        require_identity_tenant(db, tenant_id)
+
+
+def setting_for(db: Session, event_type: str, *, tenant_id: UUID,
+                financial_reconciliation: bool = False) -> NotificationSetting:
+    _require_event_tenant(db, event_type, tenant_id, financial_reconciliation)
     if event_type not in DEFINITIONS:
         raise ValueError("Evento não permitido.")
     setting = db.get(NotificationSetting, (tenant_id, event_type))
@@ -253,6 +266,15 @@ def save_setting(db: Session, event_type: str, values: dict, *, tenant_id: UUID)
         "whatsapp_body": validate_text(event_type, values.get("whatsapp_body", setting.whatsapp_body),
                                         500, channel="whatsapp"),
     }
+    whatsapp_changed = (
+        validated["whatsapp_body"] != setting.whatsapp_body
+        or values.get("whatsapp_enabled", setting.whatsapp_enabled) != setting.whatsapp_enabled
+    )
+    if whatsapp_changed and not notification_channel_ready(db, tenant_id=tenant_id):
+        raise HTTPException(status_code=409, detail={
+            "code": "whatsapp_channel_required",
+            "message": "Conecte seu WhatsApp em Configurações para personalizar as mensagens. O push continua disponível.",
+        })
     for field, value in validated.items():
         setattr(setting, field, value)
     for channel in ("push", "whatsapp"):
@@ -286,9 +308,9 @@ def save_setting(db: Session, event_type: str, values: dict, *, tenant_id: UUID)
 def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[str, str],
                   target_path: str, recipients: list[UUID], parent_gallery_id=None,
                   derived_gallery_id=None, client_id=None, sale_order_id=None,
-                  tenant_id: UUID) -> NotificationEvent:
+                  tenant_id: UUID, financial_reconciliation: bool = False) -> NotificationEvent:
     """Só persiste na transação chamadora. Nunca envia, commita ou reproduz histórico."""
-    require_identity_tenant(db, tenant_id)
+    _require_event_tenant(db, event_type, tenant_id, financial_reconciliation)
     for model, resource_id in ((ParentGallery, parent_gallery_id), (DerivedGallery, derived_gallery_id),
                                (Client, client_id), (SaleOrder, sale_order_id)):
         if resource_id is not None and not db.scalar(select(model.id).where(
@@ -311,7 +333,7 @@ def enqueue_event(db: Session, *, event_type: str, event_key: str, values: dict[
     ))
     if existing:
         return existing
-    setting = setting_for(db, event_type, tenant_id=tenant_id)
+    setting = setting_for(db, event_type, tenant_id=tenant_id, financial_reconciliation=financial_reconciliation)
     whatsapp_values = dict(values)
     gallery_hostname = None
     whatsapp_gallery_link_required = (event_type == "private_photos_ready"

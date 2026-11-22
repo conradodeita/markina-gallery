@@ -44,7 +44,6 @@ OPERATIONS_FILES = {
     "scripts/test_deploy_prod_facial_services.sh",
     "scripts/test_production_release_workflow_policy.py",
     "backend/tests/test_derived_galleries.py",
-    "backend/tests/test_provider_confirmation.py",
     "backend/tests/test_statistics_report.py",
     "frontend/app/admin/statistics/page.test.tsx",
     "scripts/test_prod_facial_release_gates.py",

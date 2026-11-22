@@ -1,6 +1,12 @@
 # Credencial SSH somente-leitura para preflight de produção
 
-O job `production-preflight` não usa o environment `production` e não pode acessar a chave de deploy. Ele usa o environment separado `production-preflight`, sem revisores obrigatórios, com uma chave dedicada cujo único comando aceito é o inventário.
+O job `production-preflight` não usa o environment `production` e não pode acessar a chave de deploy. Ele usa o environment separado `production-preflight`, sem revisores obrigatórios, com uma chave dedicada limitada pelo wrapper a comandos read-only pinados; nenhum modo de release é permitido.
+
+## Export read-only da imagem API e upload do candidato
+
+Para o release API/web, o wrapper de preflight também reconhece somente `MARKINA_APP_BASE_IMAGE_EXPORT_SHA=<40 hex>_IMAGE_ID=sha256:<64 hex>`. Ele baixa `scripts/export_prod_app_api_base_image.sh` pelo SHA candidato, confere seu blob pinado e envia apenas `docker image save` da imagem API ativa que coincidiu com o inventário. Não lê ambiente do container, mounts, volumes ou arquivos de cliente, e não grava nem carrega imagens no host. Atualizar o wrapper versionado não instala sua cópia root-owned.
+
+O bundle CI é enviado depois dos gates completos e da aprovação `production` por um wrapper de upload separado. A chave SSH correspondente deve ser distinta da chave de deploy e usar `restrict,command="/usr/local/sbin/markina-gallery-app-artifact-ssh-wrapper"`; o wrapper aceita apenas SHA e digest completos, limita o payload a 4 GiB e grava atomicamente em `/tmp/markina-gallery-app-artifacts-<uid>`, sem extração ou execução. O executor remove somente o bundle daquele SHA e o archive extraído ao sair, também em caso de falha. Configurar o secret `PRODUCTION_APP_ARTIFACT_SSH_PRIVATE_KEY` no Environment `production` e instalar/conferir o wrapper são pré-requisitos operacionais externos. Não foram feitos por esta change; sem essa preparação, o job protegido falhará fechado antes de tentar o deploy.
 
 ## Preparação no servidor
 
@@ -35,6 +41,32 @@ O environment existente `production` permanece protegido pelo revisor `conradode
 
 O preflight não reutiliza nem modifica a chave ou os secrets de deploy. A aprovação de `production` permanece separada e protegida.
 
+## Preflight somente leitura do piloto Mercado Pago Orders
+
+Após a revisão/CI do helper Orders, o modo manual `orders-pilot-inventory` pode usar o mesmo environment `production-preflight` e a mesma chave dedicada. O wrapper forçado aceita somente `MARKINA_ORDERS_TARGET_SHA=<SHA completo>`, baixa `scripts/orders_pilot_release.py` desse SHA, confere o blob `ORDERS_SCRIPT_BLOB_SHA` e executa Python exclusivamente com `inventory --sha <SHA>`, conforme o argumento posicional aceito pelo helper Orders. O helper confirma que o SHA informado continua sendo a ponta da `main` antes de consultar os serviços. A workflow exige `workflow_dispatch` na `main`, CI verde e usa apenas `contents: read`.
+
+O job não recebe a credencial mutável de deploy e não pode iniciar `prepare`, `apply`, shell ou qualquer migration. O wrapper instalado em `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper` não é atualizado por CI nem por este repositório: sua substituição root-owned exige autorização operacional específica, revisão do conteúdo/hash, `root:root`, modo `0755` e preservação das regras existentes. Até essa instalação e conferência, o preflight Orders deve falhar fechado; não use SSH arbitrário como fallback.
+
+Em 25/10/2026, após a autorização de continuidade e o CI do PR #289, a cópia foi instalada atomicamente a partir de `5b9600f6`, SHA-256 `98514bc5c7712637b69c1c6b3219f6704c78b2bffd6310f872f15020f97c2733`, `root:root 0755`, com backup em `/var/backups/markina-gallery/preflight-ssh-wrapper-20261025T235604Z-pr289`. A chave dedicada recusou comando arbitrário. O helper histórico recusou `checkout_divergente`: o piloto já está em `9bd66c48`/0088 e possui registros Orders. O procedimento atualizado exige essa identidade e seu overlay, preserva as tentativas existentes e prepara somente 0088→0089. O novo pin do helper ainda precisa de revisão/CI e atualização autorizada da cópia root-owned; não há inventário Orders válido nem migration 0089 aplicada nesta etapa. Ver `openspec/changes/add-mercadopago-orders-checkout/release-plan.md`.
+
+## Estado após o piloto Orders 0089
+
+**Estado operacional posterior:** o piloto Orders foi atualizado para `f9091a7b`/schema `20261025_0089` em 26/10/2026, após CI `40251917299`, inventário restrito e backup restaurado. Wrapper atual SHA-256 `70573e11c190801069e007182fba1c9725c6b2817487b0107c14124ec71b45a0`, helper pin `13371d50abfdeedbe02408546a685277b3e7f042`. A publicação está documentada em `openspec/changes/add-mercadopago-orders-checkout/release-plan.md`. Os preflights abaixo e o helper pontual de baseline 0088 são históricos para esse estado: não reexecutá-los como se a migration estivesse pendente, nem afrouxar seus gates para outro release.
+
+## Preflight específico da aposentadoria InfinitePay
+
+A operação manual `infinitepay-retirement` usa a mesma chave SSH restrita de `production-preflight`. O wrapper versionado reconhece somente `MARKINA_RETIREMENT_TARGET_SHA=<SHA completo>` e baixa `scripts/deploy-prod-infinitepay-retirement.sh` pelo SHA da `main`, comparando o blob imutável antes de executar apenas `--mode inventory`. O inventário é minimizado e não imprime configuração Compose, conteúdo do binding ou valores de segredo.
+
+Após integração do código em `main`, a cópia root-owned do wrapper em `/usr/local/sbin/markina-gallery-preflight-ssh-wrapper` precisa ser atualizada por uma sessão operacional autorizada para fixar o blob do wrapper e do script do SHA integrado. Conferir conteúdo, proprietário `root:root`, modo `0755`, hash do script e os comandos permitidos em `authorized_keys`; não ampliar a chave para shell nem conceder modo release. Até essa atualização e conferência, o workflow remoto falhará fechado e nenhum inventário pode ser alegado.
+
+O inventário só fica apto quando comprova checkout/runtime alinhados, `20261021_0086`, serviços saudáveis, hashes Compose API/web, domínio/porta registrados, smoke HTTPS e binding regular exclusivo sem link simbólico, hardlink ou referência externa. O JSON sanitizado e seu fingerprint são apresentados antes de qualquer etapa mutável. O manifesto de release API/web em `0084` segue sem alteração até que esse estado seja confirmado pelo host.
+
+## Preflight da migration de ajuste de prévias 0090
+
+Depois de integrar a change e concluir CI, despachar `preview-adjustment-migration-wrapper-install` em `main`. O job usa o environment `production` protegido e executa somente o helper root-owned para substituir o wrapper da chave read-only. Ele verifica o blob do SHA de suporte, preserva cópia anterior, confere `root:root 0755` e confirma recusa de comando arbitrário; não altera `authorized_keys`, containers, banco ou runtime. O wrapper aceita somente `MARKINA_PREVIEW_MIGRATION_SUPPORT_SHA=<40 hex>`, verifica o blob `PREVIEW_MIGRATION_INVENTORY_BLOB_SHA` do inventário e executa apenas a consulta read-only. O procedimento completo, os SHAs permitidos, o fingerprint e a recuperação estão em `docs/RELEASE-PREVIEW-ADJUSTMENT-MIGRATION.md`.
+
+Até a instalação root-owned e a conferência do hash/pin, não iniciar o preflight nem usar SSH arbitrário como alternativa. A chave de deploy permanece separada e só fica disponível após preflight válido, igualdade do fingerprint informado e aprovação do environment `production`.
+
 ## Verificação de ancestralidade do candidato
 
 O checkout de produção pode não conter o commit recém-mergeado em `main`. Para verificar que o SHA candidato descende do último release saudável sem alterar refs ou objetos do checkout ativo, o inventário busca a ponta de `main` com filtro de blobs em um repositório Git bare temporário configurado como partial clone, confirma que ela continua igual ao SHA solicitado e verifica a ancestralidade nesse banco temporário. O diretório é removido ao terminar; qualquer falha ou mudança da ponta de `main` faz o preflight falhar fechado antes de produzir o fingerprint.
@@ -48,3 +80,17 @@ A conclusão anterior de divergência real foi refutada. Compose 2.35.1 omite a 
 O script corrigido completou inventário remoto somente leitura, saúde dos três serviços, bind exclusivo `127.0.0.1:8080`, HTTPS 200 e fingerprint `141aa2f1f90286bc915ec6a5eed6b94b71e8a91f819846840901341bdf5987ec`, com alvo `57bbc7c`. A correção também relê hashes após a troca, aguarda saúde por até 120 segundos e valida/recarrega exclusivamente o nginx Markina antes do smoke. CI e instalação do novo blob fixado no wrapper devem preceder o próximo preflight automático. Isso não aprova os gates jurídicos, do corpus, capacidade ou restauração.
 
 O wrapper foi atualizado no host em 2026-10-17 para fixar o blob `081350c451047cd4f26da4e8bb807881901ce741` do inventário corrigido; proprietário/modo conferidos `root:root 0755`, SHA-256 `fddafdb3652e211a49880ab617cfa7ab4c5e29020072c1e627919859830b37a0`. A chave dedicada continua limitada ao inventário. O inventário Docker somente leitura confirmou os serviços Markina saudáveis, Nginx em `127.0.0.1:8080` e domínio `https://markina.pickyourpic.com.br`; a alteração não reiniciou serviços nem alterou credenciais. O preflight automático positivo desta correção ainda aguarda CI verde e merge.
+
+## Estado após a aposentadoria InfinitePay — 2026-10-24
+
+A publicação está em `1f4483bd620071a15ccfc6bc1f2b7e2a3fd0cea8`, schema `20261022_0087`. Após CI verde e merge da PR #281 (`172aef76c6cc971cd81466200da399a6912e90f9`), o wrapper root-owned foi atualizado atomicamente para SHA-256 `96150855a71fe790aa5405cc0de53710e570d2c0768165f9224738316c4373e1`, modo `0755`, pin app `646852479c83d0bfa356203379a95cbd9e4019f6` e pin de aposentadoria `935af96ec1b650eb2c9ae188186eec38f0dd532b`. A versão anterior foi preservada com checksum em `/var/backups/markina-gallery/preflight-ssh-wrapper-20261024T1926Z-close-pr281`.
+
+O inventário API/web pelo wrapper instalado passou para a revisão integrada: schema `0087`, identidade e hashes das imagens ativas, bind `127.0.0.1:8080`, domínio esperado e três checks HTTPS `200`. Fingerprint de evidência `07a56b90e3baf3f75a046c42ea2395b08e9a0aa720a01400515d8b746d74b991`. O checkout de runtime permaneceu no SHA publicado e nenhum serviço foi reiniciado. O inventário de aposentadoria `0086` é histórico e não deve ser reexecutado como se a migration ainda estivesse pendente. Novas publicações continuam exigindo seu próprio inventário e aprovação.
+
+## Inventário atual do release API/web — 17/11/2026
+
+Consulta SSH somente-leitura observou o checkout limpo `0dd015a62447e0c8d4c6af16b381140c8118f2ec` no host e a API saudável em `bfe511f850224823254b0fc9f51fa7ff60ecfba0`, schema `20261113_0126`, `APP_ENV=production` e `FACIAL_PROCESSING_ENABLED=true`. O grafo local confirma que o checkout é ancestral do SHA ativo. A `main` desta estação também está em `bfe...`; no host, `origin/main` ainda aponta para `855be42b826c61c8ebdb2bd1e471ca1d28147061` e o objeto `bfe...` está ausente. Depois do merge, será necessário buscar os objetos/ref de `main` e alinhar o checkout limpo antes do preflight; essa preparação não reinicia serviços. A entrada pública continua em `https://markina.pickyourpic.com.br`, através de `127.0.0.1:8080`.
+
+O wrapper root-owned observado tem `root:root 0755`, SHA-256 `90e93f470056d78e5e625007a47bdb0703a2d66ab4e14bd3c6f7e94cb4d19d74`, e pin app `646852479c83d0bfa356203379a95cbd9e4019f6`. O candidato altera o helper e fixa um blob novo; a cópia no servidor precisa ser substituída atomicamente, preservando a anterior e conferindo owner, modo, hash e recusa de comando arbitrário. Isso não reinicia serviços. Até essa atualização, o preflight oficial permanece bloqueado e nenhum fingerprint pode ser declarado.
+
+O preflight aprovado deve permanecer somente-leitura e limitar o deploy seguinte a `api` e `web`, sem migration, troca de configuração/credenciais, reinício de workers, instalação de unidade ou ativação de timer. A API pode ficar brevemente indisponível durante a recriação; banco, Redis, Nginx, workers, volumes, timer compartilhado do Oracle e dados permanecem fora do escopo. `FACIAL_PROCESSING_ENABLED=true` precisa continuar confirmado no Compose resolvido antes e depois. O serviço/timer `pyp-platform-backup` estão ausentes e devem continuar assim nesta publicação.

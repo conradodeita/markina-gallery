@@ -13,6 +13,7 @@ from app.auth import (
     PhotoAsset,
     PhotoFolder,
 )
+from app.folder_access import folder_media_states_by_id
 
 
 def private_folder_overview(
@@ -37,7 +38,7 @@ def private_folder_overview(
         return []
     gallery_ids = [gallery.id for gallery, _ in galleries]
     folders = defaultdict(list)
-    for folder, count in db.execute(
+    folder_rows = list(db.execute(
         select(PhotoFolder, func.count(PhotoAsset.id))
         .outerjoin(PhotoAsset, (
             (PhotoAsset.folder_id == PhotoFolder.id)
@@ -53,10 +54,15 @@ def private_folder_overview(
         )
         .group_by(PhotoFolder)
         .order_by(PhotoFolder.position, PhotoFolder.created_at, PhotoFolder.id)
-    ):
+    ))
+    media_states = folder_media_states_by_id(
+        db, folder_ids={folder.id for folder, _count in folder_rows}, tenant_id=tenant_id,
+    )
+    for folder, count in folder_rows:
         folders[folder.derived_gallery_id].append({
             "id": str(folder.id), "name": folder.name, "status": folder.status,
             "position": folder.position, "photo_count": count,
+            "media_state": media_states.get(folder.id, "unavailable"),
         })
     members = defaultdict(list)
     for gallery_id, client_id, name in db.execute(

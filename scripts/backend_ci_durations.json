@@ -1,0 +1,1048 @@
+{
+  "fallback_seconds_per_case": 0.78,
+  "modules": {
+    "tests/test_admin_client_directory.py": {
+      "items": 63,
+      "seconds": 61.384
+    },
+    "tests/test_admin_origin_allowlist.py": {
+      "items": 18,
+      "seconds": 0.019
+    },
+    "tests/test_admin_preview_pool_concurrency.py": {
+      "items": 72,
+      "seconds": 208.192
+    },
+    "tests/test_admin_security.py": {
+      "items": 81,
+      "seconds": 77.766
+    },
+    "tests/test_app_env_transition.py": {
+      "items": 48,
+      "seconds": 0.925
+    },
+    "tests/test_app_env_transition_inventory.py": {
+      "items": 6,
+      "seconds": 0.592
+    },
+    "tests/test_asset_history_migration.py": {
+      "items": 3,
+      "seconds": 30.074
+    },
+    "tests/test_asset_removal.py": {
+      "items": 33,
+      "seconds": 30.263
+    },
+    "tests/test_auth.py": {
+      "items": 63,
+      "seconds": 63.733
+    },
+    "tests/test_capacity_observability_budget.py": {
+      "items": 3,
+      "seconds": 0.003
+    },
+    "tests/test_capacity_observability_collector.py": {
+      "items": 30,
+      "seconds": 1.734
+    },
+    "tests/test_capacity_observability_contracts.py": {
+      "items": 12,
+      "seconds": 0.012
+    },
+    "tests/test_capacity_observability_database.py": {
+      "items": 9,
+      "seconds": 0.008
+    },
+    "tests/test_capacity_observability_pool.py": {
+      "items": 15,
+      "seconds": 0.013
+    },
+    "tests/test_capacity_observability_postgres.py": {
+      "items": 12,
+      "seconds": 5.138
+    },
+    "tests/test_capacity_observability_queues.py": {
+      "items": 15,
+      "seconds": 2.199
+    },
+    "tests/test_checkout_retirement.py": {
+      "items": 6,
+      "seconds": 1.3
+    },
+    "tests/test_client_deletion_migration.py": {
+      "items": 3,
+      "seconds": 21.039
+    },
+    "tests/test_client_gallery_covers.py": {
+      "items": 3,
+      "seconds": 4.356
+    },
+    "tests/test_cloned_gallery_migration.py": {
+      "items": 33,
+      "seconds": 162.58
+    },
+    "tests/test_credit_history.py": {
+      "items": 15,
+      "seconds": 47.63
+    },
+    "tests/test_derived_galleries.py": {
+      "items": 345,
+      "seconds": 1480.625
+    },
+    "tests/test_direct_region_search.py": {
+      "items": 18,
+      "seconds": 18.005
+    },
+    "tests/test_environment_transition_inventory.py": {
+      "items": 69,
+      "seconds": 0.071
+    },
+    "tests/test_environment_transition_runtime.py": {
+      "items": 15,
+      "seconds": 0.048
+    },
+    "tests/test_face_benchmark.py": {
+      "items": 12,
+      "seconds": 0.016
+    },
+    "tests/test_face_region_search.py": {
+      "items": 36,
+      "seconds": 8.097
+    },
+    "tests/test_facial_calibration.py": {
+      "items": 6,
+      "seconds": 0.499
+    },
+    "tests/test_facial_calibration_migration.py": {
+      "items": 3,
+      "seconds": 19.136
+    },
+    "tests/test_facial_conditional_consent_migration.py": {
+      "items": 3,
+      "seconds": 17.83
+    },
+    "tests/test_facial_config.py": {
+      "items": 102,
+      "seconds": 0.103
+    },
+    "tests/test_facial_crypto.py": {
+      "items": 24,
+      "seconds": 0.026
+    },
+    "tests/test_facial_crypto_context.py": {
+      "items": 42,
+      "seconds": 0.049
+    },
+    "tests/test_facial_engine.py": {
+      "items": 18,
+      "seconds": 3.323
+    },
+    "tests/test_facial_environment_backup.py": {
+      "items": 18,
+      "seconds": 0.023
+    },
+    "tests/test_facial_environment_eligibility.py": {
+      "items": 138,
+      "seconds": 0.092
+    },
+    "tests/test_facial_environment_migration.py": {
+      "items": 30,
+      "seconds": 0.03
+    },
+    "tests/test_facial_environment_migration_guard.py": {
+      "items": 99,
+      "seconds": 0.073
+    },
+    "tests/test_facial_environment_origin.py": {
+      "items": 42,
+      "seconds": 0.413
+    },
+    "tests/test_facial_environment_sql.py": {
+      "items": 18,
+      "seconds": 1.21
+    },
+    "tests/test_facial_http.py": {
+      "items": 15,
+      "seconds": 0.015
+    },
+    "tests/test_facial_indexing.py": {
+      "items": 27,
+      "seconds": 4.317
+    },
+    "tests/test_facial_integration.py": {
+      "items": 3,
+      "seconds": 4.625
+    },
+    "tests/test_facial_jobs.py": {
+      "items": 21,
+      "seconds": 3.373
+    },
+    "tests/test_facial_legal_representation.py": {
+      "items": 9,
+      "seconds": 1.425
+    },
+    "tests/test_facial_legal_representation_migration.py": {
+      "items": 6,
+      "seconds": 29.314
+    },
+    "tests/test_facial_migration.py": {
+      "items": 12,
+      "seconds": 65.377
+    },
+    "tests/test_facial_model_assets.py": {
+      "items": 15,
+      "seconds": 0.031
+    },
+    "tests/test_facial_models.py": {
+      "items": 12,
+      "seconds": 0.012
+    },
+    "tests/test_facial_notification_origin.py": {
+      "items": 273,
+      "seconds": 6.302
+    },
+    "tests/test_facial_observability.py": {
+      "items": 45,
+      "seconds": 3.958
+    },
+    "tests/test_facial_policy.py": {
+      "items": 18,
+      "seconds": 2.713
+    },
+    "tests/test_facial_provider.py": {
+      "items": 45,
+      "seconds": 0.053
+    },
+    "tests/test_facial_purge.py": {
+      "items": 18,
+      "seconds": 3.564
+    },
+    "tests/test_facial_quality.py": {
+      "items": 21,
+      "seconds": 0.021
+    },
+    "tests/test_facial_reconcile_gallery.py": {
+      "items": 6,
+      "seconds": 0.008
+    },
+    "tests/test_facial_reference_store.py": {
+      "items": 12,
+      "seconds": 0.023
+    },
+    "tests/test_facial_restore_postgres.py": {
+      "items": 6,
+      "seconds": 0.006
+    },
+    "tests/test_facial_rollout.py": {
+      "items": 60,
+      "seconds": 6.747
+    },
+    "tests/test_facial_rollout_migration.py": {
+      "items": 6,
+      "seconds": 29.756
+    },
+    "tests/test_facial_rollout_operation.py": {
+      "items": 36,
+      "seconds": 4.937
+    },
+    "tests/test_facial_rollout_operation_migration.py": {
+      "items": 3,
+      "seconds": 20.193
+    },
+    "tests/test_facial_runtime.py": {
+      "items": 15,
+      "seconds": 12.332
+    },
+    "tests/test_facial_search.py": {
+      "items": 42,
+      "seconds": 15.302
+    },
+    "tests/test_facial_search_authorization_migration.py": {
+      "items": 3,
+      "seconds": 23.412
+    },
+    "tests/test_facial_search_latency.py": {
+      "items": 63,
+      "seconds": 73.317
+    },
+    "tests/test_facial_search_worker.py": {
+      "items": 66,
+      "seconds": 100.147
+    },
+    "tests/test_facial_security.py": {
+      "items": 6,
+      "seconds": 0.735
+    },
+    "tests/test_facial_status.py": {
+      "items": 24,
+      "seconds": 14.942
+    },
+    "tests/test_facial_worker_entrypoint.py": {
+      "items": 6,
+      "seconds": 0.006
+    },
+    "tests/test_folder_processing.py": {
+      "items": 6,
+      "seconds": 6.058
+    },
+    "tests/test_folder_processing_api.py": {
+      "items": 39,
+      "seconds": 34.867
+    },
+    "tests/test_folder_processing_migration.py": {
+      "items": 6,
+      "seconds": 19.115
+    },
+    "tests/test_gallery_access_signed.py": {
+      "items": 36,
+      "seconds": 39.747
+    },
+    "tests/test_gallery_client_audience_migration.py": {
+      "items": 6,
+      "seconds": 13.828
+    },
+    "tests/test_gallery_client_selection_start_migration.py": {
+      "items": 3,
+      "seconds": 0.009
+    },
+    "tests/test_gallery_lifecycle.py": {
+      "items": 192,
+      "seconds": 385.128
+    },
+    "tests/test_gallery_workflow_remediation.py": {
+      "items": 54,
+      "seconds": 63.49
+    },
+    "tests/test_global_pix.py": {
+      "items": 54,
+      "seconds": 58.697
+    },
+    "tests/test_global_pix_migration.py": {
+      "items": 12,
+      "seconds": 82.997
+    },
+    "tests/test_google_drive_oauth.py": {
+      "items": 132,
+      "seconds": 174.245
+    },
+    "tests/test_google_drive_storage.py": {
+      "items": 51,
+      "seconds": 0.055
+    },
+    "tests/test_health.py": {
+      "items": 3,
+      "seconds": 0.016
+    },
+    "tests/test_highres_migration.py": {
+      "items": 3,
+      "seconds": 23.936
+    },
+    "tests/test_highres_pipeline.py": {
+      "items": 75,
+      "seconds": 18.362
+    },
+    "tests/test_highres_postgresql.py": {
+      "items": 12,
+      "seconds": 0.013
+    },
+    "tests/test_homolog_cleanup.py": {
+      "items": 57,
+      "seconds": 2.197
+    },
+    "tests/test_homolog_cleanup_retained_history_postgres.py": {
+      "items": 6,
+      "seconds": 31.851
+    },
+    "tests/test_integration_secrets.py": {
+      "items": 60,
+      "seconds": 0.061
+    },
+    "tests/test_invite_only_otp.py": {
+      "items": 54,
+      "seconds": 159.844
+    },
+    "tests/test_media.py": {
+      "items": 162,
+      "seconds": 190.904
+    },
+    "tests/test_media_archive_billing.py": {
+      "items": 30,
+      "seconds": 93.085
+    },
+    "tests/test_media_archive_catalog.py": {
+      "items": 15,
+      "seconds": 1.238
+    },
+    "tests/test_media_archive_dispatcher.py": {
+      "items": 24,
+      "seconds": 3.245
+    },
+    "tests/test_media_archive_executor.py": {
+      "items": 42,
+      "seconds": 8.58
+    },
+    "tests/test_media_archive_manifest.py": {
+      "items": 24,
+      "seconds": 3.776
+    },
+    "tests/test_media_archive_notices.py": {
+      "items": 3,
+      "seconds": 0.433
+    },
+    "tests/test_media_archive_recovery_billing_migration.py": {
+      "items": 6,
+      "seconds": 0.045
+    },
+    "tests/test_media_archive_scheduler.py": {
+      "items": 33,
+      "seconds": 14.844
+    },
+    "tests/test_media_archive_staging.py": {
+      "items": 21,
+      "seconds": 0.81
+    },
+    "tests/test_media_archive_terms.py": {
+      "items": 6,
+      "seconds": 0.046
+    },
+    "tests/test_media_archive_worker.py": {
+      "items": 33,
+      "seconds": 17.356
+    },
+    "tests/test_mercadopago_checkout.py": {
+      "items": 54,
+      "seconds": 65.821
+    },
+    "tests/test_mercadopago_credit_purchases.py": {
+      "items": 87,
+      "seconds": 230.481
+    },
+    "tests/test_mercadopago_operations.py": {
+      "items": 39,
+      "seconds": 0.034
+    },
+    "tests/test_mercadopago_projections.py": {
+      "items": 15,
+      "seconds": 14.634
+    },
+    "tests/test_mercadopago_schema.py": {
+      "items": 12,
+      "seconds": 0.084
+    },
+    "tests/test_mercadopago_settings.py": {
+      "items": 15,
+      "seconds": 14.186
+    },
+    "tests/test_mercadopago_webhook.py": {
+      "items": 69,
+      "seconds": 64.29
+    },
+    "tests/test_mercadopago_worker.py": {
+      "items": 12,
+      "seconds": 0.012
+    },
+    "tests/test_messaging.py": {
+      "items": 39,
+      "seconds": 0.04
+    },
+    "tests/test_migration_downgrade_lock_guards.py": {
+      "items": 3,
+      "seconds": 0.091
+    },
+    "tests/test_notification_channel_readiness.py": {
+      "items": 27,
+      "seconds": 0.028
+    },
+    "tests/test_notification_delivery.py": {
+      "items": 33,
+      "seconds": 8.845
+    },
+    "tests/test_notification_events.py": {
+      "items": 15,
+      "seconds": 3.622
+    },
+    "tests/test_notification_payments.py": {
+      "items": 6,
+      "seconds": 2.501
+    },
+    "tests/test_notification_settings.py": {
+      "items": 45,
+      "seconds": 12.111
+    },
+    "tests/test_optional_payment_migration.py": {
+      "items": 6,
+      "seconds": 20.319
+    },
+    "tests/test_order_delivery.py": {
+      "items": 60,
+      "seconds": 16.263
+    },
+    "tests/test_order_delivery_concurrency.py": {
+      "items": 6,
+      "seconds": 0.0
+    },
+    "tests/test_order_delivery_migration.py": {
+      "items": 3,
+      "seconds": 12.461
+    },
+    "tests/test_order_delivery_url.py": {
+      "items": 78,
+      "seconds": 0.078
+    },
+    "tests/test_otp_privacy.py": {
+      "items": 3,
+      "seconds": 22.655
+    },
+    "tests/test_owner_credit_mutations_postgres.py": {
+      "items": 9,
+      "seconds": 29.557
+    },
+    "tests/test_payment_availability.py": {
+      "items": 9,
+      "seconds": 12.78
+    },
+    "tests/test_payment_operations_redesign.py": {
+      "items": 36,
+      "seconds": 42.061
+    },
+    "tests/test_payment_shortcut_projection.py": {
+      "items": 6,
+      "seconds": 7.693
+    },
+    "tests/test_payment_status_visual_groups.py": {
+      "items": 6,
+      "seconds": 6.78
+    },
+    "tests/test_payment_templates.py": {
+      "items": 12,
+      "seconds": 0.013
+    },
+    "tests/test_persistent_client_cart_migration.py": {
+      "items": 6,
+      "seconds": 21.13
+    },
+    "tests/test_photographer_access_recovery.py": {
+      "items": 69,
+      "seconds": 212.273
+    },
+    "tests/test_photographer_adult_attestation_migration.py": {
+      "items": 3,
+      "seconds": 13.955
+    },
+    "tests/test_photographer_credits.py": {
+      "items": 153,
+      "seconds": 396.076
+    },
+    "tests/test_photographer_onboarding_migration.py": {
+      "items": 6,
+      "seconds": 31.608
+    },
+    "tests/test_photographer_signup.py": {
+      "items": 72,
+      "seconds": 220.27
+    },
+    "tests/test_photographer_signup_journey.py": {
+      "items": 3,
+      "seconds": 0.0
+    },
+    "tests/test_photographer_signup_migration.py": {
+      "items": 3,
+      "seconds": 15.166
+    },
+    "tests/test_photographer_terms_migration.py": {
+      "items": 3,
+      "seconds": 0.003
+    },
+    "tests/test_photographer_totp.py": {
+      "items": 33,
+      "seconds": 110.689
+    },
+    "tests/test_photographer_totp_support.py": {
+      "items": 39,
+      "seconds": 122.863
+    },
+    "tests/test_photographer_turnstile.py": {
+      "items": 24,
+      "seconds": 0.026
+    },
+    "tests/test_pix.py": {
+      "items": 12,
+      "seconds": 0.117
+    },
+    "tests/test_platform_backup_archive.py": {
+      "items": 84,
+      "seconds": 0.179
+    },
+    "tests/test_platform_backup_payload.py": {
+      "items": 30,
+      "seconds": 0.036
+    },
+    "tests/test_platform_backup_postgres.py": {
+      "items": 6,
+      "seconds": 0.0
+    },
+    "tests/test_platform_backup_production_cli.py": {
+      "items": 9,
+      "seconds": 0.008
+    },
+    "tests/test_platform_backup_restore.py": {
+      "items": 39,
+      "seconds": 0.058
+    },
+    "tests/test_platform_backup_retention.py": {
+      "items": 51,
+      "seconds": 0.558
+    },
+    "tests/test_platform_backup_runtime_config.py": {
+      "items": 39,
+      "seconds": 0.033
+    },
+    "tests/test_platform_backup_runtime_worker.py": {
+      "items": 9,
+      "seconds": 0.058
+    },
+    "tests/test_platform_backup_storage.py": {
+      "items": 48,
+      "seconds": 0.116
+    },
+    "tests/test_platform_backup_worker.py": {
+      "items": 30,
+      "seconds": 0.379
+    },
+    "tests/test_platform_backup_workspace_credentials.py": {
+      "items": 30,
+      "seconds": 87.29
+    },
+    "tests/test_platform_backup_workspace_store.py": {
+      "items": 45,
+      "seconds": 8.262
+    },
+    "tests/test_platform_console.py": {
+      "items": 81,
+      "seconds": 226.042
+    },
+    "tests/test_platform_console_financial.py": {
+      "items": 6,
+      "seconds": 17.698
+    },
+    "tests/test_platform_console_media_deletion.py": {
+      "items": 30,
+      "seconds": 89.478
+    },
+    "tests/test_platform_console_migration.py": {
+      "items": 6,
+      "seconds": 10.593
+    },
+    "tests/test_platform_console_photo_payments.py": {
+      "items": 6,
+      "seconds": 20.121
+    },
+    "tests/test_platform_console_status.py": {
+      "items": 18,
+      "seconds": 51.592
+    },
+    "tests/test_preview_adjustment.py": {
+      "items": 72,
+      "seconds": 69.849
+    },
+    "tests/test_preview_adjustment_strength_migration.py": {
+      "items": 9,
+      "seconds": 0.143
+    },
+    "tests/test_preview_exposure.py": {
+      "items": 6,
+      "seconds": 0.009
+    },
+    "tests/test_pricing.py": {
+      "items": 30,
+      "seconds": 0.031
+    },
+    "tests/test_private_folder_overview.py": {
+      "items": 6,
+      "seconds": 1.597
+    },
+    "tests/test_private_gallery_operations_sales_migration.py": {
+      "items": 3,
+      "seconds": 18.909
+    },
+    "tests/test_private_membership.py": {
+      "items": 15,
+      "seconds": 14.413
+    },
+    "tests/test_private_notification_authorization.py": {
+      "items": 27,
+      "seconds": 6.671
+    },
+    "tests/test_private_notification_postgres.py": {
+      "items": 3,
+      "seconds": 22.679
+    },
+    "tests/test_private_photo_gallery_link_migration.py": {
+      "items": 3,
+      "seconds": 0.012
+    },
+    "tests/test_private_upload_batch_migration.py": {
+      "items": 3,
+      "seconds": 19.42
+    },
+    "tests/test_private_upload_batches.py": {
+      "items": 21,
+      "seconds": 7.314
+    },
+    "tests/test_provider_payment_correction_migration.py": {
+      "items": 6,
+      "seconds": 41.942
+    },
+    "tests/test_provider_payment_migration.py": {
+      "items": 9,
+      "seconds": 65.857
+    },
+    "tests/test_provider_payment_persistence.py": {
+      "items": 42,
+      "seconds": 118.512
+    },
+    "tests/test_public_folder_deadline_renewal.py": {
+      "items": 54,
+      "seconds": 30.93
+    },
+    "tests/test_public_folder_processing_migration.py": {
+      "items": 3,
+      "seconds": 0.026
+    },
+    "tests/test_public_origin.py": {
+      "items": 6,
+      "seconds": 0.006
+    },
+    "tests/test_push_subscriptions.py": {
+      "items": 18,
+      "seconds": 4.875
+    },
+    "tests/test_required_gallery_cover.py": {
+      "items": 42,
+      "seconds": 40.511
+    },
+    "tests/test_retire_infinitepay_migration.py": {
+      "items": 6,
+      "seconds": 0.034
+    },
+    "tests/test_schema_revision_check.py": {
+      "items": 12,
+      "seconds": 0.294
+    },
+    "tests/test_session_recovery.py": {
+      "items": 33,
+      "seconds": 113.487
+    },
+    "tests/test_statistics_report.py": {
+      "items": 6,
+      "seconds": 0.006
+    },
+    "tests/test_storage_metrics.py": {
+      "items": 9,
+      "seconds": 0.015
+    },
+    "tests/test_system_monitor.py": {
+      "items": 93,
+      "seconds": 9.934
+    },
+    "tests/test_tenant_acervo.py": {
+      "items": 57,
+      "seconds": 189.317
+    },
+    "tests/test_tenant_admin_auth.py": {
+      "items": 51,
+      "seconds": 164.909
+    },
+    "tests/test_tenant_auth.py": {
+      "items": 18,
+      "seconds": 59.867
+    },
+    "tests/test_tenant_canonical_host_migration.py": {
+      "items": 3,
+      "seconds": 8.005
+    },
+    "tests/test_tenant_capacity_queues.py": {
+      "items": 3,
+      "seconds": 8.181
+    },
+    "tests/test_tenant_channel_compose.py": {
+      "items": 6,
+      "seconds": 2.005
+    },
+    "tests/test_tenant_cleanup_jobs.py": {
+      "items": 30,
+      "seconds": 100.933
+    },
+    "tests/test_tenant_client_auth.py": {
+      "items": 81,
+      "seconds": 219.228
+    },
+    "tests/test_tenant_client_isolation.py": {
+      "items": 24,
+      "seconds": 68.237
+    },
+    "tests/test_tenant_client_navigation.py": {
+      "items": 15,
+      "seconds": 42.993
+    },
+    "tests/test_tenant_closure.py": {
+      "items": 48,
+      "seconds": 132.713
+    },
+    "tests/test_tenant_closure_api.py": {
+      "items": 12,
+      "seconds": 33.593
+    },
+    "tests/test_tenant_closure_biometrics.py": {
+      "items": 6,
+      "seconds": 1.165
+    },
+    "tests/test_tenant_closure_identity.py": {
+      "items": 24,
+      "seconds": 54.817
+    },
+    "tests/test_tenant_closure_migration.py": {
+      "items": 30,
+      "seconds": 122.198
+    },
+    "tests/test_tenant_closure_obligations.py": {
+      "items": 42,
+      "seconds": 6.778
+    },
+    "tests/test_tenant_closure_recovery.py": {
+      "items": 75,
+      "seconds": 46.036
+    },
+    "tests/test_tenant_commerce.py": {
+      "items": 48,
+      "seconds": 173.668
+    },
+    "tests/test_tenant_configuration.py": {
+      "items": 36,
+      "seconds": 111.884
+    },
+    "tests/test_tenant_credit_browse.py": {
+      "items": 15,
+      "seconds": 37.084
+    },
+    "tests/test_tenant_credit_purchase_postgres.py": {
+      "items": 12,
+      "seconds": 59.051
+    },
+    "tests/test_tenant_domain.py": {
+      "items": 21,
+      "seconds": 75.109
+    },
+    "tests/test_tenant_domain_context.py": {
+      "items": 33,
+      "seconds": 94.186
+    },
+    "tests/test_tenant_drive_state_migration.py": {
+      "items": 6,
+      "seconds": 12.688
+    },
+    "tests/test_tenant_facial_maintenance.py": {
+      "items": 42,
+      "seconds": 132.886
+    },
+    "tests/test_tenant_folder_reopening_migration.py": {
+      "items": 21,
+      "seconds": 75.172
+    },
+    "tests/test_tenant_foundation.py": {
+      "items": 21,
+      "seconds": 72.198
+    },
+    "tests/test_tenant_host_reservation.py": {
+      "items": 27,
+      "seconds": 72.915
+    },
+    "tests/test_tenant_host_reservation_migration.py": {
+      "items": 3,
+      "seconds": 0.19
+    },
+    "tests/test_tenant_hostname_activation_migration.py": {
+      "items": 3,
+      "seconds": 9.227
+    },
+    "tests/test_tenant_hostname_activation_postgres.py": {
+      "items": 6,
+      "seconds": 22.415
+    },
+    "tests/test_tenant_hosts.py": {
+      "items": 48,
+      "seconds": 37.223
+    },
+    "tests/test_tenant_identity_directory.py": {
+      "items": 36,
+      "seconds": 105.201
+    },
+    "tests/test_tenant_installation_operator.py": {
+      "items": 36,
+      "seconds": 105.651
+    },
+    "tests/test_tenant_lifecycle.py": {
+      "items": 18,
+      "seconds": 62.261
+    },
+    "tests/test_tenant_local_demo_schema.py": {
+      "items": 6,
+      "seconds": 33.818
+    },
+    "tests/test_tenant_media_deletion.py": {
+      "items": 33,
+      "seconds": 10.16
+    },
+    "tests/test_tenant_media_deletion_migration.py": {
+      "items": 9,
+      "seconds": 52.952
+    },
+    "tests/test_tenant_media_jobs.py": {
+      "items": 15,
+      "seconds": 44.108
+    },
+    "tests/test_tenant_migration.py": {
+      "items": 24,
+      "seconds": 100.551
+    },
+    "tests/test_tenant_notification_transport.py": {
+      "items": 78,
+      "seconds": 249.598
+    },
+    "tests/test_tenant_operational_entry.py": {
+      "items": 6,
+      "seconds": 16.284
+    },
+    "tests/test_tenant_operator_migration.py": {
+      "items": 6,
+      "seconds": 55.927
+    },
+    "tests/test_tenant_owner_reset.py": {
+      "items": 66,
+      "seconds": 232.573
+    },
+    "tests/test_tenant_ownership_schema.py": {
+      "items": 72,
+      "seconds": 186.424
+    },
+    "tests/test_tenant_photographer_migration.py": {
+      "items": 57,
+      "seconds": 312.269
+    },
+    "tests/test_tenant_pilot_journeys.py": {
+      "items": 3,
+      "seconds": 0.0
+    },
+    "tests/test_tenant_pilot_preparation.py": {
+      "items": 9,
+      "seconds": 17.324
+    },
+    "tests/test_tenant_producers.py": {
+      "items": 21,
+      "seconds": 75.735
+    },
+    "tests/test_tenant_profile_retention.py": {
+      "items": 42,
+      "seconds": 93.106
+    },
+    "tests/test_tenant_profile_retention_migration.py": {
+      "items": 3,
+      "seconds": 16.838
+    },
+    "tests/test_tenant_provisioning.py": {
+      "items": 48,
+      "seconds": 133.507
+    },
+    "tests/test_tenant_storage_metrics.py": {
+      "items": 45,
+      "seconds": 131.244
+    },
+    "tests/test_tenant_subdomain_onboarding.py": {
+      "items": 63,
+      "seconds": 57.936
+    },
+    "tests/test_totp_crypto.py": {
+      "items": 24,
+      "seconds": 0.025
+    },
+    "tests/test_totp_migration.py": {
+      "items": 24,
+      "seconds": 0.065
+    },
+    "tests/test_totp_persistence.py": {
+      "items": 6,
+      "seconds": 0.031
+    },
+    "tests/test_totp_postgres_concurrency.py": {
+      "items": 9,
+      "seconds": 30.834
+    },
+    "tests/test_totp_verification.py": {
+      "items": 24,
+      "seconds": 0.016
+    },
+    "tests/test_transactional_notification_migration.py": {
+      "items": 3,
+      "seconds": 21.963
+    },
+    "tests/test_unified_checkout.py": {
+      "items": 99,
+      "seconds": 89.07
+    },
+    "tests/test_unified_pix_migration.py": {
+      "items": 3,
+      "seconds": 31.749
+    },
+    "tests/test_web_push.py": {
+      "items": 66,
+      "seconds": 0.093
+    },
+    "tests/test_whatsapp_delivery.py": {
+      "items": 78,
+      "seconds": 98.38
+    },
+    "tests/test_worker_graceful_shutdown.py": {
+      "items": 6,
+      "seconds": 0.007
+    }
+  },
+  "schema_version": 1,
+  "source": {
+    "captured_at_utc": "2026-11-19T10:26:46Z",
+    "collected_items": 2625,
+    "event": "pull_request",
+    "head_sha": "c841dce02a092ddba241b733aaa2673c0f5e5e6e",
+    "junit_case_seconds": 3967.308,
+    "module_count": 251,
+    "run_id": 44502252441,
+    "run_url": "https://github.com/conradodeita/markina-gallery/actions/runs/44502252441",
+    "sample_count": 3,
+    "sample_junit_case_seconds": {
+      "44433195647": 4070.468,
+      "44461878620": 3550.858,
+      "44502252441": 3967.308
+    },
+    "sample_run_ids": [
+      44433195647,
+      44461878620,
+      44502252441
+    ],
+    "shard_count": 4,
+    "shard_junit_case_seconds": {
+      "0": 956.72,
+      "1": 987.102,
+      "2": 912.153,
+      "3": 1111.333
+    },
+    "shard_jobs": "all four shard jobs and aggregate backend succeeded; exact 2,625-case coverage verified",
+    "tested_revision": "28a463dda5dfbdba4c4b515d1fb602c88281328e",
+    "workflow": "CI",
+    "workflow_conclusion": "failure",
+    "workflow_failure": "homolog-inventory-policy failed because the test was invoked as a script and imported scripts.verify_main_ci_evidence; gemma-runtime propagated that failure",
+    "module_mean_correlations": {
+      "44433195647:44461878620": 0.9569311739563046,
+      "44433195647:44502252441": 0.9771768446504688,
+      "44461878620:44502252441": 0.9582629110888717
+    }
+  }
+}

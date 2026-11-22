@@ -4,7 +4,7 @@
 
 ### Requirement: Runtime Gemma integra o ciclo operacional sem ativação implícita
 
-O runtime Gemma SHALL ser provisionado separadamente e iniciado explicitamente pelo profile facial-gemma em homologação autorizada. O deploy SHALL preservar a seleção SFace inicial e SHALL incluir Gemma já ativo entre os escritores pausados antes de migrations, serviços reconstruídos e healthchecks. Retomada SHALL alcançar somente containers Gemma existentes; manutenção destrutiva autorizada SHALL pausar o leitor Gemma ativo e restaurá-lo depois. Rollback para checkout sem o serviço SHALL parar Gemma antes da troca e SHALL NOT restaurar banco automaticamente. Nenhuma dessas rotinas SHALL modificar segredos ou iniciar Gemma pela ativação do profile facial convencional.
+O runtime Gemma SHALL ser separado e iniciar somente pelo profile `facial-gemma` em homologação autorizada. Deploy preserva SFace inicial e SHALL pausar/confirmar writers Gemma ativos antes de migrations, reconstruções e healthchecks; retoma só containers existentes. Manutenção destrutiva pausa/restaura o leitor. Rollback SHALL parar Gemma antes da troca, sem restaurar banco. Rotinas não alteram segredos nem iniciam Gemma pelo profile convencional.
 
 #### Scenario: Migration encontra worker Gemma ativo
 
@@ -23,7 +23,7 @@ O runtime Gemma SHALL ser provisionado separadamente e iniciado explicitamente p
 
 ### Requirement: High-res e monitor preservam o motor atual
 
-Gemma SHALL usar a fonte high-res temporária das fotos aderentes, em job independente, sem alterar estado/métricas SFace nem bloquear geração de prévias. A retenção adicional SHALL ser limitada ao TTL existente; leitores com lease ativo SHALL impedir exclusão concorrente. Fotos cuja fonte expirou SHALL permanecer SFace quando a cobertura Gemma estiver incompleta. Monitor SHALL reconhecer atividade/duração/erros do worker Gemma e incluir seus jobs nos totais faciais, sem dados biométricos em métricas.
+Gemma SHALL usar fonte high-res temporária de fotos elegíveis em jobs independentes, sem alterar estado/métricas SFace ou bloquear prévias. TTL permanece vigente e lease ativo impede exclusão concorrente. Fonte expirada ou cobertura incompleta mantém a foto em SFace. Monitor acompanha heartbeat, duração, erros e jobs sem dados biométricos.
 
 #### Scenario: Gemma falha após sucesso SFace
 
@@ -52,7 +52,7 @@ O benchmark SHALL executar em harness isolado, preservar o motor atual e manter 
 
 ### Requirement: Seleção global de engine com fallback integral por galeria
 
-A configuração SHALL ser global e editável somente pelo proprietário autenticado. A interface SHALL oferecer um único seletor entre SFace e Gemma, com SFace como padrão. Ao selecionar Gemma, somente galerias criadas depois da primeira ativação Gemma poderão usar esse engine. Uma galeria SHALL usar Gemma apenas quando todos os ativos elegíveis estiverem completamente indexados e atuais no namespace Gemma; em qualquer pendência, falha, ausência ou divergência, a busca inteira SHALL usar SFace. Cada busca SHALL fixar o engine selecionado no momento da criação. Desligar Gemma SHALL pausar novos jobs sem apagar embeddings existentes.
+A configuração SHALL ser global, editável pelo proprietário autenticado e oferecer seletor único SFace/Gemma, com SFace padrão. Só galerias criadas após a primeira ativação usam Gemma, com todos os ativos elegíveis cobertos e atuais. Pendência, falha, ausência ou divergência SHALL manter toda a busca em SFace. Cada busca fixa o engine de criação; desligar Gemma pausa jobs sem apagar embeddings.
 
 #### Scenario: Proprietário habilita Gemma
 

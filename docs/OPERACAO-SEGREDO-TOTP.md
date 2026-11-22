@@ -1,0 +1,68 @@
+# Operação do segredo TOTP administrativo
+
+Checkpoint16/11/2026 atualizado pelo [release em produção](saas-evolution/production-release-2026-11-16.md). Custódia privada, cópia externa escolhida pelo proprietário, rollout e restore0126 executados. As restrições de preparação local e inventários anteriores abaixo conservam seu contexto histórico. A revisão visual autenticada continua pendente.
+
+## Escopo e estado
+
+O segredo TOTP do administrador é persistido em envelope AES-256-GCM no banco. O keyring é dedicado e deve vir de um gerenciador de segredos externo ao banco e ao Git. `APP_ENV` e `ADMIN_TOTP_SECRET_ENV` precisam identificar o mesmo ambiente. A API, o worker, a migration e o seed recebem a mesma configuração através do ambiente do servidor; o frontend nunca recebe as chaves.
+
+Este procedimento descreve a operação da implementação local. Ele **não autoriza** migration, mudança de segredo, reinício, deploy ou teste com contas/dados de produção ou homologação. A produção observada executa API e worker em versões distintas; a liberação permanece bloqueada até inventariar os consumidores, validar um conjunto compatível de imagens/código, comprovar backup restaurável e aprovar janela e plano de impacto zero.
+
+## Provisionamento
+
+### Preparação do binário intermediário — 16/11/2026
+
+O SaaS completo exige tabelas posteriores à migration contract e não pode servir de versão intermediária sobre0091/0092. `scripts/prepare_admin_totp_compatibility.py` prepara localmente a adaptação do módulo legado realmente inventariado, com hash de origem obrigatório, cipher do candidato, Dockerfile e manifesto. Ele recusa formato divergente e diretório já existente; não acessa Docker, rede, banco, keyring ou configuração do servidor.
+
+O pacote exige uma imagem-base imutável registrada no inventário. Antes de construir sua imagem derivada, o operador deve conferir que a tag técnica indicada no manifesto resolve exatamente ao image ID registrado, e repetir a conferência depois do build. A geração do pacote, o build e a leitura TOTP isolada são evidências diferentes; nenhum desses passos substitui startup HTTP completo, roteamento, drenagem, teste de filas ou rollback.
+
+O pacote da API observada foi ensaiado somente na cópia isolada já migrada a0126: carregou o fator existente sem plaintext e cifrou uma inserção sintética revertida. Imagem intermediária `sha256:61de18af03fcb978ec7f6c5ef4fd3fb81a5f75d84fb966d87ccdebd71df323c6`; nenhum serviço produtivo usa essa imagem neste checkpoint. Testes, hashes, contexto e limites estão em `openspec/changes/protect-admin-totp-secrets/validation.md`.
+
+### Keyring no ambiente protegido
+
+1. Gere uma chave AES de 32 bytes e um `key_id` estável (1–48 caracteres ASCII de letras, números, `_` ou `-`) diretamente no gerenciador de segredos aprovado para o ambiente, ou na custódia POSIX descrita abaixo.
+2. Configure `APP_ENV`, `ADMIN_TOTP_SECRET_ENV` (valor idêntico), `ADMIN_TOTP_ACTIVE_KEY_ID` e `ADMIN_TOTP_KEYS` como objeto JSON `{ "<key_id>": "<chave em Base64>" }` no secret store. Não coloque valores reais em `.env`, `.env.example`, logs, comandos registrados ou artefatos Git.
+3. Garanta que API, worker, `migrate` e `seed-admin` recebem as mesmas versões necessárias do keyring. Chave ausente, chave ativa ausente, Base64 inválido ou ambiente divergente causa falha fechada.
+4. Antes de habilitar a migration, execute o ensaio com banco PostgreSQL descartável: upgrade de base vazia e com fator sintético, leitura TOTP com o mesmo fator, downgrade e restore isolado. Inspecione somente se o banco contém envelope, sem imprimir a chave nem o plaintext.
+
+## Alternativa de custódia POSIX
+
+Preparação solicitada pelo proprietário em16/11/2026. `python -m scripts.admin_totp_custody --directory /etc/pyp-totp --environment production -- <consumidor>` lê `keyring.json` e substitui o processo pelo consumidor com as variáveis validadas. Execute de um checkout operacional confiável contendo o helper, suas primitivas POSIX e o cipher do candidato. Os módulos precisam das dependências criptográficas existentes do backend. O helper não gera, provisiona, imprime ou exporta chaves para arquivos temporários.
+
+O diretório `/etc/pyp-totp` deve ser root:root0700 e o arquivo root:root0400 ou0600, regular, com um único hardlink. Todos os pais precisam ter propriedade e permissões aceitas pelas primitivas POSIX; caminhos dentro de diretório gravável por usuário de aplicação são recusados mesmo se a folha for root-only. O JSON contém exclusivamente `ADMIN_TOTP_SECRET_ENV`, `ADMIN_TOTP_ACTIVE_KEY_ID` e `ADMIN_TOTP_KEYS`, todos strings. O último valor é a string JSON do mapa de chaves Base64. O ambiente informado deve corresponder a `APP_ENV`.
+
+Para Docker, passe os nomes via `--env APP_ENV --env ADMIN_TOTP_SECRET_ENV --env ADMIN_TOTP_ACTIVE_KEY_ID --env ADMIN_TOTP_KEYS`; o cliente Docker recebe os valores pelo ambiente herdado do helper. Valores reais não podem aparecer nos argumentos, logs ou recibos. Operadores root e usuários com acesso ao daemon Docker conseguem consultar o ambiente do container. O helper entrega somente o keyring e não substitui o inventário de serviços, as outras configurações nem o procedimento de rollout.
+
+Antes do provisionamento real, guardar cópia controlada do arquivo fora do servidor, sob proteção independente, e comprovar recuperação das versões requeridas pelos backups. O ensaio sintético de16/11 validou Linux/Python3.10, execução do consumidor Docker isolado e recuperação após excluir a origem. A cópia externa usada no ensaio ficou na memória do processo Windows; isso comprova o caminho de transferência/restore, mas a custódia externa durável e offline do keyring real continua pendente. Nenhuma chave de produção foi criada por esse ensaio.
+
+## Rotação do keyring
+
+1. Publique primeiro no secret store a chave nova junto com todas as chaves antigas ainda referenciadas; selecione a nova como ativa. Não remova a antiga.
+2. Em cópia isolada/restaurável, rode `python -m app.rotate_totp_keys --dry-run`. O resumo mostra somente contagens por `key_id`, itens pendentes e o identificador ativo.
+3. Após validação e autorização operacional específica, rode `python -m app.rotate_totp_keys --apply --confirm ROTATE_ADMIN_TOTP_KEYS:<key_id-ativo>` no alvo aprovado. O comando trava os registros e executa a operação em uma transação; uma falha aborta o lote.
+4. Confirme que `pendentes` é zero num novo dry-run e que cada envelope pode ser decifrado com o keyring que contém a chave nova. Faça login de teste controlado com o mesmo fator e confira auditoria sanitizada.
+5. Preserve as chaves antigas necessárias a backups históricos. A remoção só pode ocorrer depois de inventariar envelopes em todos os bancos/backups retidos e validar restore sem a chave removida. O comando de rotação recusa envelopes cuja chave não está no keyring, sem alterar os registros.
+
+Uma execução `--dry-run` não grava alterações. `--apply` exige confirmação literal do `key_id` ativo; IDs e contagens não são segredos, mas saídas continuam restritas a operadores autorizados.
+
+## Recuperação de acesso e perda de chave
+
+- Códigos de recuperação são mostrados uma vez após senha e passo TOTP válido ainda não usado. Devem ser guardados offline pelo administrador. O backend guarda somente seletor e hash Argon2id da parte secreta; o navegador não persiste os códigos em local/session storage.
+- Um código de recuperação autentica um único desafio MFA uma única vez. Para emitir outro lote, o operador precisa de sessão, senha e TOTP atual; não há bypass por e-mail ou identidade.
+- Se uma versão de chave for perdida, interrompa o rollout e restaure essa versão pelo secret store/cópia controlada antes de tentar ler ou migrar os registros dependentes. O banco não permite reconstruir a chave.
+- A restauração de backup exige também recuperar o conjunto de chaves correspondente ao snapshot, em ambiente isolado e com fixture sintética. Não descarte cópias antigas de chave nem restaure o banco de produção para teste.
+- Perda simultânea de TOTP, códigos offline e chave externa exige procedimento humano assistido; não redefina TOTP nem enfraqueça MFA por SQL ou endpoint ad hoc.
+
+## Rollback e compatibilidade
+
+A migration `20261031_0091` é expand: adiciona `totp_secret_envelope` e `totp_last_used_step`, faz backfill autenticado e mantém `admin_user.totp_secret` legado sem alteração para a API antiga. O modo `ADMIN_TOTP_LEGACY_DUAL_WRITE=true` só pode ser ligado durante convivência explicitamente planejada; nessa janela, a aplicação nova grava envelope e mantém o campo legado sincronizado. Escritas antigas posteriores ao backfill são reprocessadas pelo runtime novo ou reconciliadas por `0093` antes da limpeza.
+
+A migration `0093` é contract: exige dual-write desligado, consumidores antigos atualizados/drenados e envelope/contexto válido para todas as contas; adquire lock que bloqueia escritas concorrentes à tabela de admins, permite leituras, reconcilia qualquer envelope válido com a última escrita legada e só então define plaintext como NULL. O ensaio operacional deve considerar esse breve bloqueio de autenticações que atualizem a tabela. O downgrade de `0093` decifra e restaura somente as linhas cujo plaintext foi limpo e preserva qualquer plaintext ainda presente, numa transação antes de rollback de aplicação. Mantenha as colunas/envelopes depois do rollback; remover o envelope ou chave externa é operação separada e nunca automática.
+
+O proprietário confirmou depois que a produção atende clientes e não pode ser desligada no plano padrão. Portanto, não executar `0093` ou `alembic upgrade head` enquanto o lock, a troca de consumidores e o atendimento contínuo não forem ensaiados e demonstrados no candidato real. Se a etapa exigir bloqueio de login ou outra indisponibilidade temporária, apresentar alcance, duração estimada, janela e retorno e obter consentimento específico antes dela. Sem esse consentimento, manter o runtime atual ativo e a etapa contract pendente.
+
+Código antigo que lê diretamente `totp_secret` espera plaintext. A expansão preserva a coluna; a etapa contract não é compatível com binários antigos até executar downgrade e restaurar plaintext. O pacote de release precisa confirmar todas as instâncias/processos, drenagem de API/worker, rota de tráfego, restore e rollback. Este procedimento técnico não substitui a autorização vigente do proprietário nem os gates de continuidade; o pacote intermediário acima não foi implantado nos serviços produtivos.
+
+## Evidência operacional
+
+Registre em `openspec/changes/protect-admin-totp-secrets/validation.md` somente ambiente, versão/commit, contagens agregadas, estado de restore, resultado e bloqueios. Nunca registre chave, TOTP, código de recuperação, conteúdo de `.env`, segredo de integração ou dados pessoais.

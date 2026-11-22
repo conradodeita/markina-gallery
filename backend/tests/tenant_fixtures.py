@@ -1,5 +1,7 @@
 """Propriedade explícita nos dados sintéticos das suítes anteriores à fundação."""
 
+from datetime import UTC, datetime
+from time import sleep
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -15,6 +17,52 @@ LEGACY_SCHEMA_HEAD = "20260928_0068"
 def fixture_admin(admin: AdminUser) -> AdminUser:
     admin.tenant_memberships.append(TenantAdmin(tenant_id=FIXTURE_TENANT_ID))
     return admin
+
+
+def fixture_unmetered_owner(db, admin: AdminUser, *, tenant_id=FIXTURE_TENANT_ID) -> None:
+    """Provisiona o tenant sintético do PlatformOwner nas suítes sem migration."""
+    from app.auth import Tenant, TenantCreditWallet
+    from app.system_monitor.models import PlatformOwner
+
+    if db.get(Tenant, tenant_id) is None:
+        db.add(Tenant(id=tenant_id))
+        db.flush()
+    if not any(membership.tenant_id == tenant_id for membership in admin.tenant_memberships):
+        admin.tenant_memberships.append(TenantAdmin(tenant_id=tenant_id))
+    db.add(admin)
+    db.flush()
+    owner = db.get(PlatformOwner, 1)
+    if owner is None:
+        db.add(PlatformOwner(
+            singleton=1,
+            admin_user_id=admin.id,
+            authorization_reference="synthetic-test-owner",
+        ))
+    elif owner.admin_user_id != admin.id:
+        raise AssertionError("A suíte já possui outro PlatformOwner sintético.")
+    wallet = db.get(TenantCreditWallet, tenant_id)
+    if wallet is None:
+        db.add(TenantCreditWallet(tenant_id=tenant_id, mode="unmetered"))
+    elif wallet.mode != "unmetered":
+        raise AssertionError("O tenant sintético do PlatformOwner deve ser ilimitado.")
+    db.flush()
+
+
+def fresh_totp_code(admin: AdminUser) -> str:
+    """Gera um passo ainda não consumido para autenticações sintéticas repetidas."""
+    import pyotp
+
+    totp = pyotp.TOTP(admin.totp_secret)
+    now = datetime.now(UTC)
+    current_step = totp.timecode(now)
+    last_used = admin.totp_last_used_step
+    step = max(current_step, (last_used + 1) if last_used is not None else current_step)
+    if step > current_step + 1:
+        sleep(step * totp.interval - now.timestamp() + 0.05)
+        now = datetime.now(UTC)
+        current_step = totp.timecode(now)
+        step = max(current_step, (last_used + 1) if last_used is not None else current_step)
+    return totp.at(step * totp.interval)
 
 
 def insert_legacy_model(connection, entity, **values):

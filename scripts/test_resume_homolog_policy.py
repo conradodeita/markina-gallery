@@ -2,6 +2,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("resume-homolog.sh").read_text(encoding="utf-8")
 RUNBOOK = Path(__file__).parents[1].joinpath("docs/DEPLOY-CONTINUO-HOMOLOGACAO.md").read_text(encoding="utf-8")
+RUNBOOK_NORMALIZED = RUNBOOK.casefold()
 
 
 def require(fragment: str, reason: str) -> None:
@@ -22,6 +23,8 @@ require("readonly REQUIRED_SERVICES=(api web worker nginx)", "lista base delimit
 require("readonly FACIAL_SERVICES=(face-search-worker face-index-worker face-maintenance-worker)", "lista facial delimitada")
 require("preview-adjustment-worker", "suporte ao worker opcional de prévia")
 require('[[ "$PWD" == "$PROJECT_ROOT" ]]', "bloqueio de execução fora do projeto")
+require("Nome legado: retoma somente contêineres existentes da aplicação Markina em produção.", "identificação do destino real apesar do nome legado")
+require("configuração externa da produção ausente", "erro sem classificar produção como homologação")
 require("LOCAL_PUBLIC_BASE_URL/healthz", "healthcheck local")
 require("PUBLIC_BASE_URL/healthz", "healthcheck público")
 require("verify_schema_revision", "verificação de schema no preflight")
@@ -42,14 +45,29 @@ for fragment, reason in forbidden.items():
     forbid(fragment, reason)
 
 for fragment in (
+    "não existe ambiente operacional de homologação",
+    "foram aposentados",
+    "não configure o Environment `homolog`",
+    "scripts/resume-homolog.sh",
+    "destino configurado pelo script é a produção real",
     "bash scripts/resume-homolog.sh --public-base-url https://markina.pickyourpic.com.br",
     "--no-deps --no-recreate",
-    "não faz deploy, rebuild, recriação, limpeza nem alteração de banco",
+    "não faz release, build, recriação, migration, rollback de versão, limpeza",
     "Evolution",
 ):
-    if fragment not in RUNBOOK:
-        raise SystemExit(f"runbook não documenta a retomada segura: {fragment}")
-resume_section = RUNBOOK.split("### Retomada dos serviços sem deploy ou migration", 1)[-1]
+    if fragment.casefold() not in RUNBOOK_NORMALIZED:
+        raise SystemExit(f"runbook não documenta a política de produção/retomada: {fragment}")
+
+for obsolete in (
+    "O workflow `CI` publica em homologação",
+    "Crie o Environment GitHub `homolog`",
+    "HOMOLOG_SSH_PRIVATE_KEY",
+    "Aprove o primeiro job pendente do Environment",
+):
+    if obsolete.casefold() in RUNBOOK_NORMALIZED:
+        raise SystemExit(f"runbook mantém instrução aposentada de homologação: {obsolete}")
+
+resume_section = RUNBOOK.split("## Retomada sem deploy ou migration", 1)[-1]
 resume_command = resume_section.split("```", 2)[1]
 if "docker compose start" in resume_command:
     raise SystemExit("o comando de retomada documentado não pode usar docker compose start")

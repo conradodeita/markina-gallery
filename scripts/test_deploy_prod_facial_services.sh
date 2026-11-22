@@ -7,10 +7,11 @@ source "$(dirname "$0")/deploy-prod-facial-services.sh"
 readonly WEB_HASH="$(printf 'a%.0s' {1..64})"
 readonly API_HASH="$(printf 'b%.0s' {1..64})"
 readonly WORKER_HASH="$(printf 'c%.0s' {1..64})"
-readonly SYNTHETIC_CONFIG='{"services":{"api":{"environment":{"TOKEN":"synthetic-sensitive-$literal"}}}}'
+readonly SYNTHETIC_CONFIG='{"services":{"api":{"environment":{"TOKEN":"synthetic-sensitive-$literal","FACIAL_PROCESSING_ENABLED":"FACIAL_CONFIG_PLACEHOLDER"}},"face-search-worker":{"environment":{"FACIAL_PROCESSING_ENABLED":"FACIAL_CONFIG_PLACEHOLDER"}}}}'
 BAD_SERVICE=""
 UNHEALTHY_SERVICE=""
 FACIAL_RUNTIME=true
+FACIAL_CONFIG=true
 
 compose() {
   case "$*" in
@@ -19,7 +20,7 @@ compose() {
       if [[ -n "${EXPECTED_PRIMARY_YAML:-}" ]]; then
         [[ "${COMPOSE_PRIMARY_YAML:-}" == "$EXPECTED_PRIMARY_YAML" && "$COMPOSE_APP_VERSION" == "$ACTIVE_SHA" ]] || return 1
       fi
-      printf '%s\n' "$SYNTHETIC_CONFIG" ;;
+      printf '%s\n' "${SYNTHETIC_CONFIG//FACIAL_CONFIG_PLACEHOLDER/$FACIAL_CONFIG}" ;;
     'ps -q web') echo web ;;
     'ps -q api') echo api ;;
     'ps -q face-search-worker') echo face-search-worker ;;
@@ -33,7 +34,7 @@ docker() {
     [[ "$*" == 'compose -p markina-gallery -f - --profile facial --profile preview-adjustment config --no-interpolate --hash web,api,face-search-worker' ]] || return 1
     local payload
     payload="$(cat)"
-    [[ "$payload" == "$SYNTHETIC_CONFIG" ]] || return 1
+    [[ "$payload" == "${SYNTHETIC_CONFIG//FACIAL_CONFIG_PLACEHOLDER/$FACIAL_CONFIG}" ]] || return 1
     printf 'api %s\nface-search-worker %s\nweb %s\n' "$API_HASH" "$WORKER_HASH" "$WEB_HASH"
     return 0
   fi
@@ -83,6 +84,10 @@ if ( FACIAL_RUNTIME=false; runtime_snapshot ) >"$output" 2>&1; then
 fi
 grep -q 'manutenção exige runtime facial já ativo' "$output"
 if grep -q 'synthetic-sensitive' "$output"; then echo 'configuração vazou no erro' >&2; exit 1; fi
+if ( FACIAL_CONFIG=false; runtime_snapshot ) >"$output" 2>&1; then
+  echo 'Compose alvo com processamento facial desabilitado foi aceito' >&2; exit 1
+fi
+grep -q 'FACIAL_PROCESSING_ENABLED deve permanecer true na API e no worker' "$output"
 
 CHECKOUT_SHA="$(git rev-parse HEAD)"
 printf '%s\n' "$CHECKOUT_SHA" > "$baseline_file"

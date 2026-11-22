@@ -6,8 +6,8 @@ O teste humano da PR #144 confirmou a supressão de OTP para telefone sem víncu
 
 ## What Changes
 
-- Exibir após solicitação e reenvio bem-sucedidos: “O código será enviado somente se este telefone tiver acesso à galeria. Se não receber, confirme seu acesso com o fotógrafo.”
-- Usar o rótulo “Código de acesso”, conservando o campo e a resposta neutra.
+- Exibir na etapa de validação após solicitação e reenvio aceitos: “O código será enviado somente se este telefone tiver acesso à galeria. Se não receber, confirme seu acesso com o fotógrafo.”
+- Usar o rótulo “Código de acesso”, conservando a resposta neutra. Para `invite_only`, o change `show-private-gallery-access-guidance` apresenta primeiro o aviso privado e só abre esta etapa após a ação explícita da cliente.
 - Preservar autenticação, elegibilidade, payloads, rate limit e fluxo administrativo.
 
 ## Capabilities

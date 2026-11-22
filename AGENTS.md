@@ -7,6 +7,7 @@
 - Preserve mudanças locais existentes e não reverta, descarte ou reformate trabalho não relacionado.
 - Nunca execute `git reset --hard`, `git checkout -- .`, `git clean`, nem comando equivalente que descarte trabalho existente.
 - Nunca faça force push. Commits devem conter somente alterações relacionadas à task/change atual; nunca inclua arquivos preexistentes ou não relacionados.
+- Autorização permanente expressa pelo proprietário em 14/11/2026: neste repositório Pick-your-Pic (`conradodeita/markina-gallery`), Codex está autorizado a criar somente commits limitados à task/change e fazer pushes à origem em branches de trabalho sem pedir nova confirmação por push; a autorização persiste até revogação explícita. O primeiro push da branch atual continua condicionado ao fechamento dos gates pré-push aplicáveis e à revisão do escopo/segredos. Se um gate pós-push, inclusive CI, falhar, investigar, corrigir, validar a correção, criar commit estritamente relacionado e fazer novo push até os gates passarem, antes de PR/merge. Nunca fazer force push. Esta autorização não permite merge, deploy, migration, escrita em produção ou commit de arquivos preexistentes/alheios.
 
 ## Fluxo OpenSpec obrigatório
 
@@ -28,13 +29,15 @@
 
 ## Restrições de produto, segurança e operação
 
+- Decisão final do proprietário em 18/11/2026: homologação foi eliminada. Os únicos alvos operacionais são desenvolvimento local, CI e produção. Esta decisão supersede toda instrução histórica para criar, publicar, inventariar, limpar ou validar remotamente em homologação. CI usa dados sintéticos; produção continua protegida por gates e aprovação humana.
+
 - Produto mobile-first; painel administrativo objetivo para um fotógrafo no MVP.
 - Não implemente grade pública de evento coletivo, processamento/armazenamento de RAWs, prévias servidas do Google Drive ou criação automatizada de álbuns no Google Photos.
-- Busca facial pode ser validada em homologação privada com dados reais de adultos e menores quando o lote for enviado pelo administrador/fotógrafo e houver autorização humana explícita por execução, origem e finalidade documentadas, acesso autenticado, proteção criptográfica, retenção mínima e exclusão controlada. Essa autorização não habilita produção nem dispensa os gates próprios do fluxo infantil fora da homologação controlada.
+- Decisão final do proprietário em 18/11/2026: não existe homologação operacional; testes usam somente dados sintéticos em CI/local. Uso em produção segue o consentimento vigente, a proteção criptográfica, a retenção mínima, a auditabilidade e os gates de produção. **Decisão substitutiva expressa do proprietário em 03/11/2026 — `restore-production-facial-runtime`:** o proprietário removeu o bloqueio adicional de produção infantil desta regra e autorizou a retomada com o fluxo vigente de consentimento condicional do responsável, sem representação administrativa prévia. Permanecem OTP, vínculo e escopo autorizados, tenant/política ativos, consentimento versionado no upload, criptografia, retenção e auditoria. Registrar a ordem como autorização operacional do proprietário, sem inventar parecer jurídico, representação comprovada ou calibração medida; as demais proteções de produção continuam obrigatórias.
 - Preserve privacidade: acesso de cliente por OTP, links de convite seguros e auditabilidade para ações críticas e dados biométricos.
 - A máquina local e o Oracle compartilham infraestrutura com outros projetos. Não altere recursos de terceiros (containers, imagens, redes, volumes, proxy, firewall, DNS ou certificados).
 - Nunca execute `docker system prune`, prunes equivalentes, nem `docker compose down` sem explicitar projeto e arquivo: `-p markina-gallery -f docker/docker-compose.yml`.
-- Nunca execute migration destrutiva, operação destrutiva de banco ou deploy sem autorização humana explícita. Antes de ações autorizadas em homologação ou produção, apresente inventário, portas/subdomínio e plano de impacto zero.
+- Nunca execute migration destrutiva, operação destrutiva de banco ou deploy sem autorização humana explícita. Antes de ações autorizadas em produção, apresente inventário, portas/subdomínio e plano de impacto zero.
 
 ## Qualidade e continuidade
 
@@ -45,7 +48,7 @@
 - Consultar avisos de segurança na cadência nativa mais rápida disponível, separada do ciclo semanal de versões. Configuração ou permissão indisponível SHALL ser registrada como bloqueio/não confirmada, nunca como “sem vulnerabilidades”.
 - Identificar faixas Python abertas, transitivos relevantes, imagens/tags/digests móveis, versões de apt, ações com tag móvel e registries/fontes externos. Relatórios SHALL incluir timestamp, fontes consultadas e distinguir lista vazia, fonte não habilitada/sem permissão e falha de consulta.
 - Tratar serviços de autenticação, banco, fila, proxy, OTP, pagamento e entrega como críticos: testar contratos ponta a ponta e segurança, migração/compatibilidade e rollback antes de uma alteração que possa chegar a clientes.
-- Tratar modelos/pesos de IA, busca facial, OpenCV/NumPy, LightCraft, RawTherapee e processamento de mídia como motores especializados. Atualização exige avaliação humana de licença, pesos/revisão, formatos, qualidade, precisão/calibração, recurso e reindexação; monitoramento SHALL NOT baixar pesos, ativar engines ou criar PR automático de versões especializadas.
+- Tratar modelos/pesos de IA, busca facial SFace/YuNet, OpenCV/NumPy, RawTherapee no ajuste de prévias e processamento de mídia como motores especializados. Atualização exige avaliação humana de licença, pesos/revisão, formatos, qualidade, precisão/calibração, recurso e reindexação; monitoramento SHALL NOT baixar pesos, ativar engines ou criar PR automático de versões especializadas.
 - Separar dependências e ferramentas de desenvolvimento das imagens/runtime de produção. Priorizar updates por severidade de segurança, uso ativo, impacto de cliente, benefício, compatibilidade e manutenção upstream; a versão mais nova não é automaticamente a mais adequada.
 - Workflows de monitoramento SHALL usar permissões mínimas de leitura, não acessar Oracle, segredos operacionais ou dados de cliente, e não invocar deploy, migrations, Docker ou merge. Relatório sem novidade SHALL não criar issue/PR/comentário nem enviar notificação. PRs SHALL exigir os gates/validações por categoria e revisão exigida pelo repositório.
 - Uma atualização aprovada só pode ser publicada por fluxo de release autorizado. Antes de deploy, inventariar imagem/SHA/serviços/schema/porta e plano de impacto zero; manter referência da versão saudável anterior, fazer smoke/testes de contrato e rollback somente para artefatos/schemas compatíveis. Esta política não concede autorização de deploy, migration ou alteração de dados.

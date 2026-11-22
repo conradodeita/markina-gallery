@@ -7,10 +7,10 @@ Uma falha transitória em qualquer chamada da API deixa um aviso global de conex
 ## What Changes
 
 - Iniciar automaticamente a reconexão/revalidação da sessão após falhas transitórias, sem exigir que fotógrafo ou cliente clique em “Reconectar” ou “Verificar conexão novamente”; limitar tentativas e impedir verificações concorrentes.
-- Mostrar o aviso global somente enquanto a própria sessão/conectividade não puder ser confirmada; falhas isoladas de uma operação permanecem no respectivo fluxo.
-- Retirar automaticamente o aviso de indisponibilidade quando a sessão for confirmada; a recuperação acontece em segundo plano, sem botão manual de reconexão.
+- Mostrar o aviso de indisponibilidade de conexão somente enquanto a própria verificação da sessão falhar; falhas isoladas permanecem no fluxo da operação.
+- Retirar automaticamente o aviso de conexão quando a sessão for confirmada, sem botão manual. Se o resultado de uma operação com efeitos continuar incerto, manter um aviso próprio desse resultado, distinto da indisponibilidade de sessão.
 - Manter a distinção entre indisponibilidade temporária, sessão expirada e acesso negado.
-- Nunca repetir automaticamente a requisição comercial ou de comunicação que falhou; operações com resultado ambíguo continuam protegidas contra duplicação.
+- Nunca repetir automaticamente a requisição comercial ou de comunicação que falhou; operações com resultado ambíguo continuam protegidas contra duplicação e seguem sua reconciliação própria.
 
 ## Capabilities
 

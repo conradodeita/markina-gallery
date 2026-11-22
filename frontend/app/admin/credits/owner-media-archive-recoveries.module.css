@@ -1,0 +1,104 @@
+.section {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid var(--line, #d9e2e9);
+  border-radius: 16px;
+  background: var(--surface-subtle, #f8fafb);
+}
+
+.heading,
+.list > li,
+.actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.heading h3 {
+  margin: 4px 0 0;
+}
+
+.list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.list > li {
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--line, #d9e2e9);
+}
+
+.list > li > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.list strong {
+  overflow-wrap: anywhere;
+}
+
+.list span,
+.list small,
+.retryForm p {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.retryForm {
+  display: grid;
+  gap: 12px;
+  max-width: 520px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line, #d9e2e9);
+}
+
+.retryForm h4,
+.retryForm p {
+  margin: 0;
+}
+
+.retryForm label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.retryForm input,
+.retryForm select {
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--line, #cbd5df);
+  border-radius: 10px;
+  color: var(--foreground, #263746);
+  background: var(--surface, #fff);
+  font: inherit;
+}
+
+.actions {
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.message {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface, #fff);
+}
+
+@media (max-width: 620px) {
+  .list > li {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

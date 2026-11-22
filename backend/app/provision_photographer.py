@@ -17,6 +17,7 @@ from app.auth import (
     SessionLocal,
     Tenant,
     TenantAdmin,
+    TenantCreditWallet,
     password_hasher,
     validate_admin_password,
 )
@@ -94,7 +95,8 @@ def provision_photographer(
         translation = connection.get_execution_options().get("schema_translate_map", {})
         preparer = connection.dialect.identifier_preparer
         names = []
-        for table in (Tenant.__table__, AdminUser.__table__, TenantAdmin.__table__):
+        for table in (Tenant.__table__, AdminUser.__table__, TenantAdmin.__table__,
+                      TenantCreditWallet.__table__):
             schema = translation.get(table.schema, table.schema)
             prefix = f"{preparer.quote_schema(schema)}." if schema else ""
             names.append(prefix + preparer.quote(table.name))
@@ -107,6 +109,7 @@ def provision_photographer(
     if plan.create_tenant:
         db.add(Tenant(id=tenant_id))
         db.flush()
+        db.add(TenantCreditWallet(tenant_id=tenant_id, mode="finite"))
     admin = AdminUser(email=email, password_hash=password_hasher.hash(password),
                       totp_secret=normalized_totp, email_verified=True)
     admin.tenant_memberships.append(TenantAdmin(tenant_id=tenant_id))

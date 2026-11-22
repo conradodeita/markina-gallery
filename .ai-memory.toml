@@ -1,0 +1,17 @@
+workspace = "pick-your-pic"
+project = "system"
+
+[capture]
+ignore_paths = [
+  "**/.env",
+  "**/.env.*",
+  "**/*.pem",
+  "**/*.key",
+  "**/*.p12",
+  "**/*.pfx",
+  "**/credentials*.json",
+  "**/service-account*.json",
+  "**/secrets.yaml",
+  "**/secrets.yml",
+  "**/auth-tokens/**",
+]

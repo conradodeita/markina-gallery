@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     AdminUser,
-    Base,
     Client,
     DerivedGallery,
     ParentGallery,
@@ -19,6 +18,7 @@ from app.auth import (
     Tenant,
     TenantAdmin,
 )
+from tests.schema_fixtures import create_test_schema
 
 
 @pytest.fixture
@@ -46,7 +46,7 @@ def tenant_db(tmp_path):
         @event.listens_for(engine, "connect")
         def enable_fk(connection, _):
             connection.execute("PRAGMA foreign_keys=ON")
-    Base.metadata.create_all(engine)
+    create_test_schema(engine)
     with Session(engine) as db:
         yield db
     if schema:
@@ -151,8 +151,16 @@ def test_seed_vincula_admin_e_preserva_credenciais(tenant_db, monkeypatch):
     monkeypatch.setattr(seed_admin, "SessionLocal", sessionmaker(bind=tenant_db.bind))
     monkeypatch.setenv("ADMIN_SEED_EMAIL", "seed@example.test")
     monkeypatch.setenv("ADMIN_SEED_PASSWORD", "Synthetic-test-Password-2026!")
-    monkeypatch.setenv("ADMIN_SEED_TOTP_SECRET", pyotp.random_base32())
+    totp_secret = pyotp.random_base32()
+    monkeypatch.setenv("ADMIN_SEED_TOTP_SECRET", totp_secret)
     seed_admin.seed_admin()
+    persisted_totp = tenant_db.execute(
+        select(AdminUser.__table__.c.totp_secret, AdminUser.__table__.c.totp_secret_envelope)
+        .where(AdminUser.__table__.c.email == "seed@example.test")
+    ).one()
+    assert persisted_totp.totp_secret is None
+    assert persisted_totp.totp_secret_envelope.startswith("totp:v1:")
+    assert totp_secret not in persisted_totp.totp_secret_envelope
     original = tenant_db.scalar(select(AdminUser))
     fingerprint = (original.id, original.password_hash, original.totp_secret)
     seed_admin.seed_admin()

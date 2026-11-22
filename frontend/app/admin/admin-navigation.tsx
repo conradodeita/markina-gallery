@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { MonitorLink } from "./system-monitor/monitor-link";
+import { ConsoleLink } from "./platform/console-link";
 
 const navigation = [
   { href: "/admin", label: "Visão geral" },
@@ -11,6 +12,7 @@ const navigation = [
   { href: "/admin/payments", label: "Vendas e pagamentos" },
   { href: "/admin/notifications", label: "Notificações" },
   { href: "/admin/pricing", label: "Tabelas de preço" },
+  { href: "/admin/credits", label: "Créditos" },
   { href: "/admin/settings", label: "Configurações" },
 ];
 
@@ -19,5 +21,5 @@ export function AdminNavigation() {
   return <nav aria-label="Navegação administrativa">{navigation.map(({ href, label }) => {
     const current = href === "/admin" ? pathname === href : pathname.startsWith(href);
     return <Link aria-current={current ? "page" : undefined} href={href} key={href}>{label}</Link>;
-  })}<MonitorLink /></nav>;
+  })}<ConsoleLink /><MonitorLink /></nav>;
 }

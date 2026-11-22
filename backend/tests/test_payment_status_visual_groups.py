@@ -41,7 +41,7 @@ def test_financial_status_groups_use_priority_fifo_and_delivery_field(admin_brow
         db.flush()
         clients = {}
 
-        def add_order(name, status, days_old, *, album_url=None, overdue=False):
+        def add_order(name, status, days_old, *, album_url=None, legacy_expired=False):
             client = clients.get(name)
             if client is None:
                 client = Client(tenant_id=FIXTURE_TENANT_ID, full_name=name, phone_e164=f"+55119999{len(clients):06d}")
@@ -58,7 +58,7 @@ def test_financial_status_groups_use_priority_fifo_and_delivery_field(admin_brow
                 parent_gallery_id=gallery_parent.id,
                 client_id=client.id,
                 name=f"Galeria {name}",
-                selection_expires_at=(reference - timedelta(days=1)) if overdue else None,
+                selection_expires_at=(reference - timedelta(days=1)) if legacy_expired else None,
             )
             db.add(gallery)
             db.flush()
@@ -96,7 +96,7 @@ def test_financial_status_groups_use_priority_fifo_and_delivery_field(admin_brow
         add_order("Confirmada sem link", "confirmed_undelivered", 7)
         add_order("Aguardando", "awaiting_payment", 6)
         add_order("Não localizado", "not_found", 5)
-        add_order("Expirada", "overdue", 4, overdue=True)
+        add_order("Expirada", "awaiting_payment", 4, legacy_expired=True)
         add_order("Mixada", "confirmed", 20, album_url="https://photos.app.goo.gl/Older")
         add_order("Mixada", "reported", 3)
         db.commit()
@@ -121,8 +121,8 @@ def test_financial_status_groups_use_priority_fifo_and_delivery_field(admin_brow
         ("Confirmada", "confirmed"),
         ("Confirmada sem link", "confirmed_undelivered"),
         ("Aguardando", "awaiting_payment"),
+        ("Expirada", "awaiting_payment"),
         ("Não localizado", "not_found"),
-        ("Expirada", "overdue"),
     ]
     mixed = next(group for group in groups if group["client"]["name"] == "Mixada")
     assert {order["financial_status"] for order in mixed["orders"]} == {"reported", "confirmed"}
@@ -136,6 +136,11 @@ def test_financial_status_groups_use_priority_fifo_and_delivery_field(admin_brow
     filtered_payload = filtered.json()
     assert [group["client"]["name"] for group in filtered_payload["groups"]] == ["Confirmada sem link"]
     assert filtered_payload["groups"][0]["orders"][0]["delivery"]["album_url"] is None
+
+    obsolete_filter = admin_browser.get("/admin/payment-communications", params={
+        "financial_status": "overdue",
+    })
+    assert obsolete_filter.status_code == 422
 
 
 def test_open_selection_is_only_returned_when_financial_filter_is_all(admin_browser):

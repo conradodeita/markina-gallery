@@ -2,6 +2,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from subprocess import run
@@ -17,6 +18,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import app.main as main_module
 from app.auth import (
     AdminUser,
     AuditEvent,
@@ -36,6 +38,7 @@ from app.auth import (
     GalleryClientState,
     GalleryFacialPolicy,
     GalleryLifecycleOperation,
+    MediaArchiveCycle,
     MediaDerivative,
     MediaJob,
     ParentGallery,
@@ -45,6 +48,7 @@ from app.auth import (
     PhotoComment,
     PhotoFavorite,
     PhotoFolder,
+    PhotographerTermsVersion,
     PhotoSelection,
     PhotoView,
     PixCheckoutSettings,
@@ -106,6 +110,7 @@ from tests.tenant_fixtures import (
     FIXTURE_TENANT_ID,
     LEGACY_SCHEMA_HEAD,
     fixture_admin,
+    fresh_totp_code,
     insert_legacy_model,
 )
 
@@ -1165,7 +1170,7 @@ def test_client_library_separates_public_private_and_origin_states() -> None:
     assert private_rows["Privada ativa"]["origin"]["browse_url"] == (
         f"/public-galleries/{ids['active']}"
     )
-    assert private_rows["Privada expirada"]["gallery_status"] == "expired"
+    assert private_rows["Privada expirada"]["gallery_status"] == "active"
     assert private_rows["Privada expirada"]["origin"]["available"] is True
     assert private_rows["Privada preservada"]["gallery_status"] == ("origin_removed")
     assert private_rows["Privada preservada"]["origin"] == {
@@ -1185,7 +1190,7 @@ def test_client_library_separates_public_private_and_origin_states() -> None:
     assert journeys["Origem ativa"]["primary_surface"] == "public"
     assert journeys["Origem ativa"]["private_gallery"]["name"] == "Privada ativa"
     assert journeys["Origem da seleção expirada"]["primary_surface"] == "public"
-    assert journeys["Origem da seleção expirada"]["private_gallery"]["gallery_status"] == "expired"
+    assert journeys["Origem da seleção expirada"]["private_gallery"]["gallery_status"] == "active"
     assert journeys["Origem coletiva"]["primary_surface"] == "unavailable"
     assert journeys["Origem coletiva"]["private_gallery"] is None
     assert journeys["Origem removida"]["primary_surface"] == "private"
@@ -1443,13 +1448,21 @@ def test_first_public_selection_stays_in_canonical_gallery() -> None:
         )) == 1
 
 
-def test_canonical_selection_export_is_individual_and_keeps_confirmed_snapshot() -> None:
+def test_canonical_selection_export_is_individual_and_keeps_confirmed_snapshot(monkeypatch) -> None:
     with SessionLocal() as db:
         owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente <A>", phone_e164="+5511999999761")
         other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra cliente", phone_e164="+5511999999762")
         foreign = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Fora da galeria", phone_e164="+5511999999763")
         parent = ParentGallery(tenant_id=FIXTURE_TENANT_ID, name="Galeria <B>")
         db.add_all([owner, other, foreign, parent])
+        db.flush()
+        private_scope = DerivedGallery(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=parent.id,
+            client_id=owner.id,
+            name="Escopo privado de teste",
+        )
+        db.add(private_scope)
         db.flush()
         folder = PhotoFolder(tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent.id, name="Lote", status="released")
         db.add(folder)
@@ -1478,6 +1491,60 @@ def test_canonical_selection_export_is_individual_and_keeps_confirmed_snapshot()
         db.flush()
         db.add(SaleOrderItem(tenant_id=FIXTURE_TENANT_ID, sale_order_id=order.id, photo_asset_id=owner_photo.id,
                              filename_snapshot=owner_photo.filename, unit_price_cents=700))
+        long_comment = "<script>alert(1)</script> comentário com texto adicional para passar de cinquenta caracteres"
+        db.add_all([
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                photo_asset_id=owner_photo.id,
+                client_id=owner.id,
+                body="Comentário antigo da cliente",
+                created_at=now() - timedelta(days=1),
+            ),
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                photo_asset_id=owner_photo.id,
+                client_id=owner.id,
+                body=long_comment,
+                created_at=now(),
+            ),
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                photo_asset_id=owner_photo.id,
+                client_id=owner.id,
+                body="Comentário removido não deve aparecer",
+                created_at=now() + timedelta(days=1),
+                removed_at=now(),
+            ),
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                photo_asset_id=owner_photo.id,
+                client_id=other.id,
+                body="Comentário de outra cliente",
+            ),
+            PhotoComment(
+                tenant_id=FIXTURE_TENANT_ID,
+                derived_gallery_id=private_scope.id,
+                photo_asset_id=owner_photo.id,
+                client_id=owner.id,
+                body="Comentário de outro escopo",
+            ),
+            PhotoFavorite(
+                tenant_id=FIXTURE_TENANT_ID,
+                parent_gallery_id=parent.id,
+                photo_asset_id=owner_photo.id,
+                client_id=owner.id,
+            ),
+            PhotoFavorite(
+                tenant_id=FIXTURE_TENANT_ID,
+                derived_gallery_id=private_scope.id,
+                photo_asset_id=owner_photo.id,
+                client_id=owner.id,
+            ),
+        ])
         db.commit()
         parent_id, owner_id, other_id, foreign_id = parent.id, owner.id, other.id, foreign.id
 
@@ -1490,10 +1557,35 @@ def test_canonical_selection_export_is_individual_and_keeps_confirmed_snapshot()
         assert "outra.jpg" not in csv_response.text
         html_response = client.get(prefix + ".html")
         assert html_response.status_code == 200
+        assert html_response.headers["cache-control"] == "private, no-store"
         assert html_response.headers["content-disposition"] == 'attachment; filename="fotos-compradas-Cliente-A.html"; filename*=UTF-8\'\'fotos-compradas-Cliente%20A.html'
         assert "&lt;foto&gt;,a.jpg" in html_response.text
         assert "Galeria &lt;B&gt;" in html_response.text
         assert "Cliente &lt;A&gt;" in html_response.text
+        assert "Comentário: " not in html_response.text  # Não há uma prévia de imagem carregada.
+        assert "Favoritada pela cliente" not in html_response.text
+
+        monkeypatch.setattr(
+            main_module,
+            "_selection_html_preview",
+            lambda _db, _item: '<img src="data:image/jpeg;base64,AA==" alt="prévia">',
+        )
+        visual_html = client.get(prefix + ".html", params={"highlight": "#A1B2C3"})
+        expected_excerpt = " ".join(long_comment.split())[:49].rstrip() + "…"
+        assert visual_html.status_code == 200
+        assert len(expected_excerpt) == 50
+        assert "--highlight:#A1B2C3" in visual_html.text
+        assert "Favoritada pela cliente" in visual_html.text
+        assert escape(expected_excerpt) in visual_html.text
+        assert visual_html.headers["cache-control"] == "private, no-store"
+        assert "Comentário antigo da cliente" not in visual_html.text
+        assert "Comentário removido" not in visual_html.text
+        assert "Comentário de outra cliente" not in visual_html.text
+        assert "Comentário de outro escopo" not in visual_html.text
+        assert "<script>" not in visual_html.text
+
+        invalid_highlight = client.get(prefix + ".html", params={"highlight": "#123456; color:red"})
+        assert "--highlight:#7656d6" in invalid_highlight.text
         assert client.get(
             f"/admin/parent-galleries/{parent_id}/clients/{other_id}/selection/export.html"
         ).status_code == 409
@@ -1841,7 +1933,12 @@ def test_selection_state_isolated_by_parent_and_expiration() -> None:
                 GalleryClientState.client_id == owner_id,
             ))
             assert state is not None
-            state.selection_expires_at = now() - timedelta(seconds=1)
+            folder = db.scalar(select(PhotoFolder).where(
+                PhotoFolder.parent_gallery_id == first_id,
+                PhotoFolder.purpose == "content",
+            ))
+            folder.access_expires_at = now() - timedelta(seconds=1)
+            state.selection_expires_at = now() + timedelta(days=30)
             db.commit()
         expired_response = client.post(
             f"/public-galleries/{first_id}/photos/{photo_ids[0][1]}/selection"
@@ -2497,6 +2594,13 @@ def test_public_access_modes_require_session_and_backend_authority(
         db.add(photo)
         db.flush()
         standard.cover_photo_id = photo.id
+        db.add(GalleryClientState(
+            tenant_id=FIXTURE_TENANT_ID,
+            parent_gallery_id=standard.id,
+            client_id=owner.id,
+            status="active",
+            selection_expires_at=now() + timedelta(days=30),
+        ))
         derivative_key = f"{photo.id}/client_preview.jpg"
         clean_key = f"{photo.id}/admin_preview.jpg"
         db.add(MediaDerivative(tenant_id=FIXTURE_TENANT_ID, photo_asset_id=photo.id, variant="admin_preview", relative_path=clean_key, status="ready", width=2000, height=1125))
@@ -2556,6 +2660,19 @@ def test_public_access_modes_require_session_and_backend_authority(
         }
         public_gallery = client.get(f"/public-galleries/{standard_id}")
         assert public_gallery.status_code == 200
+        assert public_gallery.json()["selection_expires_at"] is None
+        assert public_gallery.json()["support_contact_email"] is None
+        with SessionLocal() as db:
+            terms_template = "Termos publicados sintéticos"
+            db.add(PhotographerTermsVersion(
+                version_number=1, terms_version="v1", template_text=terms_template,
+                template_sha256=sha256(terms_template.encode("utf-8")).hexdigest(),
+                provider_legal_name="Provedor sintético", provider_contact_email="privacy@example.test",
+                published_by_admin_id=_lifecycle_actor(db), published_at=now(),
+            ))
+            db.commit()
+        public_gallery = client.get(f"/public-galleries/{standard_id}")
+        assert public_gallery.json()["support_contact_email"] == "privacy@example.test"
         assert public_gallery.json()["folder_display_mode"] == "sequential"
         assert public_gallery.json()["cover_title_font"] == "playfair-display"
         assert public_gallery.json()["cover_preview_url"] == f"/public-galleries/{standard_id}/cover-preview"
@@ -2684,14 +2801,13 @@ def authenticate_admin(client: TestClient) -> None:
             ))
             db.add(admin)
             db.commit()
-        secret = admin.totp_secret
     challenge_id = client.post(
         "/auth/admin/password",
         json={"email": admin.email, "password": "senha-segura"},
     ).json()["challenge_id"]
     response = client.post(
         "/auth/admin/totp",
-        json={"challenge_id": challenge_id, "code": pyotp.TOTP(secret).now()},
+        json={"challenge_id": challenge_id, "code": fresh_totp_code(admin)},
     )
     assert response.status_code == 200
 
@@ -2730,7 +2846,7 @@ def test_deleting_parent_gallery_rejects_admin_and_client_mutations() -> None:
             ),
             client.post(
                 f"/admin/parent-galleries/{parent_id}/folders",
-                json={"name": "Pasta indevida"},
+                json={"name": "Pasta indevida", "access_duration_days": 7},
             ),
             client.post(
                 "/admin/derived-galleries",
@@ -3178,9 +3294,12 @@ def test_admin_manages_opaque_public_links_and_individual_invites() -> None:
 
 
 def test_gallery_capability_links_use_configured_https_origin(monkeypatch) -> None:
-    with TestClient(app) as client:
-        authenticate_admin(client)
+    # APP_ENV=staging emite o cookie de sessão com Secure; o cliente precisa
+    # usar HTTPS para reenviá-lo nas chamadas administrativas seguintes.
+    with TestClient(app, base_url="https://testserver") as client:
         monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "staging")
+        authenticate_admin(client)
         monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "synthetic-gallery-capability-signing-key-32bytes")
         monkeypatch.setenv("MARKINA_PUBLIC_URL", "http://localhost:3000")
         monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://gallery.example")
@@ -3238,9 +3357,10 @@ def test_gallery_capability_links_use_configured_https_origin(monkeypatch) -> No
 
 @pytest.mark.parametrize("origin", [None, "http://gallery.example", "https://gallery.example/path"])
 def test_gallery_capability_writes_fail_closed_on_bad_origin(monkeypatch, origin) -> None:
-    with TestClient(app) as client:
-        authenticate_admin(client)
+    with TestClient(app, base_url="https://testserver") as client:
         monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "staging")
+        authenticate_admin(client)
         monkeypatch.delenv("MARKINA_PUBLIC_URL", raising=False)
         if origin is None:
             monkeypatch.delenv("PUBLIC_APP_ORIGIN", raising=False)
@@ -3257,9 +3377,10 @@ def test_gallery_capability_writes_fail_closed_on_bad_origin(monkeypatch, origin
 
 
 def test_gallery_capability_rotation_does_not_revoke_on_bad_origin(monkeypatch) -> None:
-    with TestClient(app) as client:
-        authenticate_admin(client)
+    with TestClient(app, base_url="https://testserver") as client:
         monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("ADMIN_TOTP_SECRET_ENV", "staging")
+        authenticate_admin(client)
         monkeypatch.setenv("GALLERY_CAPABILITY_SIGNING_KEY", "synthetic-gallery-capability-signing-key-32bytes")
         monkeypatch.setenv("PUBLIC_APP_ORIGIN", "https://gallery.example")
         created = client.post(
@@ -3445,7 +3566,7 @@ def test_parent_gallery_client_summary_is_batched_and_uses_status_precedence() -
     assert rows["Cliente Sem seleção"]["gallery_status"] == "no_selection"
     assert rows["Cliente Sem seleção"]["available_count"] == 1
     assert rows["Cliente Bloqueada"]["gallery_status"] == "blocked"
-    assert rows["Cliente Expirada"]["gallery_status"] == "expired"
+    assert rows["Cliente Expirada"]["gallery_status"] == "active"
     assert rows["Cliente Ativa"]["gallery_status"] == "active"
     assert rows["Cliente Ativa"]["available_count"] == 2
     # Fotos compradas deixam de compor "selecionadas e não compradas".
@@ -3759,6 +3880,7 @@ def test_admin_order_queries_use_snapshots_after_operational_removal() -> None:
         assert payload["orders"][0]["items"][0] == {
             "photo_id": str(photo_id),
             "name": "IMG_0100.jpg",
+            "media_state": "available",
             "preview_url": None,
             "operational_media_available": False,
         }
@@ -3862,8 +3984,9 @@ def test_client_purchase_history_starts_only_after_payment_communication() -> No
     assert excluded_ids.isdisjoint({order["id"] for order in orders})
 
 
+@pytest.mark.parametrize("folder_state", ["without-snapshot", "removed", "archived", "restoring"])
 def test_client_library_uses_isolated_historical_media_after_gallery_removal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, folder_state: str,
 ) -> None:
     history_root = tmp_path / "commercial-history"
     monkeypatch.setenv("MEDIA_HISTORY_ROOT", str(history_root))
@@ -3871,6 +3994,8 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
     other_phone = "+5511999999811"
     private_id = uuid4()
     parent_id = uuid4()
+    folder_snapshot = uuid4() if folder_state != "without-snapshot" else None
+    cold = folder_state in {"archived", "restoring"}
     photo_id = uuid4()
     preview_buffer = BytesIO()
     Image.new("RGB", (32, 24), "yellow").save(preview_buffer, format="JPEG")
@@ -3878,6 +4003,19 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
     delivery = b"arquivo-historico-entregue"
 
     with SessionLocal() as db:
+        if cold:
+            # Controle negativo: catálogo real, pasta própria e mídia histórica local.
+            db.add(ParentGallery(tenant_id=FIXTURE_TENANT_ID, id=parent_id, name="Origem fria"))
+            db.flush()
+            db.add(PhotoFolder(
+                tenant_id=FIXTURE_TENANT_ID, id=folder_snapshot,
+                parent_gallery_id=parent_id, name="Pasta fria", purpose="content",
+            ))
+            db.flush()
+            db.add(MediaArchiveCycle(
+                tenant_id=FIXTURE_TENANT_ID, parent_gallery_id=parent_id,
+                folder_id=folder_snapshot, state=folder_state,
+            ))
         owner = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Cliente proprietária", phone_e164=owner_phone)
         other = Client(tenant_id=FIXTURE_TENANT_ID, full_name="Outra cliente", phone_e164=other_phone)
         db.add_all([owner, other])
@@ -3902,6 +4040,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
             photo_asset_id=None,
             photo_asset_id_snapshot=photo_id,
             filename_snapshot="IMG_0170.jpg",
+            folder_id_snapshot=folder_snapshot,
             checksum_sha256_snapshot=sha256(delivery).hexdigest(),
             unit_price_cents=1700,
         )
@@ -3932,6 +4071,16 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
         authenticate_client(client, owner_phone)
         response = client.get("/library/purchases")
         assert response.status_code == 200
+        if cold:
+            historical_item = response.json()["orders"][0]["items"][0]
+            assert historical_item["media_state"] == folder_state
+            assert historical_item["preview_url"] is None
+            assert historical_item["delivery_url"] is None
+            assert client.get(f"/library/history/items/{item_id}/preview").status_code == 404
+            assert client.get(f"/library/history/items/{item_id}/delivery").status_code == 404
+            with SessionLocal() as db:
+                assert "<img " not in main_module._selection_html_preview(db, db.get(SaleOrderItem, item_id))
+            return
         assert response.json()["orders"] == [
             {
                 "id": str(order_id),
@@ -3942,6 +4091,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
                 "gallery_removed": True,
                 "assets_removed": False,
                 "payment_status": "confirmed",
+                "payment_provider": "pix",
                 "commercial_state": "purchased",
                 "communication_status": None,
                 "communicated_at": None,
@@ -3954,6 +4104,7 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
                         "item_id": str(item_id),
                         "photo_id": str(photo_id),
                         "name": "IMG_0170.jpg",
+                        "media_state": "available",
                         "preview_url": f"/library/history/items/{item_id}/preview",
                         "delivery_url": f"/library/history/items/{item_id}/delivery",
                         "delivery_reference_available": False,
@@ -3972,6 +4123,8 @@ def test_client_library_uses_isolated_historical_media_after_gallery_removal(
         assert delivery_response.status_code == 200
         assert delivery_response.content == delivery
         assert delivery_response.headers["cache-control"] == "private, no-store"
+        with SessionLocal() as db:
+            assert "<img src=\"data:image/jpeg;base64," in main_module._selection_html_preview(db, db.get(SaleOrderItem, item_id))
 
         client.cookies.clear()
         authenticate_client(client, other_phone)

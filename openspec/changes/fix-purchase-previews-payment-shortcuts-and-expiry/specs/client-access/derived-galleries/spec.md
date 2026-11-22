@@ -22,7 +22,7 @@ O sistema SHALL apresentar miniaturas e ampliação das prévias protegidas dos 
 
 ### Requirement: Prazo restante de seleção explícito e contextual
 
-O sistema SHALL apresentar data/hora limite e tempo restante de seleção a partir da data efetiva autoritativa do backend. A cliente SHALL vê-los na galeria de seleção e na jornada correspondente da biblioteca quando houver prazo efetivo de seleção, mesmo sem fotos no carrinho. O rótulo SHALL distinguir o prazo para novas seleções do estado de compras congeladas ou confirmadas. O sistema SHALL conservar a regra existente de criação/herança da data da privada e SHALL NOT reiniciar, estender ou inventar prazo no navegador.
+Quando houver prazo efetivo, o sistema SHALL exibir na galeria e na biblioteca a data/hora autoritativa e o tempo restante, inclusive sem fotos no carrinho. O texto SHALL distinguir novas seleções de compras congeladas ou confirmadas. A criação/herança existente da data SHALL ser preservada; o navegador SHALL NOT inventar, estender ou reiniciar o prazo.
 
 #### Scenario: Prazo vigente
 - **WHEN** existe data efetiva futura para a seleção autorizada

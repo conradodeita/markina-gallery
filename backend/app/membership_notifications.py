@@ -85,14 +85,14 @@ def process_next_membership_notification(
     notification = db.scalar(
         select(GalleryMembershipNotificationOutbox).join(Tenant, Tenant.id == GalleryMembershipNotificationOutbox.tenant_id)
         .where(
-            Tenant.status == "active", GalleryMembershipNotificationOutbox.external_status == "queued",
+            Tenant.status == "active", Tenant.lifecycle != "closed", GalleryMembershipNotificationOutbox.external_status == "queued",
             or_(
                 GalleryMembershipNotificationOutbox.next_attempt_at.is_(None),
                 GalleryMembershipNotificationOutbox.next_attempt_at <= instant,
             ),
         )
         .order_by(GalleryMembershipNotificationOutbox.created_at)
-        .with_for_update(of=GalleryMembershipNotificationOutbox, skip_locked=True)
+        .with_for_update(of=(Tenant, GalleryMembershipNotificationOutbox), skip_locked=True)
     )
     if not notification:
         return False

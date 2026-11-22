@@ -48,7 +48,8 @@ def main() -> int:
     require('git switch --detach "$DEPLOY_SHA"', "seleção explícita de SHA", SCRIPT)
     require('return 1', "falha encaminhada ao trap de recuperação", SCRIPT)
     require('compose build migrate', "imagem de migration reconstruída no SHA alvo", SCRIPT)
-    require('compose run --rm --no-deps migrate', "migration isolada", SCRIPT)
+    require('compose run --rm --no-deps migrate alembic upgrade "$target_heads"', "migration isolada com revisão explícita", SCRIPT)
+    forbid(r'compose\s+run\s+--rm\s+--no-deps\s+migrate\s*\|\|', "migration pelo comando padrão do Compose", SCRIPT)
     require('SELECT version_num FROM alembic_version', "revisão consultada diretamente no PostgreSQL", SCRIPT)
     forbid(
         r'compose\s+run\s+--rm\s+--no-deps\s+migrate\s+alembic\s+current',
@@ -157,14 +158,10 @@ def main() -> int:
     )
     require('deploy-homolog:', "job de deploy", WORKFLOW)
     require(
-        'needs: [backend, frontend, gemma-runtime, runtime-images, openspec, homolog-inventory-policy, gitleaks]',
+        'needs: [backend, frontend, runtime-images, openspec, homolog-inventory-policy, gitleaks]',
         "dependência integral da CI",
         WORKFLOW,
     )
-    require('gemma-runtime:', "validação nativa Gemma antes do deploy", WORKFLOW)
-    require('--platform linux/amd64', "runtime Gemma em AMD64", WORKFLOW)
-    require('--memory 6g --memory-swap 6g --cpus 1', "inferência Gemma limitada", WORKFLOW)
-    require('--network none', "inferência sintética sem rede", WORKFLOW)
     require('environment: homolog', "Environment protegido", WORKFLOW)
     production_policy_step = WORKFLOW.split(
         "- name: Validar política de preflight e aprovação única de produção", 1
@@ -179,15 +176,14 @@ def main() -> int:
     require('cd /opt/markina-gallery && env MARKINA_EXPECTED_REPOSITORY=', "diretório remoto explícito", WORKFLOW)
     require('MARKINA_PUBLIC_BASE_URL=%q', "origem pública encaminhada ao deploy", WORKFLOW)
     forbid(r'HOMOLOG_FACIAL_PROCESSING_ENABLED:\s*"true"|--facial-enabled\s+%q',
-           "deploy InfinitePay não deve habilitar processamento facial", WORKFLOW)
+           "deploy de homologação não deve habilitar processamento facial", WORKFLOW)
     forbid(r'HOMOLOG_RAW_DEVELOPMENT_ENABLED:\s*"true"|--raw-development-enabled\s+%q',
-           "deploy InfinitePay não deve habilitar o worker RAW", WORKFLOW)
-    require('REQUESTED_RAW_DEVELOPMENT_ENABLED="auto"', "RAW preservado automaticamente por padrão", SCRIPT)
-    require('resolve_raw_development_state', "estado RAW resolvido após detectar worker ativo", SCRIPT)
-    require('extra+=(-f docker/docker-compose.raw-development.yml)', "overlay RAW restrito ao deploy autorizado", SCRIPT)
-    require('"$RAW_DEVELOPMENT_WORKER_ACTIVE" -eq 1', "overlay RAW mantido para parar worker ativo", SCRIPT)
-    require('compose up -d --build --no-deps raw-development-worker', "worker RAW iniciado antes da API", SCRIPT)
-    forbid(r'password\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
+           "deploy de homologação não deve habilitar o worker RAW", WORKFLOW)
+    require('worker Gemma legado ativo; inventário e parada controlada', "bloqueio para runtime Gemma legado", SCRIPT)
+    require('worker RAW legado ativo; inventário e parada controlada', "bloqueio para runtime RAW legado", SCRIPT)
+    forbid('compose up -d --build --no-deps raw-development-worker', "worker RAW não pode ser reativado", SCRIPT)
+    forbid('compose up -d --build --no-deps face-gemma-index-worker', "worker Gemma não pode ser reativado", SCRIPT)
+    forbid(r'\bpassword\s*[:=]\s*["\']?[^${\s]', "senha literal", WORKFLOW)
 
     require("MEDIA_HISTORY_ROOT: /var/lib/markina/history", "namespace histórico isolado", COMPOSE)
     require("  media-history:", "volume histórico persistente", COMPOSE)

@@ -10,13 +10,21 @@
 .page :global(.payment-order__heading) { align-items:center; }
 .page :global(.payment-order__heading h3) { font-size:1.1rem; }
 .page :global(.payment-order__heading p) { margin-top:7px; line-height:1.6; overflow-wrap:anywhere; }
+.reopeningScope { padding:8px 10px; border:1px solid var(--mk-border); border-radius:var(--mk-radius-sm); background:var(--mk-surface-subtle); color:var(--mk-ink); font-weight:650; }
+.reopeningNotice { max-width:72ch; padding:9px 11px; border:1px solid var(--mk-border); border-radius:var(--mk-radius-sm); background:var(--mk-surface-subtle); color:var(--mk-ink-muted); }
 .page :global(.payment-order__heading > strong) { font-size:1.2rem; }
 .page :global(.payment-order details > summary) { min-height:32px; color:var(--mk-ink); }
+.page :global(.payment-filters .filter-grid) { grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); }
+.page :global(.payment-filters .filter-grid > *) { min-width:0; }
+.page :global(.payment-filters .filter-grid select),.page :global(.payment-filters .filter-grid input) { width:100%; min-width:0; max-width:100%; box-sizing:border-box; }
 .orderDetail { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); grid-template-areas:"facts facts" "photos payment" "photos delivery"; gap:16px; padding-top:12px; }
 .orderDetail :global(.payment-order__facts) { grid-area:facts; margin:0; }
 .photoSection,.paymentSection,.deliverySection { min-width:0; padding:18px; border:1px solid var(--mk-border); border-radius:var(--mk-radius-md); background:var(--mk-surface); }
 .photoSection { grid-area:photos; }
 .paymentSection { grid-area:payment; }
+.paymentSection :global(.payment-order__facts) { grid-template-columns:minmax(0,1fr); }
+.paymentSection :global(.payment-order__facts > div) { min-width:0; }
+.paymentSection :global(.payment-order__facts dd) { overflow-wrap:anywhere; }
 .deliverySection { grid-area:delivery; }
 .orderDetail h4 { margin:0 0 14px; font-size:1rem; }
 .orderDetail h4 span { color:var(--mk-ink-muted); font-weight:500; }
@@ -34,6 +42,12 @@
 button.thumbnail { cursor:zoom-in; }
 .thumbnail img { display:block; width:100%; height:100%; object-fit:contain; }
 .thumbnail img[hidden] { display:none; }
+.interactionOverlay { position:absolute; inset:0; pointer-events:none; }
+.interactionOverlayCompact { padding:3px; }
+.interactionOverlayExpanded { padding:clamp(8px,2vw,18px); }
+.favoriteBadge { position:absolute; top:3px; right:3px; display:grid; place-items:center; min-width:18px; height:18px; padding:0 4px; border:2px solid var(--mk-brand); border-radius:999px; background:#111827; color:#fff; font-size:.68rem; line-height:1; box-shadow:0 1px 4px #0008; }
+.interactionOverlayExpanded .favoriteBadge { top:clamp(8px,2vw,18px); right:clamp(8px,2vw,18px); min-width:32px; height:32px; padding:0 8px; font-size:1rem; }
+.photoComment { display:block; max-width:65ch; padding-left:8px; border-left:2px solid var(--mk-brand); color:var(--mk-ink); font-size:.8rem; line-height:1.4; overflow-wrap:anywhere; }
 .lightbox { position:fixed; inset:0; width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; padding:clamp(10px,3vw,32px); border:0; background:transparent; color:var(--mk-ink); }
 .lightbox::backdrop { background:#000c; }
 .lightboxContent { display:grid; grid-template-rows:auto minmax(0,1fr) auto; width:min(1100px,100%); height:100%; margin:auto; border:1px solid var(--mk-border); border-radius:var(--mk-radius-lg); background:var(--mk-surface); box-shadow:var(--mk-shadow-md); overflow:hidden; }
@@ -41,7 +55,7 @@ button.thumbnail { cursor:zoom-in; }
 .lightboxContent h2 { margin:0; font-size:1rem; }
 .lightboxContent p { margin:6px 0 0; overflow-wrap:anywhere; }
 .lightboxContent header > div { min-width:0; }
-.lightboxStage { display:grid; place-items:center; min-width:0; min-height:0; padding:8px; background:var(--mk-canvas); }
+.lightboxStage { position:relative; display:grid; place-items:center; min-width:0; min-height:0; padding:8px; background:var(--mk-canvas); }
 .lightboxStage img { width:100%; height:100%; min-height:0; object-fit:contain; }
 .lightboxStage img[hidden] { display:none; }
 .deliverySection :global(.order-delivery-form) { display:grid; gap:8px; }

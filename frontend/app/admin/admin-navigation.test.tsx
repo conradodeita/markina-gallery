@@ -14,6 +14,7 @@ describe("navegação administrativa", () => {
     render(<AdminNavigation />);
     expect(screen.getByRole("link", { name: "Galerias" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: "Notificações" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Créditos" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Operação" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Estatísticas" })).toBeNull();
   });
@@ -24,5 +25,11 @@ describe("navegação administrativa", () => {
     const clients = screen.getByRole("link", { name: "Clientes" });
     expect(clients.getAttribute("href")).toBe("/admin/clients");
     expect(clients.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("indica a carteira como rota ativa", () => {
+    mockPathname.mockReturnValue("/admin/credits");
+    render(<AdminNavigation />);
+    expect(screen.getByRole("link", { name: "Créditos" }).getAttribute("aria-current")).toBe("page");
   });
 });

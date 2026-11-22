@@ -16,8 +16,10 @@ services:
     volumes:
       - media-derivatives:/var/lib/markina/derivatives
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     mem_limit: 768m
     cpus: 0.5
     pids_limit: 64

@@ -31,7 +31,19 @@ def client_db(tmp_path):
         def enable_fk(connection, _):
             connection.execute("PRAGMA foreign_keys=ON")
     try:
-        Base.metadata.create_all(engine)
+        create_rules = [
+            (constraint, constraint._create_rule)
+            for table in Base.metadata.tables.values()
+            for constraint in table.constraints
+        ]
+        try:
+            Base.metadata.create_all(engine)
+        finally:
+            # PostgreSQL emits cyclic FKs with ALTER TABLE. SQLAlchemy marks
+            # those constraints as already emitted on the metadata object;
+            # restore the in-memory state before another dialect reuses it.
+            for constraint, create_rule in create_rules:
+                constraint._create_rule = create_rule
         with Session(engine) as db:
             yield db
     finally:
