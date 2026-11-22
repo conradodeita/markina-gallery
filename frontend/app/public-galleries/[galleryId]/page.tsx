@@ -14,10 +14,21 @@ import { SystemState } from "../../ui-kit";
 import { FacialSearchPanel } from "../facial-search-panel";
 import { FaceRegionViewer } from "../../face-region-viewer";
 import { SelectionDeadline } from "../../selection-deadline";
+import { clientMediaStatusMessage, type MediaArchiveStatus } from "../../media-archive-status";
 
-type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; comments_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string; selection_expires_at?: string | null };
+type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; comments_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string; support_contact_email?: string | null };
 type Comment = { id: string; photo_id: string; body: string };
 type ReopeningRequest = { id: string; status: "pending" | "approved" | "refused" };
+type FolderAccess = {
+  id: string;
+  name: string;
+  position: number;
+  access_expires_at: string | null;
+  access_open: boolean;
+  media_state: MediaArchiveStatus;
+  can_request_reopening: boolean;
+  reopening_request: ReopeningRequest | null;
+};
 type CommercialState = "available" | "selected" | "awaiting_payment" | "payment_reported" | "purchased" | "selection_finalized";
 type PublicPhoto = { id: string; name: string; preview_url: string; folder_id: string; folder_name: string; folder_position: number; width: number | null; height: number | null; selected: boolean; favorited: boolean; commercial_state?: CommercialState; previewUrl: string };
 type Cart = {
@@ -40,9 +51,8 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
-  const [reopening, setReopening] = useState<ReopeningRequest | null>(null);
-  const [reopeningBusy, setReopeningBusy] = useState(false);
-  const [selectionExpired, setSelectionExpired] = useState(false);
+  const [folderAccess, setFolderAccess] = useState<FolderAccess[]>([]);
+  const [reopeningBusyFolderId, setReopeningBusyFolderId] = useState<string | null>(null);
   const [cart, setCart] = useState<Cart>({ quantity: 0, items: [] });
   const [selectingId, setSelectingId] = useState<string | null>(null);
   const [failedGalleryId, setFailedGalleryId] = useState<string | null>(null);
@@ -54,7 +64,7 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
   const [regionSearchId, setRegionSearchId] = useState<string | null>(null);
   const [regionMessage, setRegionMessage] = useState("");
   const regionRequest = useRef<{ id: string | null } | null>(null);
-  const reopeningKey = useRef("");
+  const reopeningKeys = useRef<Record<string, string>>({});
   const admissionPending = useRef(false);
   const retryAt = useRef(0);
   const mounted = useRef(true);
@@ -121,18 +131,6 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
 
   useEffect(() => {
     let active = true;
-    fetch(`/api/public-galleries/${galleryId}/reopening-requests`, { credentials: "same-origin" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        const payload = await response.json() as { request: ReopeningRequest | null };
-        if (active) setReopening(payload.request);
-      })
-      .catch(() => { if (active) setReopening(null); });
-    return () => { active = false; };
-  }, [galleryId, refresh]);
-
-  useEffect(() => {
-    let active = true;
 
     fetch(`/api/public-galleries/${galleryId}`, { credentials: "same-origin" })
       .then(async (response) => {
@@ -140,7 +138,6 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
         const result = await response.json() as PublicGallery;
         if (!active) return;
         setGallery(result);
-        setSelectionExpired(Boolean(result.selection_expires_at && Date.now() >= Date.parse(result.selection_expires_at)));
         setFailedGalleryId(null);
       })
       .catch(() => { if (active) setFailedGalleryId(galleryId); });
@@ -153,8 +150,9 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
     fetch(`/api/public-galleries/${galleryId}/photos`, { credentials: "same-origin" })
       .then(async (response) => {
         if (!response.ok) throw new Error();
-        const result = await response.json();
+        const result = await response.json() as { photos?: PublicPhoto[]; folders?: FolderAccess[]; cart?: Cart };
         if (!active) return;
+        setFolderAccess(result.folders ?? []);
         setSelectedIds((result.photos ?? []).filter((photo: PublicPhoto) => photo.selected).map((photo: PublicPhoto) => photo.id));
         setFavoriteIds((result.photos ?? []).filter((photo: PublicPhoto) => photo.favorited).map((photo: PublicPhoto) => photo.id));
         setCart(result.cart ?? { quantity: 0, items: [] });
@@ -175,7 +173,7 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
       });
 
     return () => { active = false; };
-  }, [galleryId]);
+  }, [galleryId, refresh]);
 
   async function toggleSelection(photo: PublicPhoto, fromFacial = false) {
     if (selectingId) return;
@@ -196,10 +194,6 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
       setSelectedIds((current) => selected
         ? current.filter((id) => id !== photo.id)
         : current.includes(photo.id) ? current : [...current, photo.id]);
-      if (payload.gallery_closed || "selection_expires_at" in payload) {
-        setGallery((current) => current ? { ...current, selection_expires_at: payload.gallery_closed ? null : payload.selection_expires_at } : current);
-        if (!selected) setSelectionExpired(false);
-      }
       notifyCartChanged();
       setCart(payload.cart ?? { quantity: selected ? Math.max(0, cart.quantity - 1) : cart.quantity + 1, items: [] });
       setMessage(selected
@@ -254,22 +248,26 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
     if (response.ok) await loadComments();
   }
 
-  async function requestReopening() {
-    if (reopeningBusy || reopening?.status === "pending") return;
-    setReopeningBusy(true);
-    reopeningKey.current ||= globalThis.crypto?.randomUUID?.() ?? `reopening-${Date.now()}-${galleryId}`;
+  async function requestReopening(folder: FolderAccess) {
+    if (reopeningBusyFolderId || folder.reopening_request?.status === "pending") return;
+    setReopeningBusyFolderId(folder.id);
+    reopeningKeys.current[folder.id] ||= globalThis.crypto?.randomUUID?.() ?? `reopening-${Date.now()}-${folder.id}`;
     try {
       const response = await fetch(`/api/public-galleries/${galleryId}/reopening-requests`, {
         method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idempotency_key: reopeningKey.current }),
+        body: JSON.stringify({ folder_id: folder.id, idempotency_key: reopeningKeys.current[folder.id] }),
       });
-      if (!response.ok) throw new Error("Não foi possível solicitar a reabertura.");
-      setReopening(await response.json() as ReopeningRequest);
-      setMessage("Solicitação enviada ao fotógrafo. A seleção continua fechada até a aprovação.");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail ?? "Não foi possível solicitar a reabertura.");
+      delete reopeningKeys.current[folder.id];
+      setFolderAccess((current) => current.map((item) => item.id === folder.id
+        ? { ...item, reopening_request: payload as ReopeningRequest }
+        : item));
+      setMessage(`Solicitação de reabertura da pasta “${folder.name}” enviada ao fotógrafo.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível solicitar a reabertura.");
     } finally {
-      setReopeningBusy(false);
+      setReopeningBusyFolderId(null);
     }
   }
 
@@ -326,28 +324,51 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
       <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={receiveFacialResult} />
       {regionMessage ? <p role="status">{regionMessage}</p> : null}
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}
-      <SelectionDeadline expiresAt={gallery.selection_expires_at} onRevalidate={() => setRefresh((value) => value + 1)} />
-      {selectionExpired ? <section className="admin-card gallery-reopening" aria-live="polite">
-        <h2>Prazo de seleção encerrado</h2>
-        {reopening?.status === "pending" ? <p>Reabertura solicitada. Aguarde a resposta do fotógrafo.</p> : <button className="primary" type="button" disabled={reopeningBusy} onClick={() => { void requestReopening(); }}>{reopeningBusy ? "Solicitando…" : "Solicitar reabertura da galeria"}</button>}
+      {folderAccess.length ? <section className="gallery-folder-access-list" aria-labelledby="gallery-folder-access-title">
+        <h2 id="gallery-folder-access-title">Prazo de acesso por pasta</h2>
+        {folderAccess.map((folder) => <article className="admin-card gallery-folder-access-card" key={folder.id}>
+          <h3>{folder.name}</h3>
+          {folder.access_expires_at
+            ? <SelectionDeadline expiresAt={folder.access_expires_at} onRevalidate={() => setRefresh((value) => value + 1)} />
+            : <p>Prazo indeterminado</p>}
+          {!folder.access_open ? <>
+            <p>{folder.media_state === "available"
+              ? "O prazo desta pasta terminou e as fotos não estão disponíveis no momento."
+              : clientMediaStatusMessage(folder.media_state)}</p>
+            {folder.reopening_request?.status === "pending"
+              ? <p role="status">Reabertura solicitada. Aguarde a resposta do fotógrafo.</p>
+              : folder.can_request_reopening
+                ? <button className="primary" type="button" disabled={reopeningBusyFolderId === folder.id} onClick={() => { void requestReopening(folder); }}>
+                  {reopeningBusyFolderId === folder.id ? "Solicitando…" : "Solicitar reabertura desta pasta"}
+                </button>
+                : folder.media_state === "available" ? <p>A janela para solicitar a reabertura terminou. Entre em contato com o fotógrafo.</p> : null}
+          </> : null}
+        </article>)}
       </section> : null}
       {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} deferGridImages onExpandedPhotoChange={(photo) => { if (photo) void fetch(`/api/public-galleries/${galleryId}/photos/${photo.id}/view`, { method: "POST", credentials: "same-origin" }); }} renderExpandedPhotoContent={gallery.comments_enabled ? renderPhotoComments : undefined} renderExpandedMedia={(photo) => <FaceRegionViewer key={photo.id} galleryId={galleryId} photo={photo} onRegion={(id) => { void searchRegion(id); }} busy={regionPending} searchResult={facialResult?.id === regionSearchId ? facialResult : null} searchStatus={regionMessage || (facialResult ? facialResult.status : "")} />} featuredGroups={featuredGroups} revealFeaturedRequestId={facialResult?.status === "ready" && facialResult.id === initiatedSearchId ? facialResult.id : null} separateFeaturedPhotos={Boolean(facialResult?.status === "ready")} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
         const frozenLabel = photo.commercial_state === "selection_finalized" ? "Seleção finalizada" : photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;
-        return <>{frozenLabel ? <span className="gallery-presentation-marker gallery-presentation-marker--status is-purchased">{frozenLabel}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId) || (selectionExpired && !selected)} onClick={() => toggleSelection(photo)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>}{gallery.favorites_enabled && selected ? <button type="button" className="gallery-presentation-marker gallery-presentation-marker--favorite" aria-label={favorited ? "Remover dos favoritos" : "Favoritar"} title={favorited ? "Remover dos favoritos" : "Favoritar"} aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "♥" : "♡"}</button> : null}</>;
+        return <>{frozenLabel ? <span className="gallery-presentation-marker gallery-presentation-marker--status is-purchased">{frozenLabel}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>}{gallery.favorites_enabled && selected ? <button type="button" className="gallery-presentation-marker gallery-presentation-marker--favorite" aria-label={favorited ? "Remover dos favoritos" : "Favoritar"} title={favorited ? "Remover dos favoritos" : "Favoritar"} aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "♥" : "♡"}</button> : null}</>;
       }} renderFeaturedPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
         const frozenLabel = photo.commercial_state === "selection_finalized" ? "Seleção finalizada" : photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;
-        return <>{frozenLabel ? <span className="gallery-presentation-marker gallery-presentation-marker--status is-purchased">{frozenLabel}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId) || (selectionExpired && !selected)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>}{gallery.favorites_enabled && selected ? <button type="button" className="gallery-presentation-marker gallery-presentation-marker--favorite" aria-label={favorited ? "Remover dos favoritos" : "Favoritar"} title={favorited ? "Remover dos favoritos" : "Favoritar"} aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "♥" : "♡"}</button> : null}</>;
+        return <>{frozenLabel ? <span className="gallery-presentation-marker gallery-presentation-marker--status is-purchased">{frozenLabel}</span> : <button type="button" className="gallery-presentation-marker" aria-pressed={selected} disabled={Boolean(selectingId)} onClick={() => toggleSelection(photo, true)}>{selectingId === photo.id ? (selected ? "Desmarcando…" : "Selecionando…") : selected ? "✓ Desmarcar" : "Selecionar foto"}</button>}{gallery.favorites_enabled && selected ? <button type="button" className="gallery-presentation-marker gallery-presentation-marker--favorite" aria-label={favorited ? "Remover dos favoritos" : "Favoritar"} title={favorited ? "Remover dos favoritos" : "Favoritar"} aria-pressed={favorited} disabled={Boolean(selectingId)} onClick={() => toggleFavorite(photo)}>{favorited ? "♥" : "♡"}</button> : null}</>;
       }} />}
       {cart.quantity > 0 ? <aside className="selection-summary selection-summary--floating" aria-live="polite" aria-label="Resumo da seleção">
         <div><span>Sua seleção</span><strong>{cart.quantity} foto{cart.quantity === 1 ? "" : "s"}</strong></div>
         {cart.payment_required !== false ? <div className="selection-summary__commercial"><span>Total <strong>{cart.total_cents != null ? (cart.total_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "A calcular"}</strong></span>{cart.savings_cents ? <span className="selection-summary__savings">Você economiza {(cart.savings_cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span> : null}</div> : null}
         {cart.pricing_error ? <p className="notice">{cart.pricing_error}</p> : null}
-        <ClientCartLink className="primary selection-summary__proceed" count={cart.quantity} href="/library/cart" />
+        <ClientCartLink className="primary selection-summary__proceed" href="/library/cart" />
       </aside> : null}
+      <section className="admin-card" aria-labelledby="gallery-privacy-title">
+        <h2 id="gallery-privacy-title">Privacidade das suas fotos</h2>
+        <p>Suas fotos e escolhas nesta galeria são privadas. Use o acesso apenas para ver e selecionar suas próprias fotos.</p>
+        {gallery.support_contact_email
+          ? <p>Dúvidas sobre privacidade ou para relatar um problema? <a href={`mailto:${gallery.support_contact_email}`}>Fale com o suporte</a>.</p>
+          : <p>Dúvidas sobre privacidade ou para relatar um problema? Fale com o fotógrafo pelo canal em que recebeu o convite.</p>}
+      </section>
     </main>
   );
 }

@@ -8,7 +8,11 @@ Definir a validação futura de jornadas e isolamento com um grupo pequeno de fo
 
 ### Requirement: Preservação de branding de múltiplos fotógrafos
 
-O deploy SHALL preservar todos os assets de branding referenciados por owners distintos, incluindo keys legadas de raiz e keys contextualizadas produzidas pela API, sem misturar contas ou sobrescrever arquivos conflitantes. Duplicidade de owner, chave de outro owner, traversal, symlink, arquivo irregular, hash/tamanho inválido ou transporte acima do limite seguro MUST abortar a transição e reiniciar a API anterior quando parada. O helper SHALL manter backup restrito, manifestos de integridade e indicação explícita de arquivos ausentes; não escrever SQL, apagar fontes ou alterar terceiros.
+O deploy SHALL preservar os assets de branding de cada fotógrafo sem cruzar contas ou sobrescrever conflitos.
+
+#### Scenario: Contrato integral de preservação do branding
+- **WHEN** o deploy prepara ou migra os assets de branding de vários fotógrafos
+- **THEN** O deploy SHALL preservar todos os assets de branding referenciados por owners distintos, incluindo keys legadas de raiz e keys contextualizadas produzidas pela API, sem misturar contas ou sobrescrever arquivos conflitantes. Duplicidade de owner, chave de outro owner, traversal, symlink, arquivo irregular, hash/tamanho inválido ou transporte acima do limite seguro MUST abortar a transição e reiniciar a API anterior quando parada. O helper SHALL manter backup restrito, manifestos de integridade e indicação explícita de arquivos ausentes; não escrever SQL, apagar fontes ou alterar terceiros.
 
 #### Scenario: Três fotógrafos com configurações próprias
 - **WHEN** existem três registros de branding com owners únicos e assets válidos
@@ -24,7 +28,11 @@ O deploy SHALL preservar todos os assets de branding referenciados por owners di
 
 ### Requirement: Validação futura condicionada à prontidão
 
-O ensaio com fotógrafos e clientes SHALL ocorrer somente após completar o isolamento dos caminhos inventariados, preservar o legado e aprovar os testes de engenharia aplicáveis, com evidências de prontidão registradas. A intenção do proprietário de validar assim que possível SHALL ser tratada como objetivo futuro condicionado a esses pré-requisitos e às autorizações operacionais do ambiente. Ela MUST NOT ser tratada, por si só, como ordem de execução imediata, criação de uma segunda conta operacional ou dispensa de isolamento para antecipar a validação. O monitor SHALL ser testado durante as jornadas quando essa etapa futura puder ser executada.
+O ensaio com fotógrafos e clientes SHALL depender de prontidão comprovada e das autorizações operacionais do ambiente.
+
+#### Scenario: Contrato integral de prontidão e autorização
+- **WHEN** alguém solicita executar o ensaio antes ou depois de demonstrar os pré-requisitos
+- **THEN** O ensaio com fotógrafos e clientes SHALL ocorrer somente após completar o isolamento dos caminhos inventariados, preservar o legado e aprovar os testes de engenharia aplicáveis, com evidências de prontidão registradas. A intenção do proprietário de validar assim que possível SHALL ser tratada como objetivo futuro condicionado a esses pré-requisitos e às autorizações operacionais do ambiente. Ela MUST NOT ser tratada, por si só, como ordem de execução imediata, criação de uma segunda conta operacional ou dispensa de isolamento para antecipar a validação. O monitor SHALL ser testado durante as jornadas quando essa etapa futura puder ser executada.
 
 #### Scenario: Preparação ainda incompleta
 - **WHEN** restam caminhos sem isolamento, testes de engenharia pendentes ou dependências que invalidam as jornadas
@@ -36,15 +44,23 @@ O ensaio com fotógrafos e clientes SHALL ocorrer somente após completar o isol
 
 ### Requirement: Provisionamento e piloto pequenos e autorizados
 
-O piloto SHALL usar duas contas de fotógrafo com três clientes próprias de cada conta, uma galeria por conta e no máximo seis JPEGs sintéticos por galeria. Um telefone SHALL se repetir entre contas para testar identidades independentes. Não haverá cadastro público de fotógrafo. Provisionamento remoto SHALL exigir inventário de contas/configurações preservadas e autorização específica. Dados e segredos reais MUST NOT ser incluídos no repositório; mensagens reais e biometria real SHALL exigir autorização própria.
+O piloto SHALL usar contas e dados sintéticos em pequena escala, com provisionamento remoto autorizado.
+
+#### Scenario: Contrato integral do piloto sintético local
+- **WHEN** uma jornada de isolamento é preparada localmente antes do release
+- **THEN** O piloto SHALL usar duas contas de fotógrafo com três clientes próprias de cada conta, uma galeria por conta e no máximo seis JPEGs sintéticos por galeria. Um telefone SHALL se repetir entre contas para testar identidades independentes. Não haverá cadastro público de fotógrafo. Provisionamento remoto SHALL exigir inventário de contas/configurações preservadas e autorização específica. Dados e segredos reais MUST NOT ser incluídos no repositório; mensagens reais e biometria real SHALL exigir autorização própria.
 
 #### Scenario: Piloto local
 - **WHEN** o executor prepara o ensaio antes da autorização remota
 - **THEN** usa banco, mídia e adaptadores descartáveis exclusivos, com OTP e pagamentos sintéticos sem envio ou movimentação financeira real
 
-#### Scenario: Piloto em homologação
-- **WHEN** o proprietário aprova o inventário, destino, versão, canais e plano de impacto zero
-- **THEN** somente os recursos e dados identificados do Pick-your-Pic são criados ou alterados, preservando o fotógrafo atual e recursos vizinhos
+#### Scenario: Ensaio pré-tenants em produção com o proprietário
+- **WHEN** o release no servidor de produção existente foi autorizado e a versão está restrita à conta do proprietário
+- **THEN** o cadastro público SHALL permanecer fechado. O proprietário SHALL atuar como fotógrafo e validar Workspace, backup/cópia, readback e restauração, além do arquivo frio/readback/recuperação de mídia sintética, conforme as changes próprias. O ensaio SHALL preservar os clientes, dados e serviços atuais e MUST NOT usar fotos, pedidos ou dados de clientes. Falha ou resultado inconclusivo SHALL manter o signup fechado.
+
+#### Scenario: Abertura do cadastro após provas bem-sucedidas
+- **WHEN** todas as provas pré-tenants do Workspace, backup e arquivo frio foram concluídas com sucesso, registradas e aprovadas pelo proprietário
+- **THEN** a abertura do signup SHALL ocorrer somente por uma operação de release autorizada. Depois da abertura, o fotógrafo SHALL ser ativado automaticamente ao verificar o e-mail, conforme `add-photographer-signup-portal`; aprovação manual individual MUST NOT ser exigida. A aprovação destas provas não autoriza alteração que interrompa o serviço existente.
 
 ### Requirement: Entrega persistente de configuração de canais
 
@@ -60,7 +76,11 @@ O Compose SHALL disponibilizar bindings de canais por arquivo opcional não vers
 
 ### Requirement: Jornadas positivas e tentativas de acesso cruzado
 
-O ensaio SHALL exercitar login de ambos os fotógrafos, OTP contextual, pasta comum e restrita, seleção, checkout com PIX de teste ou finalização sem cobrança, confirmação sintética e entrega. SHALL comprovar que o mesmo telefone em duas contas recebe sessões, seleção e histórico separados. Requisições diretas a galerias, arquivos, clientes, carrinhos, pedidos e configurações de outra conta SHALL ser negadas. Concorrência SHALL ser limitada a seis jornadas cliente, uma por cadastro, sem aumentar infraestrutura.
+O ensaio SHALL provar jornadas positivas e recusas de acesso cruzado entre as duas contas.
+
+#### Scenario: Contrato integral das jornadas do piloto
+- **WHEN** os fotógrafos e seus clientes percorrem os fluxos previstos no piloto
+- **THEN** O ensaio SHALL exercitar login de ambos os fotógrafos, OTP contextual, pasta comum e restrita, seleção, checkout com PIX de teste ou finalização sem cobrança, confirmação sintética e entrega. SHALL comprovar que o mesmo telefone em duas contas recebe sessões, seleção e histórico separados. Requisições diretas a galerias, arquivos, clientes, carrinhos, pedidos e configurações de outra conta SHALL ser negadas. Concorrência SHALL ser limitada a seis jornadas cliente, uma por cadastro, sem aumentar infraestrutura.
 
 #### Scenario: Cliente comum aos dois fotógrafos
 - **WHEN** a pessoa acessa os links dos dois fotógrafos e autentica separadamente
@@ -72,7 +92,11 @@ O ensaio SHALL exercitar login de ambos os fotógrafos, OTP contextual, pasta co
 
 ### Requirement: Leituras reais de capacidade com limites explícitos
 
-O operador autorizado SHALL coletar e copiar diagnósticos antes, durante e depois das jornadas, registrando janela UTC, cache, evidência, ocupação do pool, conexões PostgreSQL e estados das cinco filas. Intervalos SHALL respeitar o cache vigente; uma coleta reutilizada MUST NOT ser apresentada como nova. Os relatórios SHALL ser associados às etapas em evidência manual sanitizada, sem adicionar histórico automático ao produto. Filas sem trabalho SHALL permanecer descritas como vazias, sem conclusão sobre saúde do worker; o resultado MUST NOT declarar capacidade máxima, fairness, p95, SLO ou orçamento global completo.
+O operador autorizado SHALL coletar diagnósticos com janela e limites explícitos, sem inferir capacidade além da evidência.
+
+#### Scenario: Contrato integral de leitura de capacidade
+- **WHEN** um operador autorizado coleta diagnósticos antes, durante ou depois das jornadas
+- **THEN** O operador autorizado SHALL coletar e copiar diagnósticos antes, durante e depois das jornadas, registrando janela UTC, cache, evidência, ocupação do pool, conexões PostgreSQL e estados das cinco filas. Intervalos SHALL respeitar o cache vigente; uma coleta reutilizada MUST NOT ser apresentada como nova. Os relatórios SHALL ser associados às etapas em evidência manual sanitizada, sem adicionar histórico automático ao produto. Filas sem trabalho SHALL permanecer descritas como vazias, sem conclusão sobre saúde do worker; o resultado MUST NOT declarar capacidade máxima, fairness, p95, SLO ou orçamento global completo.
 
 #### Scenario: Job transitório não capturado
 - **WHEN** o job conclui entre duas amostras e o snapshot não observa fila pendente
@@ -84,9 +108,11 @@ O operador autorizado SHALL coletar e copiar diagnósticos antes, durante e depo
 
 ### Requirement: Inventário de manutenção pós-deploy somente-leitura multitenant
 
-**Aceita pelo proprietário em 05/10/2026 após o run #375.** Quando um deploy normal termina sem trailer de limpeza, o workflow SHALL poder executar inventário somente-leitura em instalação com várias contas e apresentar contagens agregadas por categoria/tipo de mídia, sem PII ou identificadores por fotógrafo. O relatório SHALL sinalizar explicitamente que a limpeza destrutiva integral continua indisponível enquanto houver múltiplos fotógrafos. A ausência de trailer de limpeza MUST NOT habilitar execução ou remover dados.
+**Aceita pelo proprietário em 05/10/2026 após o run #375.** O inventário pós-deploy SHALL oferecer somente leitura agregada em instalação com várias contas, sem PII.
 
-O modo destrutivo `execute` SHALL manter a exigência de proprietário único, confirmação literal e guardas existentes de homologação, schema, volumes e isolamento; inventário multitenant MUST NOT remover nem enfraquecer esses controles. O aceite autoriza implementação e testes locais desta task, mas não autoriza cleanup, CI, merge ou deploy. O run #375 e deploys já concluídos não são reexecutados por este requisito.
+#### Scenario: Contrato integral do inventário e execução
+- **WHEN** um deploy termina e o workflow avalia inventário ou limpeza
+- **THEN** Quando um deploy normal termina sem trailer de limpeza, o workflow SHALL poder executar inventário somente-leitura em instalação com várias contas e apresentar contagens agregadas por categoria/tipo de mídia, sem PII ou identificadores por fotógrafo. O relatório SHALL sinalizar explicitamente que a limpeza destrutiva integral continua indisponível enquanto houver múltiplos fotógrafos. A ausência de trailer de limpeza MUST NOT habilitar execução ou remover dados. O modo destrutivo `execute` SHALL manter a exigência de proprietário único, confirmação literal e guardas existentes de homologação, schema, volumes e isolamento; inventário multitenant MUST NOT remover nem enfraquecer esses controles. O aceite autoriza implementação e testes locais desta task, mas não autoriza cleanup, CI, merge ou deploy. O run #375 e deploys já concluídos não são reexecutados por este requisito.
 
 #### Scenario: Deploy normal em instalação com várias contas
 - **WHEN** o workflow termina o deploy em homologação sem trailer `Homolog-Cleanup`

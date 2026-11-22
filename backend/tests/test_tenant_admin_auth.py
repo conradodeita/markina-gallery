@@ -35,7 +35,7 @@ def accounts(client_db, graph, monkeypatch):
 
 
 def password(db, admin, secret=PASSWORD):
-    result = main.admin_password(auth.AdminPasswordInput(email=admin.email, password=secret), request(), db)
+    result = main.admin_password(auth.AdminPasswordInput(email=admin.email, password=secret), request(), Response(), db)
     return db.get(AuthChallenge, UUID(result["challenge_id"]))
 
 
@@ -135,7 +135,7 @@ def test_header_body_e_query_nao_elegem_conta_e_gate_operacional_permanece(clien
     forged.scope["headers"].append((b"x-tenant-id", str(accounts[1]["tenant"].id).encode()))
     forged.scope["query_string"] = f"tenant_id={accounts[1]['tenant'].id}".encode()
     result = main.admin_password(auth.AdminPasswordInput(email=first["admin"].email, password=PASSWORD,
-                                tenant_id=accounts[1]["tenant"].id), forged, client_db)
+                                tenant_id=accounts[1]["tenant"].id), forged, Response(), client_db)
     row = client_db.get(AuthChallenge, UUID(result["challenge_id"]))
     assert row.tenant_id == first["tenant"].id
     assert require_admin_tenant(client_db, first["admin"].id).id == first["tenant"].id

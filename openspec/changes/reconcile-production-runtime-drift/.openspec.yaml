@@ -1,0 +1,4 @@
+schema: spec-driven
+skip_specs: true
+created: 2026-10-31
+goal: "Preparar uma base de desenvolvimento que preserve a operação funcional antes das mudanças SaaS."

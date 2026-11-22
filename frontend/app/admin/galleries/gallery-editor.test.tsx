@@ -67,15 +67,115 @@ it("identifica clientes atribuídas no título da própria pasta restrita", asyn
   expect(fetcher.mock.calls.some(([path]) => String(path).endsWith("/private-folders"))).toBe(false);
 });
 
+it("renomeia pastas comuns e restritas já liberadas no editor e permite cancelar", async () => {
+  let folders = [
+    { id: "public-folder", name: "Pasta pública", audience_scope: "all", status: "released", photo_count: 1 },
+    { id: "private-folder", name: "Pasta privada", audience_scope: "selected", client_names: ["Ana"], status: "released", photo_count: 1 },
+  ];
+  const fetcher = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/editor")) return response(editor);
+    if (path.includes("/folders?")) return response({ total: folders.length, folders });
+    if (init?.method === "PATCH" && path.startsWith("/api/admin/photo-folders/")) {
+      const id = path.split("/").at(-1)!;
+      const name = JSON.parse(String(init.body)).name as string;
+      folders = folders.map((folder) => folder.id === id ? { ...folder, name } : folder);
+      return response({ id, name });
+    }
+    return response({});
+  });
+  vi.stubGlobal("fetch", fetcher);
+  vi.spyOn(window, "prompt")
+    .mockReturnValueOnce(null)
+    .mockReturnValueOnce("  Pública corrigida  ")
+    .mockReturnValueOnce("  Privada corrigida  ");
+  render(<GalleryEditor sourceId="source-1" step="imagens" />);
+
+  const publicCard = (await screen.findByRole("button", { name: "Abrir pasta Pasta pública" })).closest("article")!;
+  const privateCard = screen.getByRole("button", { name: "Abrir pasta Pasta privada — Ana" }).closest("article")!;
+  fireEvent.click(within(publicCard).getByRole("button", { name: "Renomear" }));
+  expect(fetcher.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  fireEvent.click(within(publicCard).getByRole("button", { name: "Renomear" }));
+  await screen.findByRole("button", { name: "Abrir pasta Pública corrigida" });
+  fireEvent.click(within(privateCard).getByRole("button", { name: "Renomear" }));
+  await screen.findByRole("button", { name: "Abrir pasta Privada corrigida — Ana" });
+
+  const patches = fetcher.mock.calls.filter(([, init]) => init?.method === "PATCH");
+  expect(patches.map(([path]) => path)).toEqual([
+    "/api/admin/photo-folders/public-folder",
+    "/api/admin/photo-folders/private-folder",
+  ]);
+  expect(patches.map(([, init]) => JSON.parse(String(init?.body)).name)).toEqual([
+    "Pública corrigida", "Privada corrigida",
+  ]);
+});
+
 function response(value: object, status = 200) {
   return Promise.resolve(new Response(status === 204 ? null : JSON.stringify(value), { status, headers: { "content-type": "application/json" } }));
 }
+
+it("renova somente a pasta pública elegível e atualiza o prazo exibido", async () => {
+  let folders = [
+    { id: "public-expired", name: "Pública vencida", audience_scope: "all", status: "released",
+      released_at: "2026-01-01T00:00:00Z", access_expires_at: "2026-01-08T00:00:00Z",
+      access_duration_days: 7, photo_count: 1, can_renew_deadline: true },
+    { id: "private-expired", name: "Privada vencida", audience_scope: "selected", status: "released",
+      released_at: "2026-01-01T00:00:00Z", access_expires_at: "2026-01-08T00:00:00Z",
+      access_duration_days: 7, photo_count: 1, can_renew_deadline: true },
+  ];
+  const fetcher = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/editor")) return response(editor);
+    if (path.includes("/folders?")) return response({ folders });
+    if (path.endsWith("/public-expired/renew-deadline") && init?.method === "PATCH") {
+      folders = folders.map((folder) => folder.id === "public-expired" ? {
+        ...folder, can_renew_deadline: false,
+        access_expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
+      } : folder);
+      return response({ can_renew_deadline: false });
+    }
+    return response({});
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="imagens" />);
+  const card = (await screen.findByRole("button", { name: "Abrir pasta Pública vencida" })).closest("article")!;
+  const privateCard = screen.getByRole("button", { name: "Abrir pasta Privada vencida" }).closest("article")!;
+  expect(within(privateCard).queryByText("Renovar prazo")).toBeNull();
+  fireEvent.click(within(card).getByText("Renovar prazo"));
+  expect(within(card).getByText("O novo prazo começa agora e vale para todos os clientes autorizados desta pasta.")).toBeTruthy();
+  fireEvent.change(within(card).getByLabelText("Dias de acesso da pasta"), { target: { value: "7" } });
+  fireEvent.click(within(card).getByRole("button", { name: "Salvar novo prazo" }));
+  expect(await screen.findByText("Prazo renovado para todos os clientes autorizados da pasta. A contagem começa agora.")).toBeTruthy();
+  expect(fetcher).toHaveBeenCalledWith("/api/admin/photo-folders/public-expired/renew-deadline",
+    expect.objectContaining({ method: "PATCH", body: JSON.stringify({ access_duration_days: 7 }) }));
+  await waitFor(() => expect(within(card).queryByText("Renovar prazo")).toBeNull());
+});
+
+it("preserva os dias digitados quando a renovação é recusada pelo servidor", async () => {
+  const fetcher = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/editor")) return response(editor);
+    if (path.includes("/folders?")) return response({ folders: [{
+      id: "expired-folder", name: "Pública expirada", audience_scope: "all", status: "released",
+      released_at: "2026-01-01T00:00:00Z", access_expires_at: "2026-01-08T00:00:00Z",
+      access_duration_days: 7, photo_count: 1, can_renew_deadline: true,
+    }] });
+    if (init?.method === "PATCH") return response({ detail: "A pasta não pode mais ser renovada." }, 409);
+    return response({});
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<GalleryEditor sourceId="source-1" step="imagens" />);
+  const card = (await screen.findByRole("button", { name: "Abrir pasta Pública expirada" })).closest("article")!;
+  fireEvent.click(within(card).getByText("Renovar prazo"));
+  fireEvent.change(within(card).getByLabelText("Dias de acesso da pasta"), { target: { value: "14" } });
+  fireEvent.click(within(card).getByRole("button", { name: "Salvar novo prazo" }));
+  expect(await screen.findByText("A pasta não pode mais ser renovada.")).toBeTruthy();
+  expect(within(card).getByLabelText("Dias de acesso da pasta")).toHaveProperty("value", "14");
+  expect((within(card).getByRole("button", { name: "Salvar novo prazo" }) as HTMLButtonElement).disabled).toBe(false);
+});
 
 it("exige preço positivo com cobrança e permite salvar seleção externa", async () => {
   const sales = { available: true, capabilities: [], payment_required: true, pricing_mode: "fixed",
     fixed_unit_price_cents: 0, progressive_pricing_preset_id: null, pricing_snapshot: null,
     pricing_review_required: false, tiers: [], pix: { status: "unconfigured", checkout_available: false },
-    sales_message: "", selection_duration_days: 14, favorites_enabled: false, comments_enabled: false };
+    sales_message: "", favorites_enabled: false, comments_enabled: false };
   const fetcher = vi.fn((path: string, init?: RequestInit) => response(path.endsWith("/editor") ? editor
     : init?.method === "PUT" ? { ...sales, ...JSON.parse(String(init.body)) } : sales));
   vi.stubGlobal("fetch", fetcher);
@@ -101,6 +201,7 @@ it("mantém o Acervo da cliente independente e inicialmente fechado em dois card
     gallery_status: "active", commercial_status: "no_order",
   }));
   const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/media-archive/recovery-pricing")) return response({ recovery_fee_credits: 10, configured: true, owner_exempt: false });
     if (!path.split("?")[0].endsWith("/folders") || init?.method) throw new Error("Chamada inesperada");
     return response({ folders: [] });
   });
@@ -136,6 +237,7 @@ it("bloqueia apenas a cliente do card aberto", async () => {
   }));
   vi.spyOn(window, "confirm").mockReturnValue(true);
   const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/media-archive/recovery-pricing")) return response({ recovery_fee_credits: 10, configured: true, owner_exempt: false });
     if (path.split("?")[0].endsWith("/folders")) return response({ folders: [] });
     if (path.endsWith("/access") && init?.method === "PATCH") return response({ status: "blocked" });
     throw new Error("Chamada inesperada");
@@ -166,6 +268,7 @@ it("oferece exclusão protegida de foto e pasta no Acervo da cliente", async () 
   let deletedFolder = false;
   vi.spyOn(window, "confirm").mockReturnValue(true);
   const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+    if (path.endsWith("/media-archive/recovery-pricing")) return response({ recovery_fee_credits: 10, configured: true, owner_exempt: false });
     if (path.endsWith("/clients/client-1/folders")) return response({ folders: deletedFolder ? [] : [{ id: "folder-1", name: "Retratos", status: "released", photo_count: deletedPhoto ? 0 : 1, assigned_client_ids: ["client-1"] }] });
     if (path.endsWith("/photo-folders/folder-1/photos/photo-1") && init?.method === "DELETE") { deletedPhoto = true; return response({}, 204); }
     if (path.endsWith("/photo-folders/folder-1") && init?.method === "DELETE") { deletedFolder = true; return response({}, 204); }
@@ -219,10 +322,11 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getAllByRole("link", { name: /Ajustes|Vendas|Detalhes|Imagens|Clientes/ })).toHaveLength(5);
     expect(screen.getByRole("link", { name: /Imagens/ }).getAttribute("aria-current")).toBe("step");
     fireEvent.change(screen.getByLabelText("Nome da nova pasta"), { target: { value: "Apresentação" } });
+    fireEvent.change(screen.getByLabelText("Dias de acesso da pasta"), { target: { value: "30" } });
     fireEvent.click(screen.getByRole("button", { name: "Criar pasta" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/parent-galleries/source-1/folders",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Apresentação", access_duration_days: 30 }) }),
     ));
     expect(fetchMock).not.toHaveBeenCalledWith("/api/admin/photo-folders", expect.anything());
   });
@@ -540,10 +644,11 @@ describe("editor administrativo de galeria", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(toggle);
     fireEvent.change(within(card).getByLabelText("Nova pasta restrita"), { target: { value: "Retratos" } });
+    fireEvent.change(within(card).getByLabelText("Dias de acesso da pasta"), { target: { value: "21" } });
     fireEvent.click(within(card).getByRole("button", { name: "Criar pasta" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/parent-galleries/source-1/clients/client-1/folders",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Retratos" }) }),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Retratos", access_duration_days: 21 }) }),
     ));
     expect(await within(card).findByRole("button", { name: /Retratos/ })).toBeTruthy();
     expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/derived-galleries"))).toBe(false);
@@ -617,7 +722,7 @@ describe("editor administrativo de galeria", () => {
   it("edita e persiste todos os controles da etapa Vendas na Galeria pública", async () => {
     const sales = {
       available: true,
-      capabilities: ["pricing_tiers", "pix", "sales_message", "interactions", "selection_deadline"],
+      capabilities: ["pricing_tiers", "pix", "sales_message", "interactions"],
       pricing_mode: "fixed",
       fixed_unit_price_cents: 700,
       progressive_pricing_preset_id: null,
@@ -626,7 +731,6 @@ describe("editor administrativo de galeria", () => {
       tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }],
       pix: { status: "active", version: 1, checkout_available: true, receiver_name: "MARKINA", receiver_city: "SAO PAULO", qr_png_data_url: "data:image/png;base64,cXI=", instructions: null },
       sales_message: "Escolha suas fotos",
-      selection_duration_days: 14,
       favorites_enabled: true,
       comments_enabled: false,
     };
@@ -646,7 +750,8 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByAltText("QR Code PIX da sua conta")).toBeTruthy();
     expect(screen.queryByLabelText("Chave PIX ou copia e cola")).toBeNull();
     fireEvent.change(screen.getByLabelText("Mensagem comercial"), { target: { value: "Mensagem atualizada" } });
-    fireEvent.change(screen.getByLabelText("Prazo padrão de seleção (dias)"), { target: { value: "21" } });
+    expect(screen.queryByLabelText("Prazo padrão de seleção (dias)")).toBeNull();
+    expect(screen.getByText(/prazo de acesso é definido individualmente em cada pasta/i)).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Permitir comentários"));
     fireEvent.click(screen.getByRole("button", { name: "Salvar e avançar →" }));
 
@@ -661,14 +766,14 @@ describe("editor administrativo de galeria", () => {
       pricing_mode: "fixed",
       fixed_unit_price_cents: 700000,
       sales_message: "Mensagem atualizada",
-      selection_duration_days: 21,
       comments_enabled: true,
     });
+    expect(JSON.parse(String(saveCall?.[1]?.body))).not.toHaveProperty("selection_duration_days");
     expect(JSON.parse(String(saveCall?.[1]?.body)).pix).toBeUndefined();
   });
 
   it("bloqueia cobrança sem meio e permite avançar no modo somente seleção", async () => {
-    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { status: "unconfigured", version: 0, checkout_available: false }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { status: "unconfigured", version: 0, checkout_available: false }, sales_message: "", favorites_enabled: true, comments_enabled: false };
     const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response(sales));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
@@ -690,7 +795,7 @@ describe("editor administrativo de galeria", () => {
       pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null,
       pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [],
       pix: { status: "unconfigured", version: 0, checkout_available: false },
-      sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+      sales_message: "", favorites_enabled: true, comments_enabled: false };
     const fetchMock = vi.fn((path: string) => path.endsWith("/editor") ? response(editor) : response(sales));
     vi.stubGlobal("fetch", fetchMock);
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
@@ -702,7 +807,7 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("preserva os dados editados e mostra o erro retornado ao falhar Vendas", async () => {
-    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, payment_methods: { available: true, pix_available: false, card_available: true }, sales_message: "Original", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const sales = { available: true, capabilities: [], pricing_mode: "fixed", fixed_unit_price_cents: 700, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "fixed" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: null, unit_price_cents: 700 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, payment_methods: { available: true, pix_available: false, card_available: true }, sales_message: "Original", favorites_enabled: true, comments_enabled: false };
     vi.stubGlobal("fetch", vi.fn((path: string, init?: RequestInit) => path.endsWith("/editor") ? response(editor) : init?.method === "PUT" ? response({ detail: "As faixas devem ser contíguas." }, 422) : response(sales)));
     render(<GalleryEditor sourceId="source-1" step="vendas" />);
     const message = await screen.findByLabelText("Mensagem comercial") as HTMLTextAreaElement;
@@ -714,7 +819,7 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("exige escolha e confirmação explícitas para converter preço legado", async () => {
-    const sales = { available: true, capabilities: [], payment_methods: { available: true, pix_available: false, card_available: true }, pricing_mode: "legacy_volume", fixed_unit_price_cents: null, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "legacy_volume" }, pricing_review_required: true, tiers: [{ minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 }, { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const sales = { available: true, capabilities: [], payment_methods: { available: true, pix_available: false, card_available: true }, pricing_mode: "legacy_volume", fixed_unit_price_cents: null, progressive_pricing_preset_id: null, pricing_snapshot: { mode: "legacy_volume" }, pricing_review_required: true, tiers: [{ minimum_quantity: 1, maximum_quantity: 10, unit_price_cents: 700 }, { minimum_quantity: 11, maximum_quantity: null, unit_price_cents: 500 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", favorites_enabled: true, comments_enabled: false };
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/pricing-presets")) return response({ presets: [] });
@@ -737,7 +842,7 @@ describe("editor administrativo de galeria", () => {
   });
 
   it("seleciona tabela global e simula parcelas e economia no backend", async () => {
-    const sales = { available: true, capabilities: [], pricing_mode: "progressive", fixed_unit_price_cents: null, progressive_pricing_preset_id: "preset-1", pricing_snapshot: { mode: "progressive" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: 30, unit_price_cents: 700 }, { minimum_quantity: 31, maximum_quantity: null, unit_price_cents: 600 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", selection_duration_days: 14, favorites_enabled: true, comments_enabled: false };
+    const sales = { available: true, capabilities: [], pricing_mode: "progressive", fixed_unit_price_cents: null, progressive_pricing_preset_id: "preset-1", pricing_snapshot: { mode: "progressive" }, pricing_review_required: false, tiers: [{ minimum_quantity: 1, maximum_quantity: 30, unit_price_cents: 700 }, { minimum_quantity: 31, maximum_quantity: null, unit_price_cents: 600 }], pix: { copy_paste: null, qr_code_payload: null, qr_png_data_url: null, review_required: false, instructions: null }, sales_message: "", favorites_enabled: true, comments_enabled: false };
     const fetchMock = vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.endsWith("/pricing-presets")) return response({ presets: [{ id: "preset-1", code: "01", name: "Escolar", label: "01 — Escolar", version: 1, active: true, tiers: sales.tiers }] });
@@ -1000,7 +1105,6 @@ describe("editor administrativo de galeria", () => {
     let detailsCalls = 0;
     vi.stubGlobal("fetch", vi.fn((path: string) => {
       if (path.endsWith("/editor")) return response(editor);
-      if (path.endsWith("/raw-development/capabilities")) return response({ enabled: false, formats: [] });
       detailsCalls += 1;
       if (detailsCalls === 2) return Promise.reject(new Error("Conexão temporariamente indisponível."));
       return response(detailsCalls === 1 ? processingDetails : readyDetails);
@@ -1030,7 +1134,7 @@ describe("editor administrativo de galeria", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<GalleryEditor sourceId="source-1" step="detalhes" />);
     await screen.findByRole("heading", { name: "Detalhes e apresentação" });
-    const input = container.querySelector('input[type="file"][accept="image/jpeg"]') as HTMLInputElement;
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(["jpeg"], "capa.jpg", { type: "image/jpeg" });
 
     fireEvent.change(input, { target: { files: [file] } });
@@ -1374,7 +1478,7 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
   it("mantém o lote identificado pela pasta de destino ao selecionar outra pasta", async () => {
     let finishUpload: (() => void) | undefined;
     vi.spyOn(sourceUpload, "jpegStorageKey").mockResolvedValue("folder-a/file.jpg");
-    vi.spyOn(sourceUpload, "uploadPhotoSource").mockImplementation((_path, _file, _waiting, progress) => {
+    vi.spyOn(sourceUpload, "uploadJpeg").mockImplementation((_path, _file, _waiting, progress) => {
       progress?.(50, 100);
       return new Promise<void>((resolve) => { finishUpload = resolve; });
     });
@@ -1401,9 +1505,91 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
     expect(await screen.findByText("Upload concluído · 1 de 1 fotos")).toBeTruthy();
   });
 
+  it("mostra reserva durante o envio e consumo confirmado por arquivo", async () => {
+    let finishUpload: (() => void) | undefined;
+    let transferFinished = false;
+    vi.spyOn(sourceUpload, "jpegStorageKey").mockResolvedValue("folder-credit/file.jpg");
+    vi.spyOn(sourceUpload, "uploadJpeg").mockImplementation(() => new Promise<void>((resolve) => {
+      finishUpload = resolve;
+    }));
+    const finiteWallet = (available: number, reserved: number) => ({ mode: "finite", available_credits: available,
+      reserved_credits: reserved, pending_operations: reserved, recent_consumed_credits: 0,
+      recent_period_days: 30, can_upload_content: available > 0, as_of: "2026-11-01T12:00:00Z" });
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{
+        id: "folder-credit", name: "Envio", status: "released", position: 0, photo_count: 0, preview_url: null,
+      }] });
+      if (path === "/api/admin/credits/wallet") return response({ wallet: finiteWallet(3, 0), entries: [] });
+      if (path.endsWith("/credit-operation")) return response({
+        wallet: transferFinished ? finiteWallet(2, 0) : finiteWallet(2, 1), applicable: true,
+        operation: { status: transferFinished ? "consumed" : "reserved", quantity: 1 },
+      });
+      if (path.endsWith("/photos") && init?.method === "POST") return response({ id: "photo-credit" }, 201);
+      if (path.endsWith("/photos")) return response({ photos: [] });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<GalleryEditor sourceId="source-1" step="imagens" initialFolderId="folder-credit" />);
+    const input = await waitFor(() => {
+      const found = container.querySelector('input[name="jpeg"]') as HTMLInputElement | null;
+      if (!found) throw new Error("Upload ainda não foi montado");
+      return found;
+    });
+    const form = input.closest("form")!;
+    vi.spyOn(form, "requestSubmit").mockImplementation(() => { fireEvent.submit(form); });
+    fireEvent.change(input, { target: { files: [new File(["jpeg"], "retrato.jpg", { type: "image/jpeg" })] } });
+    expect(await screen.findByText("1 crédito reservado enquanto o arquivo é recebido.")).toBeTruthy();
+    const wallet = screen.getByLabelText("Saldo de créditos durante o envio");
+    expect(within(wallet).getByText("Disponíveis").parentElement?.textContent).toContain("2");
+    expect(within(wallet).getByText("Reservados").parentElement?.textContent).toContain("1");
+
+    await act(async () => { transferFinished = true; finishUpload?.(); });
+    expect(await screen.findByText("1 crédito consumido, confirmado pelo servidor.")).toBeTruthy();
+    expect(await screen.findByText("Upload concluído · 1 de 1 fotos")).toBeTruthy();
+  });
+
+  it("mantém timeout ambíguo pendente até consultar a confirmação do servidor", async () => {
+    let operationStatus = "reconciliation_required";
+    vi.spyOn(sourceUpload, "jpegStorageKey").mockResolvedValue("folder-unknown/file.jpg");
+    vi.spyOn(sourceUpload, "uploadJpeg").mockRejectedValue(new sourceUpload.UploadJpegError("Conexão interrompida", null));
+    const finiteWallet = (reserved: number) => ({ mode: "finite", available_credits: 1, reserved_credits: reserved,
+      pending_operations: reserved, recent_consumed_credits: 0, recent_period_days: 30, can_upload_content: true,
+      as_of: "2026-11-01T12:00:00Z" });
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path.endsWith("/editor")) return response(editor);
+      if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{
+        id: "folder-unknown", name: "Pendência", status: "released", position: 0, photo_count: 0, preview_url: null,
+      }] });
+      if (path === "/api/admin/credits/wallet") return response({ wallet: finiteWallet(0), entries: [] });
+      if (path.endsWith("/credit-operation")) return response({ wallet: finiteWallet(operationStatus === "reconciliation_required" ? 1 : 0),
+        applicable: true, operation: { status: operationStatus, quantity: 1 } });
+      if (path.endsWith("/photos") && init?.method === "POST") return response({ id: "photo-unknown" }, 201);
+      if (path.endsWith("/photos")) return response({ photos: [] });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<GalleryEditor sourceId="source-1" step="imagens" initialFolderId="folder-unknown" />);
+    const input = await waitFor(() => {
+      const found = container.querySelector('input[name="jpeg"]') as HTMLInputElement | null;
+      if (!found) throw new Error("Upload ainda não foi montado");
+      return found;
+    });
+    const form = input.closest("form")!;
+    vi.spyOn(form, "requestSubmit").mockImplementation(() => { fireEvent.submit(form); });
+    fireEvent.change(input, { target: { files: [new File(["jpeg"], "incerta.jpg", { type: "image/jpeg" })] } });
+    expect(await screen.findByText(/Confirmação pendente; o estado do arquivo está em reconciliação/)).toBeTruthy();
+    expect(screen.queryByText(/crédito consumido, confirmado/)).toBeNull();
+    expect(screen.queryByText(/Reserva liberada/)).toBeNull();
+
+    operationStatus = "consumed";
+    fireEvent.click(screen.getByRole("button", { name: "Verificar estado dos créditos" }));
+    expect(await screen.findByText("1 crédito consumido, confirmado pelo servidor.")).toBeTruthy();
+  });
+
   it("fecha o lote de uma pasta privada enviada pela etapa Imagens mesmo com falha parcial", async () => {
     vi.spyOn(sourceUpload, "jpegStorageKey").mockImplementation(async (_sourceId, _folderId, file) => `private/${file.name}`);
-    vi.spyOn(sourceUpload, "uploadPhotoSource").mockImplementation(async (_path, file) => {
+    vi.spyOn(sourceUpload, "uploadJpeg").mockImplementation(async (_path, file) => {
       if (file.name === "falha.jpg") throw new Error("Transferência interrompida");
     });
     const batchCalls: Array<{ path: string; init?: RequestInit }> = [];
@@ -1456,7 +1642,7 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
 
   it("não cria lote de notificação para upload de pasta pública na etapa Imagens", async () => {
     vi.spyOn(sourceUpload, "jpegStorageKey").mockResolvedValue("public/file.jpg");
-    vi.spyOn(sourceUpload, "uploadPhotoSource").mockResolvedValue();
+    vi.spyOn(sourceUpload, "uploadJpeg").mockResolvedValue();
     const fetchMock = vi.fn((path: string, init?: RequestInit) => {
       if (path.endsWith("/editor")) return response(editor);
       if (path.split("?")[0].endsWith("/folders")) return response({ folders: [{

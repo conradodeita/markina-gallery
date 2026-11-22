@@ -10,14 +10,25 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, MetaData, U
 
 # Infraestrutura técnica não contém configuração comercial de um fotógrafo.
 SHARED_TABLES = frozenset({
-    "tenant", "admin_user", "admin_action_token", "email_delivery", "email_delivery_attempt",
+    "tenant", "admin_user", "admin_totp_recovery_code", "admin_action_token", "photographer_signup",
+    "email_delivery", "email_delivery_attempt",
     "installation_operator", "facial_embedding_experiment_setting",
     "system_monitor_grant", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_activity", "system_monitor_incident",
-    "system_monitor_transition", "platform_owner",
+    "system_monitor_transition", "platform_owner", "media_archive_coordinator",
 })
+# Configuração global do proprietário não pertence ao tenant operacional. A tentativa
+# temporária OAuth continua compartilhada até ser consumida/expirar.
+GLOBAL_OWNER_TABLES = frozenset({
+    "photographer_credit_package", "platform_admin_event", "google_drive_connection",
+    "photographer_terms_draft", "photographer_terms_version",
+    "media_archive_recovery_pricing",
+    "photographer_access_recovery",
+})
+SHARED_TABLES = SHARED_TABLES | frozenset({"google_drive_oauth_attempt"})
 CONTEXTUAL_TABLES = frozenset({
     "admin_security_challenge", "auth_challenge", "auth_session", "audit_event",
+    "mercadopago_credit_purchase", "mercadopago_credit_purchase_event",
 })
 SINGLETON_TABLES = frozenset({"branding_settings", "global_pix_settings"})
 # Um caminho físico ou capacidade opaca não pode representar dois proprietários.
@@ -25,6 +36,20 @@ GLOBALLY_UNIQUE_FIELDS = frozenset({
     "storage_key", "relative_path", "preview_storage_key", "delivery_storage_key", "token_hash",
     "provider_transaction_nsu",
 })
+# These partial indexes enforce a process-wide invariant and must not inherit
+# tenant_id when the generic ownership pass scopes natural unique indexes.
+GLOBALLY_UNIQUE_INDEXES = frozenset({
+    "uq_tenant_credit_wallet_single_unmetered",
+    "ix_photographer_business_profile_cpf_fingerprint",
+})
+UNSCOPED_CONTEXTUAL_UNIQUES = {
+    "whatsapp_tenant_credential": frozenset({("environment", "instance_name")}),
+    "mercadopago_credit_purchase": frozenset({
+        ("receiver_account_id", "external_reference"),
+        ("receiver_account_id", "provider_order_id"),
+        ("ledger_entry_id",),
+    }),
+}
 
 
 def constraint_name(prefix: str, *parts: str) -> str:
@@ -74,7 +99,7 @@ def apply_ownership_constraints(metadata: MetaData) -> None:
         for table in tables for foreign_key in table.foreign_key_constraints
     }
     for table in tables:
-        if table.name in SHARED_TABLES:
+        if table.name in SHARED_TABLES or table.name in GLOBAL_OWNER_TABLES:
             continue
         if "tenant_id" not in table.c:
             raise ValueError(f"Tabela sem classificação de proprietário: {table.name}")
@@ -84,6 +109,8 @@ def apply_ownership_constraints(metadata: MetaData) -> None:
                 continue
             names = tuple(column.name for column in constraint.columns)
             if "tenant_id" in names or GLOBALLY_UNIQUE_FIELDS.intersection(names):
+                continue
+            if names in UNSCOPED_CONTEXTUAL_UNIQUES.get(table.name, frozenset()):
                 continue
             # Candidate keys referenciadas permanecem disponíveis às FKs
             # antigas. A nova FK recebe chave adicional com owner; chaves
@@ -98,7 +125,9 @@ def apply_ownership_constraints(metadata: MetaData) -> None:
             ))
         for index in list(table.indexes):
             names = tuple(column.name for column in index.columns)
-            if not index.unique or "tenant_id" in names or GLOBALLY_UNIQUE_FIELDS.intersection(names):
+            if (not index.unique or "tenant_id" in names
+                    or GLOBALLY_UNIQUE_FIELDS.intersection(names)
+                    or index.name in GLOBALLY_UNIQUE_INDEXES):
                 continue
             if (table.name, names) in referenced_keys:
                 continue
@@ -111,12 +140,18 @@ def apply_ownership_constraints(metadata: MetaData) -> None:
             ensure_unique(table, ("tenant_id",))
 
     for table in tables:
-        if table.name in SHARED_TABLES or table.name == "tenant_admin":
+        if (table.name in SHARED_TABLES or table.name in GLOBAL_OWNER_TABLES
+                or table.name == "tenant_admin"):
             continue
         for foreign_key in list(table.foreign_key_constraints):
             target = foreign_key.referred_table
             local = tuple(item.parent.name for item in foreign_key.elements)
             remote = tuple(item.column.name for item in foreign_key.elements)
+            # Compras de crédito mantêm o tenant comprador em tenant_id e o
+            # proprietário da conta Orders em receiver_tenant_id. A FK
+            # composta explícita já valida essa relação entre os dois tenants.
+            if table.name == "mercadopago_credit_purchase" and target.name == "mercadopago_account":
+                continue
             # FKs históricas continuam referindo a chave original; escopar sua
             # unicidade natural não pode retirar a candidate key necessária.
             ensure_unique(target, remote)
@@ -135,7 +170,7 @@ def apply_ownership_constraints(metadata: MetaData) -> None:
     add_owner_fk(metadata.tables["admin_security_challenge"], ("session_id", "tenant_id"),
                  metadata.tables["auth_session"], ("id", "tenant_id"))
     metadata.tables["admin_security_challenge"].append_constraint(CheckConstraint(
-        "purpose != 'change_pix_otp' OR tenant_id IS NOT NULL",
+        "purpose NOT IN ('change_pix_otp', 'change_payment_otp') OR tenant_id IS NOT NULL",
         name="ck_admin_challenge_pix_context",
     ))
     metadata.info["ownership_constraints_applied"] = True

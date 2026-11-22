@@ -22,7 +22,7 @@ O sistema SHALL distinguir, em cada pedido, `Pagamento confirmado` de `Pagamento
 - **THEN** o painel preserva a situação financeira existente e não o classifica como confirmação paga
 
 ### Requirement: Prioridade dos grupos de clientes
-Com `Situação financeira` em `Todas`, o painel SHALL agrupar os cards na ordem `Pagamento comunicado`, `Pagamento confirmado`, `Pagamento confirmado - fotos não entregue`, `Aguardando pagamento`, `Pagamento não localizado`, `Prazo expirado` e demais estados. Dentro de cada grupo, SHALL ordenar clientes da chegada mais antiga para a mais recente, com desempate estável.
+Com `Situação financeira` em `Todas`, o painel SHALL agrupar os cards na ordem `Pagamento comunicado`, `Pagamento confirmado`, `Pagamento confirmado - fotos não entregue`, `Aguardando pagamento`, `Pagamento não localizado` e demais estados. Dentro de cada grupo, SHALL ordenar clientes da chegada mais antiga para a mais recente, com desempate estável.
 
 #### Scenario: Lista sem filtro financeiro
 - **WHEN** o fotógrafo abre Vendas e pagamentos com situação financeira `Todas`
@@ -51,8 +51,15 @@ Para cliente com pedidos em mais de uma situação, o card SHALL usar a situaç�
 - **WHEN** existem mais clientes do que cabem em uma página
 - **THEN** páginas sucessivas preservam a mesma prioridade e ordem de chegada sem duplicar nem omitir clientes
 
+### Requirement: Expiração de acesso não altera estado financeiro
+O painel SHALL derivar a situação financeira de cada pedido do estado do pagamento e das comunicações registradas. SHALL NOT inferir pagamento vencido a partir de um prazo legado de seleção ou do prazo de acesso de uma pasta; o prazo de acesso SHALL permanecer na superfície de estado da galeria/pasta.
+
+#### Scenario: Pedido pendente após expiração de acesso
+- **WHEN** o prazo legado da galeria ou o prazo da pasta expirou, mas o pedido continua com pagamento pendente
+- **THEN** o estado financeiro permanece `Aguardando pagamento` e o vencimento de acesso permanece separado do pagamento
+
 ### Requirement: Cores coerentes com as situações financeiras
-O sistema SHALL usar amarelo para `Pagamento comunicado`, verde para `Pagamento confirmado`, vermelho para `Pagamento confirmado - fotos não entregue`, azul para `Aguardando pagamento`, cinza para `Pagamento não localizado` e roxo para `Prazo expirado`. O card SHALL usar a cor da situação primária do cliente e cada opção do filtro SHALL usar a cor da própria situação. Texto e contraste SHALL identificar o estado independentemente da cor e permanecer legíveis nos temas suportados.
+O sistema SHALL usar amarelo para `Pagamento comunicado`, verde para `Pagamento confirmado`, vermelho para `Pagamento confirmado - fotos não entregue`, azul para `Aguardando pagamento`, cinza para `Pagamento não localizado` e roxo para `Pagamento expirado`. O card SHALL usar a cor da situação primária do cliente e cada opção do filtro SHALL usar a cor da própria situação. Texto e contraste SHALL identificar o estado independentemente da cor e permanecer legíveis nos temas suportados.
 
 #### Scenario: Card e opção no filtro
 - **WHEN** a situação financeira está representada no card e no filtro
@@ -129,3 +136,27 @@ CSV SHALL usar UTF-8 com BOM, ponto e vírgula, moeda decimal brasileira e confi
 #### Scenario: Texto e pedido sem confirmação
 - **WHEN** nome/galeria contém fórmula, aspas ou separador e pagamento não está confirmado
 - **THEN** o CSV mantém quatro campos seguros e deixa a data vazia
+
+### Requirement: Atalho contextual para seleção atual
+
+Vendas e pagamentos SHALL aceitar um link administrativo com os identificadores de cliente e Galeria pública. Esse link SHALL inicializar os filtros exatos para esses registros e usar a situação financeira `Todas`, de modo que seleções atuais continuem visíveis. A abertura direta SHALL preservar autenticação, autorização e isolamento do tenant; a rota SHALL continuar aplicando os mesmos filtros no backend.
+
+#### Scenario: Abrir uma seleção pelo painel
+
+- **WHEN** o fotógrafo autenticado ativa o cliente de uma seleção atual na Visão geral
+- **THEN** Vendas e pagamentos abre filtrado pela cliente e pela Galeria pública correspondentes e posiciona a tela no cartão “No carrinho” daquela seleção
+
+#### Scenario: Seleção muda antes do clique
+
+- **WHEN** o estado muda entre carregar a Visão geral e abrir o atalho, mas ainda há pedido do cliente no filtro
+- **THEN** a página posiciona o cartão financeiro do mesmo cliente como alternativa, sem mostrar registros de outra conta
+
+#### Scenario: Nenhum registro restante
+
+- **WHEN** não há seleção atual nem pedido correspondente no momento da consulta
+- **THEN** o filtro permanece limitado à cliente e galeria informadas e apresenta o estado vazio existente, sem simular atividade
+
+#### Scenario: Abertura normal de Vendas e pagamentos
+
+- **WHEN** o fotógrafo abre a rota sem o atalho contextual
+- **THEN** o painel mantém seu filtro inicial de pendências prioritárias e seu comportamento atual

@@ -12,7 +12,12 @@ import os
 from pathlib import Path
 
 from app import auth
-from app.homolog_cleanup import admin_security_audit_criteria
+from app.homolog_cleanup import (
+    SAAS_RETAINED_HISTORY_TABLES,
+    admin_security_audit_criteria,
+    has_credit_wallet_history,
+    has_mercadopago_financial_history,
+)
 from app.system_monitor import models as monitor
 from sqlalchemy import delete, false, func, inspect, or_, select, text, true, update
 
@@ -45,20 +50,34 @@ OPERATIONAL = frozenset({
     "photo_view", "pix_checkout_settings", "preview_adjustment", "price_rule", "private_upload_batch",
     "private_upload_batch_asset", "provider_payment", "provider_payment_attempt", "provider_payment_correction",
     "provider_payment_receipt", "raw_development_job", "removed_photo_movement", "sale_order", "sale_order_item",
+    "photo_credit_operation", "photo_credit_operation_event", "photographer_credit_entry",
+    "photographer_credit_allocation_event",
     "whatsapp_delivery", "whatsapp_delivery_attempt", "whatsapp_webhook_receipt", "email_delivery",
     "email_delivery_attempt",
+    "mercadopago_payment", "mercadopago_webhook",
+    "mercadopago_credit_purchase", "mercadopago_credit_purchase_event",
 })
 TENANT_CONFIG = frozenset({
     "branding_settings", "facial_calibration_approval", "facial_rollout_operation", "global_pix_settings",
     "notification_setting", "payment_message_template", "preview_adjustment_settings",
     "progressive_pricing_preset", "progressive_pricing_tier", "raw_development_settings", "whatsapp_channel_settings",
+    "mercadopago_account", "payment_preferences", "tenant_credit_wallet",
 })
-GLOBAL_PRESERVED = frozenset({
+SAAS_PROTECTED_TABLES = SAAS_RETAINED_HISTORY_TABLES | frozenset({
+    "admin_totp_enrollment", "photographer_business_profile", "photographer_terms_acceptance",
+    "whatsapp_tenant_credential", "media_archive_coordinator", "media_archive_recovery_pricing",
+    "photographer_terms_draft", "photographer_terms_version",
+})
+GLOBAL_PRESERVED = SAAS_PROTECTED_TABLES | frozenset({
+    "platform_admin_event", "photographer_signup", "google_drive_connection",
+    "google_drive_oauth_attempt",
     "facial_embedding_experiment_setting", "platform_owner", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_incident", "system_monitor_transition",
+    "photographer_credit_package",
 })
 OWNER_SCOPED = frozenset({
-    "admin_action_token", "admin_security_challenge", "admin_user", "installation_operator", "system_monitor_grant",
+    "admin_action_token", "admin_security_challenge", "admin_totp_recovery_code", "admin_user",
+    "installation_operator", "system_monitor_grant",
     "tenant", "tenant_admin", "auth_session", "push_subscription", "audit_event", "system_monitor_activity",
 })
 CLASSIFIED = OPERATIONAL | TENANT_CONFIG | GLOBAL_PRESERVED | OWNER_SCOPED
@@ -116,6 +135,12 @@ def owner_context(db, email):
     tenant = db.get(auth.Tenant, memberships[0].tenant_id)
     if tenant is None or tenant.status != "active":
         raise ResetPolicyError("Tenant proprietário não está ativo.")
+    if has_mercadopago_financial_history(db) or has_credit_wallet_history(db):
+        raise ResetPolicyError(
+            "Reset bloqueado: preserve e reconcilie as evidências financeiras Mercado Pago e de créditos.")
+    if any(db.scalar(select(1).select_from(auth.Base.metadata.tables[name]).limit(1))
+           for name in sorted(SAAS_PROTECTED_TABLES)):
+        raise ResetPolicyError("Reset bloqueado: preserve os registros SaaS de arquivo, encerramento, perfil e Termos.")
     return owner, memberships[0], tenant
 
 
@@ -134,6 +159,7 @@ def policy(db, owner, membership, tenant):
     audit = tables["audit_event"]
     keep.update({
         "admin_user": tables["admin_user"].c.id == owner.id,
+        "admin_totp_recovery_code": tables["admin_totp_recovery_code"].c.admin_user_id == owner.id,
         "tenant": tables["tenant"].c.id == tenant.id,
         "tenant_admin": tables["tenant_admin"].c.id == membership.id,
         "admin_action_token": tables["admin_action_token"].c.admin_id == owner.id,

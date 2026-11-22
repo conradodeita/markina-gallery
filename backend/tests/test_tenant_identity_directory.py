@@ -144,6 +144,15 @@ def test_conta_suspensa_ou_contexto_ausente_nao_tem_fallback(client_db, graph):
         resolve_client_by_phone(client_db, PHONE)
 
 
+def test_tenant_closed_cannot_resolve_client_identity(client_db, graph):
+    owner = graph[0]["tenant"]
+    owner.lifecycle = "closed"
+    client_db.commit()
+
+    with pytest.raises(ClientIdentityConflict):
+        resolve_client_by_phone(client_db, PHONE, tenant_id=owner.id)
+
+
 def test_contrato_criacao_e_edicao_por_uuid_preserva_outro_dono(client_db, graph, actor):
     first, second = graph
     client_db.add(Client(tenant_id=second["tenant"].id, full_name="Somente B", phone_e164=NEW_PHONE))

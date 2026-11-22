@@ -81,6 +81,7 @@ def _configure(monkeypatch, tmp_path: Path) -> None:
     manifest = Path(__file__).parents[1] / "facial-assets" / "model-manifest.json"
     values = {
         "APP_ENV": "test",
+        "ADMIN_TOTP_SECRET_ENV": "test",
         "FACIAL_PROCESSING_ENABLED": "true",
         "FACIAL_CREDENTIAL_ENV": "test",
         "FACIAL_MODEL_MANIFEST_PATH": str(manifest),

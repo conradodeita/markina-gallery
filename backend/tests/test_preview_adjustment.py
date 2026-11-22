@@ -92,6 +92,9 @@ def test_engine_isolated_bounded_and_does_not_change_input(monkeypatch):
     result = RawTherapeeEngine().render(original, 50)
     assert original.getpixel((0, 0)) == (40, 40, 40)
     assert result.getpixel((0, 0)) == (70, 70, 70)
+    maximum = RawTherapeeEngine().render(original, 100)
+    assert maximum.getpixel((0, 0)) == (100, 100, 100)
+    assert original.getpixel((0, 0)) == (40, 40, 40)
     assert not Path(seen[0][-1]).exists()
 
 
@@ -274,11 +277,13 @@ def test_job_idempotency_fallback_and_byte_preservation(prepared):
         assert path.is_file()
 
 
-@pytest.mark.parametrize("mutation", ["disable", "exposure", "source", "protection", "delete", "gallery"])
+@pytest.mark.parametrize("mutation", [
+    "disable", "exposure", "source", "protection", "delete", "gallery", "archiving", "archived",
+])
 def test_inflight_result_cannot_override_changed_state(prepared, mutation):
     from sqlalchemy import select
 
-    from app.auth import BrandingSettings, MediaDerivative, MediaJob, now
+    from app.auth import BrandingSettings, MediaArchiveCycle, MediaDerivative, MediaJob, now
     from app.folder_processing import configure_folder
     from app.preview_adjustment.service import adjusted_path, process_one
 
@@ -302,6 +307,12 @@ def test_inflight_result_cannot_override_changed_state(prepared, mutation):
                 elif mutation == "gallery":
                     photo = db.get(PhotoAsset, photo_id)
                     db.get(ParentGallery, photo.parent_gallery_id).lifecycle_status = "deleting"
+                elif mutation in {"archiving", "archived"}:
+                    photo = db.get(PhotoAsset, photo_id)
+                    db.add(MediaArchiveCycle(
+                        tenant_id=photo.tenant_id, parent_gallery_id=photo.parent_gallery_id,
+                        folder_id=photo.folder_id, state=mutation,
+                    ))
                 else:
                     db.execute(delete(MediaDerivative))
                     db.execute(delete(MediaJob))
@@ -312,6 +323,12 @@ def test_inflight_result_cannot_override_changed_state(prepared, mutation):
     assert process_one(factory, ChangedEngine())
     with factory() as db:
         assert adjusted_path(db, photo_id, tenant_id=FIXTURE_TENANT_ID) is None
+        if mutation in {"archiving", "archived"}:
+            assert db.scalar(select(MediaArchiveCycle.state)) == mutation
+            adjustment = db.get(PreviewAdjustment, photo_id)
+            assert adjustment.status == "cancelled"
+            assert adjustment.claim_token is None
+            assert adjustment.relative_path is None
 
 
 def test_failure_retry_and_expired_claim(prepared):
@@ -426,6 +443,8 @@ def test_admin_api_auth_comparison_and_immediate_disable(api_client):
     assert client.get(f"{root}/photos/{photo_id}/before").status_code == 403
     client.cookies.set("markina_session", "adjustment-admin")
     assert client.patch(config_url, json={"enabled": True, "strength": 200}).status_code == 422
+    maximum = client.patch(config_url, json={"enabled": True, "strength": 100})
+    assert maximum.status_code == 200, maximum.text
     assert client.patch(config_url, json={"enabled": True, "exposure_tenths": 21}).status_code == 422
     assert client.get(f"{root}/photos/{photo_id}/after").status_code == 404
     before = client.get(f"{root}/photos/{photo_id}/before")

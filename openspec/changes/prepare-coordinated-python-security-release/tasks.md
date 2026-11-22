@@ -19,3 +19,11 @@
 
 ## Workflow follow-up
 - Não sincronizar/arquivar sem revisão humana. Publicação real depende de missão posterior e dos bloqueios registrados, não deste plano nem de fixtures.
+
+## 5. Retomada limitada ao worker de prévias — 30/10/2026
+- [x] 5.1 Revalidar consumidores ativos por metadados e identificar somente o worker de prévias como pendente dos quatro pins; preservar imagem anterior e excluir opcionais parados do plano.
+- [x] 5.2 Preparar candidato ARM64 sobre a imagem exata, comparar todas as distribuições/camadas e validar pip check, HTTP sintético e JPEG/PNG com RawTherapee preservado. Evidência: candidato ef5105e0, 60 distribuições, somente quatro diferenças, hashes de render e binário idênticos em `preview-worker-preparation-20261030.md`.
+- [x] 5.3 Gerar plano oficial local com o inventário real e registrar candidato, rollback e bloqueios operacionais em `preview-worker-preparation-20261030.md`. Resultado: somente prévias afetado; produção bloqueada por drenagem, homologação operacional e executor/recuperação ausentes.
+- [x] 5.4 Validar os contratos existentes: 29 testes de preparação/política passaram; não ampliar o executor, não publicar e não reutilizar o release da migration 0090.
+
+Esta retomada não completa automaticamente as tarefas históricas da primeira preparação coordenada nem autoriza atualizar consumidores já corrigidos ou parados.

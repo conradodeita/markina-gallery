@@ -15,6 +15,7 @@ from app.auth import (
     Client,
     DerivedGallery,
     GalleryClientState,
+    MercadoPagoPayment,
     ParentGallery,
     PaymentGroup,
     PhotoSelection,
@@ -38,6 +39,16 @@ def _money(cents: int) -> str:
 
 
 def _payment(db: Session, order: SaleOrder, tenant_id: UUID) -> tuple[str, str, bool, str]:
+    if order.mercadopago_payment_id:
+        payment = db.scalar(select(MercadoPagoPayment).where(
+            MercadoPagoPayment.id == order.mercadopago_payment_id,
+            MercadoPagoPayment.tenant_id == tenant_id,
+            MercadoPagoPayment.client_id == order.client_id))
+        if payment and payment.account.test_account:
+            return payment.method, "Mercado Pago (teste)", False, "test"
+        return (payment.method if payment else "unknown", "Mercado Pago",
+                bool(payment and payment.state == "confirmed"),
+                payment.state if payment else "missing")
     if order.payment_group_id:
         group = db.scalar(select(PaymentGroup).where(
             PaymentGroup.id == order.payment_group_id,
@@ -115,7 +126,9 @@ def commercial_report(
             items = [item for item in items if item.folder_id_snapshot == folder_id]
             if not items:
                 continue
-        if payment_state == "hold" or (order.payment_status == "confirmed" and not financially_confirmed):
+        if payment_state == "test":
+            status = "test"
+        elif payment_state in {"hold", "partially_refunded", "charged_back", "duplicate_review"} or (order.payment_status == "confirmed" and not financially_confirmed):
             status = "hold_or_corrected"
         else:
             status = order.payment_status

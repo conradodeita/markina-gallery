@@ -24,7 +24,7 @@ O sistema SHALL fornecer `GET /admin/capacity-observability` somente para sessã
 
 ### Requirement: Evidência e escopo explícitos em cada valor
 
-Cada valor SHALL informar unidade, fonte sanitizada, instante de coleta em UTC e escopo entre processo respondente, banco atual e servidor PostgreSQL conectado. O contrato SHALL distinguir `observed` (observado diretamente), `calculated` (calculado de fontes explícitas), `estimated` (aproximação identificada) e `unavailable` (indisponível com motivo e valor nulo). A resposta SHALL informar início/fim da coleta, versão do contrato, cobertura e lacunas; SHALL NOT alegar simultaneidade atômica entre as fontes. Uma contagem vazia observada SHALL ser zero; falta de acesso ou de evidência MUST NOT ser substituída por zero ou sucesso.
+Cada valor SHALL informar unidade, fonte sanitizada, UTC e escopo (processo respondente, banco atual ou PostgreSQL conectado). O contrato SHALL classificar valores como `observed`, `calculated`, `estimated` ou `unavailable`, com motivo. A resposta SHALL registrar intervalo UTC, versão, cobertura e lacunas, sem alegar snapshot atômico. Só contagem vazia observada é zero; falta de acesso/evidência MUST NOT virar zero ou sucesso.
 
 #### Scenario: Snapshot reutilizado
 - **WHEN** a resposta reutiliza dados coletados anteriormente
@@ -40,7 +40,7 @@ Cada valor SHALL informar unidade, fonte sanitizada, instante de coleta em UTC e
 
 ### Requirement: Conexões PostgreSQL e pool com fronteiras verificáveis
 
-O diagnóstico SHALL mostrar contagens agregadas de conexões cliente do banco atual e do servidor PostgreSQL conectado, separando estados conhecidos e desconhecidos, além de `max_connections` e reservas técnicas quando legíveis. O diagnóstico SHALL mostrar classe, limite base, overflow máximo, timeout de aquisição e ocupação observável somente do pool do processo API respondente. Limites configurados MUST NOT ser apresentados como conexões abertas, e contadores de processo MUST NOT ser multiplicados ou somados como uso global. Pools ilimitados ou sem semântica compatível SHALL ser identificados sem inventar teto finito. Espera real de aquisição e número de timeouts SHALL permanecer indisponíveis quando não instrumentados.
+O diagnóstico SHALL mostrar conexões agregadas do banco atual e do PostgreSQL conectado, estados conhecidos/desconhecidos, `max_connections` e reservas legíveis. O pool SHALL informar classe, limites base/overflow, timeout e ocupação observável apenas da API respondente. Limites MUST NOT virar conexões abertas nem ser somados/multiplicados; pool ilimitado não recebe teto inventado. Espera/timeouts sem instrumentação ficam indisponíveis.
 
 #### Scenario: Pool com capacidade ociosa
 - **WHEN** o pool local tem teto finito superior à sua ocupação observada
@@ -56,7 +56,7 @@ O diagnóstico SHALL mostrar contagens agregadas de conexões cliente do banco a
 
 ### Requirement: Orçamento global dependente de inventário completo
 
-O sistema SHALL separar conexões observadas de orçamento potencial. Um orçamento global exige inventário explícito e vigente de todos os processos, engines/pools, concorrências de tarefas pontuais, consumidores externos do mesmo servidor e reservas técnicas/operacionais, com origem, escopo e UTC. Neste recorte, sem uma fonte completa desse inventário, a resposta SHALL informar `unavailable` para orçamento global e margem orçada, listando lacunas; o painel MUST NOT recomendar quantidade segura de workers, expansão ou capacidade de usuários. A documentação SHALL explicar como evitar dupla contagem de reservas e de pools compartilhados pelo mesmo processo.
+O sistema SHALL separar conexões observadas de orçamento potencial. Orçamento global exige inventário vigente de processos, engines/pools, tarefas pontuais concorrentes, consumidores externos e reservas, com origem, escopo e UTC. Sem cobertura completa, orçamento e margem SHALL ser `unavailable`, com lacunas declaradas; o painel MUST NOT recomendar workers, expansão ou capacidade segura de usuários. A documentação SHALL evitar dupla contagem de reservas e pools compartilhados.
 
 #### Scenario: Conhece somente API e configuração versionada
 - **WHEN** há medição do pool respondente e descrição de serviços no repositório, mas não inventário de processos ativos, pools e reservas
@@ -68,9 +68,7 @@ O sistema SHALL separar conexões observadas de orçamento potencial. Um orçame
 
 ### Requirement: Filas duráveis com cobertura e semântica de espera delimitadas
 
-O diagnóstico SHALL cobrir separadamente mídia, ajuste de prévias, busca facial, indexação facial e manutenção facial. Para cada classe SHALL apresentar contagens de registros aguardando e em processamento, idade da pendência mais antiga quando fundamentada e classificação da aproximação de espera. O sistema SHALL separar trabalhos agendados para o futuro dos aguardando com agendamento vencido quando houver esse dado; itens em processamento MUST NOT integrar a espera de itens ainda aguardando. Uma recuperação possível de lease vencido SHALL ser contagem separada, sem executar recuperação. Quando houver bloqueio por dependência conhecido, a contagem bruta SHALL ser distinguida dos candidatos após esse filtro. Sem evidência suficiente, elegibilidade ou tempo exato de espera SHALL ficar indisponível.
-
-A cobertura SHALL declarar mensagens/outboxes e outras rotinas não incluídas, sem exibir total geral de todas as filas ou de trabalhos de negócio. Redis de sinalização MUST NOT ser tratado como autoridade de jobs. Nenhuma métrica SHALL afirmar worker ativo, tempo até conclusão, throughput, p95 ou SLO geral a partir desse snapshot.
+O diagnóstico SHALL separar filas de mídia, ajuste de prévias, busca, indexação e manutenção facial, com contagens aguardando/em processamento e idade/espera quando evidenciadas. Agendamentos futuros/vencidos ficam distintos; processamento não conta como espera; lease vencido aparece como recuperável sem ação. Dependências conhecidas distinguem bruto de elegível; sem evidência, elegibilidade/espera fica indisponível.
 
 #### Scenario: Busca agendada e busca em processamento
 - **WHEN** há uma busca aguardando com agendamento futuro, outra aguardando com agendamento vencido e uma em processamento
@@ -92,9 +90,18 @@ A cobertura SHALL declarar mensagens/outboxes e outras rotinas não incluídas, 
 - **WHEN** uma classe foi consultada com sucesso e não tem registros aguardando
 - **THEN** mostra contagem zero e ausência de pendência mais antiga, sem converter a ausência em prova de worker saudável
 
+### Requirement: Cobertura e limites do diagnóstico de filas
+
+A cobertura SHALL declarar outboxes/mensagens e rotinas não incluídas, sem total geral. Redis de sinalização MUST NOT ser autoridade de jobs. O snapshot SHALL NOT afirmar worker ativo, tempo até conclusão, throughput, p95 ou SLO geral.
+
+#### Scenario: Rotinas fora do diagnóstico
+
+- **WHEN** existem outboxes ou outras rotinas não incluídas nas classes consultadas
+- **THEN** a cobertura as identifica sem agregá-las a um total geral de filas
+
 ### Requirement: Coleta limitada e saída sanitizada sem efeitos no domínio
 
-A coleta SHALL ser somente leitura, com consultas de agregação restritas, limites explícitos de tempo e cardinalidade, sem carregar históricos inteiros, objetos completos ou payloads de jobs. Resposta, logs diagnósticos e motivos de erro SHALL usar lista fechada de campos e rótulos de baixa cardinalidade. MUST NOT incluir SQL em execução, nomes de banco/usuário/host, IPs, DSNs, caminhos, identificadores de negócio, nomes pessoais, telefones, fotos, tokens, conteúdo de mensagens ou biometria. A operação SHALL preservar defaults, pools, `.env`, privilégios, limites, réplicas, filas e infraestrutura, sem claims, locks de reserva de jobs, reprocessamento ou envio externo.
+Coleta SHALL ser read-only, usar agregações com limites de tempo/cardinalidade e MUST NOT carregar históricos ou payloads. Respostas/logs/erros SHALL usar allowlist e categorias sanitizadas, sem SQL, banco/usuário/host, IP, DSN, caminhos, IDs comerciais, nomes, telefones, fotos, tokens, mensagens ou biometria. Não alterar defaults, pools, `.env`, privilégios, limites, réplicas, filas ou infraestrutura; sem claims, locks, reprocessamento ou envio.
 
 #### Scenario: Erro contém informação sensível
 - **WHEN** o driver ou um registro contém SQL, credencial, caminho ou identificador pessoal em texto livre
@@ -114,7 +121,7 @@ A coleta SHALL ser somente leitura, com consultas de agregação restritas, limi
 
 ### Requirement: Diagnóstico sob demanda no Monitor do Sistema
 
-O Monitor do Sistema SHALL apresentar seção recolhível “Diagnóstico de capacidade”, inicialmente fechada, usando os componentes e estados acessíveis existentes. Ao abrir, SHALL consultar o endpoint dedicado, mostrar escopo/UTC/classificação junto aos valores, cobertura das filas e orçamento incompleto; atualização SHALL ser manual, sem polling automático ou persistência no navegador. Falha diagnóstica SHALL manter utilizável o restante do painel. O painel SHALL explicar que esta é uma leitura parcial de capacidade, sem semáforo de expansão ou cumprimento de SLO geral.
+O Monitor SHALL mostrar seção recolhível `Diagnóstico de capacidade`, fechada inicialmente, e consultar endpoint dedicado ao abrir. Deve exibir escopo/UTC/classificação, cobertura e orçamento incompleto. Atualização é manual, sem polling ou persistência no navegador. Falha não bloqueia o painel; a interface explica que a leitura é parcial e não atesta expansão ou SLO geral.
 
 #### Scenario: Abertura e atualização
 - **WHEN** o administrador abre a seção e depois solicita atualização
@@ -135,9 +142,7 @@ O Monitor do Sistema SHALL apresentar seção recolhível “Diagnóstico de cap
 
 ### Requirement: Relatório sanitizado copiável do snapshot atual
 
-O Monitor do Sistema SHALL oferecer a ação explícita **Copiar relatório** somente enquanto existir um snapshot de capacidade válido e autorizado na tela. A ação SHALL produzir texto UTF-8 em formato versionado, determinístico e legível, usando exclusivamente os campos permitidos do mesmo snapshot exibido e sem iniciar nova coleta. O relatório SHALL incluir versão do formato e do contrato, janela UTC da coleta, uso de cache, escopos, pool, conexões PostgreSQL, as cinco classes de fila, orçamento global, cobertura e limitações. Para cada métrica, SHALL preservar valor, unidade, fonte, escopo, instante UTC, classe de evidência e motivo de indisponibilidade; valor desconhecido MUST NOT ser omitido, convertido em zero ou apresentado como observado.
-
-A geração e a cópia SHALL ocorrer somente no navegador após gesto explícito do administrador, sem endpoint novo, persistência, histórico, download ou transmissão automática. O serializador SHALL usar allowlist fechada e MUST NOT copiar campos desconhecidos nem incluir SQL, banco, usuário, host, IP, DSN, caminho, identificador de negócio, nome pessoal, telefone, foto, token, conteúdo de mensagem ou biometria. A interface SHALL comunicar de forma acessível o sucesso ou a falha da operação; falha da área de transferência SHALL preservar o snapshot e MUST NOT ser confundida com falha da coleta.
+O Monitor SHALL oferecer `Copiar relatório` somente com snapshot válido e autorizado exibido. Um gesto explícito SHALL copiar texto UTF-8 determinístico e versionado daquele snapshot, sem nova coleta. O relatório inclui versão, janela UTC, cache, escopos, pool/conexões, cinco filas, orçamento, cobertura e limites. Cada métrica preserva valor/unidade/fonte/escopo/UTC/classe/motivo; valor desconhecido MUST NOT ser omitido, virar zero ou ser observado.
 
 #### Scenario: Administrador copia o snapshot exibido
 - **WHEN** existe um snapshot autorizado na tela e o administrador aciona **Copiar relatório**
@@ -158,6 +163,24 @@ A geração e a cópia SHALL ocorrer somente no navegador após gesto explícito
 #### Scenario: Snapshot deixa de estar autorizado
 - **WHEN** uma atualização falha por perda de autorização e a interface remove o snapshot
 - **THEN** a ação de copiar deixa de estar disponível e nenhum relatório anterior permanece acessível pela interface
+
+### Requirement: Cópia e comunicação do relatório
+
+A geração e cópia SHALL ocorrer no navegador após gesto explícito, sem endpoint novo, persistência, histórico, download ou transmissão. A interface SHALL comunicar sucesso/falha de forma acessível; falha de clipboard preserva snapshot e MUST NOT ser confundida com falha de coleta.
+
+#### Scenario: Cópia local do snapshot autorizado
+
+- **WHEN** o administrador copia relatório de snapshot válido na tela
+- **THEN** o navegador copia o texto sem transmitir ou persistir o conteúdo
+
+### Requirement: Allowlist do relatório de capacidade
+
+O serializador SHALL usar allowlist fechada e MUST NOT copiar campos desconhecidos nem dados técnicos ou pessoais, incluindo SQL, banco, usuário, host, IP, DSN, caminho, identificadores comerciais, nomes, telefones, fotos, tokens, mensagens e biometria.
+
+#### Scenario: Campo adicional ou dado proibido
+
+- **WHEN** o snapshot contém campo desconhecido ou informação técnica/pessoal fora da allowlist
+- **THEN** o relatório omite esses dados
 
 ### Requirement: Diagnósticos operacionais restritos à conta proprietária
 O backend SHALL exigir proprietário por UUID, sessão/vínculo válidos e installation_operator para capacidade e observabilidade facial. Propriedade SHALL ser revalidada antes/depois da coleta e na entrega de cache. Capabilities SHALL ocultar acesso de outros administradores. A regra MUST NOT depender de e-mail fixo. Contrato métrico, limites e card SHALL ser preservados.

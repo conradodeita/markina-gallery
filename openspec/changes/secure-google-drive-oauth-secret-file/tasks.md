@@ -1,0 +1,15 @@
+# Tasks: Entrega protegida do segredo OAuth do Google Drive
+
+- [x] 1.1 Implementar leitura estrita do JSON OAuth Web no caminho dedicado, com checagem de arquivo regular, modo `0400`, sem symlink, URI de produção exata e falha sem fallback para ambiente. Evidência no diff de `backend/app/google_drive_oauth.py`.
+- [x] 1.2 Adaptar os testes existentes de configuração OAuth para arquivo sintético; validar arquivo ausente, permissões, symlink, JSON/cliente/URI inválidos, URI múltipla e ausência de fallback. Evidência: suíte OAuth completa 34 passed na primeira rodada; após o endurecimento final, oito casos focados passaram em imagem isolada sem rede; sem conta Google.
+- [x] 1.3 Fechar lint, OpenSpec, diff e CI; publicar e mergear PR #371. CI da branch `44119781082` e CI do PR `44124836538` passaram. O overlay `sha256:1c8f739ba317feeb8df85daeace906c8f94fd7b2155a29f4ef97b6b5c5763e5c` preserva as 34 camadas do digest-base de produção `sha256:66771702d4cc6b4ef230a39f87464a9dfa439cbf97de8269d57c35ace4cbbeb1` e adiciona somente as duas camadas dos arquivos OAuth e teste.
+- [x] 1.4 Fazer rollout somente da API, montar o arquivo host read-only, remover variáveis `GOOGLE_DRIVE_*` de `.Config.Env` e confirmar saúde, TOTP, `APP_ENV=production`, `FACIAL_PROCESSING_ENABLED=true` e três endpoints públicos. Evidência: recibo root-only em `/var/lib/markina-gallery/deploy-state/google-drive-oauth-3785e4c1/production-receipt.json`; container de rollback sem variáveis Drive preservado.
+- [x] 1.5 Registrar o resultado operacional. A API saudável usa o arquivo root-only montado read-only; os valores OAuth não aparecem nos logs de inicialização. Nenhuma migration, chamada OAuth/Drive, backup, upload ou mídia/dado de cliente foi acessado. O consentimento do proprietário segue pendente.
+
+## Checkpoint operacional — 17/11/2026
+
+O build padrão de validação resolveu dependências mais novas por constraints abertas e foi descartado. A imagem em produção foi construída como overlay sobre o digest API ativo, sem atualizar dependências. A suíte backend completa, Gitleaks, OpenSpec e qualidade passaram na CI da branch e do PR; frontend e runtime-images foram ignorados no PR pelo filtro de escopo. O overlay passou quatro assertions sintéticas dentro da imagem com rede desabilitada. A coleta direta do arquivo pytest na imagem de produção não ocorreu porque ela não contém o helper `tests.test_photographer_credits`; os testes completos passaram no runner de CI.
+
+PR #371 foi merged no commit `3785e4c1d055821d540a7cfb7f4420afdd558fc1`. A API canônica está saudável no digest `sha256:1c8f739ba317feeb8df85daeace906c8f94fd7b2155a29f4ef97b6b5c5763e5c`, com TOTP preservado, `FACIAL_PROCESSING_ENABLED=true`, sem credenciais `GOOGLE_DRIVE_*` no metadata de qualquer container, e mount read-only do arquivo host. Os três endpoints públicos retornaram HTTP 200; os outros containers mantiveram seus IDs. O recibo operacional não contém credenciais.
+
+O consentimento OAuth do proprietário continua pendente. Nenhuma chamada Google, prova de upload/download ou rotina de backup foi iniciada.

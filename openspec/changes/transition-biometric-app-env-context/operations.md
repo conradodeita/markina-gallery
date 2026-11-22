@@ -1,0 +1,62 @@
+# Procedimento operacional — preservação SQL e corte de ambiente
+
+## Publicação concluída em 30/10
+
+A operação `env-mp-20261030-04`, suporte main `180de9e8` com CI `41010400151` verde, concluiu a transição e enable-live. APP_ENV production, gate live true, facial false, 10 serviços saudáveis e 3 faciais preservados/parados. A prova real do destino e a comparação integral dos 14 conjuntos financeiros passaram. As credenciais existentes continuam sandbox, limitadas ao par original; o proprietário foi avisado para cadastrar as de produção pela UI. HTTPS efetivos 200 e nenhum marcador pendente. Ver `validation.md` para fingerprints, matrizes, limites, recuperação e evidências completas. Não repetir os passos abaixo nem recuperar banco após uso normal sem novo inventário/plano; são histórico e roteiro do corte concluído.
+
+## Execução de 30/10 — recuperação antes de SQL
+
+Os PRs #345, #346 e #347 estão integrados. O CI main `41007045024` passou em `dee4dc9f`; o pacote Git foi gerado com `core.autocrlf=false` e todos os blobs foram verificados nativamente. O inventário estável anterior foi `a8033c3c…25a940f`, com 13 serviços saudáveis, schema 0090, 15.055 índices e zero jobs/referências/notificações com conteúdo. A preparação `env-mp-20261030-03` confirmou uma conta, continuidade dos canais e configuração cifrada reaberta.
+
+Na aplicação, API/worker encerraram normalmente. Os três faciais não responderam a SIGTERM; SIGINT aos IDs/imagens conferidos encerrou-os sem SIGKILL. O backup definitivo excedeu o teto antigo: diagnóstico somente-leitura com persistência proibida mediu aproximadamente 305 MB e confirmou todos os cálculos/cifras. Não houve pacote SQL persistido nem aplicação SQL. O coordenador recuperou configuração/contexto anteriores e reabriu o site; 13 serviços saudáveis e nenhum marcador pendente foram confirmados. O gate live continua fechado e a busca facial retornou ao estado anterior.
+
+Antes de repetir: usar o novo orçamento limitado e prova de ociosidade após parar API/worker, aguardar CI da mesma main, gerar candidato exato, obter novo inventário/fingerprint e usar nova operação. Não reutilizar o plano 03, porque API/worker foram recriados na recuperação. Os artefatos anteriores permanecem privados, sem exclusão ou sobrescrita. A recuperação bem-sucedida observada não substitui a prova de aplicação futura. Não houve cobrança, troca de credenciais, mensagem, migration ou alteração de imagens/portas/terceiros.
+
+## Atualização executável em 30/10/2026
+
+O caminho inicial descrito abaixo foi concretizado em `scripts/environment_cutover_release.py` e `app.environment_transition_runtime`. O usuário autorizou prosseguir autonomamente com push/CI/merge/deploy e aceitou explicitamente a indisponibilidade facial. O plano revisável é: preservar as imagens, comandos, versões, volumes e portas atuais; pausar cinco consumidores; deixar os três faciais parados; retomar somente API e worker com contexto production e flag facial false. O site fica brevemente em HTTP 503 enquanto a manutenção é validada; Nginx e demais serviços permanecem os mesmos. Não atualizar engines, pesos ou outros projetos.
+
+Após CI verde da mesma main, carregar o candidato oficial em diretório de suporte isolado e executar o inventário do novo coordenador como root. Ele valida main/CI e todos os blobs Python contra o tree GitHub oficial. A preparação persiste configuração/modelo anterior cifrados e perfil de continuidade SMTP/WhatsApp, sem escrever banco. A consulta de continuidade real já passou via SMTP TLS/auth/NOOP e consultas GET da instância WhatsApp existente, sem mensagem.
+
+Na aplicação, repetir fingerprint, criar marcadores de exclusividade e barreira 503, pausar graciosamente, revalidar ausência de jobs/referências, gerar o backup SQL definitivo após a pausa, cifrar/reabrir e aplicar o conjunto de índices, cofre e bindings na mesma transação. Comparar o estado financeiro agregado antes/depois. O recibo SQL cifrado é persistido antes do commit externo, e qualquer pacote parcial ou estado ambíguo mantém a recusa. Só depois atualizar labels ambientais e retomar API/worker; revalidar cofre, canais e allowlist. O ambiente secreto do processo de manutenção é passado via memfd Linux, sem arquivo temporário em disco.
+
+O corte usa `production-release.lock` e `app-in-flight.sha` com sidecar próprio. O fingerprint de destino e o recibo published autorizam a fase `enable-live`, que altera apenas a flag live na configuração/API/worker, preservando o par de teste e o opt-in dos tenants. Se essa fase falhar, fecha o gate e conserva os dados já migrados; não desfaz estados financeiros. Receipts e modelos operacionais permanecem privados 0600 em diretórios 0700.
+
+Esta atualização substitui os bloqueios locais anteriores de implementação abaixo, mas não constitui evidência de execução real. A coleta protegida anterior mantém seu bloqueio por contagem; o novo coordenador usa prova autenticada de origem/destino e não zera contadores para fingir ausência. A compatibilidade do modelo Compose do servidor foi conferida somente-leitura, preservando as imagens dos cinco consumidores. O pacote/coordenador completos foram ensaiados em Linux/PostgreSQL sintéticos; a operação nativa ainda depende de main/CI e fingerprint atual.
+
+## Estado e autorização
+
+Este documento é o plano técnico em preparação. A execução real depende do pacote/revisão final e de inventário atual; não interpretar testes sintéticos como execução. O proprietário confirmou a origem em galerias reais e aceitou a indisponibilidade temporária da busca facial para priorizar o Mercado Pago. Não há autorização implícita para excluir índices, reindexar fotos ou fabricar calibração/rollout.
+
+## Inventário observado
+
+- Projeto: `markina-gallery`; host operacional já autorizado; ingresso público `https://markina.pickyourpic.com.br`, porta local Nginx `127.0.0.1:8080 → 80/tcp`.
+- Schema: `20261026_0090`; API `0dd015a62447e0c8d4c6af16b381140c8118f2ec`; web/worker e consumidores faciais `c1944189761799be96eeeb921cad9906484d8b09`. A distribuição de revisões é um baseline observado, não um consumidor desconhecido por si só; sua ancestralidade e imagens devem ser validadas no plano final sem impor igualdade artificial entre serviços.
+- Treze serviços ativos saudáveis. Consumidores a drenar e pausar: `api`, `worker`, `face-index-worker`, `face-search-worker`, `face-maintenance-worker`. Nginx, bancos/Redis, Evolution e preview permanecem fora da pausa desta transição. Nenhuma porta, domínio, DNS, firewall ou recurso de terceiro deve mudar.
+- 15.055 embeddings com vínculos consistentes. Todos têm política ativa com aviso, base e retenção; 394 têm modelo histórico diferente da política atual e devem conservar sua versão original. Ausência de rollout persistido é compatível com o caminho legado publicado e não deve gerar aprovação retroativa.
+- Zero jobs ativos, referências/localizadores, entradas desconhecidas ou notificações com conteúdo; 107 notificações já tiveram ciphertext apagado. Esse estado deve ser revalidado antes de preparar e antes de aplicar.
+- Processamento facial atualmente ativo, APP_ENV conhecido não produtivo, gate live fechado. O alvo deve explicitar `FACIAL_PROCESSING_ENABLED=false`; sua reativação exige fluxo próprio. Não registrar segredos nem o valor arbitrário de ambiente em recibos.
+
+## Sequência de execução proposta
+
+1. Conferir `main` atual, CI da mesma revisão, diff aprovado e imagens de aplicação compatíveis; preservar atualizações dos outros chats. As bibliotecas SQL locais ainda precisam estar em um artefato versionado e revisado antes da execução. Nenhum código local não revisado deve ser importado no servidor para escrever dados.
+2. Executar o inventário protegido, incluindo diagnóstico complementar. As contagens são evidência de estado, não autorização de migração. Resolver as classificações de e-mail/WhatsApp e a identidade dos consumidores/versionamento no plano antes do corte. O contrato atual APP_ENV continua bloqueando contagens biométricas positivas e precisa receber a prova autenticada de destino antes de permitir a sequência final.
+3. Preparar em armazenamento restrito do projeto (`/var/lib/markina-gallery/deploy-state/biometric-app-env/<operation>/`) a cópia cifrada recuperável da configuração anterior, pacote SQL e backup dos envelopes Mercado Pago. A chave dedicada de backup deve ficar separada, com proprietário/permissões restritos, fora de logs, Git e pacotes de aplicação. A implementação do armazenamento seguro e recibo protegido ainda é requisito pendente; não usar um booleano manual como única evidência de persistência.
+4. Construir o plano a partir do inventário e dos snapshots completos. O plano deve vincular fingerprints de inventário/pacote/configuração, imagens, quantidade de contas/índices, serviços, janela e recuperação. Apresentar esse plano e obter a aprovação específica prevista no AGENTS.md antes de ler plaintext biométrico, alterar configuração ou gravar dados reais.
+5. Drenar os consumidores e pausar graciosamente somente os cinco serviços listados. Não forçar parada, não apagar filas e não chamar `compose down`. Recoletar zero jobs e ausência de outros armazenamentos; drift aborta antes da primeira escrita.
+6. Com contexto de origem e destino explícitos, preparar snapshots e envelopes de destino preservando a versão de cada índice. Persistir/reabrir o pacote AES-GCM; autenticar origem/destino e conferir que o conteúdo interno corresponde sem emiti-lo. Verificar também os dois envelopes Mercado Pago por tenant/conta e preservar seus valores, IDs e classificação sandbox.
+7. Aplicar a transição em PostgreSQL com concorrência controlada. A primitiva SQL existente usa transação externa, lock exclusivo e savepoint. O coordenador financeiro/biométrico ainda precisa garantir confirmação conjunta ou recuperação verificável de todas as classes antes do corte; não executar primitivas individualmente como substituição desse coordenador.
+8. Conferir, em transação somente-leitura, igualdade integral do banco com o snapshot de destino autenticado. `inspect_sql_destination` não decifra payloads biométricos; qualquer drift invalida a prova. Produzir recibo agregado sem IDs, ciphertexts, caminhos privados ou valores.
+9. Aplicar o contexto `production` aos consumidores e bindings aprovados; deixar facial false e gate live false. Validar cofre de credenciais, configuração de canais, saúde, schema, versões, HTTPS e preservação financeira antes de retomar serviços. Se qualquer classe/configuração falhar, seguir recuperação com consumidores pausados.
+10. Somente depois de concluir a transição, executar o inventário/plano próprio de `enable-mercadopago-production`, conferir tenants e ativar o gate live pelo release autorizado. Avisar o proprietário para cadastrar credenciais de produção pela UI de seu tenant quando os requisitos estiverem satisfeitos. Não emitir cobrança real de teste; contas de teste continuam limitadas ao par autorizado e PIX permanece disponível.
+
+## Recuperação
+
+Antes de substituir envelopes, drift ou backup inválido aborta sem escrita. Falha durante a transação SQL exige rollback integral, incluindo os envelopes financeiros quando o coordenador for implementado. Após confirmação, recovery deve autenticar o pacote, exigir banco exatamente no snapshot de destino e restaurar o snapshot de origem sem recriar registros. Restaurar configuração anterior somente a partir da cópia cifrada verificada; reabrir consumidores quando dados e configuração estiverem no mesmo contexto e os checks de saúde passarem. Estado desconhecido, backup não autenticado ou recuperação divergente mantém pausa e exige intervenção; não sobrescrever dados para forçar conformidade.
+
+## Bloqueios atuais
+
+- Instalação/revisão do coletor complementar no fluxo protegido ainda não executada; SQL validado por SSH somente-leitura não é um recibo de aprovação.
+- O storage POSIX exclusivo foi implementado e validado em Linux sintético, mas falta integrá-lo aos pacotes biométrico/financeiro/configuração, sua autenticação e recibo protegido de persistência.
+- A primitiva conjunta financeira/biométrica está testada em PostgreSQL, mas falta conectá-la ao armazenamento seguro, ao gate operacional completo e à recuperação conjunta após commit. Falta integrar a prova de destino ao contrato APP_ENV.
+- Falta plano operacional final com fingerprints atuais e recuperação conjunta ensaiada. Nenhum release ou corte está declarado pronto neste documento.

@@ -115,7 +115,7 @@ def process_ready_batches(db: Session) -> bool:
             MediaJob.tenant_id == PrivateUploadBatch.tenant_id, PrivateUploadBatchAsset.batch_id == PrivateUploadBatch.id,
             MediaJob.status.in_(["queued", "processing"])).exists()
     for batch in db.scalars(select(PrivateUploadBatch).join(Tenant, Tenant.id == PrivateUploadBatch.tenant_id).where(
-        Tenant.status == "active",
+        Tenant.status == "active", Tenant.lifecycle != "closed",
         PrivateUploadBatch.status == "closed",
         ~pending_job,
     ).order_by(PrivateUploadBatch.closed_at).with_for_update(of=PrivateUploadBatch, skip_locked=True).limit(100)):

@@ -25,7 +25,7 @@
 - [x] 4.1 Criar testes backend para fluxo sintético completo: criar galeria, duas pastas, enviar JPEG, processar prévia, escolher capa, excluir foto elegível, buscar/vincular cliente e obter resumo; verificar que WhatsApp, biometria e venda não são acionados.
 - [x] 4.2 Criar testes frontend para pasta, ampliação, exclusão, capa, busca, vínculo, navegação e estados de erro; verificar que não há autorização ou persistência simulada no browser.
 - [x] 4.3 Executar ruff, testes backend, lint, testes e build frontend; registrar resultados e manter falhas abertas até correção.
-- [ ] 4.4 Revisar visualmente em desktop e smartphone com dados sintéticos, seguindo as diretrizes próprias da Markina; verificar legibilidade, hierarquia, modal, confirmações e estados vazios.
+- [x] 4.4 Revisar visualmente em desktop e smartphone com dados sintéticos, seguindo as diretrizes próprias da Markina; verificar legibilidade, hierarquia, modal, confirmações e estados vazios. Evidência em 12/11/2026: sessão sintética em `3044`; configurações, vendas, comentário abaixo do preço, favorito, confirmação financeira, editor de galeria e pastas vazias revisados em 1366×900 e 390×844; prévia ampliada centralizada e Escape fecha o modal; pasta sintética vazia foi excluída após a correção e a UI confirmou sucesso. Observação não bloqueante: em 390 px, a exportação financeira quebra em três linhas e a barra fixa de filtros consome altura relevante; registrada para refinamento visual futuro.
 - [x] 4.5 Atualizar o roteiro de homologação e fazer push/deploy automático somente após a suíte verde, usando backup e Compose estritamente limitados ao Markina; verificar saúde, migration e URLs do ambiente.
 
 ## Registro de bloqueio — 2026-08-28
@@ -35,3 +35,14 @@
 ## Registro de supersession — 2026-08-31
 
 - A task 4.4 continua sendo revisão visual humana da entrega histórica. Regras de exclusão, vínculo e derivação desta change não devem ser reaplicadas: `improve-gallery-and-client-data-lifecycle` é a autoridade para o novo ciclo de vida e pode avançar em trabalho local independente.
+
+## Revalidação local — 12/11/2026
+
+- A tentativa autônoma de inspeção visual em `http://127.0.0.1:3039/`, `/admin` e `/library/cart` recebeu HTTP 500 (`Internal Server Error`). A API local respondeu HTTP 200 em `/health`. Os processos web/API já estavam ativos; não foram reiniciados ou alterados. Nenhuma sessão, credencial, OTP ou dado de cliente foi usado. Evidência e limites em `validation.md`; task 4.4 continua aberta.
+
+## Fechamento da revisão visual — 12/11/2026
+
+- A limitação acima foi contornada sem tocar no processo 3039: sessão administrativa sintética autenticada em `3044`, com API e dados sintéticos isolados. A sessão revisou configurações e vendas em desktop e smartphone; o detalhe do pedido mostrou comentário abaixo do preço, favorito na prévia e a situação financeira coerente.
+- No editor da galeria, a prévia ampliada foi aberta e inspecionada em 390×844; Escape a fechou e removeu o modal da árvore de acessibilidade. Pastas vazias e a confirmação/resultado da exclusão da pasta sintética foram verificados após a correção de FK.
+- Em 390 px, o botão “CSV financeiro detalhado” quebra em três linhas e a barra fixa de filtros ocupa espaço vertical considerável. Continua legível e não há overflow global; o refinamento visual fica registrado para trabalho futuro, sem bloquear o escopo de revisão.
+- Este registro posterior substitui os estados “pendente” das tentativas anteriores: a task 4.4 foi concluída localmente; nenhuma sincronização de spec, arquivamento, deploy, migration ou acesso à produção ocorreu.

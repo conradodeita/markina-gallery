@@ -1,0 +1,124 @@
+name: Adotar base privada do runtime API/web
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Diagnosticar ou persistir a adoção aprovada
+        type: choice
+        required: true
+        options: [diagnose, adopt]
+      approval_fingerprint:
+        description: Fingerprint emitido pelo diagnóstico (obrigatório em adopt)
+        type: string
+        required: false
+        default: ''
+
+permissions: {}
+
+jobs:
+  code-evidence:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Conferir gates de código do SHA exato
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-runtime-adoption
+
+  runtime-adoption-inventory:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: [code-evidence]
+    runs-on: ubuntu-latest
+    environment: production-preflight
+    permissions:
+      contents: read
+    outputs:
+      fingerprint: ${{ steps.inventory.outputs.fingerprint }}
+      connection_binding: ${{ steps.inventory.outputs.connection_binding }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Diagnosticar runtime sem escrita persistente
+        id: inventory
+        env:
+          HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for name in HOST PORT USER KEY KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || { echo "Configuração protegida ausente: $name" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"; known_file="$(mktemp)"; output="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file" "$output"' EXIT
+          printf '%s\n' "$KEY" > "$key_file"; printf '%s\n' "$KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          ssh -i "$key_file" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file" \
+            "$USER@$HOST" "MARKINA_APP_ADOPTION_TARGET_SHA=$GITHUB_SHA" </dev/null | tee "$output" | tee -a "$GITHUB_STEP_SUMMARY"
+          fingerprint="$(sed -nE 's/^adoption_fingerprint=([0-9a-f]{64})$/\1/p' "$output" | tail -n1)"
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || { echo 'Fingerprint de adoção ausente' >&2; exit 1; }
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          binding="$(printf '%s' "$HOST|$PORT|$USER" | sha256sum | awk '{print $1}')"
+          echo "connection_binding=$binding" >> "$GITHUB_OUTPUT"
+
+  persist-runtime-adoption:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.operation == 'adopt' }}
+    needs: [code-evidence, runtime-adoption-inventory]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Revalidar CI e exigir fingerprint revisado
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUESTED_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+          INVENTORY_FINGERPRINT: ${{ needs.runtime-adoption-inventory.outputs.fingerprint }}
+          PREFLIGHT_CONNECTION_BINDING: ${{ needs.runtime-adoption-inventory.outputs.connection_binding }}
+          DEPLOY_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          DEPLOY_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          DEPLOY_USER: ${{ vars.PRODUCTION_SSH_USER }}
+        run: |
+          set -Eeuo pipefail
+          python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-runtime-adoption
+          [[ "$REQUESTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT" ]] \
+            || { echo 'Fingerprint difere do diagnóstico read-only' >&2; exit 1; }
+          deploy_binding="$(printf '%s' "$DEPLOY_HOST|$DEPLOY_PORT|$DEPLOY_USER" | sha256sum | awk '{print $1}')"
+          [[ "$deploy_binding" == "$PREFLIGHT_CONNECTION_BINDING" ]] \
+            || { echo 'Destino da persistência diverge do host diagnosticado' >&2; exit 1; }
+      - name: Persistir base privada após aprovação protegida
+        env:
+          HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          USER: ${{ vars.PRODUCTION_SSH_USER }}
+          KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+          APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for name in HOST PORT USER KEY KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || { echo "Configuração protegida ausente: $name" >&2; exit 1; }
+          done
+          key_file="$(mktemp)"; known_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file"' EXIT
+          printf '%s\n' "$KEY" > "$key_file"; printf '%s\n' "$KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          ssh -i "$key_file" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file" \
+            "$USER@$HOST" "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' MARKINA_PUBLIC_BASE_URL='https://markina.pickyourpic.com.br' bash -s -- --mode adopt --sha '$GITHUB_SHA' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
+            < scripts/deploy-prod-app-services.sh | tee -a "$GITHUB_STEP_SUMMARY"

@@ -27,6 +27,17 @@ it("identifica responsável, membros ativos e pastas compartilhadas com destino 
   expect(within(region).queryByRole("button", { name: "Carregar fotos" })).toBeNull();
 });
 
+it("mostra que uma pasta privada arquivada não está disponível", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ galleries: [{
+    ...gallery,
+    folders: [{ ...gallery.folders[0], media_state: "archived" }],
+  }] }))));
+  render(<PrivateFolderClientOverview sourceId="source-1" />);
+  const region = screen.getByRole("region", { name: "Pastas de galerias privadas" });
+  expect(await within(region).findByText("Arquivada no arquivo frio")).toBeTruthy();
+  expect(within(region).queryByText("Disponível")).toBeNull();
+});
+
 it("distingue carregamento de uma origem sem pastas privadas", async () => {
   let finish!: (response: Response) => void;
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; })));

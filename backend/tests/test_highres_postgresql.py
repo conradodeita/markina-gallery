@@ -14,7 +14,6 @@ from test_facial_engine import _settings
 from test_highres_pipeline import jpeg
 
 from app.auth import (
-    Base,
     FacialJob,
     FacialRollout,
     ParentGallery,
@@ -25,6 +24,7 @@ from app.auth import (
 )
 from app.facial.lifecycle import admit_source, analysis_for, cleanup_sources, finalize_source
 from app.facial.policy import ensure_automatic_policy
+from tests.schema_fixtures import create_test_schema
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, LEGACY_SCHEMA_HEAD
 
 
@@ -73,7 +73,7 @@ def postgres_scene(tmp_path, monkeypatch):
     with admin.begin() as connection:
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = _engine(url, schema)
-    Base.metadata.create_all(engine)
+    create_test_schema(engine)
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
     monkeypatch.setenv("FACIAL_HIGHRES_ENABLED", "true")
     monkeypatch.setattr(

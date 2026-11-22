@@ -138,8 +138,8 @@ def _queue(
 
 def collect_facial_queues(db: Session, *, instant: datetime) -> list[QueueSnapshot]:
     current = instant.astimezone(UTC)
-    search_kinds = FACIAL_JOB_KINDS_BY_CLASS["search"] | {"search_gemma"}
-    index_kinds = FACIAL_JOB_KINDS_BY_CLASS["index"] | {"index_gemma"}
+    search_kinds = FACIAL_JOB_KINDS_BY_CLASS["search"]
+    index_kinds = FACIAL_JOB_KINDS_BY_CLASS["index"]
     job_class = case(
         (FacialJob.kind.in_(search_kinds), "search"),
         (FacialJob.kind.in_(index_kinds), "index"),

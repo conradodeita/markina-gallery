@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Escolha persistente de push
-O sistema SHALL memorizar a escolha de ativar ou desativar notificações por identidade autenticada e dispositivo/navegador. Ao retornar com a mesma identidade, SHALL reconciliar a inscrição do navegador e servidor, restaurando a adesão anterior quando a permissão nativa continuar concedida, sem novo prompt. O logout SHALL revogar a associação ativa e preservar somente a escolha. Uma conta diferente MUST NOT herdar essa adesão. O backend SHALL rejeitar registro cuja identidade esperada divergir da sessão atual.
+O sistema SHALL persistir a escolha de push por identidade autenticada e navegador, reconciliando inscrição cliente/servidor sem novo prompt quando a permissão continuar concedida. Logout SHALL revogar a associação ativa, mas preservar a escolha. Outra conta MUST NOT herdar a adesão, e o backend SHALL validar a identidade da sessão.
 
 #### Scenario: Retorno da mesma pessoa
 - **WHEN** cliente ou admin retorna após reload ou novo login no mesmo navegador onde aderiu, com permissão concedida

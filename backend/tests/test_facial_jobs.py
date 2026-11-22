@@ -280,21 +280,14 @@ def test_progress_and_completion_require_the_current_lease(db: Session) -> None:
         )
 
 
-def test_monitor_counts_gemma_jobs_as_facial_search_and_index(db):
-    from app.system_monitor.sources import job_counts
-
-    parent_id = _parent_id(db)
-    photo_id = _photo_id(db)
-    request_id = _request_id(db)
+def test_retired_engine_job_kinds_cannot_be_enqueued(db: Session) -> None:
     repository = FacialJobRepository()
-    repository.enqueue(db, tenant_id=FIXTURE_TENANT_ID, kind="index_gemma",
-                       idempotency_key="monitor-gemma-index", parent_gallery_id=parent_id,
-                       photo_asset_id=photo_id, model_version="gemma-v1", quality_version="quality-v1",
-                       preview_fingerprint="f" * 64)
-    repository.enqueue(db, tenant_id=FIXTURE_TENANT_ID, kind="search_gemma",
-                       idempotency_key="monitor-gemma-search", parent_gallery_id=parent_id,
-                       search_request_id=request_id)
-    db.commit()
-    rows = job_counts(db, now())["counts"]
-    assert {row["kind"]: row["count"] for row in rows} == {"search": 1, "index": 1}
-    assert all(row["state"] == "queued" for row in rows)
+    for kind in ("index_gemma", "search_gemma"):
+        with pytest.raises(FacialJobError, match="Tipo de job facial inválido"):
+            repository.enqueue(
+                db,
+                tenant_id=FIXTURE_TENANT_ID,
+                kind=kind,
+                idempotency_key=f"retired:{kind}",
+                parent_gallery_id=_parent_id(db),
+            )

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { CreditShortfallNotice } from "./credits/credit-shortfall-notice";
 import {
   MarkinaLink,
   MetricCard,
@@ -33,7 +34,59 @@ type Summary = {
     active: boolean;
     event_name?: string | null;
   }>;
+  recent_selections?: Array<{
+    scope_id: string;
+    client: { id: string; name: string };
+    gallery: { id: string; name: string };
+    parent_gallery: { id: string; name: string };
+    selected_count: number;
+    selection_started_at: string | null;
+    last_selected_at: string;
+  }>;
 };
+
+type CreditWallet = {
+  mode: "finite" | "unmetered";
+  available_credits: number | null;
+  reserved_credits: number;
+  pending_operations: number;
+  recent_consumed_credits: number;
+  recent_period_days: number;
+  can_upload_content: boolean;
+};
+
+type CreditEntry = {
+  id: string;
+  type: string;
+  delta: number;
+  source_reference: string | null;
+  description: string | null;
+  created_at: string;
+};
+
+function creditEntryLabel(type: string): string {
+  return {
+    owner_grant: "Créditos concedidos",
+    grant_revocation: "Créditos revogados",
+    purchase: "Compra de créditos",
+    upload_consumption: "Upload de foto",
+    purchase_reversal: "Estorno de compra",
+    correction: "Correção de saldo",
+  }[type] ?? "Movimentação de créditos";
+}
+
+function formatCreditDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Data indisponível" : date.toLocaleString("pt-BR");
+}
+
+function selectionStartedLabel(value: string | null): string {
+  if (!value) return "Horário não registrado";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "Horário não registrado"
+    : date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
 
 function formatStorage(bytes: number | null, available: boolean) {
   if (!available || bytes === null) return "Indisponível";
@@ -49,13 +102,40 @@ function formatStorage(bytes: number | null, available: boolean) {
 export default function AdminPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [failed, setFailed] = useState(false);
+  const [wallet, setWallet] = useState<CreditWallet | null>(null);
+  const [creditEntries, setCreditEntries] = useState<CreditEntry[]>([]);
+  const [walletState, setWalletState] = useState<"loading" | "ready" | "failed">("loading");
   useEffect(() => {
-    fetch("/api/admin/validation-summary", { credentials: "same-origin" })
+    const controller = new AbortController();
+    fetch("/api/admin/validation-summary", { credentials: "same-origin", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error();
         setSummary(await response.json());
       })
-      .catch(() => setFailed(true));
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setFailed(true);
+      });
+
+    fetch("/api/admin/credits/wallet", {
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        return response.json() as Promise<{ wallet: CreditWallet; entries: CreditEntry[] }>;
+      })
+      .then((result) => {
+        setWallet(result.wallet);
+        setCreditEntries(result.entries);
+        setWalletState("ready");
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setWalletState("failed");
+      });
+    return () => controller.abort();
   }, []);
   if (failed)
     return (
@@ -124,12 +204,74 @@ export default function AdminPage() {
           tone={summary.storage.available ? "neutral" : "warning"}
         />
       </section>
+      <section className="dashboard-credit-section" aria-label="Carteira de créditos">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Créditos de fotografia</p>
+            <h2>Carteira</h2>
+            <p className="dashboard-section-detail">Saldo, uso recente e operações de upload desta conta.</p>
+          </div>
+          <MarkinaLink href="/admin/credits" variant="quiet">Ver carteira →</MarkinaLink>
+        </div>
+        {walletState === "loading" ? (
+          <SystemState tone="loading" title="Consultando carteira" detail="Os dados operacionais continuam disponíveis enquanto o saldo é consultado." />
+        ) : walletState === "failed" || !wallet ? (
+          <SystemState tone="error" title="Saldo indisponível" detail="Não foi possível consultar a carteira. As métricas operacionais acima continuam disponíveis; o saldo não foi tratado como zero." />
+        ) : (
+          <>
+            <div className="dashboard-metrics dashboard-credit-metrics">
+              <MetricCard
+                label="Créditos disponíveis"
+                value={wallet.mode === "unmetered" ? "Ilimitado" : wallet.available_credits ?? "Indisponível"}
+                detail={wallet.mode === "unmetered" ? "Conta do proprietário sem limite" : "Saldo informado pela API da carteira"}
+              />
+              <MetricCard
+                label={`Consumo nos últimos ${wallet.recent_period_days} dias`}
+                value={wallet.recent_consumed_credits}
+                detail={wallet.mode === "unmetered" ? "Sua conta não recebe débito por uploads" : "Créditos usados em novos JPEGs de conteúdo"}
+              />
+              <MetricCard
+                label="Uploads pendentes"
+                value={wallet.pending_operations}
+                detail={wallet.mode === "unmetered" ? "Operações aguardando conclusão" : `${wallet.reserved_credits} crédito(s) reservado(s)`}
+                tone={wallet.pending_operations ? "warning" : "neutral"}
+              />
+            </div>
+            {wallet.mode === "finite" && !wallet.can_upload_content ? (
+              <CreditShortfallNotice />
+            ) : null}
+            <SurfaceCard>
+              <div className="section-heading">
+                <div><p className="eyebrow">Atividade financeira</p><h3>Movimentações recentes</h3></div>
+              </div>
+              {creditEntries.length ? (
+                <div className="dashboard-credit-entries">
+                  {creditEntries.slice(0, 5).map((entry) => (
+                    <div key={entry.id}>
+                      <div>
+                        <strong>{entry.description || creditEntryLabel(entry.type)}</strong>
+                        <small>{creditEntryLabel(entry.type)} · {formatCreditDate(entry.created_at)}</small>
+                        {entry.source_reference ? <small>Origem: {entry.source_reference}</small> : null}
+                      </div>
+                      <b className={entry.delta < 0 ? "dashboard-credit-debit" : "dashboard-credit-credit"}>
+                        {entry.delta > 0 ? "+" : ""}{entry.delta}
+                      </b>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <SystemState title="Nenhuma movimentação" detail="Concessões e uploads cobrados aparecerão aqui." />
+              )}
+            </SurfaceCard>
+          </>
+        )}
+      </section>
       <section className="dashboard-columns">
         <SurfaceCard>
           <div className="section-heading">
             <div>
               <p className="eyebrow">Atenção agora</p>
-              <h2>Ritual de publicação</h2>
+              <h2>Prática de publicação</h2>
               <p className="dashboard-section-detail">
                 Uma ordem simples para evitar liberar fotos incompletas.
               </p>
@@ -202,6 +344,42 @@ export default function AdminPage() {
               detail="Comece criando uma Galeria pública e vinculando uma cliente."
             />
           )}
+          <div className="dashboard-open-selections">
+            <div className="section-heading">
+              <div>
+                <h3>Clientes com seleção em andamento</h3>
+                <p className="dashboard-section-detail">Horários exibidos no fuso local deste dispositivo.</p>
+              </div>
+            </div>
+            {summary.recent_selections?.length ? (
+              <div className="dashboard-recent">
+                {summary.recent_selections.map((selection) => {
+                  const params = new URLSearchParams({
+                    client_id: selection.client.id,
+                    parent_gallery_id: selection.parent_gallery.id,
+                  });
+                  const anchor = `open-selection-${selection.scope_id}-${selection.client.id}`;
+                  return (
+                    <div key={`${selection.scope_id}:${selection.client.id}`}>
+                      <div>
+                        <MarkinaLink
+                          href={`/admin/payments?${params.toString()}#${anchor}`}
+                          variant="quiet"
+                        >
+                          {selection.client.name}
+                        </MarkinaLink>
+                        <small>{selection.gallery.name} · {selection.parent_gallery.name}</small>
+                        <small>{selection.selected_count} foto(s) · Iniciada em {selectionStartedLabel(selection.selection_started_at)}</small>
+                      </div>
+                      <StatusBadge tone="neutral">Em andamento</StatusBadge>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="dashboard-section-detail">Nenhuma cliente está selecionando fotos agora.</p>
+            )}
+          </div>
         </SurfaceCard>
       </section>
     </div>

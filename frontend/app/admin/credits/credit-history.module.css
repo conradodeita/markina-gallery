@@ -1,0 +1,19 @@
+.section { min-width: 0; }
+.heading { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.heading h2, .heading h3 { margin: 3px 0 0; font-size: 1.2rem; }
+.list { padding: 0; margin: 0; list-style: none; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 18px; padding: 18px 0; border-top: 1px solid var(--line); }
+.info { display: grid; justify-items: start; gap: 7px; min-width: 0; }
+.info > strong, .info > span, .reference { overflow-wrap: anywhere; }
+.info > span, .info > small { color: var(--muted); font-size: .86rem; line-height: 1.5; }
+.info .photoCount { display: inline-block; border-radius: 7px; padding: 3px 8px; color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); font-weight: 750; }
+.reference { font-variant-numeric: tabular-nums; }
+.amount { display: grid; align-content: start; justify-items: end; gap: 3px; font-variant-numeric: tabular-nums; }
+.amount > strong { font-size: 1.35rem; }
+.amount small { color: var(--muted); font-size: .75rem; }
+.credit { color: var(--success, #2f7b49); }
+.debit { color: var(--danger, #a93636); }
+@media (max-width: 480px) {
+  .row { gap: 12px; }
+  .amount > strong { font-size: 1.15rem; }
+}

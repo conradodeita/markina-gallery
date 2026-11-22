@@ -62,3 +62,10 @@ Levantamento executado antes das alterações com buscas em `frontend/app/**/*.c
 - Tabelas densas podem manter rolagem horizontal local; não devem ampliar a página inteira.
 
 Não foram encontradas classes utilitárias `container`, `max-w-*` ou `mx-auto` no código de produção TSX. A ocorrência `container` em teste é apenas a variável retornada pelo Testing Library.
+
+## Repass pós-implementação — 11/11/2026
+
+- Removidos os limites estruturais duplicados de `public-gallery-shell`, `selection-summary--floating`, `gallery-editor-shell`, `gallery-preview-page`, `pricing-presets-page`, `client-directory-shell`, `client-checkout-review`, `private-gallery-detail` e `admin-notifications-page`. Os shells permanecem no contrato full-width compartilhado; formulários, textos, diálogos, QR codes e popovers mantêm limites de legibilidade ou viewport.
+- Busca direta em `globals.css` não encontrou novamente os limites anteriores de 980, 1.080, 1.120, 1.180 e 1.760 px nesses wrappers.
+- Validação estrutural: `npx vitest run app/layout-system.test.ts app/public-galleries/public-gallery.test.tsx --reporter=dot` passou 50/50; `npm run lint` terminou com zero erros e 38 avisos; `npm run build` concluiu com TypeScript e 27 rotas geradas.
+- Inspeção visual local de `/photographer-signup` em 1920×1080, 1440×900, 768×1024 e 390×844 não mostrou overflow ou container estreito. A API em `127.0.0.1:8000` estava indisponível, portanto as rotas administrativas e da cliente não foram visualmente verificadas. As tasks 1.6 e 5.2 permanecem abertas; a evidência detalhada está em `validation.md`.

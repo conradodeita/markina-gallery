@@ -1,0 +1,24 @@
+[Unit]
+Description=Pick-your-Pic restricted wildcard installer
+Requires=pyp-acme-installer.socket
+After=pyp-acme-installer.socket
+ConditionPathExists=/etc/pyp-acme-issuer/installer.json
+
+[Service]
+Type=simple
+User=root
+Group=pyp-acme
+UMask=0077
+ExecStart=/opt/pyp-acme-issuer/bin/python3 -B /opt/pyp-acme-issuer/scripts/wildcard_operational_service.py helper
+LimitCORE=0
+LimitFSIZE=16777216
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX
+TimeoutStopSec=90
+
+# O helper usa o Docker fixo como root; emissor não recebe socket/grupo Docker.

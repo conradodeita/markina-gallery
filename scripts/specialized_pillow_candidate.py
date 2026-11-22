@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 SERVICES = (
     'face-index-worker', 'face-search-worker', 'face-maintenance-worker',
-    'face-gemma-index-worker', 'preview-adjustment-worker', 'raw-development-worker',
+    'preview-adjustment-worker',
 )
 VERSION = '13.0.0'
 PROJECT = 'markina-gallery'
@@ -36,7 +36,7 @@ for d in m.distributions():
     packages[name]=d.version
 source=hashlib.sha256()
 protected=(Path('/app/app'),Path('/app/facial-assets'),Path('/app/migrations'),
- Path('/opt/markina-face-models'),Path('/opt/markina-embeddinggemma-2'))
+ Path('/opt/markina-face-models'))
 paths=sorted([p for root in protected for p in root.rglob('*')]+
  list(Path('/app').glob('*requirements*.txt'))+[Path('/app/alembic.ini')])
 for p in paths:

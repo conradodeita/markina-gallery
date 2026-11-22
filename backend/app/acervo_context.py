@@ -12,7 +12,16 @@ from app.auth import Client, Tenant
 
 def require_active_owner(db: Session, tenant_id: UUID) -> None:
     tenant = db.get(Tenant, tenant_id, populate_existing=True)
-    if tenant is None or tenant.status != "active":
+    closed_recovery = False
+    if tenant is not None and tenant.lifecycle == "closed":
+        from app.tenant_closure_recovery import archive_execution_authorized
+        closed_recovery = (tenant_id in db.info.get("tenant_archive_recovery", ())
+                           or archive_execution_authorized(db, tenant_id))
+    if tenant is None or tenant.status != "active" or (
+        tenant.lifecycle == "closed"
+        and tenant_id not in db.info.get("tenant_privacy_retention", ())
+        and not closed_recovery
+    ):
         raise HTTPException(status_code=403, detail="Acesso negado.")
     from app.tenancy import bind_domain_owner
 

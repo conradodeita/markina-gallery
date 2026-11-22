@@ -1,4 +1,38 @@
-# Inventário pré-deploy de homologação
+# Inventário de release e plano de impacto zero
+
+## Estado vigente da preparação — 12/11/2026
+
+**Alvo decidido pelo proprietário:** integrar o SaaS ao servidor de produção já operado; não há homologação separada para este release. A decisão de 11/11/2026 em `../add-small-multi-photographer-pilot/design.md` substitui o alvo de homologação descrito no inventário histórico abaixo. A autorização de 31/08/2026 registrada para homologação não autoriza publicação, migration, teste com escrita ou qualquer operação em produção.
+
+### Inventário remoto somente leitura
+
+Consulta SSH read-only de 12/11/2026, limitada ao projeto Compose `markina-gallery`; nenhum registro de cliente, conteúdo, segredo ou backup foi consultado.
+
+- 13/13 containers do projeto estavam `Up` e `healthy`: API, web, Nginx do app, PostgreSQL, Redis, worker geral, workers faciais/de índice/manutenção, worker de ajuste de prévia e Evolution API com PostgreSQL/Redis auxiliares.
+- Única porta publicada observada: Nginx do app em `127.0.0.1:8080 -> 80/tcp`. API (`8000`), web (`3000`), bancos e Redis não tinham porta publicada diretamente no host. Nginx Proxy Manager/proxy externo não foi inspecionado.
+- `alembic current` dentro da API retornou `20261026_0090 (head)`.
+- Checkout remoto `/opt/markina-gallery`: SHA `0dd015a62447e0c8d4c6af16b381140c8118f2ec`, sem alterações em `git status`; `git branch --show-current` não retornou branch (checkout destacado). Isso não prova por si só qual commit gerou cada container ativo.
+- Branch local `feature/saas-release-candidate`, HEAD `855be42b826c61c8ebdb2bd1e471ca1d28147061`; a única head Alembic local é `20261111_0125`, 35 revisões depois do schema remoto. `git status --short --untracked-files=all` contabilizou 697 entradas; nenhuma SHA isolada de candidato foi preparada. Preservar todas as mudanças existentes.
+- Foram conferidos somente os estados/portas dos containers e a revisão Alembic. Healthchecks HTTP externos, proxy, backups/restauração e conteúdo de configuração não foram consultados nesta atualização.
+
+### Avaliação de prontidão
+
+**NO-GO para executar agora a task 8.6 ou publicar.** A saúde atual dos containers não comprova compatibilidade do candidato, ausência de impacto ou restauração. A produção está em `0090`, o código local em `0125`, ainda não existe candidato isolado e o worktree tem 697 entradas pendentes. O estado de backup/restauração não foi verificado. O fluxo protegido de release de aplicação existente aceita somente API/web e proíbe migrations, Compose e workers; portanto, não cobre esta mudança. A migração e a validação abrangente ainda não têm um procedimento de release compatível comprovado.
+
+O “impacto zero” é uma meta do plano, não uma garantia. A API e a web podem sofrer interrupção breve quando recriadas, e o impacto de locks/backfills do banco em dados produtivos não foi medido. Como o proprietário determinou que o sistema em produção continue atendendo clientes, qualquer etapa com risco de indisponibilidade deve parar antes da execução e ser apresentada para autorização específica.
+
+### Plano de preparação e gates
+
+1. Preservar o worktree e concluir o checklist pré-release definido pelo proprietário; não limpar nem selecionar automaticamente os 697 caminhos e não enviar push antes de atingir o gate de 100% já estabelecido.
+2. Isolar um candidato revisável sem incluir mudanças não relacionadas. Revisar todas as revisions `0091–0125` e compatibilidade entre API, web, workers e schema; repetir a cadeia completa `0090→0125` em PostgreSQL descartável. A evidência sintética não substitui medição de lock/backfill representativa.
+3. Comprovar backup recente, integridade e ensaio de restauração antes de qualquer mudança de schema. Definir separadamente rollback de aplicação e recuperação do banco; não presumir que `alembic downgrade` seja seguro após a criação de dados de negócio.
+4. Criar ou aprovar um fluxo de release que cubra exatamente as imagens e migrations necessárias, sem incluir outros projetos/serviços; o procedimento API/web existente não pode ser ampliado por inferência.
+5. Antes de qualquer publicação em produção, repetir inventário somente leitura no SHA exato: host/projeto, serviços e imagens, portas/domínio, revisão/schema, espaço/volumes, backup/restore e rollback. Apresentar o plano completo e aguardar autorização operacional específica.
+6. Somente após release autorizado e confirmação de que nenhuma etapa exigirá interrupção não aprovada, manter o cadastro público fechado e executar a validação com a conta do proprietário e dados estritamente sintéticos, sem fotos, pedidos ou dados de clientes. Registrar SHA, migration, healthchecks, isolamento e aceite visual; se qualquer condição divergir, parar e manter o cadastro fechado.
+
+**Gate atual:** preparação documental/read-only concluída; sem autorização para push, publicação, migration, criação/exclusão de dados sintéticos em produção ou reinício de serviços. Em 12/11/2026 o proprietário aprovou classificar a task 8.6 como aceite operacional pós-release, fora do percentual de prontidão pré-release de 100%. Essa classificação não concede autorização de publicação ou operação.
+
+## Inventário histórico de homologação — 31/08/2026 (alvo substituído)
 
 Estado preparado e autorizado pelo proprietário em 2026-08-31 para a change
 `improve-gallery-and-client-data-lifecycle`. A autorização cobre integração,

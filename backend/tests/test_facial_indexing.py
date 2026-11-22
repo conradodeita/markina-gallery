@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     Base,
-    FacialEmbeddingExperimentSetting,
     FacialJob,
     FacialRollout,
     GalleryFacialPolicy,
@@ -17,6 +16,7 @@ from app.auth import (
     ParentGallery,
     PhotoAsset,
     PhotoFolder,
+    Tenant,
 )
 from app.facial.config import FacialSettings
 from app.facial.indexing import (
@@ -190,38 +190,6 @@ def test_ready_preview_enqueues_once_and_activates_internal_policy_automatically
     assert automatic_policy.actor_admin_id is None
 
 
-@pytest.mark.parametrize("is_new_gallery", [False, True])
-def test_gemma_enqueues_only_galleries_created_after_activation(
-    tmp_path: Path, is_new_gallery: bool
-) -> None:
-    from datetime import timedelta
-
-    from app.facial.gemma_provider import GEMMA_MODEL_REVISION
-
-    db = _session()
-    photo, derivative, path = _eligible_photo(db, tmp_path)
-    gallery = db.get(ParentGallery, photo.parent_gallery_id)
-    assert gallery is not None
-    db.add(FacialEmbeddingExperimentSetting(
-        singleton=1,
-        enabled=True,
-        mode="shadow",
-        model_revision=GEMMA_MODEL_REVISION,
-        enabled_since=(
-            gallery.created_at - timedelta(seconds=1)
-            if is_new_gallery
-            else gallery.created_at + timedelta(seconds=1)
-        ),
-    ))
-
-    enqueue_photo_index_if_eligible(
-        db, photo, derivative, derivative_path=path, settings=_settings(tmp_path)
-    )
-    db.commit()
-
-    job_kinds = set(db.scalars(select(FacialJob.kind)))
-    assert "index" in job_kinds
-    assert ("index_gemma" in job_kinds) is is_new_gallery
 
 
 def test_disabled_global_gate_neither_creates_policy_nor_job(tmp_path: Path) -> None:
@@ -445,6 +413,34 @@ def test_startup_reconciliation_backfills_only_new_or_divergent_galleries(
     assert db.scalar(
         select(func.count()).select_from(FacialJob).where(FacialJob.kind == "index")
     ) == 2
+
+
+def test_startup_reconciliation_skips_tenant_with_pending_closure(
+    tmp_path: Path,
+) -> None:
+    db = _session()
+    photo, _derivative, _path = _eligible_photo(
+        db, tmp_path, include_policy=False
+    )
+    tenant = db.get(Tenant, FIXTURE_TENANT_ID)
+    assert tenant is not None
+    tenant.lifecycle = "closing"
+    db.commit()
+
+    result = reconcile_automatic_gallery_policies(
+        db,
+        derivatives_root=tmp_path,
+        settings=_settings(tmp_path),
+    )
+    db.commit()
+
+    assert result.galleries_scanned == 0
+    assert db.scalar(
+        select(func.count()).select_from(GalleryFacialPolicy).where(
+            GalleryFacialPolicy.parent_gallery_id == photo.parent_gallery_id,
+        )
+    ) == 0
+    assert db.scalar(select(func.count()).select_from(FacialJob)) == 0
 
 
 def test_media_remains_available_when_facial_configuration_is_invalid(

@@ -27,8 +27,6 @@ services:
     environment: *monitor
   face-index-worker:
     environment: *monitor
-  face-gemma-index-worker:
-    environment: *monitor
   face-maintenance-worker:
     environment: *monitor
   preview-adjustment-worker:

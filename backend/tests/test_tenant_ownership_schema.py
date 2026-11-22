@@ -30,6 +30,7 @@ from app.auth import (
     ParentGallery,
     PaymentGroup,
     PhotoAsset,
+    PhotoCreditOperation,
     PhotoFolder,
     PhotoSelection,
     ProgressivePricingPreset,
@@ -38,16 +39,24 @@ from app.auth import (
     SaleOrderItem,
     Tenant,
     TenantAdmin,
+    TenantCreditWallet,
     now,
 )
-from app.ownership_schema import CONTEXTUAL_TABLES, SHARED_TABLES
+from app.ownership_schema import CONTEXTUAL_TABLES, GLOBAL_OWNER_TABLES, SHARED_TABLES
+from tests.tenant_fixtures import fixture_unmetered_owner
 from tests.test_tenant_client_isolation import client_db as _client_db
 
 client_db = _client_db
 
 
-@pytest.fixture
-def graph(client_db):
+def test_google_drive_tables_have_explicit_global_and_shared_ownership():
+    assert "google_drive_connection" in GLOBAL_OWNER_TABLES
+    assert "google_drive_oauth_attempt" in SHARED_TABLES
+    assert "tenant_id" in Base.metadata.tables["google_drive_connection"].c
+    assert "tenant_id" in Base.metadata.tables["google_drive_oauth_attempt"].c
+
+
+def build_graph(client_db, *, owner_is_first_admin=False):
     records = []
     for label in ("A", "B"):
         tenant = Tenant(canonical_host=f"{label.lower()}.fotografo.exemplo.com")
@@ -83,7 +92,25 @@ def graph(client_db):
         client_db.flush()
         records.append({"tenant": tenant, "admin": admin, "client": client, "parent": parent, "folder": folder,
                             "gallery": gallery, "photo": photo, "order": order, "event": event})
+    if owner_is_first_admin:
+        owner = records[0]["admin"]
+        owner.email_verified = True
+    else:
+        owner = AdminUser(
+            email="platform-owner-fixture@example.test",
+            password_hash="synthetic",
+            totp_secret="synthetic",
+            email_verified=True,
+        )
+    fixture_unmetered_owner(client_db, owner, tenant_id=records[0]["tenant"].id)
+    client_db.add(TenantCreditWallet(tenant_id=records[1]["tenant"].id, mode="finite"))
+    client_db.flush()
     return records
+
+
+@pytest.fixture
+def graph(client_db):
+    return build_graph(client_db)
 
 
 def test_catalogo_postgresql_conserva_owner_e_constraints(client_db):
@@ -96,9 +123,24 @@ def test_catalogo_postgresql_conserva_owner_e_constraints(client_db):
         "WHERE c.relnamespace = to_regnamespace(:schema) AND c.relkind IN ('r', 'p') "
         "AND a.attname = 'tenant_id'"
     ), {"schema": schema}).all())
-    owned = set(Base.metadata.tables) - SHARED_TABLES
-    assert set(attributes) == owned
+    owned = set(Base.metadata.tables) - SHARED_TABLES - GLOBAL_OWNER_TABLES
+    # No log global, tenant_id é o objeto/conta relacionada, não a autoridade
+    # do ator. O proprietário de A pode registrar ação autorizada sobre B.
+    shared_or_global_with_tenant = {
+        name for name in SHARED_TABLES | GLOBAL_OWNER_TABLES
+        if "tenant_id" in Base.metadata.tables[name].c
+    }
+    assert set(attributes) == owned | {"platform_admin_event"} | shared_or_global_with_tenant
+    assert attributes["platform_admin_event"] is False
+    assert attributes["google_drive_connection"] is True
+    assert attributes["google_drive_oauth_attempt"] is True
     assert all(attributes[name] for name in owned - CONTEXTUAL_TABLES)
+    assert GLOBAL_OWNER_TABLES == {
+        "photographer_credit_package", "platform_admin_event", "google_drive_connection",
+        "photographer_terms_draft", "photographer_terms_version", "media_archive_recovery_pricing",
+        "photographer_access_recovery",
+    }
+    assert "tenant_id" not in Base.metadata.tables["photographer_credit_package"].c
     actual = set(client_db.scalars(text(
         "SELECT conname FROM pg_constraint WHERE connamespace = to_regnamespace(:schema)"
     ), {"schema": schema}))
@@ -109,6 +151,35 @@ def test_catalogo_postgresql_conserva_owner_e_constraints(client_db):
         and constraint.name.startswith("fk_owner_")
     }
     assert len(expected) > 100 and expected <= actual
+
+
+def test_wallet_finite_permite_varios_tenants_e_un_unmetered_global(client_db):
+    tenants = [Tenant(), Tenant(), Tenant(), Tenant()]
+    client_db.add_all(tenants)
+    client_db.flush()
+    client_db.add_all([
+        TenantCreditWallet(tenant_id=tenants[0].id, mode="finite"),
+        TenantCreditWallet(tenant_id=tenants[1].id, mode="finite"),
+        TenantCreditWallet(tenant_id=tenants[2].id, mode="unmetered"),
+    ])
+    client_db.commit()
+    client_db.add(TenantCreditWallet(tenant_id=tenants[3].id, mode="unmetered"))
+    with pytest.raises(IntegrityError):
+        client_db.flush()
+
+
+def test_credit_operation_nao_pode_apontar_para_photo_asset_de_outro_tenant(client_db, graph):
+    first, second = graph
+    operation = PhotoCreditOperation(
+        tenant_id=second["tenant"].id,
+        photo_asset_id=first["photo"].id,
+        photo_asset_id_snapshot=first["photo"].id,
+        storage_key_snapshot=first["photo"].storage_key,
+        payload_fingerprint="a" * 64,
+    )
+    client_db.add(operation)
+    with pytest.raises(IntegrityError):
+        client_db.flush()
 
 
 @pytest.mark.parametrize("kind", [

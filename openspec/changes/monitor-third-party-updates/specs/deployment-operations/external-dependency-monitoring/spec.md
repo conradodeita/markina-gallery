@@ -40,7 +40,7 @@ O projeto SHALL distinguir Dependabot security alerts/security updates das verif
 
 ### Requirement: Relatório semanal consolidado com estado observável
 
-O projeto SHALL gerar no GitHub Actions um resumo semanal das PRs Dependabot abertas e dos alertas legíveis. O resumo SHALL informar instante da verificação, endpoints/fontes, contagens, versões candidatas, benefício, riscos, prioridade e recomendação. Lista vazia só SHALL significar ausência de itens retornados pela fonte consultada; falha, permissão insuficiente e fonte não confirmada SHALL ser apresentados em estados distintos. Uma execução sem novidade SHALL não criar PR, issue, comentário ou notificação.
+O GitHub Actions SHALL gerar um resumo semanal de PRs Dependabot e alertas legíveis, com horário, fontes, contagens, versões, benefícios, riscos, prioridade e recomendação. Lista vazia SHALL indicar somente que a fonte consultada retornou zero itens; falha, falta de permissão e fonte não confirmada SHALL ter estados distintos. Execução sem novidades SHALL NOT criar PR, issue, comentário ou notificação.
 
 #### Scenario: Consulta sem itens
 

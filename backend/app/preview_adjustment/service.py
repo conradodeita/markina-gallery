@@ -146,6 +146,15 @@ def photo_active(db: Session, photo: PhotoAsset | None) -> bool:
     parent = owned_record(db, ParentGallery, photo.parent_gallery_id, tenant_id=photo.tenant_id)
     if not parent or not parent.active or parent.lifecycle_status != "active":
         return False
+    folder = db.scalar(
+        select(PhotoFolder)
+        .where(PhotoFolder.id == photo.folder_id, PhotoFolder.tenant_id == photo.tenant_id)
+        .with_for_update()
+    )
+    from app.folder_access import folder_media_writes_allowed
+
+    if not folder or not folder_media_writes_allowed(db, folder):
+        return False
     if photo.derived_gallery_id:
         gallery = owned_record(db, DerivedGallery, photo.derived_gallery_id, tenant_id=photo.tenant_id)
         return bool(gallery)
@@ -178,17 +187,37 @@ def private_facial_job_completed(db: Session, photo: PhotoAsset, folder: PhotoFo
 def enqueue(db: Session, photo_id: UUID, *, tenant_id: UUID, retry: bool = False) -> bool:
     from app.facial.lifecycle import media_can_proceed
     require_active_owner(db, tenant_id)
-    photo = db.scalar(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id, PhotoAsset.id == photo_id).with_for_update())
-    if not photo or not media_can_proceed(db, photo_id, tenant_id=tenant_id):
+    photo = db.scalar(select(PhotoAsset).where(
+        PhotoAsset.tenant_id == tenant_id, PhotoAsset.id == photo_id,
+    ))
+    if not photo:
         return False
-    folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=tenant_id) if photo else None
+    parent = db.scalar(select(ParentGallery).where(
+        ParentGallery.tenant_id == tenant_id,
+        ParentGallery.id == photo.parent_gallery_id,
+    ).with_for_update())
+    if not parent or not media_can_proceed(db, photo_id, tenant_id=tenant_id):
+        return False
+    photo = db.scalar(select(PhotoAsset).where(
+        PhotoAsset.tenant_id == tenant_id, PhotoAsset.id == photo_id,
+    ).with_for_update())
+    if not photo:
+        return False
+    folder = db.scalar(
+        select(PhotoFolder)
+        .where(PhotoFolder.id == photo.folder_id, PhotoFolder.tenant_id == tenant_id)
+        .with_for_update()
+    ) if photo else None
     config = effective_preview(db, folder, lock=True) if folder else None
+    from app.folder_access import folder_media_writes_allowed
+
     if (
         not config
         or not config.enabled
         or not photo_active(db, photo)
         or not folder
         or folder.purpose != "content"
+        or not folder_media_writes_allowed(db, folder)
     ):
         return False
     if not private_facial_job_completed(db, photo, folder):
@@ -301,7 +330,7 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
             select(PreviewAdjustment.photo_asset_id, PreviewAdjustment.tenant_id, PhotoAsset.folder_id)
             .join(PhotoAsset, PhotoAsset.id == PreviewAdjustment.photo_asset_id)
             .join(Tenant, Tenant.id == PreviewAdjustment.tenant_id)
-            .where(eligible, Tenant.status == "active", PhotoAsset.tenant_id == PreviewAdjustment.tenant_id)
+            .where(eligible, Tenant.status == "active", Tenant.lifecycle != "closed", PhotoAsset.tenant_id == PreviewAdjustment.tenant_id)
             .order_by(PreviewAdjustment.updated_at, PreviewAdjustment.photo_asset_id)
             .limit(1)
         ).first()
@@ -324,6 +353,12 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
         )
         if not row:
             return False
+        from app.folder_access import folder_media_writes_allowed
+
+        if not folder or not folder_media_writes_allowed(db, folder):
+            row.status, row.claim_token, row.updated_at = "cancelled", None, now()
+            db.commit()
+            return True
         if not config or not config.enabled or row.generation != config.generation:
             row.status, row.claim_token, row.updated_at = "cancelled", None, now()
             db.commit()
@@ -385,7 +420,11 @@ def process_one(session_factory, engine: AdjustmentEngine | None = None) -> bool
                     select(ParentGallery).where(ParentGallery.tenant_id == tenant_id, ParentGallery.id == parent_id).with_for_update()
                 )
             photo = db.scalar(select(PhotoAsset).where(PhotoAsset.tenant_id == tenant_id, PhotoAsset.id == photo_id).with_for_update())
-            folder = owned_record(db, PhotoFolder, photo.folder_id, tenant_id=tenant_id) if photo else None
+            folder = db.scalar(
+                select(PhotoFolder)
+                .where(PhotoFolder.id == photo.folder_id, PhotoFolder.tenant_id == tenant_id)
+                .with_for_update()
+            ) if photo else None
             config = effective_preview(db, folder, lock=True) if folder else None
             row = adjustment_for(db, photo_id, tenant_id=tenant_id)
             source = inputs(db, photo_id, tenant_id=tenant_id) if photo else None

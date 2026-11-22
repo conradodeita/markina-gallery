@@ -5,12 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = "a" * 40
@@ -73,7 +73,14 @@ docker() {
           service="${!#}"
           if [[ -f "$FLOW_ROOT/published" ]]; then printf 'new-%s\n' "$service";
           else printf 'old-%s\n' "$service"; fi ;;
-        config) event config ;;
+        config)
+          event config
+          if [[ "$*" == *"--format json"* ]]; then
+            local facial_flag=true
+            [[ "$FLOW_CASE" != facial_flag_false ]] || facial_flag=false
+            printf '{"services":{"api":{"environment":{"FACIAL_PROCESSING_ENABLED":"%s"}},"worker":{"environment":{"FACIAL_PROCESSING_ENABLED":"%s"}},"face-search-worker":{"environment":{"FACIAL_PROCESSING_ENABLED":"%s"}}}}\n' \
+              "$facial_flag" "$facial_flag" "$facial_flag"
+          fi ;;
         build)
           event build
           [[ "$FLOW_CASE" != build_failure ]] || return 55 ;;
@@ -106,6 +113,7 @@ docker() {
     inspect)
       format="$3"; identifier="$4"
       case "$format" in
+        '{{json .Config.Env}}') printf '["FACIAL_PROCESSING_ENABLED=true"]\n' ;;
         '{{.Image}}')
           case "$identifier" in
             old-api) printf 'sha256:%064d\n' 1 ;;
@@ -169,7 +177,7 @@ class RetirementReleaseFlowTests(unittest.TestCase):
             if git_bash.exists():
                 bash = str(git_bash)
         self.assertIsNotNone(bash, "bash is required for release flow fixtures")
-        result = subprocess.run([bash, str(harness)], capture_output=True, text=True, timeout=30,
+        result = subprocess.run([bash, str(harness)], capture_output=True, text=True, timeout=30, check=False,
                                 env=dict(os.environ, FLOW_SOURCE=script.as_posix(),
                                          FLOW_ROOT=directory.as_posix(), FLOW_PYTHON=Path(sys.executable).as_posix(),
                                          FLOW_TARGET=TARGET, FLOW_PREVIOUS=PREVIOUS,
@@ -198,6 +206,14 @@ class RetirementReleaseFlowTests(unittest.TestCase):
         self.assertIn(f"sha256={hashlib.sha256(ARCHIVE).hexdigest()}", manifest)
         self.assertFalse((directory / "state/infinitepay-retirement-in-flight.sha").exists())
         self.assertIn(f"release=saudavel sha={TARGET} schema=20261022_0087", result.stdout)
+
+    def test_disabled_facial_flag_aborts_before_build_or_pause(self):
+        result, _, events = self.run_flow("facial_flag_false")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FACIAL_PROCESSING_ENABLED deve permanecer true", result.stderr)
+        self.assertNotIn("build", events)
+        self.assertNotIn("stop:api", events)
+        self.assertNotIn("stop:worker", events)
 
     def test_build_failure_restores_observed_checkout_before_stopping_services(self):
         result, directory, events = self.run_flow("build_failure")

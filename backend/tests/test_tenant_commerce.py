@@ -27,14 +27,19 @@ from app.auth import (
 from app.checkout import CheckoutError, _checkout_material, _synchronize_order
 from app.global_pix import normalize_configuration
 from tests.test_tenant_client_auth import client_db as _client_db
-from tests.test_tenant_client_auth import graph as _graph
 from tests.test_tenant_client_auth import links as _links
 from tests.test_tenant_client_auth import request
 from tests.test_tenant_client_navigation import cookie
+from tests.test_tenant_ownership_schema import build_graph
 
 client_db = _client_db
-graph = _graph
 links = _links
+
+
+@pytest.fixture
+def graph(client_db):
+    """Uma conta por tenant; o primeiro fotógrafo é o proprietário sintético."""
+    return build_graph(client_db, owner_is_first_admin=True)
 
 
 @pytest.fixture

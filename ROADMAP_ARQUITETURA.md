@@ -8,7 +8,7 @@
 
 # Pick-your-Pic — Roadmap Arquitetural
 
-> **Decisão de galeria única — `unify-gallery-client-collections`:** a Galeria pública autenticada é a única galeria operacional. Cada pasta é comum ou atribuída a uma ou mais clientes; “Coleção” reúne somente as pastas comuns e atribuídas à pessoa autenticada. Seleções, compras, prazo e histórico permanecem por galeria + cliente. “Minha galeria” deixa de ser uma tela e links antigos redirecionam após autorização. A limpeza dos dados de teste é exclusiva de homologação, com preservação de admin, 2FA, Evolution e configurações globais. Cláusulas históricas de derivação abaixo ficam substituídas nesse escopo.
+> **Decisão de galeria única — `unify-gallery-client-collections`:** a Galeria pública autenticada é a única galeria operacional. Cada pasta é comum ou atribuída a uma ou mais clientes; “Coleção” reúne somente as pastas comuns e atribuídas à pessoa autenticada. Seleções, compras, prazo e histórico permanecem por galeria + cliente. “Minha galeria” deixa de ser uma tela e links antigos redirecionam após autorização. A limpeza e os workflows remotos de homologação foram encerrados pela decisão do proprietário em 18/11/2026; essas cláusulas históricas não são executáveis.
 
 > Direção detalhada de interface e UX: [DIRETRIZES_FRONTEND_MARKINA_GALLERY.md](DIRETRIZES_FRONTEND_MARKINA_GALLERY.md).
 
@@ -32,7 +32,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Criar specs iniciais por domínio: autenticação, acesso do cliente, galeria e seleção, preços e pedidos, mídia/armazenamento, mensagens, privacidade/biometria e deploy/operação.
 - Criar repositório privado no GitHub, com `main` protegida, `develop`, branches de funcionalidade e pull requests.
 - Configurar convenção de commits, `.gitignore`, documentação local e CI para lint, testes e build.
-- Separar homologação de produção: domínio, banco, chaves, WhatsApp e dados totalmente distintos.
+- Manter desenvolvimento local, CI efêmera e produção isolados; não criar ambiente operacional intermediário.
 - Implantar via Docker Compose: proxy HTTPS, frontend, API, PostgreSQL, Redis e workers.
 - Guardar chaves e segredos somente em variáveis seguras do servidor; nunca no Git, frontend ou tabelas comuns.
 - Criar backups diários cifrados do PostgreSQL no Google Drive e testar restauração periodicamente.
@@ -111,7 +111,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 
 - Evolução aprovada em `configurable-push-and-whatsapp-notifications`: central `/admin/notifications` com seis eventos e dois canais independentes (WhatsApp/push); substitui inbox read/unread e editor de pagamentos em Configurações. Histórico e auditoria permanecem.
 - Avisos ao fotógrafo: primeiro acesso e primeira seleção por cliente/galeria canônica; pagamento informado. Avisos ao cliente: novas prévias de pasta restrita prontas somente para destinatárias efetivas; pagamento confirmado ou recusado. Correções financeiras são silenciosas; falha de transporte não desfaz o negócio.
-- Web Push exige adesão explícita por dispositivo, inscrição cifrada, VAPID externo, destino interno autenticado e worker sem cache privado. Lotes, marcos e entregas são duráveis/idempotentes; ligar canais não reproduz histórico. Operação real depende de configuração e aceite de homologação, não apenas dos testes locais.
+- Web Push exige adesão explícita por dispositivo, inscrição cifrada, VAPID externo, destino interno autenticado e worker sem cache privado. Lotes, marcos e entregas são duráveis/idempotentes; ligar canais não reproduz histórico. Operação real depende dos gates da release protegida e aprovação humana; CI usa dados sintéticos.
 
 - Mensagens configuráveis para OTP, convite, pagamento, edição, entrega, carrinho abandonado e expiração.
 - Separar mensagens transacionais de lembretes comerciais e registrar opt-out destes últimos.
@@ -133,7 +133,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Incluir foto/excluir foto da indexação em massa antes da liberação do evento.
 - Registrar consentimento versionado da cliente, busca, revogação, exclusão e operação administrativa; cada login OTP continua auditado. Na change `configurable-push-and-whatsapp-notifications`, somente o primeiro acesso autorizado por cliente/galeria canônica produz aviso externo, sem transportar OTP e sem replay de vínculos históricos.
 - Apagar foto de referência e embedding temporário conforme retenção configurada; oferecer exclusão de dados biométricos.
-- Validar desempenho, licença comercial, compatibilidade ARM, precisão facial e qualidade técnica com 500–1.000 JPEGs em homologação privada. O lote pode ser sintético ou conter dados reais de adultos e menores quando for enviado pelo administrador/fotógrafo e possuir autorização explícita por execução, origem e finalidade documentadas, acesso autenticado, criptografia, retenção mínima e exclusão controlada. Essa medição não autoriza produção; OFIQ ou qualquer modelo adicional exige validação separada de código, pesos e dependências.
+- Validar desempenho, licença comercial, compatibilidade ARM, precisão facial e qualidade técnica com conjunto sintético em CI/local isolado. Não usar homologação ou dados de produção como ambiente de teste; um requisito posterior de dados reais exige decisão e autorização operacional específicas. OFIQ ou qualquer modelo adicional continua exigindo validação separada de código, pesos e dependências.
 
 ## Fase 8 — Privacidade, observabilidade e métricas
 

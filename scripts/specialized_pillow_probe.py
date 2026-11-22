@@ -52,17 +52,9 @@ def probe():
                     visual.resize((128, 96), Image.Resampling.LANCZOS))
             # Call the actual installed normalization and protection implementations.
             from app.media import save_presentation_jpeg, watermark
-            from app.raw_development.engines import normalize_rendered_jpeg
 
             with tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                source, target = root / 'source.jpg', root / 'clean.jpg'
-                source.write_bytes(payload)
-                normalized = normalize_rendered_jpeg(source, target)
-                assert (normalized.width, normalized.height) == expected_size
-                with Image.open(target) as clean:
-                    assert not clean.getexif()
-                    record['normalized'] = pixels(clean.convert('RGB'))
                 marked = watermark(visual)
                 assert marked.size == expected_size
                 assert pixels(marked)['sha256'] != pixels(visual)['sha256']

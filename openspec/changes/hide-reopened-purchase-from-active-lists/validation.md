@@ -44,3 +44,15 @@ Fechamento: lint final sem erros (34 avisos preexistentes); build final e TypeSc
 GO técnico para revisão e solicitação de autorização de integração; PRs continuam draft e não foram mesclados. Publicação operacional continua NO-GO até os requisitos de0085 do release-plan, inventário/backup/keyring/restore e autorização específica. Nenhuma compra real (incluindo673ba102), segredo ou recurso Oracle foi alterado nesta missão. A cliente pode remover todas as fotos sem eliminar rastreabilidade; somente ocorrência de conferência tardia reaparece, sem checkout antigo retomável.
 
 O fechamento posterior somente documental conserva o runtime validado. Resultado exato dos checks desse head será registrado nos corpos dos PRs; não criar commits recursivos apenas para citar o próprio SHA. Specs principais não sincronizadas e changes não arquivadas, conforme gate de revisão humana.
+## Reconciliação da projeção após a aposentadoria da InfinitePay
+
+A evidência acima do CI #784 pertence ao commit 7b8f3039d931d88224304736d8a794beb2961f14, anterior à aposentadoria da InfinitePay em 22391e3a1f3beb60bfb7ba5b501d515e678e011c (#267). A aposentadoria removeu a projeção de recuperação junto com as rotas de escrita. Esta revisão restabelece apenas a classificação de histórico exigida pela decisão atual; não restaura checkout, chamadas ao provedor, emissão, confirmação ou reabertura.
+
+- A função somente leitura em backend/app/provider_payment_history.py consulta os dois formatos preservados de evento de auditoria e recibos do mesmo tenant. Ela marca para conferência recibos queued/processing/verified, recibos processados após a recuperação (inclusive antigos reprocessados), NSU, confirmação ou estado financeiro incompatível.
+- Compras omite apenas a tentativa auditada em exception sem evidência de reconciliação. Retornos tardios permanecem visíveis, sem URL de checkout; o filtro administrativo financial_status=reopened separa o histórico da lista ativa e também se aplica à exportação.
+- A interface identifica a conferência tardia e oculta ações de entrega para pedidos reabertos ainda não confirmados. A aposentadoria das rotas e ações de InfinitePay continua intacta.
+- Regressão sintética atual: backend/.venv/Scripts/python.exe -m pytest -q tests/test_payment_operations_redesign.py::test_retired_provider_recovery_is_history_only_and_never_reopens_checkout — 1 passed, 7 warnings. Cobriu formatos novo/legado de auditoria, recibo ignored antigo, receipt failed reprocessado após a recuperação, estados queued/processing/verified, NSU, estado incompatível, confirmação, ausência de evento, filtro do fotógrafo, exportação e ausência de mutação.
+- Interface: vitest run app/admin/payments/page.test.tsx app/library/library.test.tsx — 2 arquivos, 36 testes aprovados.
+- Ruff nos três arquivos Python alterados e tsc --noEmit no frontend passaram.
+- git diff --check passou; Git reportou apenas avisos preexistentes de conversão LF/CRLF.
+- OpenSpec global strict após esta reconciliação: 188/188 (157 changes e 31 specs), zero falhas.

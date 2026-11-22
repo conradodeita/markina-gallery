@@ -1,0 +1,44 @@
+{
+  "environment": {
+    "implementation_name": "cpython",
+    "implementation_version": "3.13.5",
+    "os_name": "posix",
+    "platform_machine": "aarch64",
+    "platform_python_implementation": "CPython",
+    "platform_release": "6.6.87.2-microsoft-standard-WSL2",
+    "platform_system": "Linux",
+    "platform_version": "#1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025",
+    "python_full_version": "3.13.5",
+    "python_version": "3.13",
+    "sys_platform": "linux"
+  },
+  "packages": [
+    {
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "name": "cryptography",
+      "requires_python": ">=3.9, !=3.9.0, !=3.9.1",
+      "sha256": "07949c449a1abcf60d1ee6e88956d89404c7df3c8258f46589e912988e551987",
+      "url": "https://files.pythonhosted.org/packages/32/98/8a151d64367204cbc63ec65d37502f1d9c53cf4bfc6ec3c532614dbec60d/cryptography-50.0.0-cp311-abi3-manylinux_2_34_aarch64.whl",
+      "version": "50.0.0",
+      "metadata_source": "https://pypi.org/pypi/cryptography/50.0.0/json"
+    },
+    {
+      "license": "MIT-0",
+      "name": "cffi",
+      "requires_python": ">=3.10",
+      "sha256": "f16c709686a78c727bbbf059f92b0bf41c6fc60deec706d2dc19f529175a6125",
+      "url": "https://files.pythonhosted.org/packages/37/6f/3b5ce4c3b2192d250f04908f2bfd91ef34552ec8f7716a5d4abdb8d67bb2/cffi-2.1.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "version": "2.1.1",
+      "metadata_source": "https://pypi.org/pypi/cffi/2.1.1/json"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "pycparser",
+      "requires_python": ">=3.11",
+      "sha256": "a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e",
+      "url": "https://files.pythonhosted.org/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl",
+      "version": "3.12",
+      "metadata_source": "https://pypi.org/pypi/pycparser/3.12/json"
+    }
+  ]
+}

@@ -1,0 +1,417 @@
+.card {
+  min-width: 0;
+}
+
+.heading h2 {
+  margin: 4px 0 8px;
+}
+
+.heading p:not(.eyebrow) {
+  max-width: 760px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.reviewQueue,
+.financialHistory {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--mk-surface-subtle, #f7f8f5);
+}
+
+.reviewHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.reviewHeading h3,
+.financialHistory h3 {
+  margin: 4px 0 7px;
+}
+
+.reviewHeading p:not(.eyebrow) {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.reviewItems,
+.financialHistory ol {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reviewItems > li,
+.financialHistory ol > li {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.reviewSummary {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.reviewSummary strong,
+.reviewSummary small {
+  overflow-wrap: anywhere;
+}
+
+.reviewSummary span,
+.reviewSummary small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.reviewReason {
+  display: grid;
+  gap: 6px;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.reviewReason textarea {
+  width: 100%;
+  min-height: 76px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--mk-surface, #fff);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.reviewReason textarea:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.reviewActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reviewStepUp {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 4px 0 14px;
+}
+
+.reviewStepUp label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.reviewStepUp input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--mk-surface, #fff);
+  color: var(--ink);
+  font: inherit;
+}
+
+.reviewStepUp input:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .reviewStepUp {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.tenantPicker,
+.operationForm label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.tenantPicker {
+  margin-top: 18px;
+}
+
+.tenantViewControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.tenantViewControls label {
+  display: grid;
+  gap: 6px;
+}
+
+.moreTenants {
+  margin-top: 10px;
+}
+
+.tenantPicker select,
+.tenantPicker input,
+.operationForm input,
+.operationForm select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--mk-surface, #fff);
+  color: var(--ink);
+  font: inherit;
+}
+
+.tenantPicker select:focus-visible,
+.tenantPicker input:focus-visible,
+.operationForm input:focus-visible,
+.operationForm select:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.searchHint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.tenantSuggestions {
+  display: grid;
+  gap: 4px;
+  max-height: 280px;
+  margin: -8px 0 0;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--mk-surface, #fff);
+  list-style: none;
+}
+
+.tenantSuggestions li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tenantSuggestions li:hover,
+.tenantSuggestions li[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 9%, var(--mk-surface, #fff));
+}
+
+.tenantSuggestions li span {
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.tenantSuggestions li small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.tenantIdentity {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.tenantIdentity > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.tenantIdentity strong,
+.tenantIdentity small {
+  overflow-wrap: anywhere;
+}
+
+.tenantIdentity small {
+  color: var(--muted);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.metrics :global(.mk-card) {
+  display: grid;
+  gap: 7px;
+}
+
+.metrics :global(.mk-card) span,
+.metrics :global(.mk-card) small {
+  color: var(--muted);
+}
+
+.metrics :global(.mk-card) strong {
+  font-size: clamp(1.5rem, 3.5vw, 2rem);
+}
+
+.forms {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 16px 0;
+}
+
+.operationForm {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--mk-surface-subtle, #f7f8f5);
+}
+
+.operationForm h3 {
+  margin: 0;
+}
+
+.operationForm > :global(.mk-button) {
+  justify-self: start;
+}
+
+.actionError,
+.actionMessage {
+  margin: 12px 0;
+}
+
+.actionError {
+  color: var(--danger, #a93636);
+}
+
+.actionMessage {
+  color: var(--success, #2f7b49);
+}
+
+.history {
+  margin-top: 20px;
+}
+
+.historyHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.historyHeading h3 {
+  margin: 4px 0 10px;
+}
+
+.grantHistory ul {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.grantHistory li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+
+.grantHistory li span,
+.grantHistory > p {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.grantHistory {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.grantHistory summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.grantHistory summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 3px;
+}
+
+.grantHistory li strong {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+@media (max-width: 760px) {
+  .metrics,
+  .forms {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .tenantViewControls {
+    grid-template-columns: 1fr;
+  }
+
+  .tenantViewControls > :global(.mk-button) {
+    justify-self: start;
+  }
+
+  .metrics,
+  .forms {
+    grid-template-columns: 1fr;
+  }
+
+  .tenantIdentity,
+  .reviewHeading,
+  .grantHistory li {
+    flex-direction: column;
+  }
+
+  .grantHistory li strong {
+    text-align: left;
+  }
+}

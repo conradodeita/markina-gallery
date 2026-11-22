@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,8 +20,10 @@ from app.auth import (
     ParentGallery,
     ParentGalleryRegistration,
     Tenant,
+    TenantClosureRequest,
     now,
 )
+from app.facial.closure_gate import biometric_cleanup_started, lock_facial_tenant
 from app.facial.config import FacialSettings
 from app.facial.crypto import FacialCipher, FacialEnvelope, FacialScope
 from app.messaging import (
@@ -105,12 +107,39 @@ def process_next_search_notification(
 ) -> bool:
     current = now()
     recovered_interrupted = False
-    for interrupted in db.scalars(
-        select(FacialSearchNotificationOutbox).join(Tenant, Tenant.id == FacialSearchNotificationOutbox.tenant_id).where(
-            Tenant.status == "active", FacialSearchNotificationOutbox.status == "processing",
+    expired_rows = db.execute(
+        select(FacialSearchNotificationOutbox.id, FacialSearchNotificationOutbox.tenant_id)
+        .join(Tenant, Tenant.id == FacialSearchNotificationOutbox.tenant_id)
+        .where(
+            Tenant.status == "active",
+            Tenant.lifecycle != "closed",
+            FacialSearchNotificationOutbox.status == "processing",
             FacialSearchNotificationOutbox.lease_expires_at <= current,
         )
-    ):
+        .order_by(FacialSearchNotificationOutbox.available_at)
+        .limit(64)
+    ).all()
+    for notification_id, tenant_id in expired_rows:
+        tenant = lock_facial_tenant(db, tenant_id, skip_locked=True)
+        if (
+            tenant is None
+            or tenant.status != "active"
+            or tenant.lifecycle == "closed"
+            or biometric_cleanup_started(db, tenant_id)
+        ):
+            continue
+        interrupted = db.scalar(
+            select(FacialSearchNotificationOutbox)
+            .where(
+                FacialSearchNotificationOutbox.id == notification_id,
+                FacialSearchNotificationOutbox.tenant_id == tenant_id,
+                FacialSearchNotificationOutbox.status == "processing",
+                FacialSearchNotificationOutbox.lease_expires_at <= current,
+            )
+            .with_for_update(skip_locked=True)
+        )
+        if interrupted is None:
+            continue
         # Uma queda após o envio é ambígua; não reenviar preserva "no máximo uma".
         interrupted.status = "failed"
         interrupted.last_error_category = "ambiguous_delivery"
@@ -121,17 +150,51 @@ def process_next_search_notification(
         recovered_interrupted = True
     db.commit()
 
-    notification = db.scalar(
-        select(FacialSearchNotificationOutbox).join(Tenant, Tenant.id == FacialSearchNotificationOutbox.tenant_id)
+    cleanup_started = select(TenantClosureRequest.id).where(
+        TenantClosureRequest.tenant_id == FacialSearchNotificationOutbox.tenant_id,
+        TenantClosureRequest.state == "closing",
+        TenantClosureRequest.biometric_cleanup_started_at.is_not(None),
+    ).exists()
+    tenant_candidates = db.execute(
+        select(
+            FacialSearchNotificationOutbox.tenant_id,
+            func.min(FacialSearchNotificationOutbox.available_at).label("available_at"),
+        )
+        .join(Tenant, Tenant.id == FacialSearchNotificationOutbox.tenant_id)
         .where(
-            Tenant.status == "active", FacialSearchNotificationOutbox.status == "queued",
+            Tenant.status == "active", Tenant.lifecycle != "closed", FacialSearchNotificationOutbox.status == "queued",
             FacialSearchNotificationOutbox.attempts < max_attempts,
             FacialSearchNotificationOutbox.available_at <= current,
+            ~cleanup_started,
         )
-        .order_by(FacialSearchNotificationOutbox.available_at)
-        .limit(1)
-        .with_for_update(of=FacialSearchNotificationOutbox, skip_locked=True)
-    )
+        .group_by(FacialSearchNotificationOutbox.tenant_id)
+        .order_by("available_at")
+        .limit(64)
+    ).all()
+    notification = None
+    for tenant_id, _available_at in tenant_candidates:
+        tenant = lock_facial_tenant(db, tenant_id, skip_locked=True)
+        if (
+            tenant is None
+            or tenant.status != "active"
+            or tenant.lifecycle == "closed"
+            or biometric_cleanup_started(db, tenant_id)
+        ):
+            continue
+        notification = db.scalar(
+            select(FacialSearchNotificationOutbox)
+            .where(
+                FacialSearchNotificationOutbox.tenant_id == tenant_id,
+                FacialSearchNotificationOutbox.status == "queued",
+                FacialSearchNotificationOutbox.attempts < max_attempts,
+                FacialSearchNotificationOutbox.available_at <= current,
+            )
+            .order_by(FacialSearchNotificationOutbox.available_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if notification is not None:
+            break
     if notification is None:
         return recovered_interrupted
     notification.status = "processing"

@@ -33,7 +33,7 @@
 - [x] 5.1 Ler integralmente a documentação local relevante do Next.js 16 e os `AGENTS.md` aplicáveis antes de editar o frontend; registrar no `tasks.md` as páginas consultadas.
 - [x] 5.2 Adicionar `Esqueci minha senha` somente ao contexto Fotógrafo e implementar as etapas e estados neutros de solicitação, OTP e confirmação de envio do e-mail; verificar navegação por teclado, leitores de tela, erro, expiração, reenvio e layout mobile/desktop em testes de componente.
 - [x] 5.3 Criar a página de redefinição que lê o token do fragmento, remove-o imediatamente da URL/histórico, não usa storage e só o envia no POST com a nova senha; verificar token ausente/inválido, política de senha, sucesso sem login automático e ausência de recurso de terceiro.
-- [x] 5.4 Criar a página de confirmação de novo e-mail com consumo explícito por POST e remoção do fragmento; verificar que visita/preview por GET não consome o token e que sucesso/falha encaminham ao login sem expor endereços.
+- [x] 5.4 Criar a página de confirmação de novo e-mail com consumo explícito por POST e remoção do fragmento; verificar que visita/preview por GET não consome o token e que sucesso encaminha ao login sem expor endereços; falhas transitórias seguem a task 6.5.
 - [x] 5.5 Adicionar a seção acessível `Segurança da conta` em Configurações, com e-mail mascarado, formulários separados, confirmação por OTP e aviso de encerramento de sessão; verificar estados de canais indisponíveis, cancelamento, erros e sucesso em testes de componente.
 - [x] 5.6 Executar testes frontend focados, lint e typecheck após cada superfície e corrigir regressões causadas pela change antes da validação integrada.
 
@@ -43,6 +43,8 @@
 - [x] 6.2 Executar testes backend focados e completos, Ruff, validação Alembic do zero/sobre o head e inspeção do schema; corrigir falhas da change e registrar comandos/resultados verificáveis neste arquivo.
 - [x] 6.3 Executar testes frontend completos, ESLint, TypeScript e build de produção; corrigir falhas da change e registrar comandos/resultados verificáveis neste arquivo.
 - [x] 6.4 Executar `git diff --check`, revisar o diff por escopo/segredos e validar `add-secure-admin-account-recovery` em modo OpenSpec estrito; reconciliar qualquer divergência antes de marcar a implementação local concluída.
+
+- [x] 6.5 Tratar falha de rede ou erro HTTP na confirmação de novo e-mail sem travar o botão nem descartar o token em memória; permitir somente repetição explícita, sem confirmação automática ou replay. Evidência de 15/11/2026: duas reproduções falharam antes da correção; os oito casos do componente passaram na seleção integrada de 58 testes em seis arquivos; ESLint focal e TypeScript aprovados.
 
 ## 7. Homologação e aceite humano
 

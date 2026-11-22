@@ -6,7 +6,12 @@ Centralizar mensagens curtas e configuráveis de eventos transacionais de galeri
 
 ### Requirement: Matriz de eventos e destinatários
 
-O sistema SHALL oferecer WhatsApp e push para os seis eventos abaixo, com dois interruptores independentes por evento: `Enviar WhatsApp` e `Enviar notificação push`. Os destinatários SHALL ser resolvidos pelo backend e não editáveis como endereços arbitrários nos templates.
+Para cada um dos seis eventos desta matriz, o sistema SHALL oferecer controles independentes `Enviar WhatsApp` e `Enviar notificação push`. O backend SHALL resolver destinatário e chave de unicidade, sem aceitar endereços arbitrários nos templates.
+
+#### Scenario: Destinatários e unicidade por evento
+
+- **WHEN** o sistema processa um dos eventos de notificação abaixo
+- **THEN** usa o destinatário e a chave de unicidade correspondentes:
 
 | Evento | Destinatário | Unicidade |
 |---|---|---|
@@ -14,7 +19,7 @@ O sistema SHALL oferecer WhatsApp e push para os seis eventos abaixo, com dois i
 | Primeira foto selecionada naquela galeria | Admin/fotógrafo | Cliente e galeria |
 | Novas fotos privadas com prévias disponíveis | Clientes ativos autorizados ao lote | Lote e cliente |
 | Pagamento comunicado pelo cliente | Admin/fotógrafo | Comunicação válida de pagamento |
-| Pagamento confirmado pelo admin | Cliente do pedido | Decisão válida |
+| Pagamento confirmado pelo admin ou provedor | Cliente do pedido | Decisão ou confirmação financeira válida |
 | Pagamento recusado pelo admin | Cliente do pedido | Decisão válida |
 
 #### Scenario: Primeiro acesso e repetição
@@ -34,8 +39,8 @@ O sistema SHALL oferecer WhatsApp e push para os seis eventos abaixo, com dois i
 - **THEN** não envia anúncio de novas fotos nem duplica aviso; retentativa de fotos falhas de lote já anunciado não repete esse anúncio
 
 #### Scenario: Pagamentos isolados
-- **WHEN** comunicação, confirmação ou recusa é persistida com sucesso
-- **THEN** agenda os canais habilitados para o destinatário correspondente sem compartilhar pedidos com outros clientes da galeria; a correção administrativa silenciosa de decisão continua sem mensagem
+- **WHEN** comunicação, decisão administrativa ou confirmação do provedor é persistida com sucesso
+- **THEN** agenda canais habilitados para o destinatário correto sem compartilhar pedidos com outros clientes da galeria; a correção administrativa silenciosa não gera mensagem
 
 ### Requirement: Configuração central com textos curtos
 
