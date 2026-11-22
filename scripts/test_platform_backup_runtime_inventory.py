@@ -249,10 +249,15 @@ class InventoryTests(unittest.TestCase):
                 self.assertNotIn("private output", output.getvalue())
 
     def test_container_diagnostics_aggregate_fixed_roles_and_states(self) -> None:
-        ids_by_role = {
+        label_ids_by_role = {
             "api": ["a" * 64, "b" * 64, "c" * 64, "d" * 64, "e" * 64],
             "web": [],
-            "db": ["f" * 64],
+            "db": ["0" * 64],
+        }
+        compose_ids_by_role = {
+            "api": ["a" * 64, "b" * 64, "c" * 64, "f" * 64],
+            "web": [],
+            "db": ["0" * 64],
         }
         states = {
             "a" * 64: "running",
@@ -260,45 +265,71 @@ class InventoryTests(unittest.TestCase):
             "c" * 64: "exited",
             "d" * 64: "dead",
             "e" * 64: "paused",
-            "f" * 64: "restarting",
+            "0" * 64: "restarting",
         }
         commands: list[list[str]] = []
 
         def runner(argv):
             commands.append(list(argv))
+            if "compose" in argv and "ps" in argv:
+                role = argv[-1]
+                self.assertIn("--project-name", argv)
+                self.assertEqual(argv[argv.index("--project-name") + 1], "markina-gallery")
+                self.assertIn("--project-directory", argv)
+                self.assertEqual(argv[argv.index("--project-directory") + 1],
+                                 "/opt/markina-gallery/docker")
+                self.assertIn("--file", argv)
+                self.assertEqual(argv[argv.index("--file") + 1],
+                                 "/opt/markina-gallery/docker/docker-compose.yml")
+                self.assertIn("--all", argv)
+                self.assertIn("--quiet", argv)
+                self.assertIn("--no-trunc", argv)
+                self.assertIn("--orphans=false", argv)
+                return self._result(list(argv), "".join(
+                    f"{value}\n" for value in compose_ids_by_role[role]))
             if "container" in argv and "ls" in argv:
                 project_filter = "label=com.docker.compose.project=markina-gallery"
                 service_filter = next(value for value in argv
                                       if value.startswith("label=com.docker.compose.service="))
                 self.assertIn(project_filter, argv)
                 role = service_filter.rsplit("=", 1)[-1]
-                identifiers = ids_by_role[role]
+                identifiers = label_ids_by_role[role]
                 return self._result(list(argv), "".join(f"{value}\n" for value in identifiers))
             if "container" in argv and "inspect" in argv:
                 identifiers = argv[argv.index("--format") + 2:]
                 rows = [f"{identifier}|{states[identifier]}|markina-gallery|"
-                        f"{next(role for role, values in ids_by_role.items() if identifier in values)}"
+                        f"{next(role for role, values in label_ids_by_role.items() if identifier in values)}"
                         for identifier in identifiers]
                 return self._result(list(argv), "".join(f"{row}\n" for row in rows))
             raise AssertionError(f"unexpected command class: {argv[0]}")
 
         result = inventory.collect_container_diagnostics(runner)
 
+        self.assertEqual(result["schema_version"], 2)
         self.assertEqual(set(result["roles"]), {"api", "web", "db"})
         self.assertEqual(result["roles"]["api"], {
-            "records": 5, "running": 1, "stopped": 3, "unknown": 1,
+            "label_records": 5, "compose_records": 4, "matched_records": 3,
+            "label_only_records": 2, "compose_only_records": 1,
+            "running": 1, "stopped": 3, "unknown": 1,
         })
         self.assertEqual(result["roles"]["web"], {
-            "records": 0, "running": 0, "stopped": 0, "unknown": 0,
+            "label_records": 0, "compose_records": 0, "matched_records": 0,
+            "label_only_records": 0, "compose_only_records": 0,
+            "running": 0, "stopped": 0, "unknown": 0,
         })
         self.assertEqual(result["roles"]["db"], {
-            "records": 1, "running": 0, "stopped": 0, "unknown": 1,
+            "label_records": 1, "compose_records": 1, "matched_records": 1,
+            "label_only_records": 0, "compose_only_records": 0,
+            "running": 0, "stopped": 0, "unknown": 1,
         })
         serialized = json.dumps(result, sort_keys=True)
         for identifier in states:
             self.assertNotIn(identifier, serialized)
         self.assertNotIn("paused", serialized)
         self.assertNotIn("restarting", serialized)
+        self.assertNotIn("f" * 64, serialized)
+        compose_commands = [command for command in commands if "compose" in command and "ps" in command]
+        self.assertEqual(len(compose_commands), 6)
         self.assertEqual(
             {next(value.rsplit("=", 1)[-1] for value in command
                  if value.startswith("label=com.docker.compose.service="))
@@ -333,6 +364,61 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), "diagnostic_container_list_invalid")
         self.assertNotIn(identifiers[0], str(raised.exception))
 
+    def test_container_diagnostics_rejects_bad_compose_lists_and_limits(self) -> None:
+        identifier = "a" * 64
+        invalid_cases = (
+            ("not-an-id\n", 0, "diagnostic_compose_list_invalid"),
+            (identifier + "\n" + identifier + "\n", 0, "diagnostic_compose_list_invalid"),
+            ("private-compose-output\n", 1, "diagnostic_compose_list_failed"),
+        )
+        for output, returncode, expected_code in invalid_cases:
+            def runner(argv, output=output, returncode=returncode):
+                if "container" in argv and "ls" in argv:
+                    return self._result(list(argv), identifier + "\n")
+                if "compose" in argv and "ps" in argv:
+                    return self._result(list(argv), output, returncode=returncode)
+                raise AssertionError("invalid Compose list must fail before inspection")
+
+            with self.subTest(expected_code=expected_code, output=output):
+                with self.assertRaises(inventory.InventoryError) as raised:
+                    inventory.collect_container_diagnostics(runner)
+                self.assertEqual(str(raised.exception), expected_code)
+                self.assertNotIn("private", str(raised.exception))
+
+        identifiers = [f"{value:064x}" for value in range(513)]
+
+        def excessive_compose_list(argv):
+            if "container" in argv and "ls" in argv:
+                return self._result(list(argv), "")
+            if "compose" in argv and "ps" in argv:
+                return self._result(list(argv), "".join(f"{value}\n" for value in identifiers))
+            raise AssertionError("excessive Compose list must fail before inspection")
+
+        with self.assertRaises(inventory.InventoryError) as raised:
+            inventory.collect_container_diagnostics(excessive_compose_list)
+        self.assertEqual(str(raised.exception), "diagnostic_compose_list_invalid")
+        self.assertNotIn(identifiers[0], str(raised.exception))
+
+    def test_container_diagnostics_rejects_a_changing_source_snapshot(self) -> None:
+        identifier = "a" * 64
+        label_calls = 0
+
+        def runner(argv):
+            nonlocal label_calls
+            if "container" in argv and "ls" in argv:
+                label_calls += 1
+                return self._result(list(argv), identifier + "\n" if label_calls == 1 else "")
+            if "compose" in argv and "ps" in argv:
+                return self._result(list(argv), identifier + "\n")
+            if "container" in argv and "inspect" in argv:
+                return self._result(list(argv), f"{identifier}|running|markina-gallery|api\n")
+            raise AssertionError("unexpected command class")
+
+        with self.assertRaises(inventory.InventoryError) as raised:
+            inventory.collect_container_diagnostics(runner)
+        self.assertEqual(str(raised.exception), "diagnostic_inventory_changed")
+        self.assertNotIn(identifier, str(raised.exception))
+
     def test_container_diagnostics_discard_partial_counts_and_sanitize_failures(self) -> None:
         api_id = "a" * 64
 
@@ -344,6 +430,8 @@ class InventoryTests(unittest.TestCase):
                     return self._result(list(argv), api_id + "\n")
                 if service == "web":
                     return self._result(list(argv), "private-list-output\n", returncode=1)
+                return self._result(list(argv), "")
+            if "compose" in argv and "ps" in argv:
                 return self._result(list(argv), "")
             if "container" in argv and "inspect" in argv:
                 return self._result(list(argv), f"{api_id}|running|markina-gallery|api\n")
@@ -373,6 +461,8 @@ class InventoryTests(unittest.TestCase):
         def inspect_failure(argv):
             if "container" in argv and "ls" in argv:
                 return self._result(list(argv), identifier + "\n")
+            if "compose" in argv and "ps" in argv:
+                return self._result(list(argv), identifier + "\n")
             if "container" in argv and "inspect" in argv:
                 return self._result(list(argv), "private-inspect-output\n", returncode=1)
             raise AssertionError(f"unexpected command class: {argv[0]}")
@@ -384,6 +474,8 @@ class InventoryTests(unittest.TestCase):
 
         def invalid_label(argv):
             if "container" in argv and "ls" in argv:
+                return self._result(list(argv), identifier + "\n")
+            if "compose" in argv and "ps" in argv:
                 return self._result(list(argv), identifier + "\n")
             if "container" in argv and "inspect" in argv:
                 return self._result(list(argv),

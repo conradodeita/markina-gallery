@@ -170,6 +170,8 @@ jobs:
           allowed = {
               "diagnostic_container_list_failed", "diagnostic_container_list_invalid",
               "diagnostic_container_inspect_failed", "diagnostic_container_inventory_invalid",
+              "diagnostic_compose_list_failed", "diagnostic_compose_list_invalid",
+              "diagnostic_inventory_changed",
               "inventory_error", "inventory_io_failed", "inventory_command_failed",
           }
           match = re.fullmatch(r"platform-backup-runtime: container diagnostics failed \(([a-z0-9_]+)\)", lines[0]) if len(lines) == 1 else None
@@ -187,18 +189,23 @@ jobs:
               raise SystemExit("backup_runtime_diagnostic_output_invalid")
           data = json.loads(lines[0][len(prefix):])
           if (type(data) is not dict or set(data) != {"schema_version", "roles"}
-            or type(data.get("schema_version")) is not int or data["schema_version"] != 1):
+            or type(data.get("schema_version")) is not int or data["schema_version"] != 2):
               raise SystemExit("backup_runtime_diagnostic_output_invalid")
           roles = data["roles"]
           if type(roles) is not dict or set(roles) != {"api", "web", "db"}:
               raise SystemExit("backup_runtime_diagnostic_output_invalid")
-          fields = {"records", "running", "stopped", "unknown"}
+          fields = {
+              "label_records", "compose_records", "matched_records",
+              "label_only_records", "compose_only_records", "running", "stopped", "unknown",
+          }
           for role in roles.values():
               if type(role) is not dict or set(role) != fields:
                   raise SystemExit("backup_runtime_diagnostic_output_invalid")
-              if any(type(value) is not int or value < 0 for value in role.values()):
+              if any(type(value) is not int or not 0 <= value <= 512 for value in role.values()):
                   raise SystemExit("backup_runtime_diagnostic_output_invalid")
-              if role["records"] != role["running"] + role["stopped"] + role["unknown"]:
+              if (role["label_records"] != role["matched_records"] + role["label_only_records"]
+                or role["compose_records"] != role["matched_records"] + role["compose_only_records"]
+                or role["label_records"] != role["running"] + role["stopped"] + role["unknown"]):
                   raise SystemExit("backup_runtime_diagnostic_output_invalid")
           print(prefix + json.dumps(data, sort_keys=True, separators=(",", ":")))
           PY

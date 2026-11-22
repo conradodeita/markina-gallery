@@ -77,6 +77,8 @@ SAFE_INVENTORY_ERROR_CODES = frozenset({
 SAFE_DIAGNOSTIC_ERROR_CODES = frozenset({
     "diagnostic_container_list_failed", "diagnostic_container_list_invalid",
     "diagnostic_container_inspect_failed", "diagnostic_container_inventory_invalid",
+    "diagnostic_compose_list_failed", "diagnostic_compose_list_invalid",
+    "diagnostic_inventory_changed",
     "inventory_error", "inventory_command_failed", "inventory_io_failed",
 })
 
@@ -151,61 +153,93 @@ def _container(service: str, runner: Runner) -> dict[str, object]:
     }
 
 
-def _container_diagnostic(service: str, runner: Runner) -> dict[str, int]:
+def _diagnostic_container_ids(service: str, runner: Runner, *, compose: bool) -> set[str]:
     if service not in CONTAINER_ROLES:
         raise InventoryError("diagnostic_container_inventory_invalid")
-    raw_ids = _output(runner([
-        "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "ls",
-        "--all", "--no-trunc", "--quiet",
-        "--filter", "label=com.docker.compose.project=markina-gallery",
-        "--filter", f"label=com.docker.compose.service={service}",
-    ]), "diagnostic_container_list_failed")
+    if compose:
+        command = [
+            "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "compose",
+            "--project-name", "markina-gallery",
+            "--project-directory", "/opt/markina-gallery/docker",
+            "--file", "/opt/markina-gallery/docker/docker-compose.yml",
+            "ps", "--all", "--quiet", "--no-trunc", "--orphans=false", service,
+        ]
+        error_code = "diagnostic_compose_list_failed"
+        invalid_code = "diagnostic_compose_list_invalid"
+    else:
+        command = [
+            "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "ls",
+            "--all", "--no-trunc", "--quiet",
+            "--filter", "label=com.docker.compose.project=markina-gallery",
+            "--filter", f"label=com.docker.compose.service={service}",
+        ]
+        error_code = "diagnostic_container_list_failed"
+        invalid_code = "diagnostic_container_list_invalid"
+    raw_ids = _output(runner(command), error_code)
     if len(raw_ids) > 512 * 65:
-        raise InventoryError("diagnostic_container_list_invalid")
+        raise InventoryError(invalid_code)
     identifiers = raw_ids.splitlines() if raw_ids else []
     if (len(identifiers) > 512 or len(identifiers) != len(set(identifiers))
             or any(not CONTAINER_ID.fullmatch(value) for value in identifiers)):
-        raise InventoryError("diagnostic_container_list_invalid")
+        raise InventoryError(invalid_code)
+    return set(identifiers)
 
-    counts = {"records": len(identifiers), "running": 0, "stopped": 0, "unknown": 0}
-    if not identifiers:
-        return counts
-    raw = _output(runner([
-        "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "inspect",
-        "--format", CONTAINER_DIAGNOSTIC_INSPECT, *identifiers,
-    ]), "diagnostic_container_inspect_failed")
-    rows = raw.splitlines()
-    if len(rows) != len(identifiers):
-        raise InventoryError("diagnostic_container_inventory_invalid")
 
-    expected_ids = set(identifiers)
-    inspected_ids: set[str] = set()
-    for row in rows:
-        parts = row.split("|")
-        if len(parts) != 4:
+def _container_diagnostic(service: str, runner: Runner) -> dict[str, int]:
+    label_identifiers = _diagnostic_container_ids(service, runner, compose=False)
+    compose_identifiers = _diagnostic_container_ids(service, runner, compose=True)
+
+    counts = {"running": 0, "stopped": 0, "unknown": 0}
+    if label_identifiers:
+        raw = _output(runner([
+            "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "inspect",
+            "--format", CONTAINER_DIAGNOSTIC_INSPECT, *sorted(label_identifiers),
+        ]), "diagnostic_container_inspect_failed")
+        rows = raw.splitlines()
+        if len(rows) != len(label_identifiers):
             raise InventoryError("diagnostic_container_inventory_invalid")
-        identifier, state, project, actual_service = parts
-        if (not CONTAINER_ID.fullmatch(identifier) or identifier not in expected_ids
-                or identifier in inspected_ids or project != "markina-gallery"
-                or actual_service != service):
+
+        expected_ids = label_identifiers
+        inspected_ids: set[str] = set()
+        for row in rows:
+            parts = row.split("|")
+            if len(parts) != 4:
+                raise InventoryError("diagnostic_container_inventory_invalid")
+            identifier, state, project, actual_service = parts
+            if (not CONTAINER_ID.fullmatch(identifier) or identifier not in expected_ids
+                    or identifier in inspected_ids or project != "markina-gallery"
+                    or actual_service != service):
+                raise InventoryError("diagnostic_container_inventory_invalid")
+            inspected_ids.add(identifier)
+            if state == "running":
+                category = "running"
+            elif state in {"created", "exited", "dead"}:
+                category = "stopped"
+            else:
+                category = "unknown"
+            counts[category] += 1
+        if inspected_ids != expected_ids:
             raise InventoryError("diagnostic_container_inventory_invalid")
-        inspected_ids.add(identifier)
-        if state == "running":
-            category = "running"
-        elif state in {"created", "exited", "dead"}:
-            category = "stopped"
-        else:
-            category = "unknown"
-        counts[category] += 1
-    if inspected_ids != expected_ids:
-        raise InventoryError("diagnostic_container_inventory_invalid")
-    return counts
+
+    if (_diagnostic_container_ids(service, runner, compose=False) != label_identifiers
+            or _diagnostic_container_ids(service, runner, compose=True) != compose_identifiers):
+        raise InventoryError("diagnostic_inventory_changed")
+
+    matched_ids = label_identifiers & compose_identifiers
+    return {
+        "label_records": len(label_identifiers),
+        "compose_records": len(compose_identifiers),
+        "matched_records": len(matched_ids),
+        "label_only_records": len(label_identifiers - compose_identifiers),
+        "compose_only_records": len(compose_identifiers - label_identifiers),
+        **counts,
+    }
 
 
 def collect_container_diagnostics(runner: Runner = _run) -> dict[str, object]:
     """Return only fixed-role aggregate counts; never disclose container records."""
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "roles": {service: _container_diagnostic(service, runner) for service in CONTAINER_ROLES},
     }
 

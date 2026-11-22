@@ -88,10 +88,10 @@ def main() -> int:
 
         safe_error = run_parser(
             error_parser,
-            "platform-backup-runtime: container diagnostics failed (diagnostic_container_list_failed)\n",
+            "platform-backup-runtime: container diagnostics failed (diagnostic_compose_list_failed)\n",
         )
         require(safe_error.returncode == 0
-                and safe_error.stdout == "backup_runtime_diagnostic_failed=diagnostic_container_list_failed\n",
+                and safe_error.stdout == "backup_runtime_diagnostic_failed=diagnostic_compose_list_failed\n",
                 "backup_diagnostic_workflow_did_not_allowlist_error")
         unsafe_error = run_parser(
             error_parser,
@@ -103,12 +103,24 @@ def main() -> int:
                 "backup_diagnostic_workflow_leaked_error_details")
 
         roles = {
-            "api": {"records": 2, "running": 1, "stopped": 1, "unknown": 0},
-            "web": {"records": 0, "running": 0, "stopped": 0, "unknown": 0},
-            "db": {"records": 1, "running": 1, "stopped": 0, "unknown": 0},
+            "api": {
+                "label_records": 2, "compose_records": 2, "matched_records": 2,
+                "label_only_records": 0, "compose_only_records": 0,
+                "running": 1, "stopped": 1, "unknown": 0,
+            },
+            "web": {
+                "label_records": 0, "compose_records": 0, "matched_records": 0,
+                "label_only_records": 0, "compose_only_records": 0,
+                "running": 0, "stopped": 0, "unknown": 0,
+            },
+            "db": {
+                "label_records": 1, "compose_records": 1, "matched_records": 1,
+                "label_only_records": 0, "compose_only_records": 0,
+                "running": 1, "stopped": 0, "unknown": 0,
+            },
         }
         valid_aggregate = "backup_runtime_container_diagnostics=" + json.dumps(
-            {"schema_version": 1, "roles": roles}, sort_keys=True, separators=(",", ":"),
+            {"schema_version": 2, "roles": roles}, sort_keys=True, separators=(",", ":"),
         ) + "\n"
         aggregate_ok = run_parser(aggregate_parser, valid_aggregate)
         require(aggregate_ok.returncode == 0 and aggregate_ok.stdout == valid_aggregate,
@@ -116,7 +128,7 @@ def main() -> int:
         invalid_aggregate = run_parser(
             aggregate_parser,
             "backup_runtime_container_diagnostics=" + json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
                 "roles": {**roles, "api": {**roles["api"], "container_id": "private"}},
             }) + "\n",
         )
@@ -380,12 +392,24 @@ def main() -> int:
     validator_source = validator.group(1)
     ast.parse(validator_source)
     roles = {
-        "api": {"records": 2, "running": 1, "stopped": 1, "unknown": 0},
-        "web": {"records": 0, "running": 0, "stopped": 0, "unknown": 0},
-        "db": {"records": 1, "running": 1, "stopped": 0, "unknown": 0},
+        "api": {
+            "label_records": 2, "compose_records": 2, "matched_records": 2,
+            "label_only_records": 0, "compose_only_records": 0,
+            "running": 1, "stopped": 1, "unknown": 0,
+        },
+        "web": {
+            "label_records": 0, "compose_records": 0, "matched_records": 0,
+            "label_only_records": 0, "compose_only_records": 0,
+            "running": 0, "stopped": 0, "unknown": 0,
+        },
+        "db": {
+            "label_records": 1, "compose_records": 1, "matched_records": 1,
+            "label_only_records": 0, "compose_only_records": 0,
+            "running": 1, "stopped": 0, "unknown": 0,
+        },
     }
     valid_report = "backup_runtime_container_diagnostics=" + json.dumps(
-        {"schema_version": 1, "roles": roles}, separators=(",", ":"),
+        {"schema_version": 2, "roles": roles}, separators=(",", ":"),
     )
     valid = subprocess.run(
         [sys.executable, "-c", validator_source, valid_report],
@@ -400,19 +424,22 @@ def main() -> int:
         "backup_runtime_container_diagnostics={invalid-json}",
         valid_report + "\nextra",
         "backup_runtime_container_diagnostics=" + json.dumps({
-            "schema_version": 1, "roles": {**roles, "unexpected": roles["api"]},
+            "schema_version": 2, "roles": {**roles, "unexpected": roles["api"]},
         }),
         "backup_runtime_container_diagnostics=" + json.dumps({
-            "schema_version": 1, "roles": {**roles, "api": {**roles["api"], "id": "not-allowed"}},
+            "schema_version": 2, "roles": {**roles, "api": {**roles["api"], "id": "not-allowed"}},
         }),
         "backup_runtime_container_diagnostics=" + json.dumps({
-            "schema_version": 1, "roles": {**roles, "api": {**roles["api"], "records": True}},
+            "schema_version": 2, "roles": {**roles, "api": {**roles["api"], "label_records": True}},
         }),
         "backup_runtime_container_diagnostics=" + json.dumps({
-            "schema_version": 1, "roles": {**roles, "api": {"records": 513, "running": 513, "stopped": 0, "unknown": 0}},
+            "schema_version": 2, "roles": {**roles, "api": {**roles["api"], "label_records": 513}},
         }),
         "backup_runtime_container_diagnostics=" + json.dumps({
-            "schema_version": 1, "roles": {**roles, "api": {**roles["api"], "records": 3}},
+            "schema_version": 2, "roles": {**roles, "api": {**roles["api"], "label_only_records": 1}},
+        }),
+        "backup_runtime_container_diagnostics=" + json.dumps({
+            "schema_version": 1, "roles": roles,
         }),
     )
     for report in invalid_reports:
