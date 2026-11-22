@@ -10,6 +10,8 @@ import recoveryStyles from "./photographer-access-recovery.module.css";
 import { PhotographerTermsEditor } from "./photographer-terms-editor";
 import { PhotographerTermsHistory } from "./photographer-terms-history";
 import { TenantClosureConsole } from "./tenant-closure-console";
+import { GoogleDriveConnectForm } from "./google-drive-connect";
+import { GoogleDriveBackupFolderPicker } from "./google-drive-folder-picker";
 
 type Tenant = { tenant_id: string; status: string; lifecycle: string; canonical_host: string | null; canonical_host_status: "reserved" | "ready" | null; photographer_name?: string | null; admin_email: string | null };
 type Detail = Omit<Tenant, "admin_email"> & { gallery_count: number; photo_count: number; observed_at: string };
@@ -68,10 +70,12 @@ function auditActionLabel(action: string) {
 }
 
 export default function PlatformConsole() {
-  const { access, revision } = useConsoleAccess();
-  if (access === null) return <SystemState tone="loading" title="Verificando acesso" detail="Aguarde a confirmação da sua sessão." />;
-  if (!access) return <SystemState tone="error" title="Console indisponível" detail="É necessário acesso de proprietário da plataforma." />;
-  return <ConsoleContent key={revision} />;
+  const { access, revalidating } = useConsoleAccess();
+  if (access === false) return <SystemState tone="error" title="Console indisponível" detail="É necessário acesso de proprietário da plataforma." />;
+  return <>
+    {access === null || revalidating ? <SystemState tone="loading" title="Verificando acesso" detail="Aguarde a confirmação da sua sessão." /> : null}
+    {access === true ? <div hidden={revalidating} inert={revalidating}><ConsoleContent /></div> : null}
+  </>;
 }
 
 function ConsoleContent() {
@@ -265,6 +269,9 @@ function ConsoleContent() {
                   : <p>Sem registro de conexão; quota desconhecida. A disponibilidade atual do Drive não foi verificada.</p>}
             {drive.quota_observed_at ? <p>Última quota registrada: {formatBytes(drive.quota_usage)} usados de {formatBytes(drive.quota_limit)} · consulta em {new Date(drive.quota_observed_at).toLocaleString("pt-BR")}</p> : <p>Quota ainda não observada.</p>}
             <small>{drive.connection_updated_at ? `Estado salvo em ${new Date(drive.connection_updated_at).toLocaleString("pt-BR")} · ` : ""}Registro consultado em {drive.observed_at ? new Date(drive.observed_at).toLocaleString("pt-BR") : "instante desconhecido"}</small>
+            {drive.availability !== "authorization_recorded" ? <GoogleDriveConnectForm /> : null}
+            {drive.availability === "authorization_recorded" && drive.scope === "platform_owner"
+              ? <GoogleDriveBackupFolderPicker /> : null}
           </div>;
         })()}
         <p>Backup, arquivo e restauração: sem fonte integrada; estado desconhecido.</p>

@@ -23,3 +23,17 @@ O executor SHALL poder prosseguir sem pedir autorizações repetidas quando o pr
 #### Scenario: Escopo ou estado mudou
 - **WHEN** inventário, SHA, escopo ou autorização diverge
 - **THEN** a operação não inicia a mutação e registra a divergência para decisão apropriada
+
+### Requirement: Despacho da ponte reutiliza checks completos do SHA exato
+
+A instalação da ponte e do wrapper de API/web SHALL usar um workflow manual em `main`, consultar os checks do push exato antes de acessar `production` e exigir o ambiente protegido. A permissão de reutilizar evidência com preflight recusado SHALL se limitar a esse instalador. O release SHALL continuar exigindo preflight próprio aprovado e fingerprint válido.
+
+#### Scenario: CI de código aprovado e preflight recusado
+
+- **WHEN** a tentativa mais recente do push para o SHA atual de `main` terminou, todos os jobs obrigatórios e o escopo estão verdes, o único job falho é `production-app-preflight` e o release API/web foi pulado
+- **THEN** somente o job de instalação poderá aguardar a revisão de `production`, sem repetir a suíte e com os blobs revisados vinculados ao SHA
+
+#### Scenario: Outra falha ou evidência incompleta
+
+- **WHEN** o SHA não corresponde à main atual, a tentativa mais recente está pendente, faltam jobs obrigatórios ou outro job da tentativa falhou
+- **THEN** o instalador SHALL recusar antes de acessar o ambiente protegido

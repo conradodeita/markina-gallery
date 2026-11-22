@@ -9,7 +9,14 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
-from scripts.backend_ci import partition, verify
+from scripts.backend_ci import (
+    duration_profile_sha256,
+    load_duration_profile,
+    module_loads,
+    partition,
+    validate_duration_profile,
+    verify,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 IDS = [f"tests/test_{module}.py::test_case[{case}]"
@@ -17,10 +24,17 @@ IDS = [f"tests/test_{module}.py::test_case[{case}]"
        for case in range(size)]
 
 
-def reports():
-    return [{"version": 1, "revision": "synthetic", "count": 3, "index": index,
+def reports(profile=None):
+    profile = load_duration_profile() if profile is None else profile
+    return [{"version": 2, "revision": "synthetic", "count": 4, "index": index,
+             "duration_profile_sha256": duration_profile_sha256(profile),
              "exit_code": 0, "collected": IDS, "selected": items}
-            for index, items in enumerate(partition(IDS, 3))]
+            for index, items in enumerate(partition(IDS, 4, profile))]
+
+
+def profile_for(modules, fallback=1.0):
+    return {"schema_version": 1, "fallback_seconds_per_case": fallback,
+            "modules": modules}
 
 
 class PartitionTests(unittest.TestCase):
@@ -43,23 +57,87 @@ class PartitionTests(unittest.TestCase):
             with self.subTest(ids=ids[:1], count=count), self.assertRaises(ValueError):
                 partition(ids, count)
 
+    def test_duration_profile_is_versioned_and_validated(self):
+        profile = load_duration_profile()
+        self.assertEqual(1, profile["schema_version"])
+        self.assertEqual(2625, profile["source"]["collected_items"])
+        self.assertEqual(251, profile["source"]["module_count"])
+        self.assertEqual(3, profile["source"]["sample_count"])
+        self.assertEqual(7875, sum(item["items"] for item in profile["modules"].values()))
+        self.assertEqual(
+            profile["source"]["collected_items"] * profile["source"]["sample_count"],
+            sum(item["items"] for item in profile["modules"].values()),
+        )
+        self.assertEqual(64, len(duration_profile_sha256(profile)))
+        for invalid in (
+            {"schema_version": 2, "fallback_seconds_per_case": 1,
+             "modules": {"tests/a.py": {"items": 1, "seconds": 1}}},
+            profile_for({"../outside.py": {"items": 1, "seconds": 1}}),
+            profile_for({"tests/test_bad.py": {"items": 0, "seconds": 1}}),
+            profile_for({"tests/test_bad.py": {"items": 1, "seconds": -1}}),
+            profile_for({"tests/test_bad.py": {"items": 1, "seconds": float("inf")}}),
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                validate_duration_profile(invalid)
+
+    def test_new_and_zero_duration_modules_receive_median_case_fallback(self):
+        profile = profile_for({"tests/test_known.py": {"items": 2, "seconds": 0}},
+                              fallback=0.75)
+        ids = ["tests/test_known.py::test_a", "tests/test_known.py::test_b",
+               "tests/test_new.py::test_a", "tests/test_new.py::test_b",
+               "tests/test_new.py::test_c"]
+        self.assertEqual({"tests/test_known.py": 1.5, "tests/test_new.py": 2.25},
+                         module_loads(ids, profile))
+
+    def test_duration_weighted_lpt_balances_historical_slow_modules(self):
+        sizes = {"a": 1, "b": 10, "c": 9, "d": 8, "e": 7,
+                 "f": 6, "g": 5, "h": 4, "i": 3, "j": 2}
+        seconds = {"a": 18, "b": 10, "c": 9, "d": 8, "e": 7,
+                   "f": 6, "g": 5, "h": 4, "i": 3, "j": 2}
+        ids = [f"tests/test_{name}.py::test_{item}"
+               for name, size in sizes.items() for item in range(size)]
+        measured = profile_for({
+            f"tests/test_{name}.py": {"items": sizes[name], "seconds": seconds[name]}
+            for name in sizes
+        })
+        item_balanced = profile_for({
+            f"tests/test_{name}.py": {"items": sizes[name], "seconds": sizes[name]}
+            for name in sizes
+        })
+        weighted_parts = partition(ids, 3, measured)
+        count_parts = partition(ids, 3, item_balanced)
+        actual_weights = module_loads(ids, measured)
+
+        def loads(parts):
+            return [sum(actual_weights[module] for module in {
+                node.split("::", 1)[0] for node in part
+            }) for part in parts]
+
+        self.assertEqual(weighted_parts, partition(ids, 3, measured))
+        self.assertLess(max(loads(weighted_parts)), max(loads(count_parts)))
+        for module in sizes:
+            path = f"tests/test_{module}.py"
+            self.assertEqual(1, sum(any(node.startswith(path + "::") for node in part)
+                                    for part in weighted_parts))
+
     def test_complete_reports_pass(self):
-        self.assertEqual(len(IDS), verify(reports(), 3, "synthetic"))
+        self.assertEqual(len(IDS), verify(reports(), 4, "synthetic"))
 
     def test_missing_extra_or_duplicate_shard_fails(self):
         data = reports()
         for invalid in (data[:2], data + [data[0]], [data[0], data[0], data[2]]):
             with self.assertRaises(ValueError):
-                verify(invalid, 3, "synthetic")
+                verify(invalid, 4, "synthetic")
 
     def test_bad_metadata_or_failed_pytest_cannot_pass(self):
-        for field, value in (("revision", "other-sha"), ("count", 2), ("version", 2),
+        for field, value in (("revision", "other-sha"), ("count", 2), ("version", 1),
+                             ("duration_profile_sha256", "0" * 64),
                              ("exit_code", 1), ("exit_code", 2), ("exit_code", 5),
                              ("exit_code", None), ("exit_code", False), ("index", True)):
             data = reports()
             data[0][field] = value
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):
-                verify(data, 3, "synthetic")
+                verify(data, 4, "synthetic")
 
     def test_different_collection_omission_and_overlap_fail(self):
         original = reports()
@@ -78,11 +156,11 @@ class PartitionTests(unittest.TestCase):
         variants.append(data)
         for invalid in variants:
             with self.assertRaises(ValueError):
-                verify(invalid, 3, "synthetic")
+                verify(invalid, 4, "synthetic")
 
 
 class PytestIntegrationTests(unittest.TestCase):
-    def run_shard(self, root, index, *, count=3):
+    def run_shard(self, root, index, *, count=4):
         env = dict(os.environ, PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
         env.pop("PYTEST_ADDOPTS", None)
         output = root / "reports" / f"shard-{index}.json"
@@ -98,7 +176,7 @@ class PytestIntegrationTests(unittest.TestCase):
             root = Path(directory)
             tests = root / "tests"
             tests.mkdir()
-            for module in ("a", "b", "c"):
+            for module in ("a", "b", "c", "d"):
                 (tests / f"test_{module}.py").write_text(
                     "import pytest\n"
                     "@pytest.fixture(scope='module')\n"
@@ -110,12 +188,12 @@ class PytestIntegrationTests(unittest.TestCase):
                     "@pytest.mark.skip(reason='synthetic existing skip')\n"
                     "def test_skipped(): pass\n", encoding="utf-8")
             data = []
-            for index in range(3):
+            for index in range(4):
                 result, output = self.run_shard(root, index)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                 self.assertTrue(output.with_suffix(".xml").is_file())
                 data.append(json.loads(output.read_text(encoding="utf-8")))
-            self.assertEqual(12, verify(data, 3, "synthetic"))
+            self.assertEqual(16, verify(data, 4, "synthetic"))
 
     def test_real_pytest_failure_replaces_old_success_report(self):
         with tempfile.TemporaryDirectory() as directory:

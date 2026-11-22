@@ -17,6 +17,8 @@
 
 ## Capabilities
 
+A preparação operacional inclui loader POSIX de keyring em arquivo privado e ensaio sintético de entrega/recuperação externa, conforme alternativa solicitada pelo proprietário. Reutiliza o cipher e as primitivas privadas de arquivo existentes.
+
 ### New Capabilities
 
 Nenhuma.

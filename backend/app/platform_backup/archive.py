@@ -12,7 +12,7 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import BinaryIO
 from uuid import UUID
 
@@ -51,11 +51,14 @@ class BackupContext:
             or not isinstance(self.backup_id, UUID)
             or not isinstance(self.schema_revision, str)
             or not _SCHEMA.fullmatch(self.schema_revision)
-            or self.environment not in {"development", "test"}
+            or not self._valid_environment()
             or not isinstance(self.created_at, datetime)
             or self.created_at.utcoffset() != timedelta(0)
         ):
             raise BackupArchiveError("Contexto de backup inválido.")
+
+    def _valid_environment(self) -> bool:
+        return self.environment in {"development", "test"}
 
     def header(self) -> bytes:
         return json.dumps(
@@ -66,7 +69,7 @@ class BackupContext:
                 "backup_id": str(self.backup_id),
                 "schema_revision": self.schema_revision,
                 "environment": self.environment,
-                "created_at": self.created_at.astimezone(UTC).isoformat(),
+                "created_at": self.created_at.astimezone(timezone.utc).isoformat(),  # noqa: UP017 -- host Python 3.10
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -81,9 +84,29 @@ class ArchiveReceipt:
     sha256: str
 
 
+@dataclass(frozen=True)
+class _ProductionContext(BackupContext):
+    """Contexto interno autenticado, vinculado à versão da chave operacional."""
+
+    key_id: str
+
+    def _valid_environment(self) -> bool:
+        return (self.environment == "production" and isinstance(self.key_id, str)
+                and re.fullmatch(r"backup-[0-9a-f]{12}", self.key_id) is not None)
+
+    def header(self) -> bytes:
+        base = json.loads(super().header())
+        base.update(version=2, key_id=self.key_id)
+        return json.dumps(base, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
 def describe_ciphertext(source: BinaryIO, backup_id: UUID) -> ArchiveReceipt:
     """Checksum limitado do ciphertext; não autentica nem qualifica restore."""
     _local_runtime()
+    return _describe_ciphertext(source, backup_id)
+
+
+def _describe_ciphertext(source: BinaryIO, backup_id: UUID) -> ArchiveReceipt:
     if not isinstance(backup_id, UUID):
         raise BackupArchiveError("Identidade de backup inválida.")
     try:
@@ -106,13 +129,17 @@ def describe_ciphertext(source: BinaryIO, backup_id: UUID) -> ArchiveReceipt:
 
 def verify_ciphertext(source: BinaryIO, receipt: ArchiveReceipt) -> None:
     _local_runtime()
+    _verify_ciphertext(source, receipt)
+
+
+def _verify_ciphertext(source: BinaryIO, receipt: ArchiveReceipt) -> None:
     if (not isinstance(receipt, ArchiveReceipt) or not isinstance(receipt.backup_id, UUID)
             or type(receipt.size_bytes) is not int
             or not 0 < receipt.size_bytes <= MAX_PLAINTEXT_BYTES + MAX_HEADER_BYTES + 64
             or not isinstance(receipt.sha256, str)
             or not re.fullmatch(r"[0-9a-f]{64}", receipt.sha256)):
         raise BackupArchiveError("Recibo de arquivo inválido.")
-    if describe_ciphertext(source, receipt.backup_id) != receipt:
+    if _describe_ciphertext(source, receipt.backup_id) != receipt:
         raise BackupArchiveError("Checksum do arquivo divergente.")
 
 
@@ -155,6 +182,12 @@ def seal_archive(
 ) -> ArchiveReceipt:
     """O caller publica o ciphertext somente após receber o receipt completo."""
     _local_runtime()
+    return _seal_archive(source, destination, key=key, context=context)
+
+
+def _seal_archive(
+    source: BinaryIO, destination: BinaryIO, *, key: bytes, context: BackupContext
+) -> ArchiveReceipt:
     key = _key(key)
     if not isinstance(context, BackupContext):
         raise BackupArchiveError("Contexto de backup inválido.")
@@ -204,6 +237,14 @@ def open_archive(
 ) -> Iterator[AuthenticatedContent]:
     """Staging anônimo privado; nenhum handle é entregue antes de GCM.finalize()."""
     _local_runtime()
+    with _open_archive(source, key=key, expected=expected) as content:
+        yield content
+
+
+@contextmanager
+def _open_archive(
+    source: BinaryIO, *, key: bytes, expected: BackupContext
+) -> Iterator[AuthenticatedContent]:
     key = _key(key)
     if not isinstance(expected, BackupContext):
         raise BackupArchiveError("Contexto de backup inválido.")

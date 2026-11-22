@@ -22,7 +22,11 @@ class DriveTransport(Protocol):
 
     def get(self, url: str, **kwargs: Any) -> httpx.Response: ...
 
+    def delete(self, url: str, **kwargs: Any) -> httpx.Response: ...
+
     def put(self, url: str, **kwargs: Any) -> httpx.Response: ...
+
+    def patch(self, url: str, **kwargs: Any) -> httpx.Response: ...
 
 
 class HttpxDriveTransport:
@@ -41,6 +45,11 @@ class HttpxDriveTransport:
             time.sleep(0.1)
         raise AssertionError("tentativa HTTP GET esgotada sem resposta")
 
+    def delete(self, url: str, **kwargs: Any) -> httpx.Response:
+        # Exclusão nunca é repetida automaticamente: o chamador confirma ausência.
+        kwargs.setdefault("timeout", httpx.Timeout(30.0, connect=3.0))
+        return self._request("DELETE", url, **kwargs)
+
     @contextmanager
     def stream_get(self, url: str, **kwargs: Any) -> Iterator[httpx.Response]:
         """Lê conteúdo binário em streaming, mantendo o cliente aberto durante o consumo."""
@@ -54,3 +63,7 @@ class HttpxDriveTransport:
         # Upload é uma operação de escrita; não repete chunks automaticamente.
         kwargs.setdefault("timeout", httpx.Timeout(120.0, connect=3.0))
         return self._request("PUT", url, **kwargs)
+
+    def patch(self, url: str, **kwargs: Any) -> httpx.Response:
+        kwargs.setdefault("timeout", httpx.Timeout(30.0, connect=3.0))
+        return self._request("PATCH", url, **kwargs)

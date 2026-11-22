@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 import tempfile
 from collections.abc import Callable, Iterator
@@ -34,6 +35,7 @@ CHUNK_SIZE = 1024 * 1024
 MAX_BACKUP_SIZE = MAX_PLAINTEXT_BYTES + MAX_HEADER_BYTES + 64
 _DRIVE_IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,256}\Z")
 _HEX_MD5 = re.compile(r"[0-9a-f]{32}\Z")
+_REHEARSAL_NAME = re.compile(r"pyp-backup-rehearsal-[0-9a-f]{32}\.txt\Z")
 
 
 def is_drive_identifier(value: object) -> bool:
@@ -265,3 +267,153 @@ class WorkspaceDriveBackupStore:
             raise BackupStorageError("conflict")
         return CopyReceipt(self.destination_id, receipt.backup_id,
                            receipt.size_bytes, receipt.sha256)
+
+    def upload_rehearsal_item(self, *, name: str, content: bytes) -> DriveUploadReceipt:
+        """Upload only a small uniquely named synthetic item into the bound folder."""
+        if (not isinstance(name, str) or not _REHEARSAL_NAME.fullmatch(name)
+                or not isinstance(content, bytes) or not 0 < len(content) <= 4096):
+            raise BackupStorageError("unsafe")
+        transport = self.transport
+        if transport is None:
+            raise BackupStorageError("unsafe")
+        uploader = self.uploader or upload_drive_file
+        try:
+            receipt = uploader(
+                access_token=self.access_token,
+                parent_folder_id=self.parent_folder_id,
+                name=name,
+                mime_type="text/plain",
+                size_bytes=len(content),
+                stream=io.BytesIO(content),
+                transport=transport,
+            )
+        except DriveUploadError as error:
+            raise BackupStorageError(error.code) from None
+        except (httpx.HTTPError, OSError, ValueError):
+            raise BackupStorageError("io") from None
+        if (not isinstance(receipt, DriveUploadReceipt)
+                or not _DRIVE_IDENTIFIER.fullmatch(receipt.file_id)
+                or receipt.size_bytes != len(content)
+                or receipt.sha256 != hashlib.sha256(content).hexdigest()):
+            raise BackupStorageError("conflict")
+        return receipt
+
+    def _rehearsal_metadata(self, file_id: str, name: str) -> dict[str, object] | None:
+        if (not isinstance(file_id, str) or not _DRIVE_IDENTIFIER.fullmatch(file_id)
+                or not isinstance(name, str) or not _REHEARSAL_NAME.fullmatch(name)):
+            raise BackupStorageError("unsafe")
+        transport = self.transport
+        if transport is None:
+            raise BackupStorageError("unsafe")
+        url = FILES_ENDPOINT + "/" + quote(file_id, safe="")
+        try:
+            response = transport.get(url, params={
+                "supportsAllDrives": "true",
+                "fields": "id,name,mimeType,size,md5Checksum,parents,trashed",
+            }, headers=self._headers())
+        except httpx.HTTPError:
+            raise BackupStorageError("io") from None
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise self._error_for_response(response)
+        try:
+            item = response.json()
+            size = item.get("size") if isinstance(item, dict) else None
+            parents = item.get("parents") if isinstance(item, dict) else None
+            md5 = item.get("md5Checksum") if isinstance(item, dict) else None
+            if (not isinstance(item, dict) or item.get("id") != file_id or item.get("name") != name
+                    or item.get("mimeType") != "text/plain" or item.get("trashed") not in (False, None)
+                    or not isinstance(parents, list) or self.parent_folder_id not in parents
+                    or not isinstance(size, str) or not size.isdigit() or not 0 < int(size) <= 4096
+                    or not isinstance(md5, str) or not _HEX_MD5.fullmatch(md5.lower())):
+                raise ValueError
+        except (AttributeError, TypeError, ValueError):
+            raise BackupStorageError("conflict") from None
+        return {"id": file_id, "name": name, "size": int(size), "md5": md5.lower()}
+
+    def read_rehearsal_item(self, *, file_id: str, name: str) -> bytes:
+        """Read an exact rehearsal object and verify its metadata and MD5."""
+        remote = self._rehearsal_metadata(file_id, name)
+        if remote is None:
+            raise BackupStorageError("authorization")
+        transport = self.transport
+        assert transport is not None
+        url = FILES_ENDPOINT + "/" + quote(file_id, safe="")
+        chunks = bytearray()
+        try:
+            with transport.stream_get(url, params={
+                "alt": "media", "supportsAllDrives": "true",
+            }, headers={"Authorization": self._headers()["Authorization"],
+                        "Accept": "text/plain"}) as response:
+                if response.status_code != 200:
+                    raise self._error_for_response(response)
+                for part in response.iter_bytes(chunk_size=CHUNK_SIZE):
+                    if not isinstance(part, bytes):
+                        raise BackupStorageError("checksum")
+                    chunks.extend(part)
+                    if len(chunks) > 4096:
+                        raise BackupStorageError("checksum")
+        except BackupStorageError:
+            raise
+        except (httpx.HTTPError, OSError, TypeError, ValueError):
+            raise BackupStorageError("io") from None
+        content = bytes(chunks)
+        if (len(content) != remote["size"]
+                or hashlib.md5(content, usedforsecurity=False).hexdigest() != remote["md5"]):
+            raise BackupStorageError("checksum")
+        return content
+
+    def find_rehearsal_item(self, *, name: str) -> str | None:
+        """Find only one exact random rehearsal name in the already bound folder."""
+        if not isinstance(name, str) or not _REHEARSAL_NAME.fullmatch(name):
+            raise BackupStorageError("unsafe")
+        transport = self.transport
+        if transport is None:
+            raise BackupStorageError("unsafe")
+        query = f"name='{name}' and '{self.parent_folder_id}' in parents and trashed=false"
+        try:
+            response = transport.get(FILES_ENDPOINT, params={
+                "q": query, "pageSize": 2, "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+                "fields": "files(id,name,mimeType,size,md5Checksum,parents,trashed),nextPageToken,incompleteSearch",
+                "corpora": "user",
+            }, headers=self._headers())
+        except httpx.HTTPError:
+            raise BackupStorageError("io") from None
+        if response.status_code != 200:
+            raise self._error_for_response(response)
+        try:
+            document = response.json()
+            items = document.get("files") if isinstance(document, dict) else None
+            if (not isinstance(items, list) or len(items) > 1
+                    or document.get("nextPageToken") is not None
+                    or document.get("incompleteSearch", False) is not False):
+                raise ValueError
+            if not items:
+                return None
+            item = items[0]
+            file_id = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(file_id, str) or not _DRIVE_IDENTIFIER.fullmatch(file_id):
+                raise ValueError
+        except (AttributeError, TypeError, ValueError):
+            raise BackupStorageError("conflict") from None
+        if self._rehearsal_metadata(file_id, name) is None:
+            return None
+        return file_id
+
+    def delete_rehearsal_item(self, *, file_id: str, name: str) -> bool:
+        """Delete only an exact rehearsal ID after reattesting name and parent."""
+        remote = self._rehearsal_metadata(file_id, name)
+        if remote is None:
+            return True
+        transport = self.transport
+        assert transport is not None
+        url = FILES_ENDPOINT + "/" + quote(file_id, safe="")
+        try:
+            response = transport.delete(url, params={"supportsAllDrives": "true"}, headers=self._headers())
+        except httpx.HTTPError:
+            raise BackupStorageError("io") from None
+        if response.status_code not in {200, 204, 404}:
+            raise self._error_for_response(response)
+        return self._rehearsal_metadata(file_id, name) is None

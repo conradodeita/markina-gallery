@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import secrets
+import stat
 from datetime import timedelta
-from urllib.parse import urlencode
+from pathlib import Path
+from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
 import httpx
 from argon2.exceptions import InvalidHashError
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, SecretStr
 from sqlalchemy import select
 
@@ -36,7 +39,11 @@ from app.google_drive_client import (
     DriveTransport,
     HttpxDriveTransport,
 )
-from app.integration_secrets import IntegrationCipher, IntegrationSecretError, SecretEnvelope
+from app.integration_secrets import (
+    IntegrationCipher,
+    IntegrationSecretError,
+    SecretEnvelope,
+)
 from app.mercadopago_api import SensitiveRoute
 from app.system_monitor.access import is_owner
 from app.system_monitor.store import bounded
@@ -46,6 +53,10 @@ from app.totp_verification import matching_unused_totp_step
 
 router = APIRouter(prefix="/admin/platform/drive", route_class=SensitiveRoute)
 HEADERS = {"Cache-Control": "private, no-store"}
+GOOGLE_DRIVE_CLIENT_CONFIG_PATH = Path("/run/secrets/google-drive-oauth-client.json")
+GOOGLE_DRIVE_EXPECTED_REDIRECT_URI = (
+    "https://markina.pickyourpic.com.br/api/admin/platform/drive/oauth/callback"
+)
 
 
 class ConnectInput(BaseModel):
@@ -57,11 +68,48 @@ class ConnectInput(BaseModel):
 def _config():
     if os.getenv("APP_ENV", "development") != "production":
         raise HTTPException(503, "OAuth real do Drive é habilitado somente em produção.", headers=HEADERS)
-    client_id = os.getenv("GOOGLE_DRIVE_CLIENT_ID", "")
-    client_secret = os.getenv("GOOGLE_DRIVE_CLIENT_SECRET", "")
-    redirect_uri = os.getenv("GOOGLE_DRIVE_REDIRECT_URI", "")
-    valid_redirect = redirect_uri.startswith("https://")
-    if not client_id or not client_secret or not valid_redirect or len(client_id) > 256 or len(client_secret) > 512:
+
+    descriptor = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(GOOGLE_DRIVE_CLIENT_CONFIG_PATH, flags)
+        metadata = os.fstat(descriptor)
+        if (not stat.S_ISREG(metadata.st_mode)
+                or (os.name == "posix" and stat.S_IMODE(metadata.st_mode) != 0o400)
+                or metadata.st_size <= 0 or metadata.st_size > 16_384):
+            raise ValueError()
+        with os.fdopen(descriptor, "r", encoding="utf-8") as client_file:
+            descriptor = None
+            document = json.load(client_file)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, RecursionError):
+        raise HTTPException(503, "Conexão Drive ainda não configurada.", headers=HEADERS) from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+    web = document.get("web") if isinstance(document, dict) and set(document) == {"web"} else None
+    client_id = web.get("client_id") if isinstance(web, dict) else None
+    client_secret = web.get("client_secret") if isinstance(web, dict) else None
+    redirect_uris = web.get("redirect_uris") if isinstance(web, dict) else None
+    if (not isinstance(client_id, str) or not client_id or len(client_id) > 256
+            or any(not 0x21 <= ord(char) <= 0x7E for char in client_id)
+            or not isinstance(client_secret, str) or not client_secret or len(client_secret) > 512
+            or any(not 0x21 <= ord(char) <= 0x7E for char in client_secret)
+            or not isinstance(redirect_uris, list) or len(redirect_uris) != 1
+            or not isinstance(redirect_uris[0], str)):
+        raise HTTPException(503, "Conexão Drive ainda não configurada.", headers=HEADERS)
+    redirect_uri = redirect_uris[0]
+    try:
+        parsed_redirect = urlsplit(redirect_uri)
+        valid_redirect = (redirect_uri == GOOGLE_DRIVE_EXPECTED_REDIRECT_URI
+                          and parsed_redirect.scheme == "https" and bool(parsed_redirect.hostname)
+                          and parsed_redirect.port in (None, 443)
+                          and parsed_redirect.username is None and parsed_redirect.password is None
+                          and not parsed_redirect.query and not parsed_redirect.fragment
+                          and not any(ord(char) < 0x21 or ord(char) == 0x7F for char in redirect_uri))
+    except ValueError:
+        valid_redirect = False
+    if not valid_redirect:
         raise HTTPException(503, "Conexão Drive ainda não configurada.", headers=HEADERS)
     return client_id, client_secret, redirect_uri
 
@@ -184,8 +232,7 @@ def observe_quota(request: Request, response: Response):
         raise HTTPException(503, "Não foi possível observar a quota do Google Drive.", headers=HEADERS) from None
 
 
-@router.post("/connect")
-def connect(payload: ConnectInput, request: Request):
+def _begin_connect(payload: ConnectInput, request: Request) -> str:
     from app.main import require_same_origin
     require_same_origin(request)
     session, tenant_id = _owner(request)
@@ -231,7 +278,18 @@ def connect(payload: ConnectInput, request: Request):
     params = {"client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code",
               "scope": SCOPE, "access_type": "offline", "prompt": "consent", "state": state,
               "code_challenge": challenge, "code_challenge_method": "S256"}
-    return RedirectResponse(AUTH_ENDPOINT + "?" + urlencode(params), status_code=303, headers=HEADERS)
+    return AUTH_ENDPOINT + "?" + urlencode(params)
+
+
+@router.post("/connect")
+def connect(payload: ConnectInput, request: Request):
+    return RedirectResponse(_begin_connect(payload, request), status_code=303, headers=HEADERS)
+
+
+@router.post("/connect/start")
+def connect_start(payload: ConnectInput, request: Request):
+    authorization_url = _begin_connect(payload, request)
+    return JSONResponse({"authorization_url": authorization_url}, headers=HEADERS)
 
 
 @router.get("/oauth/callback")

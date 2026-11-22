@@ -6,11 +6,11 @@ O backup global e a conexão Google Drive já têm fundamentos locais, mas ainda
 
 ## What Changes
 
-- Conectar o fluxo de cópia global ao Google Workspace com a conexão OAuth autorizada e o escopo mais restrito validado; o ensaio pré-abertura usará a conta do proprietário e a rotina recorrente usará uma identidade Workspace dedicada, conforme D17.
+- Conectar o fluxo de cópia global ao Google Workspace com a conexão OAuth autorizada e o escopo mais restrito validado. Em 17/11, o proprietário escolheu a mesma conta Workspace para o ensaio e a rotina, conforme D17.
 - Enviar somente o arquivo de backup já cifrado; não enviar dumps, configurações ou conteúdo em claro.
 - Usar destino dedicado e privado, sem compartilhamento público, com credenciais e chaves fora do código, frontend, logs e tabelas comuns.
 - Registrar a origem, o destino, o instante e o estado de upload/verificação/recuperação sem expor conteúdo, tokens ou URLs de sessão.
-- Validar localmente com transporte sintético. Antes de abrir o primeiro tenant, testar com a conta do proprietário a leitura de retorno, integridade e restauração em ambiente descartável, e comprovar a cópia recorrente com identidade Workspace dedicada.
+- Validar localmente com transporte sintético. Antes de abrir o primeiro tenant, testar com a conta do proprietário a leitura de retorno, integridade e restauração em ambiente descartável, e comprovar a cópia recorrente com a conta escolhida.
 - Manter suspensão de expurgo e retenção destrutiva até existir cópia sobrevivente comprovada e autorização operacional própria.
 
 ## Capabilities

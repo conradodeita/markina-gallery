@@ -24,6 +24,12 @@ O diretório de saída deve ser novo e separado da origem. O manifesto identific
 
 Testes devem comprovar recusa de origem divergente ou transformação ambígua, preservação dos trechos não relacionados, dual-write com atualização por escritor legado, continuidade do mesmo fator após contract e falha segura de envelope inválido. Imagens derivadas, tráfego/health, drenagem de leitores/escritores e rollback precisam de ensaio operacional próprio antes do corte; um pacote gerado não demonstra disponibilidade contínua. O worker de prévias observado com `APP_ENV=staging` precisa ser reconciliado no inventário de consumidores, sem alterar seu contexto por inferência.
 
+## Custódia operacional em arquivo protegido
+
+O proprietário autorizou preparar a alternativa ao cofre de nuvem em 16/11/2026. O operador pode manter `keyring.json` em diretório POSIX privado, fora do banco, Git e `.env`. Diretório deve pertencer ao usuário executor e ter modo0700; arquivo regular com único hardlink, mesmo proprietário e modo0400/0600. Nenhum componente do caminho pode ser symlink ou permitir escrita de terceiros. Em produção o executor é root. O arquivo contém somente as três variáveis TOTP já consumidas pelo runtime. O loader reutiliza a validação criptográfica atual e entrega os valores exclusivamente ao ambiente de um processo filho, sem shell, saída de segredo ou argumentos com valores. Ambiente divergente e JSON duplicado são recusados.
+
+Uma cópia controlada fora do servidor, preservando versões históricas, deve recuperar uma fixture cifrada antes da ativação real. A cópia contém material secreto e exige proteção própria. O preparo e os testes usam chaves sintéticas. Geração/provisionamento de chave real e rollout permanecem etapas operacionais identificadas separadamente. A posse de root permite acesso ao arquivo e ao ambiente Docker; este mecanismo protege a segregação e as permissões locais.
+
 ## Não objetivos
 
 - Não redefinir TOTP, desativar MFA ou criar usuários administrativos durante a migração.

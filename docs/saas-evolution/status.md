@@ -1,5 +1,9 @@
 # Estado da execução
 
+## Produção — release de 16/11/2026
+
+SaaS aplicado para a operação do proprietário no runtime9df3b735/schema0126. Treze serviços saudáveis, dados financeiros e fator TOTP preservados, facialtrue e18891 embeddings intactos. Mercado Pago/PIX ativos e WhatsApp reconectado/ready. Provas, rollback e limites no [registro do release](production-release-2026-11-16.md). Configurações pré-tenants permanecem no [checklist pós-deploy](post-deploy-configuration-checklist.md). A revisão visual autenticada pós-deploy permanece pendente pela conexão Browser. Os checkpoints abaixo mantêm seu contexto histórico.
+
 ## Continuação pós-push — 16/11/2026
 
 O primeiro push ocorreu em `cc5ebe16`; as correções posteriores e o CI atual são acompanhados no [plano de release](../../openspec/changes/add-photographer-signup-portal/production-release-readiness.md). Os checkpoints pré-push abaixo são históricos. Backup online e restauração isolada foram comprovados; a cadeia `0090→0126` foi ensaiada na cópia restaurada, preservando os registros financeiros comparados e o fator TOTP. O banco produtivo permanece em `0090`.

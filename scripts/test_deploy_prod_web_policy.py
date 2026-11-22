@@ -13,19 +13,24 @@ STATE = (ROOT / "scripts/deploy-prod-state.sh").read_text(encoding="utf-8")
 def main():
     for name, text in (("web", SCRIPT), ("app", APP)):
         for fragment in ('GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 PYTHONDONTWRITEBYTECODE=1', 'release_load_support || fail',
-                         'acquire_production_deploy_lock', 'release_assert_web_identity'):
+                         'acquire_production_deploy_lock',
+                         'release_assert_web_identity' if name == 'web' else 'bridge_call web-identity'):
             if fragment not in text:
                 raise AssertionError(f"{name}: gate ausente {fragment}")
         if re.search(r"git (?:fetch|init)|mktemp|source /dev/stdin", text):
             raise AssertionError(f"{name}: inventário deve usar somente memória e objetos locais")
-    app_release = APP.split("release() {", 1)[1].split("\nrollback() {", 1)[0]
+    app_release = APP.split("\nrelease() {", 1)[1].split("\nrollback() {", 1)[0]
     if "require_facial_processing_enabled_in_config" not in app_release:
         raise AssertionError("release API/web deve validar FACIAL_PROCESSING_ENABLED=true no alvo")
     if not (app_release.index("compose config --quiet")
             < app_release.index("require_facial_processing_enabled_in_config")
-            < app_release.index("compose build") < app_release.index("compose up")):
-        raise AssertionError("release API/web deve recusar flag facial desabilitada antes do build/recreate")
-    app_rollback = APP.split("rollback() {", 1)[1].split("emergency_maintenance() {", 1)[0]
+            < app_release.index("verify_candidate_artifact")
+            < app_release.index("load_candidate_artifact")
+            < app_release.index("compose up")):
+        raise AssertionError("release API/web deve validar a flag facial e o bundle antes da recriação")
+    if "compose build" in app_release or "docker build" in app_release:
+        raise AssertionError("release API/web não pode reconstruir imagens no host")
+    app_rollback = APP.split("\nrollback() {", 1)[1].split("\nemergency_maintenance() {", 1)[0]
     if not (app_rollback.index("require_facial_processing_enabled_in_config")
             < app_rollback.index("compose up")):
         raise AssertionError("rollback API/web deve preservar a flag facial ativa")

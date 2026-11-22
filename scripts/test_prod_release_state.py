@@ -57,6 +57,9 @@ if kind=="git":
     elif a[0]=="ls-remote": print(s["remote"]+"\trefs/heads/main")
     elif a[0]=="status":
         if s.get("dirty"): print(" M unexpected")
+    elif a[0]=="hash-object":
+        data=(Path(os.environ["SOURCE_ROOT"])/"scripts/production_app_compose_bridge.py").read_bytes().replace(b"\r\n",b"\n")
+        print(hashlib.sha1(b"blob "+str(len(data)).encode()+b"\0"+data).hexdigest())
     elif a[0]=="check-ignore": pass
     elif a[0]=="cat-file":
         if s.get("missing_target"): die("missing commit")
@@ -71,6 +74,23 @@ if kind=="git":
         elif path.endswith("runtime-gates.json"): print("{}")
         else: print((Path(os.environ["SOURCE_ROOT"])/path).read_text())
     else: die("unexpected git "+repr(a))
+elif kind=="app-bridge":
+    operation=a[0]
+    version=next((v.split("=",1)[1] for v in a if v.startswith("__APP_VERSION=")),"")
+    with Path(os.environ["CALLS"]).open("a") as log: log.write("app-bridge "+" ".join(a)+"\n")
+    if operation=="hashes":
+        print("api "+s["services"]["api"]["hash"])
+        print("web "+s["web_hash"])
+    elif operation=="sources-fingerprint": print(hashlib.sha256(Path(s["overlay_native"]).read_bytes()).hexdigest())
+    elif operation=="service-hash": print(s["services"][a[1]]["hash"])
+    elif operation=="service-project": print("markina-gallery")
+    elif operation=="web-identity": print(s["checkout"]+" "+s["services"]["web"]["image"]+" "+s["web_hash"]+" "+s["checkout"])
+    elif operation=="assert-facial":
+        facial=s.get("target_facial_config","true") if version==s["main"] else s.get("facial_runtime","true")
+        if facial!="true": die("facial disabled")
+        print("facial_processing_enabled=true app_env=production")
+    elif operation=="snapshot": print("snapshot=preserved")
+    else: die("unexpected app bridge operation "+repr(operation))
 elif kind=="dependency-policy":
     # Pure policy boundary: real Git/build-context behavior is covered by
     # test_dependency_release.py, including its actual shell invocation.
@@ -78,9 +98,15 @@ elif kind=="dependency-policy":
     print('{"fixture_policy_contract":true}')
 elif kind=="docker":
     if a[0]=="ps": print("\n".join(s["services"]))
-    elif a[:2]==["image","inspect"]: print(image(a[-1]))
+    elif a[:2]==["image","inspect"]:
+        fmt=a[a.index("--format")+1] if "--format" in a else ""
+        print("linux/arm64" if ".Os" in fmt else image(a[-1]))
     elif a[:2]==["image","tag"]:
         val=image(a[2]);s["images"][a[3]]=val;save()
+    elif a[:2]==["load","--input"]:
+        s["images"]["markina-gallery-api"]=s["built"]["api"]
+        s["images"]["markina-gallery-web"]=s["built"]["web"]
+        save()
     elif a[0]=="inspect":
         fmt=a[a.index("--format")+1];target=a[-1]
         service=next((k for k,v in s["services"].items() if target in (k,v["id"])),None)
@@ -130,7 +156,7 @@ elif kind=="docker":
                     if service=="api": s["api_version"]=compose_version or s["main"]
             save()
         elif cmd[0]=="exec":
-            if "alembic" in cmd: print("20261022_0087 (head)")
+            if "alembic" in cmd: print("20261113_0126 (head)")
         else: die("unexpected compose "+repr(cmd))
     else: die("unexpected docker "+repr(a))
 elif kind=="curl":
@@ -174,14 +200,19 @@ class ReleaseContracts(unittest.TestCase):
         self.base = Path(self.temp.name)
         self.project = self.base / "project"
         self.state = self.base / "state"
+        self.artifacts = self.base / "app-artifacts"
         self.project.mkdir()
         self.state.mkdir()
+        self.artifacts.mkdir()
+        os.chmod(self.artifacts, 0o700)
         self.fixture = self.base / "model.json"
         self.calls = self.base / "calls.log"
         self.stub = self.base / "stub.py"
         self.stub.write_text(STUB, encoding="utf-8")
         self.server = self.base / "rpc.py"
         self.server.write_text(RPC_SERVER, encoding="utf-8")
+        (self.project / "scripts").mkdir()
+        shutil.copy2(ROOT / "scripts/production_app_artifact.py", self.project / "scripts/production_app_artifact.py")
         def shell_path(path):
             if os.name != "nt":
                 return path.as_posix()
@@ -191,11 +222,20 @@ class ReleaseContracts(unittest.TestCase):
         for name in ("web", "app-services"):
             text = (ROOT / f"scripts/deploy-prod-{name}.sh").read_text(encoding="utf-8")
             text = text.replace("/opt/markina-gallery", project_shell).replace("/var/lib/markina-gallery/deploy-state", state_shell)
+            if name == "app-services":
+                text = text.replace('/tmp/markina-gallery-app-artifacts-${UID}', shell_path(self.artifacts))
             path = self.base / f"{name}.sh"
             path.write_text(text, encoding="utf-8", newline="\n")
             self.scripts[name] = path
-        files = re.search(r'COMPOSE_FILE_LABEL="([^"]+)"', self.scripts["web"].read_text()).group(1)
-        for path in files.split(","):
+        file_paths = [
+            shell_path(self.project / "docker/docker-compose.yml"),
+            shell_path(self.state / "branding.compose.yml"),
+            shell_path(self.project / "docker/docker-compose.preview-adjustment.yml"),
+            shell_path(self.project / "docker/docker-compose.system-monitor.yml"),
+            shell_path(self.state / "system-monitor.compose.yml"),
+        ]
+        files = ",".join(file_paths)
+        for path in file_paths:
             if os.name == "nt":
                 path = subprocess.check_output([BASH, "-c", 'cygpath -w "$1"', "--", path], text=True).strip()
             f = Path(path)
@@ -237,6 +277,41 @@ class ReleaseContracts(unittest.TestCase):
         env = os.environ.copy()
         env.update(FIXTURE=str(self.fixture), CALLS=str(self.calls), SOURCE_ROOT=str(ROOT))
         python = quote(Path(os.sys.executable).as_posix())
+        stat_shim = ""
+        if os.name == "nt":
+            # Git Bash exposes NTFS ACL modes differently from Linux. Model the
+            # private artifact directory/file mode bits; Linux CI checks them for real.
+            stat_shim = r'''
+stat() {
+  local format="${2:-}" target="${4:-}"
+  if [[ "$target" == "$ARTIFACT_DIR" ]]; then
+    [[ "$format" == %u ]] && printf '%s\n' "$UID" || printf '700\n'
+  elif [[ "$target" == "$ARTIFACT_DIR/"*.bundle ]]; then
+    [[ "$format" == %u ]] && printf '%s\n' "$UID" || printf '600\n'
+  else
+    command stat "$@"
+  fi
+}
+'''
+            python_shim = f'''
+python3() {{
+  local output status normalized line
+  output="$({python} "$@")"; status=$?
+  if [[ "$status" -eq 0 && "${{1:-}}" == scripts/production_app_artifact.py && "${{2:-}}" == verify ]]; then
+    while IFS= read -r line; do
+      if [[ "$line" == image_archive=* ]]; then
+        line="image_archive=$(cygpath -u "${{line#image_archive=}}")"
+      fi
+      normalized+="$line"$'\\n'
+    done <<< "$output"
+    output="${{normalized%$'\\n'}}"
+  fi
+  printf '%s' "$output"
+  return "$status"
+}}
+'''
+        else:
+            python_shim = f'python3() {{ {python} "$@"; }}'
         script = f'''source {quote(self.scripts[flow].as_posix())}
 source {quote((ROOT/'scripts/deploy-prod-state.sh').as_posix())}
 source {quote((ROOT/'scripts/deploy-prod-lock.sh').as_posix())}
@@ -259,11 +334,36 @@ stub_call() {{
   printf '%s' "$error" >&2
   return "$status"
 }}
-python3() {{ {python} "$@"; }}
+{python_shim}
 git() {{ stub_call git "$@"; }}
 dependency_policy() {{
   if [[ "$1" == web-build ]]; then cat >/dev/null; fi
   stub_call dependency-policy "$@"
+}}
+sudo() {{
+  [[ "${{1:-}}" == -n ]] || return 80
+  shift
+  local executable="$1" mode="" target="" version="" fingerprint="" source_fingerprint="" operation="" after_separator=false
+  shift
+  local -a forwarded=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mode) mode="$2"; shift 2 ;;
+      --sha) target="$2"; shift 2 ;;
+      --app-version) version="$2"; shift 2 ;;
+      --approval-fingerprint) fingerprint="$2"; shift 2 ;;
+      --source-fingerprint) source_fingerprint="$2"; shift 2 ;;
+      compose|hashes|service-hash|service-project|web-identity|sources-fingerprint|assert-facial|snapshot) operation="$1"; shift ;;
+      --) after_separator=true; shift ;;
+      *) if [[ "$after_separator" == true ]]; then forwarded+=("$1"); shift; else return 81; fi ;;
+    esac
+  done
+  [[ "$executable" == "$APP_COMPOSE_BRIDGE" && -n "$operation" ]] || return 82
+  if [[ "$operation" == compose ]]; then
+    stub_call docker "__APP_VERSION=$version" compose "${{forwarded[@]}}"
+  else
+    stub_call app-bridge "$operation" "${{forwarded[@]}}" "__APP_VERSION=$version" "$mode" "$target" "$fingerprint" "$source_fingerprint"
+  fi
 }}
 docker() {{
   if [[ "$*" == "compose "* && " $* " == *" -f - "* ]]; then cat >/dev/null; fi
@@ -274,6 +374,7 @@ hostname() {{ echo clearbudget-vnic; }}
 sleep() {{ :; }}
 flock() {{ return 0; }}
 {extra}
+{stat_shim}
 {code}
 '''
         result = subprocess.run([BASH, "-c", script], env=env, capture_output=True, text=True, timeout=120, check=False)
@@ -285,7 +386,26 @@ flock() {{ return 0; }}
 
     def mode(self, mode, flow="web", approval=None, extra="", ok=True, args=""):
         flag = "--approval-code" if flow == "web" else "--approval-fingerprint"
+        if flow == "app-services" and mode == "release" and "--artifact-sha256" not in args:
+            digest = self.prepare_artifact()
+            args = f"{args} --artifact-sha256 {digest}"
         return self.run_shell(f'main --mode {mode} --sha {self.model["main"]} {flag+" "+approval if approval else ""} {args}', flow, extra, ok)
+
+    def prepare_artifact(self, api_base_image_id=None):
+        target = self.model["main"]
+        images = self.base / "synthetic-images.tar.gz"
+        images.write_bytes(b"synthetic docker image archive")
+        bundle = self.artifacts / f"{target}.bundle"
+        result = subprocess.run(
+            [os.sys.executable, str(ROOT / "scripts/production_app_artifact.py"), "create",
+             "--images", str(images), "--output", str(bundle), "--target-sha", target,
+             "--api-base-image-id", api_base_image_id or self.model["services"]["api"]["image"],
+             "--api-image-id", self.model["built"]["api"],
+             "--web-image-id", self.model["built"]["web"]],
+            check=True, capture_output=True, text=True,
+        )
+        return next(line.split("=", 1)[1] for line in result.stdout.splitlines()
+                    if line.startswith("bundle_sha256="))
 
     def fingerprint(self, mode="inventory", flow="web", args=""):
         result = self.mode(mode, flow, args=args)
@@ -500,14 +620,24 @@ flock() {{ return 0; }}
         self.assertEqual(self.model["services"]["web"]["image"], IMAGE_NEW)
         self.fingerprint()
 
-    def test_app_failed_build_or_health_preserves_recovery_identity(self):
-        for failure in ("build_fail", "health_fail"):
+    def test_app_failed_artifact_or_health_preserves_recovery_identity(self):
+        for failure in ("digest_fail", "base_fail", "health_fail"):
             fp = self.fingerprint(flow="app-services")
-            self.mutate(**{failure: True})
-            self.mode("release", flow="app-services", approval=fp, ok=False)
+            args = ""
+            if failure in ("digest_fail", "base_fail"):
+                wrong_base = "sha256:" + "5" * 64 if failure == "base_fail" else None
+                digest = self.prepare_artifact(api_base_image_id=wrong_base)
+                if failure == "digest_fail":
+                    (self.artifacts / f"{self.model['main']}.bundle").write_bytes(b"tampered bundle")
+                args = f"--artifact-sha256 {digest}"
+            else:
+                self.mutate(health_fail=True)
+            self.mode("release", flow="app-services", approval=fp, ok=False, args=args)
             self.assertTrue((self.state / "app-in-flight.sha").exists())
+            if failure in ("digest_fail", "base_fail"):
+                self.assertNotIn("load --input", self.log())
             self.reload()
-            self.mutate(**{failure: False})
+            self.mutate(health_fail=False)
             fp = self.fingerprint("rollback-inventory", flow="app-services")
             self.mode("rollback", flow="app-services", approval=fp)
             self.assertEqual(self.reload()["services"]["web"]["image"], IMAGE_OLD)

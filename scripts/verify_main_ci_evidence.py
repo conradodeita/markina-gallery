@@ -14,7 +14,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 SHA = re.compile(r'^[0-9a-f]{40}$')
 REQUIRED_JOBS = frozenset({
     'ci-scope', 'backend-quality', 'backend-tests (0)', 'backend-tests (1)',
-    'backend-tests (2)', 'backend', 'frontend', 'runtime-images (ubuntu-latest, amd64)',
+    'backend-tests (2)', 'backend-tests (3)', 'backend', 'frontend', 'runtime-images (ubuntu-latest, amd64)',
     'runtime-images (ubuntu-24.04-arm, arm64)', 'openspec', 'gitleaks',
     'homolog-inventory-policy', 'gemma-runtime',
 })
@@ -32,7 +32,8 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def select_run(runs: list[dict], sha: str) -> dict:
+def select_run(runs: list[dict], sha: str, *, app_bridge_install: bool = False,
+               app_runtime_adoption: bool = False, app_handoff_recovery: bool = False) -> dict:
     if not SHA.fullmatch(sha):
         raise EvidenceError('sha_invalido')
     candidates = [run for run in runs if run.get('path') == '.github/workflows/ci.yml'
@@ -45,7 +46,9 @@ def select_run(runs: list[dict], sha: str) -> dict:
                for key in ('id', 'run_number', 'run_attempt')):
             raise EvidenceError('ci_metadados_invalidos')
     latest = max(candidates, key=lambda item: (item['run_number'], item['run_attempt']))
-    if latest.get('status') != 'completed' or latest.get('conclusion') != 'success':
+    allow_readonly_preflight_failure = app_bridge_install or app_runtime_adoption or app_handoff_recovery
+    allowed_conclusions = {'success', 'failure'} if allow_readonly_preflight_failure else {'success'}
+    if latest.get('status') != 'completed' or latest.get('conclusion') not in allowed_conclusions:
         raise EvidenceError('ci_mais_recente_nao_verde')
     return latest
 
@@ -59,6 +62,41 @@ def verify_jobs(jobs: list[dict]) -> None:
         matches = indexed.get(name, [])
         if len(matches) != 1 or matches[0].get('status') != 'completed' or matches[0].get('conclusion') != 'success':
             raise EvidenceError('job_obrigatorio_nao_verde:' + name)
+
+
+def verify_app_preflight_failure(jobs: list[dict]) -> None:
+    """Admit an isolated app preflight failure only for the protected installer."""
+    unsuccessful = [job for job in jobs if job.get('status') != 'completed'
+                    or job.get('conclusion') not in {'success', 'skipped'}]
+    if (len(unsuccessful) != 1 or unsuccessful[0].get('name') != 'production-app-preflight'
+            or unsuccessful[0].get('status') != 'completed' or unsuccessful[0].get('conclusion') != 'failure'):
+        raise EvidenceError('ci_instalacao_exige_falha_isolada_no_preflight')
+    for name, expected in (('release-scope', 'success'), ('production-app-preflight', 'failure'),
+                           ('production-app-release', 'skipped')):
+        matching = [job for job in jobs if job.get('name') == name]
+        if (len(matching) != 1 or matching[0].get('status') != 'completed'
+                or matching[0].get('conclusion') != expected):
+            raise EvidenceError('estado_release_app_invalido:' + name)
+
+
+def verify_app_handoff_failure(jobs: list[dict]) -> None:
+    """Reuse green code evidence for separately approved operational recovery."""
+    failed = [job for job in jobs if job.get('status') != 'completed'
+              or job.get('conclusion') not in {'success', 'skipped'}]
+    pipeline = ('production-app-preflight', 'production-app-image-artifact',
+                'production-app-handoff-preflight', 'production-app-release')
+    allowed = {pipeline[0], pipeline[2], pipeline[3]}
+    if (len(failed) != 1 or failed[0].get('name') not in allowed
+            or failed[0].get('status') != 'completed' or failed[0].get('conclusion') != 'failure'):
+        raise EvidenceError('ci_recuperacao_exige_falha_operacional_isolada')
+    failure_index = pipeline.index(failed[0]['name'])
+    for name, expected in [('release-scope', 'success')] + [
+        (name, 'failure' if index == failure_index else 'success' if index < failure_index else 'skipped')
+        for index, name in enumerate(pipeline)
+    ]:
+        matches = [job for job in jobs if job.get('name') == name]
+        if len(matches) != 1 or matches[0].get('status') != 'completed' or matches[0].get('conclusion') != expected:
+            raise EvidenceError('estado_recuperacao_app_invalido:' + name)
 
 
 def request_json(url: str, token: str) -> dict:
@@ -107,7 +145,8 @@ def paginate(path: str, key: str, token: str, params: dict[str, str] | None = No
     raise EvidenceError('paginacao_excessiva')
 
 
-def verify_remote(sha: str, token: str) -> dict:
+def verify_remote(sha: str, token: str, *, app_bridge_install: bool = False,
+                  app_runtime_adoption: bool = False, app_handoff_recovery: bool = False) -> dict:
     if not SHA.fullmatch(sha) or not token:
         raise EvidenceError('sha_ou_token_ausente')
     main = request_json(API + '/commits/main', token).get('sha')
@@ -115,20 +154,34 @@ def verify_remote(sha: str, token: str) -> dict:
         raise EvidenceError('sha_nao_e_main_atual')
     runs = paginate('actions/workflows/ci.yml/runs', 'workflow_runs', token,
                     {'event': 'push', 'branch': 'main', 'head_sha': sha})
-    run = select_run(runs, sha)
+    run = select_run(runs, sha, app_bridge_install=app_bridge_install,
+                     app_runtime_adoption=app_runtime_adoption, app_handoff_recovery=app_handoff_recovery)
     jobs = paginate(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", 'jobs', token)
     verify_jobs(jobs)
+    if app_handoff_recovery and run['conclusion'] == 'failure':
+        verify_app_handoff_failure(jobs)
+    elif (app_bridge_install or app_runtime_adoption) and run['conclusion'] == 'failure':
+        verify_app_preflight_failure(jobs)
     if request_json(API + '/commits/main', token).get('sha') != sha:
         raise EvidenceError('main_mudou_durante_consulta')
-    return {'sha': sha, 'run_id': run['id'], 'run_attempt': run['run_attempt'], 'conclusion': 'success'}
+    return {'sha': sha, 'run_id': run['id'], 'run_attempt': run['run_attempt'], 'conclusion': run['conclusion']}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sha', required=True)
+    parser.add_argument('--app-bridge-install', action='store_true',
+                        help='Admite somente falha isolada no preflight de API/web para instalar a ponte.')
+    parser.add_argument('--app-runtime-adoption', action='store_true',
+                        help='Admite somente falha isolada no preflight API/web para adoção, após todos os gates de código verdes.')
+    parser.add_argument('--app-handoff-recovery', action='store_true',
+                        help='Exige gates de código verdes e no máximo uma falha operacional isolada para recuperação protegida.')
     args = parser.parse_args()
     try:
-        evidence = verify_remote(args.sha, os.environ.get('GITHUB_TOKEN', ''))
+        evidence = verify_remote(args.sha, os.environ.get('GITHUB_TOKEN', ''),
+                                 app_bridge_install=args.app_bridge_install,
+                                 app_runtime_adoption=args.app_runtime_adoption,
+                                 app_handoff_recovery=args.app_handoff_recovery)
     except EvidenceError as error:
         print(f'ci_evidence_ready=false;criterio={error}', file=sys.stderr)
         return 1

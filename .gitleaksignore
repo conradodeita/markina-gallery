@@ -12,6 +12,10 @@ b7f2090e559e58815906a2311aa170b81efb86ca:openspec/changes/reopen-card-purchase-c
 2abb7d259e5b129c6a190320e6a4165bf5da87d3:openspec/changes/reopen-card-purchase-cart/validation.md:generic-api-key:142
 # Falso positivo: SHA-1 público do blob auth.py fixado no manifesto de runtime.
 e93015388f86d1f6af59ec946c70a99c6e7e4d00:openspec/changes/add-production-app-release-workflow/runtime-gates.json:generic-api-key:6
+# Falso positivo: novo SHA-1 público do blob auth.py, validado contra git hash-object e fixado no manifesto de runtime.
+7484514568d8ccadf412bee556f10ce518db6557:openspec/changes/add-production-app-release-workflow/runtime-gates.json:generic-api-key:6
+# Falso positivo: SHA-1 público do blob auth.py no commit squash da release, confirmado contra o objeto Git da main.
+d3df5f7bf7b33e8cf44a5b68065aa10a3f6e1df8:openspec/changes/add-production-app-release-workflow/runtime-gates.json:generic-api-key:6
 # Falsos positivos verificados no CI 41546846981: checksums SHA-256 de módulos no inventário histórico.
 44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc:openspec/changes/restore-production-facial-runtime/runtime-inventory.json:generic-api-key:44
 44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc:openspec/changes/restore-production-facial-runtime/runtime-inventory.json:generic-api-key:101
@@ -53,3 +57,5 @@ e93015388f86d1f6af59ec946c70a99c6e7e4d00:openspec/changes/add-production-app-rel
 44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc:openspec/changes/restore-production-facial-runtime/runtime-inventory.json:generic-api-key:1206
 44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc:openspec/changes/restore-production-facial-runtime/runtime-inventory.json:generic-api-key:1220
 44ab1498e1e23c9eaacdf7e01aa27b8c1cc68ddc:openspec/changes/restore-production-facial-runtime/runtime-inventory.json:generic-api-key:1227
+# Blob Git publicamente verificável de use-console-access.ts, não é credencial.
+44cde9163b29ae70ab9628ae4227bfa3bbe4cdf4:openspec/changes/add-production-app-release-workflow/runtime-gates.json:generic-api-key:38

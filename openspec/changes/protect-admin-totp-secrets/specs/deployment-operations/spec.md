@@ -19,6 +19,15 @@ A operação SHALL manter keyring TOTP dedicado fora do banco e separado de outr
 - **WHEN** operador solicita remover uma versão antiga
 - **THEN** a operação recusa até que inventário prove zero envelopes referenciados e restore compatível com a chave ativa
 
+### Requirement: Carregamento de keyring em arquivo privado
+
+O operador SHALL poder entregar o keyring por arquivo POSIX privado externo ao banco e Git. O loader SHALL recusar symlinks, hardlinks adicionais, proprietário/modo incorretos, JSON duplicado e ambiente divergente. SHALL validar o keyring com o cipher existente e executar o consumidor sem shell, com valores somente no ambiente. Falhas SHALL emitir mensagem sanitizada.
+
+#### Scenario: Recuperação por cópia externa
+
+- **WHEN** a cópia controlada do keyring é restaurada em diretório privado isolado
+- **THEN** o consumidor decifra a mesma fixture sintética e a prova registra apenas o resultado
+
 ### Requirement: Migração TOTP compatível com versões antigas
 
 O rollout SHALL usar migração expand/contract. A etapa expand mantém a coluna legada legível pelos processos antigos e acrescenta envelope cifrado. A etapa contract só SHALL limpar plaintext depois que todas as instâncias/API/workers que leem o formato antigo tiverem sido atualizados e drenados, e dual-write estiver desligado. Rollback SHALL restaurar plaintext antes da volta a um binário antigo.
