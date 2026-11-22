@@ -1,16 +1,16 @@
 # Markina Gallery — frontend (Next.js) — scaffolding da fundação
-FROM node:24-alpine AS deps
+FROM node:26-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:24-alpine AS runner
+FROM node:26-alpine AS runner
 WORKDIR /app
 # HOSTNAME=0.0.0.0: o server.js standalone usa $HOSTNAME; dentro do container ele
 # viria como o ID do container e o healthcheck via 127.0.0.1 falharia.
