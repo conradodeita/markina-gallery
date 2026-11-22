@@ -248,6 +248,153 @@ class InventoryTests(unittest.TestCase):
                 self.assertNotIn("secret", output.getvalue())
                 self.assertNotIn("private output", output.getvalue())
 
+    def test_container_diagnostics_aggregate_fixed_roles_and_states(self) -> None:
+        ids_by_role = {
+            "api": ["a" * 64, "b" * 64, "c" * 64, "d" * 64, "e" * 64],
+            "web": [],
+            "db": ["f" * 64],
+        }
+        states = {
+            "a" * 64: "running",
+            "b" * 64: "created",
+            "c" * 64: "exited",
+            "d" * 64: "dead",
+            "e" * 64: "paused",
+            "f" * 64: "restarting",
+        }
+        commands: list[list[str]] = []
+
+        def runner(argv):
+            commands.append(list(argv))
+            if "container" in argv and "ls" in argv:
+                project_filter = "label=com.docker.compose.project=markina-gallery"
+                service_filter = next(value for value in argv
+                                      if value.startswith("label=com.docker.compose.service="))
+                self.assertIn(project_filter, argv)
+                role = service_filter.rsplit("=", 1)[-1]
+                identifiers = ids_by_role[role]
+                return self._result(list(argv), "".join(f"{value}\n" for value in identifiers))
+            if "container" in argv and "inspect" in argv:
+                identifiers = argv[argv.index("--format") + 2:]
+                rows = [f"{identifier}|{states[identifier]}|markina-gallery|"
+                        f"{next(role for role, values in ids_by_role.items() if identifier in values)}"
+                        for identifier in identifiers]
+                return self._result(list(argv), "".join(f"{row}\n" for row in rows))
+            raise AssertionError(f"unexpected command class: {argv[0]}")
+
+        result = inventory.collect_container_diagnostics(runner)
+
+        self.assertEqual(set(result["roles"]), {"api", "web", "db"})
+        self.assertEqual(result["roles"]["api"], {
+            "records": 5, "running": 1, "stopped": 3, "unknown": 1,
+        })
+        self.assertEqual(result["roles"]["web"], {
+            "records": 0, "running": 0, "stopped": 0, "unknown": 0,
+        })
+        self.assertEqual(result["roles"]["db"], {
+            "records": 1, "running": 0, "stopped": 0, "unknown": 1,
+        })
+        serialized = json.dumps(result, sort_keys=True)
+        for identifier in states:
+            self.assertNotIn(identifier, serialized)
+        self.assertNotIn("paused", serialized)
+        self.assertNotIn("restarting", serialized)
+        self.assertEqual(
+            {next(value.rsplit("=", 1)[-1] for value in command
+                 if value.startswith("label=com.docker.compose.service="))
+             for command in commands if "container" in command and "ls" in command},
+            {"api", "web", "db"},
+        )
+        with self.assertRaisesRegex(inventory.InventoryError, "api_container_record_ambiguous"):
+            inventory._container("api", runner)
+
+        output = io.StringIO()
+        with (mock.patch.object(inventory, "collect_container_diagnostics", return_value=result),
+              contextlib.redirect_stdout(output)):
+            self.assertEqual(inventory.diagnostic_main(), 0)
+        self.assertEqual(output.getvalue(),
+                         "backup_runtime_container_diagnostics="
+                         + json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
+        self.assertNotIn("fingerprint", output.getvalue())
+        self.assertNotIn("preconditions", output.getvalue())
+        for identifier in states:
+            self.assertNotIn(identifier, output.getvalue())
+
+    def test_container_diagnostics_bound_record_count_without_partial_output(self) -> None:
+        identifiers = [f"{value:064x}" for value in range(513)]
+
+        def runner(argv):
+            if "container" in argv and "ls" in argv:
+                return self._result(list(argv), "".join(f"{value}\n" for value in identifiers))
+            raise AssertionError("excessive list must fail before inspection")
+
+        with self.assertRaises(inventory.InventoryError) as raised:
+            inventory.collect_container_diagnostics(runner)
+        self.assertEqual(str(raised.exception), "diagnostic_container_list_invalid")
+        self.assertNotIn(identifiers[0], str(raised.exception))
+
+    def test_container_diagnostics_discard_partial_counts_and_sanitize_failures(self) -> None:
+        api_id = "a" * 64
+
+        def runner(argv):
+            if "container" in argv and "ls" in argv:
+                service = next(value.rsplit("=", 1)[-1] for value in argv
+                               if value.startswith("label=com.docker.compose.service="))
+                if service == "api":
+                    return self._result(list(argv), api_id + "\n")
+                if service == "web":
+                    return self._result(list(argv), "private-list-output\n", returncode=1)
+                return self._result(list(argv), "")
+            if "container" in argv and "inspect" in argv:
+                return self._result(list(argv), f"{api_id}|running|markina-gallery|api\n")
+            raise AssertionError(f"unexpected command class: {argv[0]}")
+
+        with self.assertRaises(inventory.InventoryError) as raised:
+            inventory.collect_container_diagnostics(runner)
+        self.assertEqual(str(raised.exception), "diagnostic_container_list_failed")
+        self.assertNotIn("private", str(raised.exception))
+        self.assertIn(str(raised.exception), inventory.SAFE_DIAGNOSTIC_ERROR_CODES)
+
+        output = io.StringIO()
+        with (mock.patch.object(inventory, "collect_container_diagnostics",
+                                side_effect=inventory.InventoryError("diagnostic_container_list_failed")),
+              contextlib.redirect_stdout(output)):
+            self.assertEqual(inventory.diagnostic_main(), 1)
+        self.assertEqual(output.getvalue(),
+                         "platform-backup-runtime: container diagnostics failed "
+                         "(diagnostic_container_list_failed)\n")
+        self.assertNotIn("backup_runtime_container_diagnostics", output.getvalue())
+        self.assertNotIn("fingerprint", output.getvalue())
+        self.assertNotIn("private", output.getvalue())
+
+    def test_container_diagnostics_sanitize_inspection_failures(self) -> None:
+        identifier = "a" * 64
+
+        def inspect_failure(argv):
+            if "container" in argv and "ls" in argv:
+                return self._result(list(argv), identifier + "\n")
+            if "container" in argv and "inspect" in argv:
+                return self._result(list(argv), "private-inspect-output\n", returncode=1)
+            raise AssertionError(f"unexpected command class: {argv[0]}")
+
+        with self.assertRaises(inventory.InventoryError) as failed:
+            inventory.collect_container_diagnostics(inspect_failure)
+        self.assertEqual(str(failed.exception), "diagnostic_container_inspect_failed")
+        self.assertNotIn("private", str(failed.exception))
+
+        def invalid_label(argv):
+            if "container" in argv and "ls" in argv:
+                return self._result(list(argv), identifier + "\n")
+            if "container" in argv and "inspect" in argv:
+                return self._result(list(argv),
+                                    f"{identifier}|running|private-project-label|api\n")
+            raise AssertionError(f"unexpected command class: {argv[0]}")
+
+        with self.assertRaises(inventory.InventoryError) as invalid:
+            inventory.collect_container_diagnostics(invalid_label)
+        self.assertEqual(str(invalid.exception), "diagnostic_container_inventory_invalid")
+        self.assertNotIn("private-project-label", str(invalid.exception))
+
     def test_installed_release_requires_matching_root_owned_receipts(self) -> None:
         if os.name != "posix" or os.geteuid() != 0:
             self.skipTest("root-only release evidence requires POSIX root")

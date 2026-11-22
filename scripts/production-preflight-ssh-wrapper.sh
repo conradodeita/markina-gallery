@@ -16,7 +16,7 @@ readonly PREVIEW_MIGRATION_INVENTORY_BLOB_SHA="1296ccb0e0f6295bc07b30837fc5043e7
 readonly APP_ENV_INVENTORY_BLOB_SHA="8a460514b25ee26355e5252815096940b5736083"
 readonly APP_BASE_IMAGE_EXPORT_BLOB_SHA="988ca208646836ecb965b80ec91c2ada9a38dc37"
 readonly BACKUP_ARTIFACT_BLOB_SHA="af6ae65732b94a52ecbcadb7cb0ebf9b455af296"
-readonly BACKUP_INVENTORY_BLOB_SHA="7823d1ef5b318e96fab2ebec0c66c8c66e3f366f"
+readonly BACKUP_INVENTORY_BLOB_SHA="752e86f4710d775bd12df043e400ba3552f2433a"
 readonly BACKUP_INSTALLER_BLOB_SHA="0b96e8257720aba015ea01a1eaa37ba17dd9dfb7"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
@@ -41,6 +41,9 @@ backup_digest=""
 backup_fingerprint=""
 if [[ "$original_command" =~ ^MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=([0-9a-f]{40})$ ]]; then
   backup_mode="inventory"
+  backup_sha="${BASH_REMATCH[1]}"
+elif [[ "$original_command" =~ ^MARKINA_PLATFORM_BACKUP_DIAGNOSE_SHA=([0-9a-f]{40})$ ]]; then
+  backup_mode="diagnose"
   backup_sha="${BASH_REMATCH[1]}"
 elif [[ "$original_command" =~ ^MARKINA_PLATFORM_BACKUP_INSTALL_SHA=([0-9a-f]{40})_BUNDLE=([0-9a-f]{64})_FINGERPRINT=([0-9a-f]{64})$ ]]; then
   backup_mode="install"
@@ -85,6 +88,8 @@ exec(compile(base64.b64decode(sys.argv[1]), module.__file__, "exec"), module.__d
 operation, args = sys.argv[2], sys.argv[3:]
 if operation == "inventory":
     raise SystemExit(module.main())
+if operation == "diagnose" and not args:
+    raise SystemExit(module.diagnostic_main())
 if operation == "assert-installed" and len(args) == 2:
     try:
         module.verify_installed_release(args[0], args[1])
@@ -100,6 +105,11 @@ PY
     inventory)
       sudo -n /usr/bin/python3.10 -B -c "$inventory_bootstrap" "$inventory_b64" inventory </dev/null
       exit 0
+      ;;
+    diagnose)
+      acquire_backup_release_lock
+      sudo -n /usr/bin/python3.10 -B -c "$inventory_bootstrap" "$inventory_b64" diagnose </dev/null
+      exit $?
       ;;
     install)
       for pair in "platform_backup_runtime_artifact.py:$BACKUP_ARTIFACT_BLOB_SHA:artifact.py" \

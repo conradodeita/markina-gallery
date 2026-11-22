@@ -23,6 +23,11 @@ CONTAINER_INSPECT = (
     "{{index .Config.Labels \"com.docker.compose.service\"}}|"
     "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
 )
+CONTAINER_DIAGNOSTIC_INSPECT = (
+    "{{.Id}}|{{.State.Status}}|"
+    "{{index .Config.Labels \"com.docker.compose.project\"}}|"
+    "{{index .Config.Labels \"com.docker.compose.service\"}}"
+)
 SHARED_CONTAINER_INSPECT = "{{.Id}}|{{.Image}}|{{.State.Status}}|{{.State.StartedAt}}"
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
@@ -69,6 +74,11 @@ SAFE_INVENTORY_ERROR_CODES = frozenset({
     "installed_release_rollback_unsafe", "installed_release_rollback_mismatch",
     "inventory_changed_during_scan",
 }) | CONTAINER_VALIDATION_ERROR_CODES
+SAFE_DIAGNOSTIC_ERROR_CODES = frozenset({
+    "diagnostic_container_list_failed", "diagnostic_container_list_invalid",
+    "diagnostic_container_inspect_failed", "diagnostic_container_inventory_invalid",
+    "inventory_error", "inventory_command_failed", "inventory_io_failed",
+})
 
 
 Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
@@ -138,6 +148,65 @@ def _container(service: str, runner: Runner) -> dict[str, object]:
         "running": running == "true",
         "started_at": started_at,
         "health": health,
+    }
+
+
+def _container_diagnostic(service: str, runner: Runner) -> dict[str, int]:
+    if service not in CONTAINER_ROLES:
+        raise InventoryError("diagnostic_container_inventory_invalid")
+    raw_ids = _output(runner([
+        "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "ls",
+        "--all", "--no-trunc", "--quiet",
+        "--filter", "label=com.docker.compose.project=markina-gallery",
+        "--filter", f"label=com.docker.compose.service={service}",
+    ]), "diagnostic_container_list_failed")
+    if len(raw_ids) > 512 * 65:
+        raise InventoryError("diagnostic_container_list_invalid")
+    identifiers = raw_ids.splitlines() if raw_ids else []
+    if (len(identifiers) > 512 or len(identifiers) != len(set(identifiers))
+            or any(not CONTAINER_ID.fullmatch(value) for value in identifiers)):
+        raise InventoryError("diagnostic_container_list_invalid")
+
+    counts = {"records": len(identifiers), "running": 0, "stopped": 0, "unknown": 0}
+    if not identifiers:
+        return counts
+    raw = _output(runner([
+        "/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "container", "inspect",
+        "--format", CONTAINER_DIAGNOSTIC_INSPECT, *identifiers,
+    ]), "diagnostic_container_inspect_failed")
+    rows = raw.splitlines()
+    if len(rows) != len(identifiers):
+        raise InventoryError("diagnostic_container_inventory_invalid")
+
+    expected_ids = set(identifiers)
+    inspected_ids: set[str] = set()
+    for row in rows:
+        parts = row.split("|")
+        if len(parts) != 4:
+            raise InventoryError("diagnostic_container_inventory_invalid")
+        identifier, state, project, actual_service = parts
+        if (not CONTAINER_ID.fullmatch(identifier) or identifier not in expected_ids
+                or identifier in inspected_ids or project != "markina-gallery"
+                or actual_service != service):
+            raise InventoryError("diagnostic_container_inventory_invalid")
+        inspected_ids.add(identifier)
+        if state == "running":
+            category = "running"
+        elif state in {"created", "exited", "dead"}:
+            category = "stopped"
+        else:
+            category = "unknown"
+        counts[category] += 1
+    if inspected_ids != expected_ids:
+        raise InventoryError("diagnostic_container_inventory_invalid")
+    return counts
+
+
+def collect_container_diagnostics(runner: Runner = _run) -> dict[str, object]:
+    """Return only fixed-role aggregate counts; never disclose container records."""
+    return {
+        "schema_version": 1,
+        "roles": {service: _container_diagnostic(service, runner) for service in CONTAINER_ROLES},
     }
 
 
@@ -221,11 +290,13 @@ def _digest(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _safe_failure_code(error: BaseException) -> str:
+def _safe_failure_code(
+    error: BaseException, allowed_codes: frozenset[str] = SAFE_INVENTORY_ERROR_CODES,
+) -> str:
     """Return only a fixed category or allowlisted code, never exception details."""
     if isinstance(error, InventoryError):
         candidate = str(error)
-        return candidate if candidate in SAFE_INVENTORY_ERROR_CODES else "inventory_error"
+        return candidate if candidate in allowed_codes else "inventory_error"
     if isinstance(error, subprocess.SubprocessError):
         return "inventory_command_failed"
     if isinstance(error, OSError):
@@ -489,6 +560,18 @@ def install_preconditions(inventory: dict[str, object]) -> bool:
         return inventory["database_schema"] != ""
     except (KeyError, TypeError):
         return False
+
+
+def diagnostic_main() -> int:
+    try:
+        result = collect_container_diagnostics()
+        report = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        print(f"backup_runtime_container_diagnostics={report}")
+        return 0
+    except (InventoryError, OSError, subprocess.SubprocessError) as exc:
+        print(f"platform-backup-runtime: container diagnostics failed "
+              f"({_safe_failure_code(exc, SAFE_DIAGNOSTIC_ERROR_CODES)})")
+        return 1
 
 
 def main() -> int:
