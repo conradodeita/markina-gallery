@@ -207,3 +207,45 @@ A ponte SHALL oferecer operação fixa de configuração somente da API para o m
 
 - **WHEN** uma fase ficar incompleta ou qualquer identidade divergir
 - **THEN** a ponte MUST bloquear repetição cega e oferecer inventário e recuperação explícitos somente da API, preservando todos os containers
+
+### Requirement: Preparar e restaurar o bootstrap protegido do runtime
+
+Antes do inventário do backup, o suporte SHALL usar operações fixas e protegidas, CI da `main` no SHA exato, fingerprint atual, lock comum e aprovação `production`. SHALL preservar cópias/recibos root-only, alterar somente ponte, forced command e `origin/main`, e oferecer compensação única. A fingerprint de suporte MUST NOT ser aceita como inventário do runtime; checkout, aplicações, banco, containers, Drive e timer MUST NOT ser alterados.
+
+#### Scenario: Preparar a base de suporte sem publicar runtime
+
+- **WHEN** `prepare-support` for executado com SHA atual da `main`, CI verde, fingerprint de suporte idêntica e estado revalidado sob o lock
+- **THEN** SHALL registrar em recibo root-only a presença/hash/metadados anteriores dos executáveis, a presença/SHA anterior da referência Git, os blobs candidatos, a impressão agregada dos containers e as cópias verificadas
+- **AND** SHALL atualizar por compare-and-swap somente `refs/remotes/origin/main`, trocar atomicamente os dois executáveis fixos e confirmar blob/hash, owner/mode/link, allowlist e invariância de containers
+- **AND** SHALL preservar todas as cópias/recibos sem limpeza automática e deixar o runtime de backup sem alteração
+
+#### Scenario: Falha parcial durante preparação
+
+- **WHEN** qualquer operação depois da primeira mutação ou qualquer verificação pós-troca falhar
+- **THEN** SHALL executar no máximo uma compensação verificável na ordem inversa, respeitando a presença/ausência e os hashes registrados
+- **AND** se a compensação não puder ser provada, MUST NOT sobrescrever valor desconhecido nem tentar novamente; SHALL preservar os alvos observados, cópias/recibos e emitir somente `support_preparation_rollback_unverified`
+
+#### Scenario: Recibo, backup ou staging preexistente
+
+- **WHEN** nome de cópia, recibo ou staging fixo já existir antes da preparação
+- **THEN** MUST abortar antes de alterar qualquer alvo, sem sobrescrever ou remover o artefato preexistente
+- **AND** SHALL manter o lock/fingerprint sem aprovação para preparação e emitir somente erro sanitizado
+
+#### Scenario: Preparação concluída requer inventário novo do runtime
+
+- **WHEN** `prepare-support` terminar com sucesso
+- **THEN** o operador SHALL executar em despacho separado `operation=inventory`, que coleta a fingerprint completa do runtime, saúde, schema, espaço, portas/subdomínio e serviços/timers
+- **AND** a fingerprint de suporte MUST NOT liberar `install-wrapper`, vínculo, Drive, backup, restore ou ativação de timer
+
+#### Scenario: Restaurar suporte preparado por recibo
+
+- **WHEN** `restore-support` receber somente o digest de recibo apresentado, com fingerprint read-only atual, CI verde da `main` no SHA exato e aprovação do ambiente protegido
+- **THEN** SHALL preservar primeiro os dois executáveis ativos e o estado atual da ref em cópias/recibo root-only e restaurar os valores anteriores registrados pelo recibo de preparação em ordem inversa
+- **AND** SHALL aceitar somente correspondência única e íntegra de recibo/cópias no diretório fixo, confirmar metadados/hash/sintaxe/allowlist/ref e invariância de containers e preservar todos os recibos/cópias
+- **AND** caminho arbitrário, cópia ausente/ambígua/adulterada, fingerprint divergente, ref/arquivo com valor inesperado ou falha de verificação MUST abortar sem sobrescrever estado desconhecido
+
+#### Scenario: Compensar falha na restauração protegida
+
+- **WHEN** a restauração alterar um ou mais alvos e falhar antes de comprovar o estado anterior
+- **THEN** SHALL tentar uma única compensação para o estado exato imediatamente anterior à restauração usando somente cópias e recibo dessa operação
+- **AND** se a compensação falhar ou não puder ser verificada, SHALL parar, preservar estado observado, cópias e recibos e emitir somente `support_restore_fallback_unverified`; MUST NOT limpar, repetir ou chamar shell/SSH ad hoc
