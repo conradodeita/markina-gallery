@@ -98,24 +98,32 @@ def main() -> None:
     )[0]
     bridge_workflow = (ROOT / ".github/workflows/production-app-compose-bridge-install.yml").read_text(encoding="utf-8")
     evidence_gate, bridge_install = bridge_workflow.split("  production-app-compose-bridge-install:", 1)
-    require("on:\n  workflow_dispatch:\n\npermissions: {}",
-            "instalação da ponte apenas por despacho explícito e sem permissões padrão", evidence_gate)
+    require("on:\n  workflow_dispatch:\n    inputs:\n      operation:",
+            "suporte do preflight apenas por despacho com operação explícita", evidence_gate)
+    require("permissions: {}", "sem permissões padrão no workflow de suporte", evidence_gate)
+    require("options: [support-inventory, prepare-support, restore-support-inventory, restore-support]",
+            "somente as quatro operações aprovadas", evidence_gate)
     main_dispatch = "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
     verify_evidence = 'scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-bridge-install'
     for block in (evidence_gate, bridge_install):
         require(main_dispatch, "instalação apenas na main", block)
         require(verify_evidence, "instalação exige evidência do SHA exato", block)
         require("set -Eeuo pipefail", "falha da consulta bloqueia mesmo com tee", block)
-    require("environment: production", "ponte exige ambiente protegido", bridge_install)
-    require("needs: [ci-evidence]", "instalação aguarda evidência antes da revisão protegida", bridge_install)
-    require("scripts/install-prod-app-compose-bridge.sh", "instalador fixo da ponte", bridge_install)
-    require("scripts/install-prod-preview-migration-wrapper.sh", "wrapper atualizado após instalar ponte", bridge_install)
+    require("environment:", "suporte usa ambiente protegido", bridge_install)
+    require("'production-preflight'", "inventários usam ambiente protegido de preflight", bridge_install)
+    require("'production'", "mutações usam ambiente protegido de produção", bridge_install)
+    require("needs: [ci-evidence]", "operação aguarda evidência antes do gate protegido", bridge_install)
+    require("scripts/install-prod-app-compose-bridge.sh", "runner fixo do canal existente", bridge_install)
+    require("scripts/production_app_preflight_support.py", "helper exato incluído no gate", bridge_install)
+    require("support_args=(--mode", "argumentos de operação montados por allowlist", bridge_install)
+    if "scripts/install-prod-preview-migration-wrapper.sh" in bridge_install:
+        raise AssertionError("o suporte não deve voltar ao instalador de duas etapas")
     if "PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY" in bridge_install or "PRODUCTION_SSH_" in evidence_gate:
         raise AssertionError("segredos da instalação só podem estar no job de instalação protegido")
     if (bridge_install.index(verify_evidence) > bridge_install.index("scripts/install-prod-app-compose-bridge.sh")
             or "app-compose-bridge-install" in WORKFLOW
             or "production-app-release:" in bridge_workflow):
-        raise AssertionError("instalação deve revalidar CI antes de SSH e manter despacho separado do release")
+        raise AssertionError("suporte deve revalidar CI antes do canal SSH e manter despacho separado do release")
     app_release = WORKFLOW.split("  production-app-release:", 1)[1]
     release_scope = WORKFLOW.split("  release-scope:", 1)[1].split(
         "  production-app-image-artifact:", 1

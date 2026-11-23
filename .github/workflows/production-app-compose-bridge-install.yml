@@ -1,13 +1,33 @@
-name: Instalar ponte API e web em produção
+name: Preparar suporte protegido do preflight da aplicação
 
 on:
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Inventariar, preparar ou restaurar o suporte do preflight
+        required: true
+        type: choice
+        options: [support-inventory, prepare-support, restore-support-inventory, restore-support]
+      approval_fingerprint:
+        description: Fingerprint de suporte atual aprovada; obrigatória somente para prepare-support e restore-support
+        required: false
+        type: string
+        default: ''
+      preparation_receipt_sha256:
+        description: Digest do recibo de preparação; obrigatório somente para operações de restauração
+        required: false
+        type: string
+        default: ''
 
 permissions: {}
 
+concurrency:
+  group: production-app-preflight-support
+  cancel-in-progress: false
+
 jobs:
   ci-evidence:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && contains(fromJSON('["support-inventory","prepare-support","restore-support-inventory","restore-support"]'), inputs.operation) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,10 +45,11 @@ jobs:
           python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-bridge-install | tee -a "$GITHUB_STEP_SUMMARY"
 
   production-app-compose-bridge-install:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && contains(fromJSON('["support-inventory","prepare-support","restore-support-inventory","restore-support"]'), inputs.operation) }}
     needs: [ci-evidence]
     runs-on: ubuntu-latest
-    environment: production
+    environment:
+      name: ${{ (inputs.operation == 'support-inventory' || inputs.operation == 'restore-support-inventory') && 'production-preflight' || 'production' }}
     permissions:
       contents: read
       actions: read
@@ -37,39 +58,66 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Revalidar CI do SHA antes da instalação
+      - name: Revalidar CI de push da main para o SHA exato
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-bridge-install | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Instalar ponte root-only e wrapper de inventário revisados
+      - name: Executar somente a operação allowlisted pelo canal existente
         shell: bash
         env:
-          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
-          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
-          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
-          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
-          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+          OPERATION: ${{ inputs.operation }}
+          APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+          PREPARATION_RECEIPT_SHA256: ${{ inputs.preparation_receipt_sha256 }}
         run: |
           set -Eeuo pipefail
-          for required in PRODUCTION_SSH_HOST PRODUCTION_SSH_PORT PRODUCTION_SSH_USER PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS; do
+          [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_REPOSITORY" == conradodeita/markina-gallery ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          for required in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS; do
             [[ -n "${!required}" ]] || { echo "Configuração protegida ausente: $required" >&2; exit 1; }
           done
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( 10#$SSH_PORT >= 1 && 10#$SSH_PORT <= 65535 ))
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          helper_blob="$(git rev-parse "$GITHUB_SHA:scripts/production_app_preflight_support.py")"
+          [[ "$helper_blob" =~ ^[0-9a-f]{40}$ ]]
+          connection_binding="$(printf '%s' "$SSH_HOST|$SSH_PORT|$SSH_USER" | sha256sum | awk '{print $1}')"
+          [[ "$connection_binding" =~ ^[0-9a-f]{64}$ ]]
+          support_args=(--mode "$OPERATION" --support-sha "$GITHUB_SHA" --helper-blob "$helper_blob" --connection-binding "$connection_binding")
+          case "$OPERATION" in
+            support-inventory)
+              [[ -z "$APPROVAL_FINGERPRINT" && -z "$PREPARATION_RECEIPT_SHA256" ]]
+              ;;
+            prepare-support)
+              [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ && -z "$PREPARATION_RECEIPT_SHA256" ]]
+              support_args+=(--approval-fingerprint "$APPROVAL_FINGERPRINT")
+              ;;
+            restore-support-inventory)
+              [[ -z "$APPROVAL_FINGERPRINT" && "$PREPARATION_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+              support_args+=(--receipt-sha256 "$PREPARATION_RECEIPT_SHA256")
+              ;;
+            restore-support)
+              [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$PREPARATION_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+              support_args+=(--approval-fingerprint "$APPROVAL_FINGERPRINT" --receipt-sha256 "$PREPARATION_RECEIPT_SHA256")
+              ;;
+            *) echo 'Operação de suporte inválida' >&2; exit 1 ;;
+          esac
+          umask 077
           key_file="$(mktemp)"; known_hosts_file="$(mktemp)"
-          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
-          printf '%s\n' "$PRODUCTION_SSH_PRIVATE_KEY" > "$key_file"
-          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          trap 'rm -f -- "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_hosts_file"
           chmod 600 "$key_file" "$known_hosts_file"
-          bridge_blob="$(git rev-parse "$GITHUB_SHA:scripts/production_app_compose_bridge.py")"
-          wrapper_blob="$(git rev-parse "$GITHUB_SHA:scripts/production-preflight-ssh-wrapper.sh")"
-          [[ "$bridge_blob" =~ ^[0-9a-f]{40}$ && "$wrapper_blob" =~ ^[0-9a-f]{40}$ ]]
-          ssh_options=(-i "$key_file" -p "$PRODUCTION_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file")
-          target="$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST"
-          ssh "${ssh_options[@]}" "$target" \
-            "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' bash -s -- --support-sha '$GITHUB_SHA' --bridge-blob '$bridge_blob'" \
+          ssh_options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts_file")
+          target="$SSH_USER@$SSH_HOST"
+          remote_command="cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' bash -s -- ${support_args[*]}"
+          ssh "${ssh_options[@]}" "$target" "$remote_command" \
             < scripts/install-prod-app-compose-bridge.sh | tee -a "$GITHUB_STEP_SUMMARY"
-          ssh "${ssh_options[@]}" "$target" \
-            "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' bash -s -- --mode install --support-sha '$GITHUB_SHA' --wrapper-blob '$wrapper_blob'" \
-            < scripts/install-prod-preview-migration-wrapper.sh | tee -a "$GITHUB_STEP_SUMMARY"
