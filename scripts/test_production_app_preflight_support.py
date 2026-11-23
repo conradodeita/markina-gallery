@@ -382,6 +382,41 @@ class SupportCoordinatorTests(unittest.TestCase):
         self.assertEqual(output.getvalue().strip(), "support_error=support_sha_invalid")
         self.assertNotIn("private-input", output.getvalue())
 
+    def test_cli_classifies_allowlisted_unhandled_errors_without_exposing_details(self):
+        cases = (
+            (TypeError("private helper path"), "support_internal_type_error"),
+            (PermissionError("private filesystem path"), "support_internal_io_error"),
+            (subprocess.CalledProcessError(1, "private-command"), "support_internal_command_error"),
+            (KeyError("private field"), "support_internal_lookup_error"),
+        )
+        for error, expected in cases:
+            output = io.StringIO()
+            with self.subTest(expected=expected), patch.object(
+                    support.SupportCoordinator, "inventory", side_effect=error), patch("sys.stdout", output):
+                result = support.main(["--mode", "support-inventory", "--support-sha", SHA_MAIN,
+                                       "--connection-binding", SHA_CONNECTION])
+            self.assertEqual(result, 1)
+            self.assertEqual(output.getvalue().strip(), f"support_error={expected}")
+            self.assertNotIn("private", output.getvalue())
+            self.assertNotIn("Traceback", output.getvalue())
+            self.assertNotIn("support_fingerprint=", output.getvalue())
+
+    def test_cli_keeps_unknown_unhandled_errors_generic(self):
+        class UnlistedFailure(Exception):
+            pass
+
+        output = io.StringIO()
+        with patch.object(support.SupportCoordinator, "inventory",
+                          side_effect=UnlistedFailure("private diagnostic")), patch("sys.stdout", output):
+            result = support.main(["--mode", "support-inventory", "--support-sha", SHA_MAIN,
+                                   "--connection-binding", SHA_CONNECTION])
+        self.assertEqual(result, 1)
+        self.assertEqual(output.getvalue().strip(), "support_error=support_internal_error")
+        self.assertNotIn("private diagnostic", output.getvalue())
+        self.assertNotIn("UnlistedFailure", output.getvalue())
+        self.assertNotIn("Traceback", output.getvalue())
+        self.assertNotIn("support_fingerprint=", output.getvalue())
+
     def test_cli_rejects_unlisted_operation_without_echoing_it(self):
         output = io.StringIO()
         with patch("sys.stdout", output):

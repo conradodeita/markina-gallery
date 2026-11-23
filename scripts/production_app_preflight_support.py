@@ -51,6 +51,20 @@ HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 OBJECT_ID = re.compile(r"^[0-9a-f]{64}$")
 VALID_MODES = {"support-inventory", "prepare-support", "restore-support-inventory", "restore-support"}
+INTERNAL_ERROR_CODES: tuple[tuple[type[BaseException], str], ...] = (
+    (UnicodeError, "support_internal_encoding_error"),
+    (subprocess.SubprocessError, "support_internal_command_error"),
+    (OSError, "support_internal_io_error"),
+    (AssertionError, "support_internal_assertion_error"),
+    (AttributeError, "support_internal_attribute_error"),
+    (ImportError, "support_internal_import_error"),
+    (LookupError, "support_internal_lookup_error"),
+    (NameError, "support_internal_name_error"),
+    (ArithmeticError, "support_internal_arithmetic_error"),
+    (RuntimeError, "support_internal_runtime_error"),
+    (TypeError, "support_internal_type_error"),
+    (ValueError, "support_internal_value_error"),
+)
 ZERO_SHA = "0" * 40
 
 
@@ -60,6 +74,13 @@ class SupportError(Exception):
     def __init__(self, code: str):
         super().__init__(code)
         self.code = code
+
+
+def _internal_error_code(error: BaseException) -> str:
+    for error_type, code in INTERNAL_ERROR_CODES:
+        if isinstance(error, error_type):
+            return code
+    return "support_internal_error"
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -1014,8 +1035,8 @@ def main(argv: list[str] | None = None) -> int:
     except SupportError as exc:
         print(f"support_error={exc.code}")
         return 1
-    except BaseException:  # noqa: BLE001 - CLI output must never expose an unhandled exception.
-        print("support_error=support_internal_error")
+    except BaseException as exc:  # noqa: BLE001 - CLI output must never expose an unhandled exception.
+        print(f"support_error={_internal_error_code(exc)}")
         return 1
 
 

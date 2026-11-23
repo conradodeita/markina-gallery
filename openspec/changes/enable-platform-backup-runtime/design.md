@@ -103,6 +103,25 @@ O proprietário autorizou prosseguir pelas operações já documentadas nesta ch
 
 Esta proposta é distinta do modo `restore-wrapper` aprovado e implementado na 3.2u. `restore-wrapper` recupera somente o forced command de backup e usa o recibo `previous_wrapper_backup_sha256`. O contrato abaixo cobre o bootstrap de suporte do preflight: a ponte Compose, o forced command de preflight e a referência Git local `refs/remotes/origin/main`. Não reutilizar recibos entre esses fluxos.
 
+#### Diagnóstico de exceções internas do helper
+
+O helper SHALL mapear somente as classes abaixo para códigos fixos:
+
+- UnicodeError → support_internal_encoding_error
+- subprocess.SubprocessError → support_internal_command_error
+- OSError → support_internal_io_error
+- AssertionError → support_internal_assertion_error
+- AttributeError → support_internal_attribute_error
+- ImportError → support_internal_import_error
+- LookupError → support_internal_lookup_error
+- NameError → support_internal_name_error
+- ArithmeticError → support_internal_arithmetic_error
+- RuntimeError → support_internal_runtime_error
+- TypeError → support_internal_type_error
+- ValueError → support_internal_value_error
+
+Classes não reconhecidas permanecem em support_internal_error. A saída SHALL NOT interpolar o nome da classe, mensagem, traceback, caminho, argumentos ou saída de subprocesso; qualquer falha SHALL abortar antes de emitir fingerprint.
+
 #### Escopo e identidade
 
 - O fluxo deverá ter operações fixas e separadas: `support-inventory` somente leitura, `prepare-support`, `restore-support-inventory` somente leitura e `restore-support`. Todas usam workflow/canal protegido já revisado, checkout em `main`, CI verde para o SHA exato que executa a operação, identidade fixa do host/repositório e ambiente `production`. Mesmo as operações read-only usam credenciais SSH do ambiente `production` e, portanto, exigem o gate de revisor desse ambiente; não copiar essas credenciais para `production-preflight`, que não possui revisor obrigatório. Nenhuma operação aceita shell, comando, caminho, serviço, SHA ou arquivo arbitrário como input; a restauração aceita somente digest de recibo e fingerprint aprovados.
