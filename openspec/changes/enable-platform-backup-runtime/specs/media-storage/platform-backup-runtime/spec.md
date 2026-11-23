@@ -212,6 +212,13 @@ A ponte SHALL oferecer operação fixa de configuração somente da API para o m
 
 Antes do inventário do backup, o suporte SHALL usar operações fixas e protegidas, CI da `main` no SHA exato, fingerprint atual, lock comum e aprovação `production`. SHALL preservar cópias/recibos root-only, alterar somente ponte, forced command e `origin/main`, e oferecer compensação única. A fingerprint de suporte MUST NOT ser aceita como inventário do runtime; checkout, aplicações, banco, containers, Drive e timer MUST NOT ser alterados.
 
+#### Scenario: Inventário read-only usa credenciais protegidas de produção
+
+- **WHEN** `support-inventory` ou `restore-support-inventory` acessa o host pelo canal SSH atual
+- **THEN** SHALL exigir aprovação do ambiente `production`, que contém as credenciais SSH usadas pelo fluxo
+- **AND** MUST NOT disponibilizar essas credenciais no ambiente `production-preflight` sem revisor obrigatório
+- **AND** SHALL limitar a operação aos dados read-only descritos no contrato, sem alterar host, containers ou configuração
+
 #### Scenario: Preparar a base de suporte sem publicar runtime
 
 - **WHEN** `prepare-support` for executado com SHA atual da `main`, CI verde, fingerprint de suporte idêntica e estado revalidado sob o lock
