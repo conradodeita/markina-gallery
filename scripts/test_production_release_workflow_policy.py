@@ -110,8 +110,9 @@ def main() -> None:
         require(verify_evidence, "instalação exige evidência do SHA exato", block)
         require("set -Eeuo pipefail", "falha da consulta bloqueia mesmo com tee", block)
     require("environment:", "suporte usa ambiente protegido", bridge_install)
-    require("'production-preflight'", "inventários usam ambiente protegido de preflight", bridge_install)
-    require("'production'", "mutações usam ambiente protegido de produção", bridge_install)
+    require("environment: production", "todas as operações de suporte protegem credenciais SSH de produção", bridge_install)
+    if "'production-preflight'" in bridge_install:
+        raise AssertionError("credenciais SSH de produção não ficam disponíveis no ambiente sem revisor")
     require("needs: [ci-evidence]", "operação aguarda evidência antes do gate protegido", bridge_install)
     require("scripts/install-prod-app-compose-bridge.sh", "runner fixo do canal existente", bridge_install)
     require("scripts/production_app_preflight_support.py", "helper exato incluído no gate", bridge_install)

@@ -48,8 +48,9 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && contains(fromJSON('["support-inventory","prepare-support","restore-support-inventory","restore-support"]'), inputs.operation) }}
     needs: [ci-evidence]
     runs-on: ubuntu-latest
-    environment:
-      name: ${{ (inputs.operation == 'support-inventory' || inputs.operation == 'restore-support-inventory') && 'production-preflight' || 'production' }}
+    # All support operations use production-scoped SSH credentials. Even the
+    # read-only inventory must pass the production environment reviewer gate.
+    environment: production
     permissions:
       contents: read
       actions: read

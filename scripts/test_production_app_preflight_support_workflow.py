@@ -27,8 +27,8 @@ def main() -> int:
     require(WORKFLOW.count("python scripts/verify_main_ci_evidence.py --sha \"$GITHUB_SHA\" --app-bridge-install") == 2,
             "support_workflow_does_not_revalidate_exact_ci_twice")
     require("needs: [ci-evidence]" in WORKFLOW, "support_operation_skips_ci_evidence_job")
-    require("'production-preflight'" in WORKFLOW and "'production'" in WORKFLOW,
-            "read_and_mutating_operations_do_not_use_distinct_protected_environments")
+    require("environment: production" in WORKFLOW and "production-preflight" not in WORKFLOW,
+            "support_operations_must_gate_production_ssh_credentials")
     require("PRODUCTION_SSH_PRIVATE_KEY" in WORKFLOW and "PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY" not in WORKFLOW,
             "support_workflow_does_not_reuse_existing_protected_channel")
     require("scripts/install-prod-app-compose-bridge.sh" in WORKFLOW
