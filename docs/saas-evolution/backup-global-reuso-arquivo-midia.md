@@ -27,13 +27,14 @@ Registro de continuidade de 20/11/2026, solicitado pelo proprietário para evita
 | [google_drive_storage.py](../../backend/app/google_drive_storage.py) | `upload_drive_file`, envio retomável, medição dos bytes, validação da resposta, receipts e `provider_failure_code` | Mapear os receipts ao objeto/ciclo de mídia; conservar idempotência e recusa de conteúdo divergente. |
 | [platform_backup/workspace_store.py](../../backend/app/platform_backup/workspace_store.py) | Referência comprovada para streaming, leitura de retorno, tamanho/checksum e tratamento de erros do Drive | O store é especializado em artefatos globais cifrados e `BackupContext`. Reutilizar primitivas compatíveis; não substituir o contrato de mídia por um pacote de banco. Extração de helper comum exige consumidores e compatibilidade comprovados. |
 | [platform_backup/workspace_credentials.py](../../backend/app/platform_backup/workspace_credentials.py) e [integration_secrets.py](../../backend/app/integration_secrets.py) | Padrões de acesso efêmero, credenciais cifradas, configuração externa e erros sanitizados | A factory do backup valida contexto owner-only específico. A mídia precisa de seu próprio vínculo autorizado; não chamar essa factory como atalho para outro contexto. |
+| [google_drive_media_archive_storage.py](../../backend/app/google_drive_media_archive_storage.py) | Adaptador `MediaArchiveStorage` exige token, raiz, tenant e transporte explícitos; a topologia aprovada é raiz → tenant → galeria → pasta → ciclo, com UUIDs e `appProperties` privadas. Busca de catálogo incompleta/ambígua falha fechado; bytes são baixados em streaming e falhas sanitizadas. Provas em [validation.md](../../openspec/changes/add-gallery-media-archive/validation.md). | O código não está ligado ao worker/runtime, não tem credencial/root configurados e só foi exercitado por transporte sintético. A raiz e identidade de mídia continuam separadas do backup global e aguardam o gate operacional 1.4. |
 | [Validações operacionais](../../openspec/changes/enable-platform-backup-runtime/release-preflight.md) | Método de inventário, fingerprint, revisão de escopo, CI do SHA exato, preservação de rollback e saúde pós-release | O release API/web não instala automaticamente outro worker, mount, identidade, segredo ou timer. Cada operação usa o gate já aprovado para seu escopo. |
 
 ## Núcleo de mídia já existente — começar por estes consumidores
 
 | Código | Responsabilidade pronta que deve ser preservada |
 |---|---|
-| [media_archive_storage.py](../../backend/app/media_archive_storage.py) | Interface `MediaArchiveStorage`: `upload_object`, `read_object`, `download_object` e `delete_object`; fronteira para o adaptador real. |
+| [media_archive_storage.py](../../backend/app/media_archive_storage.py) | Interface `MediaArchiveStorage`: `upload_object`, `read_object`, `download_object` e `delete_object`; fronteira provider-neutral do adaptador sintético e do adaptador Drive local já implementado. |
 | [media_archive_executor.py](../../backend/app/media_archive_executor.py) | `execute_archive_operation`, readback integral em `_verify_remote_object`, download conferido, promoção de staging e `execute_restore_operation`. |
 | [media_archive_manifest.py](../../backend/app/media_archive_manifest.py) | Manifesto canônico com UUIDs, tamanhos, SHA-256, IDs remotos e validação da origem/destino pelos registros existentes. |
 | [media_archive_worker.py](../../backend/app/media_archive_worker.py) e [media_archive_scheduler.py](../../backend/app/media_archive_scheduler.py) | Fila durável, claims, leases, checkpoints, transições e agendamento pelo lifecycle da mídia. |
@@ -42,9 +43,9 @@ Registro de continuidade de 20/11/2026, solicitado pelo proprietário para evita
 
 ## Sequência de implementação da ligação real
 
-1. Ler a task 1.4, design/specs e evidências da change de arquivo. Conferir o runtime publicado e os consumidores acima antes de adicionar outra abstração.
-2. Inventariar o adaptador disponível e completar a implementação de `MediaArchiveStorage` para Drive usando os helpers comuns. Reaproveitar contratos/fixtures; não reconstruir a fila, catálogo, manifesto ou recuperação.
-3. Vincular identidade e raiz próprias de mídia; organizar subpastas por UUID de tenant/galeria/pasta/ciclo conforme o design. O vínculo no banco e a autorização no servidor são obrigatórios em cada operação; diretórios não são barreira de autorização.
+1. Ler as tasks 1.4a e 1.4, design/specs e evidências da change de arquivo. Conferir o runtime publicado e os consumidores abaixo antes de ligar qualquer adaptador.
+2. Reutilizar `GoogleDriveMediaArchiveStorage` e seus testes sintéticos; não reconstruir o transporte, a fila, o catálogo, o manifesto ou a recuperação. O código provider-specific não está ligado ao runtime e nenhuma chamada real foi feita.
+3. No gate pós-release 1.4, provisionar/verificar a identidade e a raiz próprias de mídia. O adaptador organiza pastas encadeadas por UUID de tenant, galeria, pasta e ciclo sob a raiz; `appProperties` privadas vinculam a hierarquia e o objeto à chave/manifesto. O vínculo no banco e a autorização no servidor continuam obrigatórios em cada operação; diretórios não são barreira de autorização.
 4. Conectar o adaptador ao caller/agendamento existente, com limites de tamanho, tempo, quota e retentativas revisados. Preservar fila global, leases, estados incertos e reconciliação.
 5. Executar o ensaio autorizado com galeria e JPEGs sintéticos do proprietário: upload, readback integral, manifesto/checksums e só então liberação dos bytes locais prevista pelo contrato. Recuperar os mesmos registros e conferir IDs, seleções, pedidos, prévias e histórico.
 6. Provar retry/interrupção, recusa de tenant divergente, quota e espaço insuficientes, fonte/objeto ausente e resultado incerto. Não promover operação parcial a sucesso nem cobrar recuperação incompleta.
@@ -74,4 +75,4 @@ Reutilizar resultados quando código, dependências, configuração e ambiente r
 - A recuperação lógica do banco de um único tenant continua em fase própria. A restauração global inclui o catálogo de mídia, mas não traz automaticamente seus bytes do Drive.
 - A v1 de arquivo não habilita expurgo remoto de fotos por idade. A autorização de backup global não autoriza remover mídia ou operar outras contas/serviços.
 
-Próxima ação após comprovar o backup global: retomar a task 1.4 do arquivo a partir deste mapa, começando pela fronteira `MediaArchiveStorage` e pelo transporte real já existente.
+Próxima ação após comprovar o backup global: retomar a task 1.4 do arquivo para provisionar/verificar identidade, raiz, permissões e limites, e só então executar o ensaio real do proprietário. O adaptador local da task 1.4a e suas provas sintéticas devem ser reaproveitados, sem repetir a implementação do zero.

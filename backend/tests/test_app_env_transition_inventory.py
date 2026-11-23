@@ -29,6 +29,7 @@ EXPECTED_REFERENCE_LINE_COUNTS = {
     "backend/app/gallery_access.py": 2,
     "backend/app/google_drive_oauth.py": 4,
     "backend/app/google_drive_storage.py": 1,
+    "backend/app/google_drive_media_archive_storage.py": 1,
     "backend/app/homolog_cleanup.py": 3,
     "backend/app/integration_secrets.py": 4,
     "backend/app/mercadopago_credit_purchases.py": 1,

@@ -94,6 +94,23 @@ class _DigestingReader:
         self._digest = sha256()
         self.size_bytes = 0
 
+    def seekable(self) -> bool:
+        seekable = getattr(self._stream, "seekable", None)
+        if not callable(seekable):
+            return False
+        try:
+            return bool(seekable())
+        except (OSError, TypeError, ValueError):
+            return False
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        if offset != 0 or whence != 0 or not self.seekable():
+            raise OSError("O leitor só permite reposicionamento ao início.")
+        position = self._stream.seek(0, 0)
+        self._digest = sha256()
+        self.size_bytes = 0
+        return position if isinstance(position, int) else 0
+
     def read(self, size: int = -1) -> bytes:
         self._renew()
         payload = self._stream.read(size)
