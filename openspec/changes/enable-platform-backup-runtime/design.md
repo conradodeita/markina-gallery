@@ -122,6 +122,8 @@ O helper SHALL mapear somente as classes abaixo para códigos fixos:
 
 Classes não reconhecidas permanecem em support_internal_error. A saída SHALL NOT interpolar o nome da classe, mensagem, traceback, caminho, argumentos ou saída de subprocesso; qualquer falha SHALL abortar antes de emitir fingerprint.
 
+O coletor SHALL consumir `stdout` do `CompletedProcess` retornado pelo adapter `_run`; MUST NOT desempacotar o objeto como tupla. SHALL validar que `Id`, `Image`, `State.Status` e `State.StartedAt` são strings antes de regex, membership ou comprimento. Resposta malformada SHALL produzir somente `support_container_inventory_invalid`, sem valores ou fingerprint. A revisão local reproduziu `TypeError: cannot unpack non-iterable CompletedProcess object` ao aplicar a implementação anterior ao contrato real do adapter, compatível com `support_internal_type_error` no run `45267463556`; como o log remoto não tem traceback, a correspondência não prova a pilha exata do host.
+
 #### Escopo e identidade
 
 - O fluxo deverá ter operações fixas e separadas: `support-inventory` somente leitura, `prepare-support`, `restore-support-inventory` somente leitura e `restore-support`. Todas usam workflow/canal protegido já revisado, checkout em `main`, CI verde para o SHA exato que executa a operação, identidade fixa do host/repositório e ambiente `production`. Mesmo as operações read-only usam credenciais SSH do ambiente `production` e, portanto, exigem o gate de revisor desse ambiente; não copiar essas credenciais para `production-preflight`, que não possui revisor obrigatório. Nenhuma operação aceita shell, comando, caminho, serviço, SHA ou arquivo arbitrário como input; a restauração aceita somente digest de recibo e fingerprint aprovados.
