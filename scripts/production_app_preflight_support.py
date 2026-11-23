@@ -295,7 +295,8 @@ class LocalSupportHost:
         }
 
     def _container_digest(self) -> str:
-        _, ids_bytes = self._run(["docker", "ps", "-aq", "--no-trunc"], code="support_container_inventory_failed")
+        ids_result = self._run(["docker", "ps", "-aq", "--no-trunc"], code="support_container_inventory_failed")
+        ids_bytes = ids_result.stdout
         try:
             ids = ids_bytes.decode("ascii").splitlines()
         except UnicodeDecodeError:
@@ -304,7 +305,8 @@ class LocalSupportHost:
             raise SupportError("support_container_inventory_invalid")
         rows: list[dict[str, str]] = []
         if ids:
-            _, inspected = self._run(["docker", "inspect", *sorted(ids)], code="support_container_inventory_failed")
+            inspect_result = self._run(["docker", "inspect", *sorted(ids)], code="support_container_inventory_failed")
+            inspected = inspect_result.stdout
             try:
                 records = json.loads(inspected)
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -319,10 +321,12 @@ class LocalSupportHost:
                     started = item["State"]["StartedAt"]
                 except (KeyError, TypeError):
                     raise SupportError("support_container_inventory_invalid") from None
-                if (container_id not in ids or not OBJECT_ID.fullmatch(container_id)
+                if (not isinstance(container_id, str) or not isinstance(image_id, str)
+                        or not isinstance(state, str) or not isinstance(started, str)
+                        or container_id not in ids or not OBJECT_ID.fullmatch(container_id)
                         or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
                         or state not in {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
-                        or not isinstance(started, str) or not started or len(started) > 64):
+                        or not started or len(started) > 64):
                     raise SupportError("support_container_inventory_invalid")
                 rows.append({"id": container_id, "image": image_id, "state": state, "started": started})
         if {row["id"] for row in rows} != set(ids):

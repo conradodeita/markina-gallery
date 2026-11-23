@@ -25,6 +25,12 @@ O suporte do preflight SHALL usar operações fixas e protegidas, CI verde da `m
 - **THEN** SHALL emitir somente fingerprint específica de suporte e resumo sanitizado; MUST NOT tratar essa fingerprint como inventário/fingerprint do runtime de backup
 - **AND** se a coleta for incompleta, não emitir fingerprint nem autorizar preparação
 
+#### Scenario: Resposta de docker inspect contém campos com tipos inválidos
+
+- **WHEN** `support-inventory` recebe campos `Id`, `Image`, `State.Status` ou `State.StartedAt` ausentes ou com tipo diferente de string
+- **THEN** SHALL abortar com somente `support_container_inventory_invalid`, sem fingerprint ou precondição aprovada
+- **AND** valores do JSON, IDs/imagens de containers, exceção, caminho e saída de comando MUST NOT aparecer no log
+
 #### Scenario: Preparação com estado ainda aprovado
 
 - **WHEN** a fingerprint revisada, o SHA de main/CI, os alvos fixos e a identidade dos containers forem revalidados sob o lock comum

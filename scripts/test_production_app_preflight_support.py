@@ -5,6 +5,7 @@ import contextlib
 import copy
 import hashlib
 import io
+import json
 import stat
 import subprocess
 import tempfile
@@ -372,6 +373,81 @@ class SupportCoordinatorTests(unittest.TestCase):
             self.coordinator.restore(SHA_MAIN, SHA_CONNECTION, fingerprint, receipt)
         self.assertEqual(self.host.contents["wrapper"], b"unexpected-external-state")
         self.assertTrue(self.host.backups)
+
+    def test_container_inspect_fields_are_type_checked_before_pattern_operations(self):
+        container_id = "a" * 64
+        record = {
+            "Id": container_id,
+            "Image": f"sha256:{'b' * 64}",
+            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+        }
+        malformed_records = (
+            ("Id", lambda item: item.update({"Id": None})),
+            ("Image", lambda item: item.update({"Image": {"private": "value"}})),
+            ("State.Status", lambda item: item["State"].update({"Status": []})),
+            ("State.StartedAt", lambda item: item["State"].update({"StartedAt": ["private"]})),
+        )
+
+        for field, mutate in malformed_records:
+            with self.subTest(field=field):
+                candidate = copy.deepcopy(record)
+                mutate(candidate)
+                host = support.LocalSupportHost()
+                ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
+                inspect = subprocess.CompletedProcess(
+                    ["docker", "inspect"], 0, json.dumps([candidate]).encode(), b"")
+                with (
+                    patch.object(host, "_run", side_effect=[ps, inspect]),
+                    self.assertRaises(support.SupportError) as caught,
+                ):
+                    host._container_digest()
+                self.assertEqual(caught.exception.code, "support_container_inventory_invalid")
+                self.assertNotIn("private", str(caught.exception))
+
+    def test_malformed_container_fields_emit_sanitized_error_without_fingerprint(self):
+        container_id = "a" * 64
+        record = {
+            "Id": None,
+            "Image": f"sha256:{'b' * 64}",
+            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+        }
+        ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
+        inspect = subprocess.CompletedProcess(
+            ["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
+        output = io.StringIO()
+        with (
+            patch.object(support.LocalSupportHost, "lock", return_value=contextlib.nullcontext()),
+            patch.object(support.LocalSupportHost, "_assert_host_repository", return_value="fixed-repository"),
+            patch.object(support.LocalSupportHost, "_remote_main_sha", return_value=SHA_MAIN),
+            patch.object(support.LocalSupportHost, "_ref_sha", return_value=SHA_OLD),
+            patch.object(support.LocalSupportHost, "target_state", return_value={"present": False}),
+            patch.object(support.LocalSupportHost, "_run", side_effect=[ps, inspect]),
+            patch("sys.stdout", output),
+        ):
+            result = support.main([
+                "--mode", "support-inventory",
+                "--support-sha", SHA_MAIN,
+                "--connection-binding", SHA_CONNECTION,
+            ])
+
+        self.assertEqual(result, 1)
+        self.assertEqual(output.getvalue().strip(), "support_error=support_container_inventory_invalid")
+        self.assertNotIn("support_fingerprint=", output.getvalue())
+        self.assertNotIn(container_id, output.getvalue())
+
+    def test_container_digest_reads_completed_process_stdout(self):
+        container_id = "a" * 64
+        record = {
+            "Id": container_id,
+            "Image": f"sha256:{'b' * 64}",
+            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+        }
+        ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
+        inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
+        host = support.LocalSupportHost()
+        with patch.object(host, "_run", side_effect=[ps, inspect]):
+            digest = host._container_digest()
+        self.assertEqual(len(digest), 64)
 
     def test_cli_errors_are_static_and_do_not_echo_untrusted_argument(self):
         output = io.StringIO()
