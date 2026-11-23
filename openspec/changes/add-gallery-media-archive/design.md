@@ -46,7 +46,9 @@ O adaptador valida o snapshot em blocos limitados antes de buscar um retry. Quan
 
 Um retry localiza o objeto sob a pasta de ciclo e valida UUIDs, pai, nome/hash da chave, MIME, tamanho, namespace e propriedades privadas antes de devolver o ID. O executor então faz readback integral em streaming e compara tamanho/SHA-256 com o snapshot antes de promover sucesso ou remover bytes locais. Download valida ownership remoto e grava somente no destino privado; exclusão só atinge objeto validado nessa hierarquia. Ausência é sucesso idempotente somente quando todas as buscas necessárias são completas. Nenhuma operação recebe caminho local do chamador nem devolve URL pública/de preview.
 
-Os testes locais podem colocar `APP_ENV=production` somente para atravessar o gate existente do helper de upload, mas devem injetar um transporte falso que não execute rede e usar valores/arquivos sintéticos. A composição do worker continua no adapter sintético. A classe provider-specific não será ligada ao runtime, configurada com token real, ou chamada contra Google até a etapa protegida da task 1.4.
+Cada operação pública do adapter provider-specific (upload, leitura de metadados, download e exclusão) verifica `APP_ENV=production` antes de consumir a fonte, resolver pastas ou invocar o transporte. Fora desse ambiente, falha com erro sanitizado sem qualquer chamada HTTP; o gate apenas restringe o ambiente e não autoriza uma operação real. O helper compartilhado `upload_drive_file` mantém seu próprio gate.
+
+Os testes locais podem definir `APP_ENV=production` somente para atravessar os gates de ambiente, mas devem injetar um transporte falso que não execute rede e usar valores/arquivos sintéticos. Regressões em desenvolvimento verificam que todas as operações do adapter falham antes de qualquer chamada e sem consumir/alterar os streams. A composição normal do worker continua no adapter sintético. A classe provider-specific não será ligada ao runtime, configurada com token real, ou chamada contra Google até a etapa protegida da task 1.4.
 
 ### Interface do prazo por pasta
 

@@ -8,6 +8,7 @@ usando o adapter sintético.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from contextlib import AbstractContextManager
 from typing import Any, BinaryIO, Protocol
@@ -86,6 +87,7 @@ class GoogleDriveMediaArchiveStorage:
         sha256: str,
         stream: BinaryIO,
     ) -> ArchiveRemoteObject:
+        self._require_production_environment()
         key_hash, gallery_id, folder_id, cycle_id = self._validate_object_key(object_key)
         if (
             not isinstance(mime_type, str)
@@ -160,6 +162,7 @@ class GoogleDriveMediaArchiveStorage:
         return ArchiveRemoteObject(receipt.file_id, receipt.size_bytes, mime_type)
 
     def read_object(self, *, remote_id: str) -> ArchiveRemoteObject | None:
+        self._require_production_environment()
         verified = self._owned_object(remote_id)
         return verified[0] if verified else None
 
@@ -169,6 +172,7 @@ class GoogleDriveMediaArchiveStorage:
         remote_id: str,
         destination: BinaryIO,
     ) -> ArchiveDownloadReceipt:
+        self._require_production_environment()
         verified = self._owned_object(remote_id)
         if verified is None:
             raise GoogleDriveMediaArchiveError("Objeto de mídia remoto não encontrado.")
@@ -211,6 +215,7 @@ class GoogleDriveMediaArchiveStorage:
         return ArchiveDownloadReceipt(total, sha256)
 
     def delete_object(self, *, remote_id: str) -> None:
+        self._require_production_environment()
         verified = self._owned_object(remote_id)
         if verified is None:
             return
@@ -226,6 +231,14 @@ class GoogleDriveMediaArchiveStorage:
         if response.status_code == 404 or 200 <= response.status_code < 300:
             return
         raise self._response_error(response, "Não foi possível excluir o objeto de mídia.")
+
+    @staticmethod
+    def _require_production_environment() -> None:
+        if os.getenv("APP_ENV", "development") != "production":
+            raise GoogleDriveMediaArchiveError(
+                "Operações do adaptador Google Drive estão habilitadas somente em produção.",
+                code="authorization",
+            )
 
     def _validate_object_key(self, object_key: str) -> tuple[str, str, str, str]:
         if not isinstance(object_key, str) or len(object_key) != 184:

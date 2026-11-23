@@ -167,6 +167,16 @@ A configuração e os testes reais do Drive SHALL ocorrer somente depois da entr
 - **WHEN** a versão autorizada entra em produção e o ensaio do proprietário ainda não passou
 - **THEN** outros fotógrafos/tenants não podem se cadastrar nem usar o sistema
 
+### Requirement: O adapter provider-specific falha fechado fora de produção
+
+O adapter Google Drive SHALL recusar operações de upload, leitura, download e exclusão quando `APP_ENV` não for `production`. A recusa SHALL ocorrer antes de invocar o transporte ou consumir/alterar streams; o helper compartilhado mantém seu próprio gate de upload.
+
+#### Scenario: Operações do adapter são bloqueadas no desenvolvimento
+
+- **WHEN** upload, leitura, download ou exclusão é chamado com `APP_ENV` diferente de `production`
+- **THEN** o adapter retorna erro sanitizado sem invocar qualquer método do transporte ou consumir/alterar streams
+- **AND** a falha ocorre antes de resolver ou criar pastas remotas
+
 ### Requirement: A validação do proprietário cobre sua mídia antes dos tenants
 
 Antes de liberar qualquer tenant além do proprietário, o sistema SHALL validar arquivo e recuperação completos numa galeria sintética do próprio tenant UUID do proprietário. A mídia do proprietário SHALL receber a mesma cobertura de arquivo frio, recuperação e cópia de segurança de mídia dos tenants, mantendo a isenção de créditos. O teste SHALL incluir readback e conferência de manifesto/checksums e SHALL NOT usar fotos de clientes.

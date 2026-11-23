@@ -93,6 +93,12 @@ def adapter(transport: SyntheticDriveTransport) -> GoogleDriveMediaArchiveStorag
     )
 
 
+@pytest.fixture(autouse=True)
+def _allow_synthetic_drive_calls(monkeypatch):
+    # O transporte desta suíte é sempre local; produção apenas atravessa o gate do adapter.
+    monkeypatch.setenv("APP_ENV", "production")
+
+
 def tenant_folder_resource():
     return {
         "id": TENANT_FOLDER_ID,
@@ -210,6 +216,42 @@ def queue_new_path(transport: SyntheticDriveTransport):
         queue_folder_lookup(transport)
     for resource in resources:
         transport.respond("POST", FakeResponse(200, resource))
+
+
+@pytest.mark.parametrize("operation", ["upload", "read", "download", "delete"])
+@pytest.mark.parametrize("app_env", ["development", "test", "staging", None])
+def test_provider_adapter_blocks_all_operations_outside_production_without_transport(
+    monkeypatch, operation, app_env,
+):
+    if app_env is None:
+        monkeypatch.delenv("APP_ENV", raising=False)
+    else:
+        monkeypatch.setenv("APP_ENV", app_env)
+    transport = SyntheticDriveTransport()
+    store = adapter(transport)
+    source = BytesIO(b"synthetic media bytes")
+    destination = BytesIO()
+
+    with pytest.raises(GoogleDriveMediaArchiveError, match="somente em produção") as error:
+        if operation == "upload":
+            store.upload_object(
+                object_key=OBJECT_KEY,
+                mime_type="image/jpeg",
+                size_bytes=len(source.getvalue()),
+                sha256=hashlib.sha256(source.getvalue()).hexdigest(),
+                stream=source,
+            )
+        elif operation == "read":
+            store.read_object(remote_id=FILE_ID)
+        elif operation == "download":
+            store.download_object(remote_id=FILE_ID, destination=destination)
+        else:
+            store.delete_object(remote_id=FILE_ID)
+
+    assert error.value.code == "authorization"
+    assert transport.calls == []
+    assert source.tell() == 0
+    assert destination.getvalue() == b""
 
 
 def queue_owned_file_lookup(transport: SyntheticDriveTransport, resource):
