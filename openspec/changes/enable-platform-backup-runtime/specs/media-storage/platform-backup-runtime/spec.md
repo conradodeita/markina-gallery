@@ -103,6 +103,12 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **THEN** o operador SHALL receber somente um código técnico estático permitido ou uma categoria fixa de I/O/comando; nenhuma fingerprint ou precondição aprovada SHALL ser emitida
 - **AND** mensagens de exceção, caminhos, saídas de comandos, dados de configuração, segredos, tokens, chaves e IDs do Drive MUST NOT aparecer no log
 
+#### Scenario: Classificar exceção interna sem expor detalhes
+
+- **WHEN** o helper de suporte encontra uma exceção interna cuja classe pertence à allowlist estática
+- **THEN** SHALL emitir somente o código de categoria fixo associado; classes desconhecidas SHALL continuar usando support_internal_error
+- **AND** texto, classe dinâmica, traceback, caminhos e valores da exceção MUST NOT aparecer no log, e nenhuma fingerprint ou precondição aprovada SHALL ser emitida
+
 #### Scenario: Registro de container falha na validação
 
 - **WHEN** o registro de API, web ou banco não corresponder ao formato fixo esperado
