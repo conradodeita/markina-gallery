@@ -18,6 +18,7 @@
 - `origin/main` e a base da branch coincidem em `bc96fcda3172b73fe452f8fc98ebc3d7fcb86932`; a CI da main `45311450221` terminou success nesse SHA exato.
 - `gh` está autenticado para o repositório. Gitleaks não está instalado localmente; a revisão manual foi complementada pela verificação remota de segredos aprovada na CI da PR abaixo.
 - PR #422, SHA `08303e7b94bf386d1437ab65a26f5cec681d4300`: CI `45391768675` terminou success. Gitleaks, OpenSpec, classificação de escopo, backend-quality, quatro shards backend, frontend, imagens AMD64/ARM64, `homolog-inventory-policy` e `gemma-runtime` passaram; jobs de produção foram ignorados pelo escopo. O resultado é válido para esse SHA; a integração e CI da main ainda estão pendentes.
+- Após atualização documental, PR #422, SHA `e5875a8eb263e9ec21d015856633b986ab07415a`: CI `45395605397` terminou success, incluindo Gitleaks, OpenSpec, classificação de escopo, backend-quality, quatro shards backend, frontend, imagens AMD64/ARM64 e agregados `backend`, `homolog-inventory-policy` e `gemma-runtime`; jobs de produção foram ignorados pelo escopo. A integração e a CI da main ainda estão pendentes.
 
 ## Task 2.1 — integração local — 24/11/2026 BRT
 
