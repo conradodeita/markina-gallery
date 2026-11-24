@@ -225,6 +225,20 @@ Antes do inventário do backup, o suporte SHALL usar operações fixas e protegi
 - **AND** MUST NOT disponibilizar essas credenciais no ambiente `production-preflight` sem revisor obrigatório
 - **AND** SHALL limitar a operação aos dados read-only descritos no contrato, sem alterar host, containers ou configuração
 
+#### Scenario: Inventário read-only verifica diretórios do suporte
+
+- **WHEN** support-inventory coleta o estado para preparar o suporte protegido
+- **THEN** SHALL classificar somente por leitura os diretórios fixos de recibos e cópias como ready, creatable, parent_invalid, directory_invalid ou unavailable e incluir as categorias na fingerprint de suporte
+- **AND** a saída SHALL mostrar somente as categorias estáticas, sem caminhos, owner, mode bruto, conteúdo ou metadados de arquivo
+- **AND** MUST NOT criar, alterar permissões, remover ou limpar diretórios, arquivos, recibos ou cópias
+
+#### Scenario: Diretório inseguro bloqueia preparação antes de mutação
+
+- **WHEN** a fingerprint aprovada registra qualquer diretório de suporte como parent_invalid, directory_invalid ou unavailable, ou o estado revalidado sob lock diverge
+- **THEN** prepare-support SHALL abortar antes de buscar candidatos, criar diretórios, cópias ou recibos, ou alterar a referência Git e os executáveis
+- **AND** SHALL emitir somente support_state_directory_invalid ou support_backup_directory_invalid, sem fingerprint de preparação ou recibo
+- **AND** ready e creatable SHALL ser aceitos somente quando os pais fixos passarem pelas verificações root-only; qualquer criação SHALL ocorrer apenas dentro da operação protegida aprovada
+
 #### Scenario: Preparar a base de suporte sem publicar runtime
 
 - **WHEN** `prepare-support` for executado com SHA atual da `main`, CI verde, fingerprint de suporte idêntica e estado revalidado sob o lock
