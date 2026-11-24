@@ -82,10 +82,39 @@ class InventoryTests(unittest.TestCase):
                 return self._result(list(argv), "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/test 100000 50000 50000 50% /var/lib\n")
             if argv[0] == "/usr/bin/systemctl":
                 if argv[-1] == "pyp-platform-backup.timer":
-                    return self._result(list(argv), f"not-found\n{timer_enabled}\ninactive\n")
-                return self._result(list(argv), "not-found\nunknown\ninactive\n")
+                    return self._result(list(argv), f"ActiveState=inactive\nLoadState=not-found\nUnitFileState={timer_enabled}\n")
+                return self._result(list(argv), "ActiveState=inactive\nLoadState=not-found\nUnitFileState=\n")
             raise AssertionError(f"unexpected command class: {argv[0]}")
         return run
+
+    def test_systemd_reader_requests_named_properties_and_preserves_empty_state(self) -> None:
+        unit = "pyp-platform-backup.service"
+        runner = mock.Mock(return_value=self._result(
+            [], "ActiveState=inactive\nLoadState=not-found\nUnitFileState=\n",
+        ))
+        self.assertEqual(
+            inventory.read_systemd_unit_state(unit, runner),
+            {"load": "not-found", "enabled": "unknown", "active": "inactive"},
+        )
+        runner.assert_called_once_with([
+            "/usr/bin/systemctl", "show", "--all", "--property=LoadState,UnitFileState,ActiveState", unit,
+        ])
+
+    def test_systemd_reader_rejects_invalid_or_incomplete_responses(self) -> None:
+        base = "LoadState=loaded\nActiveState=inactive\n"
+        for response in (
+            base,
+            base + "UnitFileState=static\nUnitFileState=disabled\n",
+            base + "UnexpectedProperty=disabled\n",
+            base + "UnitFileState=new-state\n",
+            base + "UnitFileState\n",
+        ):
+            with self.subTest(response=response), self.assertRaisesRegex(
+                inventory.InventoryError, "^systemd_inventory_invalid$",
+            ):
+                inventory.read_systemd_unit_state(
+                    "pyp-platform-backup.timer", mock.Mock(return_value=self._result([], response)),
+                )
 
     def test_inventory_is_sanitized_and_fingerprint_binds_host_and_runtime(self) -> None:
         result = inventory.collect_inventory(self._runner(), root=self.root)
