@@ -40,6 +40,8 @@ def main() -> int:
             "support_helper_blob_not_bound_to_exact_sha")
     require("--helper-blob \"$helper_blob\"" in WORKFLOW,
             "support_workflow_does_not_pass_helper_pin")
+    require('tee -a "$GITHUB_STEP_SUMMARY"' in WORKFLOW,
+            "support_inventory_output_not_presented_in_protected_summary")
 
     require("readonly PROJECT_ROOT=\"/opt/markina-gallery\"" in RUNNER
             and "readonly SUPPORT_HELPER=\"scripts/production_app_preflight_support.py\"" in RUNNER,
@@ -73,6 +75,13 @@ def main() -> int:
     require('LOCK_DIR = Path("/var/lib/markina-gallery/deploy-state")' in HELPER
             and 'LOCK_PATH = LOCK_DIR / "production-release.lock"' in HELPER,
             "support_helper_common_lock_changed")
+    for diagnostic_field in (
+        "support_state_directory_diagnostics", "support_backup_directory_diagnostics",
+    ):
+        require(diagnostic_field in HELPER, "support_inventory_diagnostic_output_missing:" + diagnostic_field)
+    require("def _format_directory_diagnostics(value: Any) -> str:" in HELPER
+            and "item not in SUPPORT_DIRECTORY_DIAGNOSTICS" in HELPER,
+            "support_inventory_diagnostic_output_not_allowlisted")
     require('"bridge": BRIDGE_PATH, "wrapper": WRAPPER_PATH' in HELPER,
             "support_helper_has_dynamic_targets")
     for forbidden in ("git checkout", "git reset", "git clean", "git prune", "docker compose up",
