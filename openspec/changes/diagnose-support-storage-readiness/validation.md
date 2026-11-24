@@ -16,7 +16,8 @@
 ## Task 3.1 — preflight de publicação — 24/11/2026 BRT
 
 - `origin/main` e a base da branch coincidem em `bc96fcda3172b73fe452f8fc98ebc3d7fcb86932`; a CI da main `45311450221` terminou success nesse SHA exato.
-- `gh` está autenticado para o repositório. Gitleaks não está instalado localmente; o diff foi revisado manualmente e a verificação remota de segredos permanece pendente na CI da PR.
+- `gh` está autenticado para o repositório. Gitleaks não está instalado localmente; a revisão manual foi complementada pela verificação remota de segredos aprovada na CI da PR abaixo.
+- PR #422, SHA `08303e7b94bf386d1437ab65a26f5cec681d4300`: CI `45391768675` terminou success. Gitleaks, OpenSpec, classificação de escopo, backend-quality, quatro shards backend, frontend, imagens AMD64/ARM64, `homolog-inventory-policy` e `gemma-runtime` passaram; jobs de produção foram ignorados pelo escopo. O resultado é válido para esse SHA; a integração e CI da main ainda estão pendentes.
 
 ## Task 2.1 — integração local — 24/11/2026 BRT
 
@@ -26,4 +27,4 @@
 - `openspec validate diagnose-support-storage-readiness --strict`: change válida.
 - `git diff --check`: passou. A busca de espaços em branco finais nos artefatos novos não encontrou ocorrências; Git apenas avisou que normalizará LF para CRLF nos arquivos Python em futuras operações.
 - Revisão do diff: somente o classificador read-only, a saída allowlisted e os testes correspondentes mudaram. Os estados agregados e `_assert_storage_preconditions` permanecem intactos; nenhuma credencial, valor bruto do filesystem ou dado de cliente foi adicionado. Nenhuma limpeza além da deduplicação do classificador era segura ou necessária.
-- A CI remota ainda não foi executada; seguirá após publicação da branch e criação da PR.
+- Na data desta validação local, a CI remota ainda não havia sido executada; o resultado posterior está registrado na Task 3.1.
