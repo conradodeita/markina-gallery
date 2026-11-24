@@ -351,14 +351,21 @@ def collect_container_diagnostics(runner: Runner = _run) -> dict[str, object]:
     }
 
 
-def _unit(name: str, runner: Runner) -> dict[str, str]:
+def read_systemd_unit_state(name: str, runner: Runner) -> dict[str, str]:
+    """Read one unit's fixed properties without relying on output order."""
+    properties = ("LoadState", "UnitFileState", "ActiveState")
     raw = _output(runner([
-        "/usr/bin/systemctl", "show", "--property=LoadState,UnitFileState,ActiveState", "--value", name,
+        "/usr/bin/systemctl", "show", "--all", f"--property={','.join(properties)}", name,
     ]), "systemd_inventory_failed")
-    parts = raw.splitlines()
-    if len(parts) != 3 or any(len(value) > 32 for value in parts):
+    values: dict[str, str] = {}
+    for line in raw.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key not in properties or key in values:
+            raise InventoryError("systemd_inventory_invalid")
+        values[key] = value
+    if len(values) != len(properties):
         raise InventoryError("systemd_inventory_invalid")
-    load, enabled, active = parts
+    load, enabled, active = (values[key] for key in properties)
     allowed_load = {"loaded", "not-found", "error"}
     allowed_enabled = {"enabled", "disabled", "static", "indirect", "masked", "generated", "transient", "unknown", ""}
     allowed_active = {"active", "inactive", "failed", "activating", "deactivating", "unknown", ""}
@@ -622,8 +629,8 @@ def collect_inventory(
     disk_info = {"total_kib": int(disk_parts[1]), "used_kib": int(disk_parts[2]),
                  "available_kib": int(disk_parts[3]), "use_percent": int(disk_parts[4][:-1])}
     units = {
-        "service": _unit("pyp-platform-backup.service", runner),
-        "timer": _unit("pyp-platform-backup.timer", runner),
+        "service": read_systemd_unit_state("pyp-platform-backup.service", runner),
+        "timer": read_systemd_unit_state("pyp-platform-backup.timer", runner),
     }
     config_paths = {
         "config_directory": root / "etc/pyp-backup",

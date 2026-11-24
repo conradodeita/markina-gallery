@@ -126,6 +126,13 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **AND** MUST NOT selecionar containers por nome, escolher registros antigos por label como fallback para API/web ou usar agregados diagnósticos como identidade; metadados inseguros, falha, ausência, duplicidade, saída inválida, blob da ponte divergente ou mudança SHALL abortar com código estático allowlisted, sem fingerprint ou precondição
 - **AND** IDs e saídas brutas da ponte MUST NOT aparecer em logs
 
+#### Scenario: Interpretar propriedades nomeadas das unidades systemd
+
+- **WHEN** o inventário ou o instalador consultar serviço e timer com o comando fixo somente leitura
+- **THEN** SHALL solicitar também as propriedades vazias e ler `LoadState`, `UnitFileState` e `ActiveState` por nome, exigindo exatamente uma ocorrência de cada e validando os valores permitidos
+- **AND** `UnitFileState` vazio SHALL ser representado como `unknown`. Uma unidade ausente só atende à condição de inércia quando tiver `LoadState=not-found` e `ActiveState=inactive`, respeitada a fase da instalação
+- **AND** resposta inválida SHALL produzir somente código estático, sem fingerprint nem aprovação. Unidade ativa ou instalada com configuração insegura MUST NOT liberar operação
+
 #### Scenario: Emitir resumo de inventário sem identificadores
 
 - **WHEN** o inventário normal concluir com sucesso

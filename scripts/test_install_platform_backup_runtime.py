@@ -95,7 +95,10 @@ class RuntimeInstallTests(unittest.TestCase):
             def runner(argv, **kwargs):
                 if argv[:2] == ["/usr/bin/systemctl", "show"]:
                     unit = argv[-1]
-                    return subprocess.CompletedProcess(argv, 0, f"loaded\n{'disabled' if unit.endswith('timer') else 'static'}\ninactive\n", "")
+                    state = "disabled" if unit.endswith("timer") else "static"
+                    return subprocess.CompletedProcess(
+                        argv, 0, f"ActiveState=inactive\nLoadState=loaded\nUnitFileState={state}\n", "",
+                    )
                 return subprocess.CompletedProcess(argv, 0, "", "")
         with patch.object(installer, "_install_wheels", side_effect=fake_wheels):
             return installer.install_verified_bundle(
@@ -107,6 +110,23 @@ class RuntimeInstallTests(unittest.TestCase):
                 lock_path=self.lock_path, lock_owner=self.lock_owner,
                 require_root=(os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0),
             )
+
+    def test_inert_check_requires_inactive_units_and_explicit_missing_phase(self) -> None:
+        def absent(argv):
+            return subprocess.CompletedProcess(
+                argv, 0, "ActiveState=inactive\nLoadState=not-found\nUnitFileState=\n", "",
+            )
+
+        def active(argv):
+            return subprocess.CompletedProcess(
+                argv, 0, "ActiveState=active\nLoadState=loaded\nUnitFileState=static\n", "",
+            )
+
+        installer._assert_units_inert(absent, allow_missing=True)
+        with self.assertRaisesRegex(installer.InstallError, "^systemd_unit_not_inert$"):
+            installer._assert_units_inert(absent)
+        with self.assertRaisesRegex(installer.InstallError, "^systemd_unit_not_inert$"):
+            installer._assert_units_inert(active, allow_missing=True)
 
     def test_cli_binds_every_inventory_read_to_approved_source_sha(self) -> None:
         inventory_result = {"sentinel": "synthetic"}
@@ -165,7 +185,9 @@ class RuntimeInstallTests(unittest.TestCase):
             if argv[:2] == ["/usr/bin/systemctl", "show"]:
                 unit = argv[-1]
                 state = "disabled" if unit.endswith("timer") else "static"
-                return subprocess.CompletedProcess(argv, 0, f"loaded\n{state}\ninactive\n", "")
+                return subprocess.CompletedProcess(
+                    argv, 0, f"ActiveState=inactive\nLoadState=loaded\nUnitFileState={state}\n", "",
+                )
             calls.append(argv)
             status = 1 if len(calls) == 1 else 0
             return subprocess.CompletedProcess(argv, status, "", "")
@@ -193,7 +215,8 @@ class RuntimeInstallTests(unittest.TestCase):
                 self.bundle, source_sha=self.sha, bundle_sha256=self.bundle_sha,
                 approval_fingerprint=self.fingerprint, inventory_provider=inventory_provider,
                 runner=lambda argv, **kwargs: subprocess.CompletedProcess(
-                    argv, 0, "loaded\ndisabled\ninactive\n", "") if argv[:2] == ["/usr/bin/systemctl", "show"]
+                    argv, 0, "ActiveState=inactive\nLoadState=loaded\nUnitFileState=disabled\n", "",
+                ) if argv[:2] == ["/usr/bin/systemctl", "show"]
                     else subprocess.CompletedProcess(argv, 0, "", ""),
                 install_root=self.install_root, systemd_root=self.systemd_root,
                 config_root=self.config_root, lock_path=self.lock_path, lock_owner=self.lock_owner,
