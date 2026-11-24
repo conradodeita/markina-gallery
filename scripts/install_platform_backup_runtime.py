@@ -29,6 +29,7 @@ from platform_backup_runtime_inventory import (
     InventoryError,
     collect_inventory,
     install_preconditions,
+    read_systemd_unit_state,
 )
 
 INSTALL_ROOT = Path("/opt/pyp-backup-runtime")
@@ -325,13 +326,13 @@ def _restore_unit(path: Path, previous: bytes | None, *, expected_current: bytes
 def _assert_units_inert(runner: Runner, *, allow_missing: bool = False) -> None:
     for name in UNIT_NAMES:
         unit = Path(name).name
-        result = runner([
-            "/usr/bin/systemctl", "show", "--property=LoadState,UnitFileState,ActiveState", "--value", unit,
-        ])
-        _require(result.returncode == 0, "systemd_inert_state_unavailable")
-        fields = result.stdout.rstrip("\n").split("\n")
-        _require(len(fields) == 3, "systemd_inert_state_invalid")
-        load, enabled, active = fields
+        try:
+            state = read_systemd_unit_state(unit, runner)
+        except InventoryError as exc:
+            if str(exc) == "systemd_inventory_failed":
+                raise InstallError("systemd_inert_state_unavailable") from None
+            raise InstallError("systemd_inert_state_invalid") from None
+        load, enabled, active = state["load"], state["enabled"], state["active"]
         loaded_inert = load == "loaded" and enabled in {"disabled", "static"} and active == "inactive"
         missing_inert = allow_missing and load == "not-found" and enabled == "unknown" and active == "inactive"
         _require(loaded_inert or missing_inert, "systemd_unit_not_inert")
