@@ -357,6 +357,9 @@ class LocalSupportHost:
         _, data = self._git(["for-each-ref", "--format=%(refname) %(objectname)"])
         return _file_digest(data)
 
+    def refs_digest(self) -> str:
+        return self._refs_digest()
+
     def load_candidates(self, support_sha: str) -> dict[str, dict[str, Any]]:
         refs_before = self._refs_digest()
         remote_before = self._remote_main_sha()

@@ -190,6 +190,14 @@ class FakeHost:
             raise support.SupportError("injected_failure")
 
 
+class LocalSupportHostAdapterTests(unittest.TestCase):
+    def test_refs_digest_is_exposed_for_prepare_coordinator(self):
+        host = object.__new__(support.LocalSupportHost)
+        with patch.object(support.LocalSupportHost, "_refs_digest", return_value="refs-stable") as digest:
+            self.assertEqual(host.refs_digest(), "refs-stable")
+            digest.assert_called_once_with()
+
+
 class SupportCoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.host = FakeHost()
