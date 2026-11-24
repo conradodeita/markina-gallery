@@ -11,8 +11,8 @@
 
 ## 3. Publicação da mudança e diagnóstico remoto
 
-- [ ] 3.1 Após revisão humana dos artefatos, publicar a implementação por PR e obter revisão/merge conforme autorização vigente; exigir CI verde da `main` no SHA exato e registrar os runs em `validation.md`.
-- [ ] 3.2 Após a integração, executar somente `support-inventory` read-only pelo fluxo protegido, passar pelos gates de produção exigidos e registrar a razão observada e fingerprint atual; não despachar `prepare-support`, reparar diretório ou reutilizar fingerprint antiga.
+- [x] 3.1 Após revisão/autorização do proprietário, publicar a implementação por PR e obter merge conforme autorização vigente; exigir CI verde da `main` no SHA exato e registrar os runs em `validation.md`. PR #422 foi mergeada em `d62ffde00959feb59756f38fcb9523602e0147d5`; a CI da PR `45399365512` e a CI da `main` `45403526631` passaram nos SHAs correspondentes. A autorização expressa do proprietário cobriu prosseguir e aprovar as próximas etapas; não há review formal registrada no GitHub.
+- [x] 3.2 Após a integração, executar somente `support-inventory` read-only pelo fluxo protegido e passar pelo gate de produção; run `45407412507` no SHA `d62ffde00959feb59756f38fcb9523602e0147d5` terminou success. Estado do diretório de estado `ready` com diagnóstico `ready`; diretório de backup `directory_invalid` com diagnóstico `target_mode_invalid`; fingerprint `5b4f5c1ccdd363acdabffbd6af8e7a042144e31ecb958a42ac6ed9bfbf90c2b4`. Nenhuma preparação ou reparo foi despachado.
 
 ## Workflow follow-up
 
