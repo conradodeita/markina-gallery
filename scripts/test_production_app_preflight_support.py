@@ -6,6 +6,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import stat
 import subprocess
 import tempfile
@@ -51,6 +52,8 @@ class FakeHost:
         self.candidates_loaded = 0
         self.preserve_calls = 0
         self.lock_count = 0
+        self.mode_repair_calls = 0
+        self.fail_after_repair_snapshot = False
 
     @contextlib.contextmanager
     def lock(self):
@@ -60,6 +63,8 @@ class FakeHost:
     def collect_snapshot(self, sha: str, binding: str) -> dict:
         if sha != self.remote_sha:
             raise support.SupportError("support_main_changed")
+        if self.mode_repair_calls and self.fail_after_repair_snapshot:
+            raise support.SupportError("private path mode=0777 uid=1234 content=secret")
         return {"host": "fixed-host", "repository": "fixed-repository", "support_sha": sha,
                 "remote_main_sha": self.remote_sha, "connection_binding": binding,
                 "origin_main_ref": self.ref, "bridge": state(self.contents["bridge"]),
@@ -69,6 +74,11 @@ class FakeHost:
                 "backup_directory_state": self.backup_directory_state,
                 "backup_directory_diagnostics": self.backup_directory_diagnostics,
                 "containers_sha256": self.containers}
+
+    def repair_backup_directory_mode(self):
+        self.mode_repair_calls += 1
+        self.backup_directory_state = "ready"
+        self.backup_directory_diagnostics = ["ready"]
 
     def check_no_staging(self):
         return None
@@ -319,6 +329,110 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
             self.assertEqual(target.created_mode, 0o700)
             self.assertEqual(support.LocalSupportHost.state_directory_state(), "ready")
 
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "O_DIRECTORY"),
+                         "requires POSIX directory descriptors and chmod semantics")
+    def test_backup_mode_repair_preserves_directory_identity_and_contents(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary) / "backups"
+            parent.mkdir(mode=0o755)
+            target = parent / "markina-gallery"
+            target.mkdir(mode=0o750)
+            payload = target / "existing-support-data.bin"
+            payload.write_bytes(b"preserve existing bytes")
+            os.chmod(parent, 0o755)
+            os.chmod(target, 0o750)
+            original = target.stat()
+            original_payload = payload.stat()
+            real_lstat = Path.lstat
+            real_stat = os.stat
+            real_fstat = os.fstat
+
+            def root_owned(info):
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_gid=0,
+                                       st_dev=info.st_dev, st_ino=info.st_ino)
+
+            def synthetic_stat(path, *args, **kwargs):
+                return root_owned(real_stat(path, *args, **kwargs))
+
+            def synthetic_fstat(descriptor):
+                return root_owned(real_fstat(descriptor))
+
+            def synthetic_lstat(path):
+                return root_owned(real_lstat(path))
+
+            with (patch.object(support, "BACKUPS_DIR", target),
+                  patch.object(support.Path, "lstat", new=synthetic_lstat),
+                  patch.object(support.os, "stat", side_effect=synthetic_stat),
+                  patch.object(support.os, "fstat", side_effect=synthetic_fstat)):
+                support.LocalSupportHost().repair_backup_directory_mode()
+
+            repaired = target.stat()
+            self.assertEqual(repaired.st_ino, original.st_ino)
+            self.assertEqual(repaired.st_dev, original.st_dev)
+            self.assertEqual(stat.S_IMODE(repaired.st_mode), 0o700)
+            self.assertEqual(payload.read_bytes(), b"preserve existing bytes")
+            self.assertEqual(payload.stat().st_ino, original_payload.st_ino)
+            self.assertEqual(stat.S_IMODE(payload.stat().st_mode), stat.S_IMODE(original_payload.st_mode))
+
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "O_DIRECTORY"),
+                         "requires POSIX directory descriptors and chmod semantics")
+    def test_backup_mode_repair_fails_closed_if_path_identity_changes_after_chmod(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary) / "backups"
+            parent.mkdir(mode=0o755)
+            target = parent / "markina-gallery"
+            target.mkdir(mode=0o750)
+            original = target.stat()
+            real_lstat = Path.lstat
+            real_stat = os.stat
+            real_fstat = os.fstat
+            real_fchmod = os.fchmod
+            replaced = False
+
+            def root_owned(info):
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_gid=0,
+                                       st_dev=info.st_dev, st_ino=info.st_ino)
+
+            def synthetic_stat(path, *args, **kwargs):
+                return root_owned(real_stat(path, *args, **kwargs))
+
+            def synthetic_fstat(descriptor):
+                return root_owned(real_fstat(descriptor))
+
+            def synthetic_lstat(path):
+                return root_owned(real_lstat(path))
+
+            def replace_after_chmod(descriptor, mode):
+                nonlocal replaced
+                real_fchmod(descriptor, mode)
+                if not replaced:
+                    moved = parent / "moved-original"
+                    target.rename(moved)
+                    target.mkdir(mode=0o750)
+                    replaced = True
+
+            output = io.StringIO()
+            with (patch.object(support, "BACKUPS_DIR", target),
+                  patch.object(support.Path, "lstat", new=synthetic_lstat),
+                  patch.object(support.os, "stat", side_effect=synthetic_stat),
+                  patch.object(support.os, "fstat", side_effect=synthetic_fstat),
+                  patch.object(support.os, "fchmod", side_effect=replace_after_chmod) as chmod,
+                  patch("sys.stdout", output)):
+                host = support.LocalSupportHost()
+                try:
+                    host.repair_backup_directory_mode()
+                except support.SupportError as error:
+                    self.assertEqual(error.code, "support_backup_mode_unverified")
+                else:
+                    self.fail("path replacement after chmod was reported as verified")
+
+            chmod.assert_called_once_with(unittest.mock.ANY, 0o700)
+            self.assertTrue(replaced)
+            self.assertEqual(stat.S_IMODE((parent / "moved-original").stat().st_mode), 0o700)
+            self.assertNotEqual((parent / "moved-original").stat().st_ino, target.stat().st_ino)
+            self.assertEqual(original.st_ino, (parent / "moved-original").stat().st_ino)
+            self.assertEqual(output.getvalue(), "")
+
 
 class SupportCoordinatorTests(unittest.TestCase):
     def setUp(self):
@@ -362,6 +476,88 @@ class SupportCoordinatorTests(unittest.TestCase):
         second, _ = self.coordinator.inventory(SHA_MAIN, SHA_CONNECTION)
         self.assertNotEqual(first, second)
 
+    def test_repair_requires_exact_fingerprint_and_only_mode_diagnostic(self):
+        self.host.backup_directory_state = "directory_invalid"
+        self.host.backup_directory_diagnostics = ["target_mode_invalid"]
+        fingerprint = self.inventory_fingerprint()
+
+        with self.assertRaisesRegex(support.SupportError, "support_fingerprint_changed"):
+            self.coordinator.repair_backup_directory_mode(SHA_MAIN, SHA_CONNECTION, "f" * 64)
+        self.assertEqual(self.host.mode_repair_calls, 0)
+
+        for directory_state, diagnostics in (
+            ("creatable", ["creatable"]),
+            ("ready", ["ready"]),
+            ("directory_invalid", ["target_symlink"]),
+            ("directory_invalid", ["target_type_invalid"]),
+            ("directory_invalid", ["target_owner_invalid"]),
+            ("directory_invalid", ["target_mode_invalid", "target_group_invalid"]),
+            ("parent_invalid", ["parent_invalid"]),
+            ("unavailable", ["unavailable"]),
+        ):
+            with self.subTest(directory_state=directory_state, diagnostics=diagnostics):
+                self.host.backup_directory_state = directory_state
+                self.host.backup_directory_diagnostics = diagnostics
+                current = self.inventory_fingerprint()
+                with self.assertRaisesRegex(support.SupportError, "support_backup_directory_invalid"):
+                    self.coordinator.repair_backup_directory_mode(SHA_MAIN, SHA_CONNECTION, current)
+                self.assertEqual(self.host.mode_repair_calls, 0)
+
+        self.host.backup_directory_state = "directory_invalid"
+        self.host.backup_directory_diagnostics = ["target_mode_invalid"]
+        fingerprint = self.inventory_fingerprint()
+        before = self.host.collect_snapshot(SHA_MAIN, SHA_CONNECTION)
+        result = self.coordinator.repair_backup_directory_mode(SHA_MAIN, SHA_CONNECTION, fingerprint)
+        self.assertIsNone(result)
+        self.assertEqual(self.host.mode_repair_calls, 1)
+        after = self.host.collect_snapshot(SHA_MAIN, SHA_CONNECTION)
+        for field in ("host", "repository", "support_sha", "remote_main_sha", "connection_binding",
+                      "origin_main_ref", "bridge", "wrapper", "state_directory_state",
+                      "state_directory_diagnostics", "containers_sha256"):
+            self.assertEqual(after[field], before[field])
+        self.assertEqual(after["backup_directory_state"], "ready")
+        self.assertEqual(after["backup_directory_diagnostics"], ["ready"])
+
+    def test_repair_cli_success_emits_only_static_result_without_chaining(self):
+        self.host.backup_directory_state = "directory_invalid"
+        self.host.backup_directory_diagnostics = ["target_mode_invalid"]
+        fingerprint = self.inventory_fingerprint()
+        output = io.StringIO()
+        with patch.object(support, "LocalSupportHost", return_value=self.host), patch("sys.stdout", output):
+            result = support.main([
+                "--mode", "repair-support-backups-mode", "--support-sha", SHA_MAIN,
+                "--connection-binding", SHA_CONNECTION, "--approval-fingerprint", fingerprint,
+            ])
+        self.assertEqual(result, 0)
+        self.assertEqual(output.getvalue(), "support_backup_mode_repair=success\n")
+        self.assertEqual(self.host.mode_repair_calls, 1)
+        self.assertEqual(self.host.candidates_loaded, 0)
+        self.assertEqual(self.host.preserve_calls, 0)
+        self.assertFalse(self.host.receipts)
+        self.assertFalse(self.host.backups)
+        self.assertNotIn("support_fingerprint=", output.getvalue())
+        self.assertNotIn("support_receipt", output.getvalue())
+
+    def test_repair_postcheck_failure_is_terminal_and_sanitized(self):
+        self.host.backup_directory_state = "directory_invalid"
+        self.host.backup_directory_diagnostics = ["target_mode_invalid"]
+        self.host.fail_after_repair_snapshot = True
+        fingerprint = self.inventory_fingerprint()
+        output = io.StringIO()
+        with patch.object(support, "LocalSupportHost", return_value=self.host), patch("sys.stdout", output):
+            result = support.main([
+                "--mode", "repair-support-backups-mode", "--support-sha", SHA_MAIN,
+                "--connection-binding", SHA_CONNECTION, "--approval-fingerprint", fingerprint,
+            ])
+        self.assertEqual(result, 1)
+        self.assertEqual(output.getvalue(), "support_error=support_backup_mode_unverified\n")
+        self.assertEqual(self.host.mode_repair_calls, 1)
+        self.assertEqual(self.host.backup_directory_state, "ready")
+        self.assertNotIn("private", output.getvalue())
+        self.assertNotIn("0777", output.getvalue())
+        self.assertNotIn("1234", output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
+
     def test_prepare_rejects_unsafe_directory_before_fetch_or_any_persistence(self):
         for field, value, error in (
             ("state_directory_state", "parent_invalid", "support_state_directory_invalid"),
@@ -381,6 +577,7 @@ class SupportCoordinatorTests(unittest.TestCase):
                 self.assertEqual(self.host.contents, original)
                 self.assertEqual(self.host.candidates_loaded, 0)
                 self.assertEqual(self.host.preserve_calls, 0)
+                self.assertEqual(self.host.mode_repair_calls, 0)
                 self.assertFalse(self.host.receipts)
                 self.assertFalse(self.host.backups)
 
@@ -405,6 +602,7 @@ class SupportCoordinatorTests(unittest.TestCase):
         self.assertNotIn("st_mode", output.getvalue())
         self.assertFalse(self.host.candidates_loaded)
         self.assertFalse(self.host.preserve_calls)
+        self.assertEqual(self.host.mode_repair_calls, 0)
         self.assertFalse(self.host.receipts)
         self.assertFalse(self.host.backups)
 
@@ -755,6 +953,11 @@ class SupportCoordinatorTests(unittest.TestCase):
             ("prepare-support",),
             ("prepare-support", "--approval-fingerprint", SHA_CONNECTION,
              "--receipt-sha256", SHA_CONNECTION),
+            ("repair-support-backups-mode",),
+            ("repair-support-backups-mode", "--approval-fingerprint", SHA_CONNECTION,
+             "--receipt-sha256", SHA_CONNECTION),
+            ("repair-support-backups-mode", "--approval-fingerprint", SHA_CONNECTION,
+             "--path", "private-path"),
             ("restore-support-inventory",),
             ("restore-support-inventory", "--receipt-sha256", SHA_CONNECTION,
              "--approval-fingerprint", SHA_CONNECTION),

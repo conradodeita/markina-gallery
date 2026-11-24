@@ -33,6 +33,10 @@ case "$mode" in
     [[ $# == 2 && "$1" == --approval-fingerprint && "$2" =~ ^[0-9a-f]{64}$ ]] || fail arguments_invalid
     support_args+=(--approval-fingerprint "$2")
     ;;
+  repair-support-backups-mode)
+    [[ $# == 2 && "$1" == --approval-fingerprint && "$2" =~ ^[0-9a-f]{64}$ ]] || fail arguments_invalid
+    support_args+=(--approval-fingerprint "$2")
+    ;;
   restore-support-inventory)
     [[ $# == 2 && "$1" == --receipt-sha256 && "$2" =~ ^[0-9a-f]{64}$ ]] || fail arguments_invalid
     support_args+=(--receipt-sha256 "$2")
@@ -64,7 +68,7 @@ actual_helper_blob="$(git rev-parse "$support_sha:$SUPPORT_HELPER" 2>/dev/null)"
 git cat-file -e "$support_sha:$SUPPORT_HELPER" 2>/dev/null || fail support_helper_unavailable
 
 # This is the existing protected SSH workflow and pinned Git object. The helper
-# acquires the common host lock and enforces the approved four-operation contract.
+# acquires the common host lock and enforces the fixed-operation contract.
 if ! git cat-file blob "$support_sha:$SUPPORT_HELPER" 2>/dev/null \
   | sudo -n /usr/bin/python3.10 -B - "${support_args[@]}"; then
   exit 1

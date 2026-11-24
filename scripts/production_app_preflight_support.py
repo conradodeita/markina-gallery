@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixed, receipt-backed preparation and restoration of app preflight support.
+"""Fixed, protected operations for app preflight support.
 
 This program is invoked only by the protected workflow through the existing
 production SSH channel. It intentionally has no user-selectable paths,
@@ -58,7 +58,10 @@ TARGET_SOURCES = {
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 OBJECT_ID = re.compile(r"^[0-9a-f]{64}$")
-VALID_MODES = {"support-inventory", "prepare-support", "restore-support-inventory", "restore-support"}
+VALID_MODES = {
+    "support-inventory", "prepare-support", "repair-support-backups-mode",
+    "restore-support-inventory", "restore-support",
+}
 INTERNAL_ERROR_CODES: tuple[tuple[type[BaseException], str], ...] = (
     (UnicodeError, "support_internal_encoding_error"),
     (subprocess.SubprocessError, "support_internal_command_error"),
@@ -500,6 +503,92 @@ class LocalSupportHost:
     def backup_directory_state() -> str:
         return LocalSupportHost.backup_directory_status()[0]
 
+    def repair_backup_directory_mode(self) -> None:
+        """Set the fixed backup directory to 0700 through a verified directory fd."""
+        if (os.name != "posix" or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW")
+                or not hasattr(os, "fchmod")):
+            raise SupportError("support_platform_unsupported")
+
+        parent_fd: int | None = None
+        target_fd: int | None = None
+        mutation_attempted = False
+
+        def valid_parent(info: os.stat_result) -> bool:
+            return (stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+                    and info.st_uid == 0 and info.st_gid == 0
+                    and stat.S_IMODE(info.st_mode) == 0o755)
+
+        def valid_target(info: os.stat_result) -> bool:
+            return (stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+                    and info.st_uid == 0 and info.st_gid == 0
+                    and stat.S_IMODE(info.st_mode) != 0o700)
+
+        def same_object(left: os.stat_result, right: os.stat_result) -> bool:
+            return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+        try:
+            if self.backup_directory_status() != ("directory_invalid", ["target_mode_invalid"]):
+                raise SupportError("support_backup_directory_invalid")
+
+            parent_before = BACKUPS_DIR.parent.lstat()
+            if not valid_parent(parent_before):
+                raise SupportError("support_backup_directory_invalid")
+            parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+            parent_fd = os.open(BACKUPS_DIR.parent, parent_flags)
+            parent_open = os.fstat(parent_fd)
+            if not valid_parent(parent_open) or not same_object(parent_before, parent_open):
+                raise SupportError("support_backup_directory_invalid")
+
+            target_before = os.stat(BACKUPS_DIR.name, dir_fd=parent_fd, follow_symlinks=False)
+            if not valid_target(target_before):
+                raise SupportError("support_backup_directory_invalid")
+            target_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+            target_fd = os.open(BACKUPS_DIR.name, target_flags, dir_fd=parent_fd)
+            target_open = os.fstat(target_fd)
+            if not valid_target(target_open) or not same_object(target_before, target_open):
+                raise SupportError("support_backup_directory_invalid")
+
+            # Revalidate both fixed names immediately before the only mutation.
+            parent_current = BACKUPS_DIR.parent.lstat()
+            target_current = os.stat(BACKUPS_DIR.name, dir_fd=parent_fd, follow_symlinks=False)
+            if (not valid_parent(parent_current) or not same_object(parent_open, parent_current)
+                    or not valid_target(target_current) or not same_object(target_open, target_current)
+                    or self.backup_directory_status() != ("directory_invalid", ["target_mode_invalid"])):
+                raise SupportError("support_backup_directory_invalid")
+
+            mutation_attempted = True
+            os.fchmod(target_fd, 0o700)
+
+            parent_after = BACKUPS_DIR.parent.lstat()
+            target_after = os.stat(BACKUPS_DIR.name, dir_fd=parent_fd, follow_symlinks=False)
+            target_open_after = os.fstat(target_fd)
+            if (not valid_parent(parent_after) or not same_object(parent_open, parent_after)
+                    or not stat.S_ISDIR(target_open_after.st_mode)
+                    or stat.S_ISLNK(target_open_after.st_mode)
+                    or target_open_after.st_uid != 0 or target_open_after.st_gid != 0
+                    or stat.S_IMODE(target_open_after.st_mode) != 0o700
+                    or not same_object(target_open, target_open_after)
+                    or not stat.S_ISDIR(target_after.st_mode) or stat.S_ISLNK(target_after.st_mode)
+                    or target_after.st_uid != 0 or target_after.st_gid != 0
+                    or stat.S_IMODE(target_after.st_mode) != 0o700
+                    or not same_object(target_open, target_after)):
+                raise SupportError("support_backup_mode_unverified")
+        except SupportError:
+            if mutation_attempted:
+                raise SupportError("support_backup_mode_unverified") from None
+            raise
+        except BaseException:  # noqa: BLE001 - the fixed CLI must not expose host details.
+            if mutation_attempted:
+                raise SupportError("support_backup_mode_unverified") from None
+            raise SupportError("support_backup_directory_invalid") from None
+        finally:
+            for descriptor in (target_fd, parent_fd):
+                if descriptor is not None:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+
     def ensure_state_directories(self) -> None:
         state = self.state_directory_state()
         if state == "creatable":
@@ -860,6 +949,28 @@ class SupportCoordinator:
             snapshot = self.host.collect_snapshot(support_sha, connection_binding)
             return _digest(snapshot), snapshot
 
+    def repair_backup_directory_mode(self, support_sha: str, connection_binding: str,
+                                     approval_fingerprint: str) -> None:
+        _safe_sha(approval_fingerprint, HEX64, "support_fingerprint_invalid")
+        with self.host.lock():
+            before = self.host.collect_snapshot(support_sha, connection_binding)
+            if _digest(before) != approval_fingerprint:
+                raise SupportError("support_fingerprint_changed")
+            if (before.get("backup_directory_state") != "directory_invalid"
+                    or before.get("backup_directory_diagnostics") != ["target_mode_invalid"]):
+                raise SupportError("support_backup_directory_invalid")
+
+            self.host.repair_backup_directory_mode()
+            try:
+                after = self.host.collect_snapshot(support_sha, connection_binding)
+                expected = dict(before)
+                expected["backup_directory_state"] = "ready"
+                expected["backup_directory_diagnostics"] = ["ready"]
+                if after != expected:
+                    raise SupportError("support_backup_mode_unverified")
+            except BaseException:  # noqa: BLE001 - post-mutation uncertainty is terminal and sanitized.
+                raise SupportError("support_backup_mode_unverified") from None
+
     def prepare(self, support_sha: str, connection_binding: str, approval_fingerprint: str) -> str:
         _safe_sha(approval_fingerprint, HEX64, "support_fingerprint_invalid")
         with self.host.lock():
@@ -1074,6 +1185,11 @@ def _validate_mode_arguments(args: argparse.Namespace) -> None:
             raise SupportError("support_arguments_invalid")
         _safe_sha(approval, HEX64, "support_fingerprint_invalid")
         return
+    if args.mode == "repair-support-backups-mode":
+        if not approval or receipt:
+            raise SupportError("support_arguments_invalid")
+        _safe_sha(approval, HEX64, "support_fingerprint_invalid")
+        return
     if args.mode == "restore-support-inventory":
         if approval or not receipt:
             raise SupportError("support_arguments_invalid")
@@ -1126,6 +1242,12 @@ def main(argv: list[str] | None = None) -> int:
             digest = coordinator.prepare(args.support_sha, args.connection_binding, args.approval_fingerprint)
             print("support_preparation=success")
             print(f"support_receipt_sha256={digest}")
+            return 0
+        if args.mode == "repair-support-backups-mode":
+            coordinator.repair_backup_directory_mode(
+                args.support_sha, args.connection_binding, args.approval_fingerprint,
+            )
+            print("support_backup_mode_repair=success")
             return 0
         if args.mode == "restore-support-inventory":
             fingerprint, view = coordinator.restore_inventory(
