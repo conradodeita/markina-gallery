@@ -52,6 +52,7 @@ EXPECTED_REFERENCE_LINE_COUNTS = {
     "backend/app/whatsapp_channel.py": 1,
     "backend/app/whatsapp_delivery.py": 1,
     "backend/app/whatsapp_tenant_credentials.py": 1,
+    "backend/app/worker.py": 1,
 }
 
 EXPECTED_COMPOSE_SERVICES = {
