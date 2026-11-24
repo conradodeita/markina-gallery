@@ -424,6 +424,7 @@ def _new_claim(
 def claim_next_operation(
     db: Session,
     *,
+    tenant_id: UUID | None = None,
     lease_seconds: int = 120,
     at: datetime | None = None,
 ) -> MediaArchiveClaim | None:
@@ -432,6 +433,8 @@ def claim_next_operation(
     A linha coordenadora serializa as réplicas. Se já houver lease vigente, ou
     se os registros do lease divergirem, nenhum segundo job é iniciado.
     """
+    if tenant_id is not None and not isinstance(tenant_id, UUID):
+        raise ValueError("Tenant de arquivo frio inválido.")
     if type(lease_seconds) is not int or not 1 <= lease_seconds <= 86_400:
         raise ValueError("Duração de lease inválida.")
     instant = _utc(at or now())
@@ -454,6 +457,9 @@ def claim_next_operation(
         if active is None:
             db.rollback()
             raise MediaArchiveLeaseConflict("Lease global aponta para operação ausente.")
+        if tenant_id is not None and active.tenant_id != tenant_id:
+            db.rollback()
+            return None
         coordinator_expiry = _utc(coordinator.lease_expires_at)
         active_expiry = _utc(active.lease_expires_at)
         if (
@@ -507,6 +513,7 @@ def claim_next_operation(
         .join(Tenant, Tenant.id == MediaArchiveOperation.tenant_id)
         .where(
             Tenant.status == "active",
+            MediaArchiveOperation.tenant_id == tenant_id if tenant_id is not None else True,
             MediaArchiveOperation.status == "queued",
             MediaArchiveOperation.operation_type.in_(("restore", "delete_remote", "archive")),
         )

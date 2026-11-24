@@ -5,6 +5,7 @@ import os
 import signal
 import threading
 import time
+from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID
 
@@ -71,6 +72,7 @@ from app.gallery_lifecycle import (
     process_claimed_operation,
 )
 from app.media import generate_derivatives
+from app.media_archive_synthetic_storage import SyntheticMediaArchiveStorage
 from app.membership_notifications import (
     process_next_membership_notification as process_membership_outbox,
 )
@@ -99,18 +101,41 @@ from app.whatsapp_delivery import (
 )
 
 _MEDIA_ARCHIVE_LOG = logging.getLogger("app.media_archive_worker")
-_MEDIA_ARCHIVE_RUNTIME_STORAGE = None
 _last_media_archive_discovery = 0.0
 _MEDIA_ARCHIVE_DISCOVERY_INTERVAL_SECONDS = 60
 
 
+@dataclass(frozen=True)
+class SyntheticMediaArchiveBinding:
+    """Vínculo local explícito; não provisiona identidade nem habilita Drive real."""
+
+    storage: object
+    tenant_id: UUID
+    storage_tenant_id: UUID
+    media_root: str
+    namespace: str = "gallery-media-v1"
+    purpose: str = "synthetic-media-pilot"
+
+    def valid(self) -> bool:
+        return (
+            type(self.storage) is SyntheticMediaArchiveStorage
+            and isinstance(self.tenant_id, UUID)
+            and self.storage_tenant_id == self.tenant_id
+            and isinstance(self.media_root, str)
+            and self.media_root.startswith("synthetic:")
+            and len(self.media_root) > len("synthetic:")
+            and self.namespace == "gallery-media-v1"
+            and self.purpose == "synthetic-media-pilot"
+            and all(callable(getattr(self.storage, method, None)) for method in (
+                "upload_object", "read_object", "download_object", "delete_object",
+            ))
+        )
+
+
 def configure_media_archive_storage(storage) -> None:
-    """Injeta explicitamente o adapter de arquivo frio no processo do worker."""
-    required = ("upload_object", "read_object", "download_object", "delete_object")
-    if storage is None or any(not callable(getattr(storage, method, None)) for method in required):
-        raise TypeError("O adapter de arquivo frio não implementa o contrato exigido.")
-    global _MEDIA_ARCHIVE_RUNTIME_STORAGE
-    _MEDIA_ARCHIVE_RUNTIME_STORAGE = storage
+    """Runtime fechado até existir vínculo operacional durável aprovado."""
+    raise TypeError("Vínculo sintético não pode configurar o runtime de arquivo frio.")
+
 
 
 def _media_archive_worker_enabled() -> bool:
@@ -127,9 +152,19 @@ def process_next_media_archive_operation(
     """
     global _last_media_archive_discovery
     gate_open = _media_archive_worker_enabled() if enabled is None else enabled is True
-    adapter = storage if storage is not None else _MEDIA_ARCHIVE_RUNTIME_STORAGE
+    # O loop não tem vínculo operacional aprovado. Fixtures só entram por
+    # argumento direto em ambiente local, com sessão e raízes descartáveis.
+    if storage is None or os.getenv("APP_ENV", "development") == "production":
+        return False
+    adapter = storage
     if not gate_open or adapter is None:
         return False
+    tenant_scope = None
+    if isinstance(adapter, SyntheticMediaArchiveBinding):
+        if not adapter.valid():
+            return False
+        tenant_scope = adapter.tenant_id
+        adapter = adapter.storage
 
     from app.media_archive_staging import MediaArchiveStagingError, configured_staging_root
 
@@ -149,8 +184,8 @@ def process_next_media_archive_operation(
     monotonic_now = time.monotonic()
     if monotonic_now - _last_media_archive_discovery >= _MEDIA_ARCHIVE_DISCOVERY_INTERVAL_SECONDS:
         with SessionLocal() as db:
-            enqueue_due_archive_window_notices(db)
-            enqueue_eligible_archive_operations(db)
+            enqueue_due_archive_window_notices(db, tenant_id=tenant_scope)
+            enqueue_eligible_archive_operations(db, tenant_id=tenant_scope)
         _last_media_archive_discovery = time.monotonic()
 
     from app.media_archive_executor import (
@@ -161,7 +196,7 @@ def process_next_media_archive_operation(
     from app.media_archive_worker import claim_next_operation
 
     with SessionLocal() as db:
-        claim = claim_next_operation(db)
+        claim = claim_next_operation(db, tenant_id=tenant_scope)
     if claim is None:
         return False
 

@@ -56,8 +56,7 @@ def test_worker_discovers_claims_and_completes_archive_with_injected_adapter(
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     monkeypatch.setattr(worker, "SessionLocal", factory)
     monkeypatch.setattr(worker, "_last_media_archive_discovery", 0.0)
-    adapter = InMemoryArchiveStorage()
-    monkeypatch.setattr(worker, "_MEDIA_ARCHIVE_RUNTIME_STORAGE", adapter)
+    adapter = worker.SyntheticMediaArchiveStorage()
 
     with factory() as db:
         tenant = Tenant()
@@ -116,13 +115,41 @@ def test_worker_discovers_claims_and_completes_archive_with_injected_adapter(
         source_file.write_bytes(b"synthetic-jpeg-for-dispatch")
         tenant_id, folder_id = tenant.id, folder.id
 
-    assert worker.process_next_media_archive_operation() is True
+    with factory() as db:
+        other = Tenant()
+        db.add(other)
+        db.flush()
+        other_gallery = ParentGallery(tenant_id=other.id, name="Outro tenant sintético")
+        db.add(other_gallery)
+        db.flush()
+        db.add(PhotoFolder(
+            tenant_id=other.id, parent_gallery_id=other_gallery.id,
+            name="Pasta fora do piloto", purpose="content", status="released", position=0,
+            released_at=now() - timedelta(days=90), access_duration_days=30,
+            access_expires_at=now() - timedelta(days=61),
+        ))
+        db.add(PhotoFolder(
+            tenant_id=other.id, parent_gallery_id=other_gallery.id,
+            name="Aviso fora do piloto", purpose="content", status="released", position=1,
+            released_at=now() - timedelta(days=60), access_duration_days=36,
+            access_expires_at=now() - timedelta(days=24),
+        ))
+        db.commit()
+        other_tenant_id = other.id
+
+    binding = worker.SyntheticMediaArchiveBinding(
+        adapter, tenant_id, tenant_id, "synthetic:owner-media",
+    )
+    assert worker.process_next_media_archive_operation(storage=binding) is True
 
     with factory() as db:
         cycle = db.scalar(select(MediaArchiveCycle).where(
             MediaArchiveCycle.tenant_id == tenant_id,
             MediaArchiveCycle.folder_id == folder_id,
         ))
+        assert db.scalar(select(func.count()).select_from(MediaArchiveCycle).where(
+            MediaArchiveCycle.tenant_id == other_tenant_id,
+        )) == 0
         assert cycle is not None
         assert cycle.state == "archived"
         operation = db.scalar(select(MediaArchiveOperation).where(
@@ -148,7 +175,6 @@ def test_closed_gate_or_missing_adapter_does_not_discover_or_change_cycle(monkey
         raise AssertionError("Gate fechado não deve consultar nem alterar o banco.")
 
     monkeypatch.setattr(worker, "SessionLocal", forbidden_session)
-    monkeypatch.setattr(worker, "_MEDIA_ARCHIVE_RUNTIME_STORAGE", None)
     monkeypatch.setattr(worker, "_last_media_archive_discovery", 0.0)
     assert worker.process_next_media_archive_operation(enabled=False) is False
     assert worker.process_next_media_archive_operation(enabled=True) is False
@@ -176,7 +202,8 @@ def test_invalid_staging_prevents_discovery_and_claims(
     assert not served_root.exists()
 
 
-def test_dispatcher_completes_restore_before_new_archive(tmp_path, monkeypatch):
+@pytest.mark.parametrize("scoped", [False, True])
+def test_dispatcher_completes_restore_before_new_archive(tmp_path, monkeypatch, scoped):
     (
         engine, tenant_id, gallery_id, _folder_id, restore_cycle_id,
         _archive_operation_id, restore_operation_id, _selection_ids, _photo_ids,
@@ -187,7 +214,6 @@ def test_dispatcher_completes_restore_before_new_archive(tmp_path, monkeypatch):
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     monkeypatch.setattr(worker, "SessionLocal", factory)
     monkeypatch.setattr(worker, "_last_media_archive_discovery", 0.0)
-    monkeypatch.setattr(worker, "_MEDIA_ARCHIVE_RUNTIME_STORAGE", adapter)
 
     with factory() as db:
         restore_operation = db.get(MediaArchiveOperation, restore_operation_id)
@@ -214,8 +240,14 @@ def test_dispatcher_completes_restore_before_new_archive(tmp_path, monkeypatch):
     def ample_capacity(_path):
         return VolumeCapacity("c" * 64, 100 * 1024**3, 90 * 1024**3)
 
+    synthetic_storage = worker.SyntheticMediaArchiveStorage()
+    synthetic_storage.objects.update(adapter.objects)
+    synthetic_storage.by_key.update(adapter.by_key)
     assert worker.process_next_media_archive_operation(
         capacity_provider=ample_capacity,
+        storage=(worker.SyntheticMediaArchiveBinding(
+            synthetic_storage, tenant_id, tenant_id, "synthetic:owner-media",
+        ) if scoped else adapter),
     ) is True
 
     with factory() as db:
@@ -270,3 +302,94 @@ def test_general_worker_cycle_calls_the_gated_archive_dispatcher(monkeypatch):
 
     assert worker.run_cycle() is False
     assert called == ["media_archive"]
+
+
+@pytest.mark.parametrize("invalid", ["tenant", "root", "namespace", "purpose"])
+def test_invalid_synthetic_binding_fails_before_database_or_transport(monkeypatch, invalid):
+    tenant = uuid4()
+    def forbidden_session():
+        raise AssertionError("database called")
+
+    fields = {"storage": worker.SyntheticMediaArchiveStorage(), "tenant_id": tenant, "storage_tenant_id": tenant,
+              "media_root": "synthetic:owner-media", "namespace": "gallery-media-v1",
+              "purpose": "synthetic-media-pilot"}
+    fields[{"tenant": "storage_tenant_id", "root": "media_root",
+            "namespace": "namespace", "purpose": "purpose"}[invalid]] = (
+        uuid4() if invalid == "tenant" else "invalid"
+    )
+    monkeypatch.setattr(worker, "SessionLocal", forbidden_session)
+    assert worker.process_next_media_archive_operation(
+        enabled=True, storage=worker.SyntheticMediaArchiveBinding(**fields),
+    ) is False
+
+
+@pytest.mark.parametrize("kind", ["bare", "duck", "google", "subclass"])
+def test_configured_loop_rejects_unscoped_or_external_storage(monkeypatch, kind):
+    from pydantic import SecretStr
+
+    from app.google_drive_media_archive_storage import GoogleDriveMediaArchiveStorage
+
+    class ForbiddenTransport:
+        def get(self, *args, **kwargs):
+            raise AssertionError("external transport called")
+        post = put = delete = stream_get = get
+
+    class DerivedStorage(worker.SyntheticMediaArchiveStorage):
+        pass
+
+    tenant = uuid4()
+    storage = {
+        "bare": worker.SyntheticMediaArchiveStorage,
+        "duck": InMemoryArchiveStorage,
+        "subclass": DerivedStorage,
+        "google": lambda: GoogleDriveMediaArchiveStorage(
+            access_token=SecretStr("synthetic-token"), media_root_id="synthetic-root",
+            tenant_id=tenant, transport=ForbiddenTransport(),
+        ),
+    }[kind]()
+    candidate = storage if kind == "bare" else worker.SyntheticMediaArchiveBinding(
+        storage, tenant, tenant, "synthetic:owner-media",
+    )
+    def forbidden_session():
+        raise AssertionError("database called")
+
+    monkeypatch.setattr(worker, "SessionLocal", forbidden_session)
+    monkeypatch.setenv("MEDIA_ARCHIVE_WORKER_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(TypeError, match="Vínculo sintético"):
+        worker.configure_media_archive_storage(candidate)
+    assert worker.process_next_media_archive_operation() is False
+    monkeypatch.setattr(worker, "_MEDIA_ARCHIVE_RUNTIME_STORAGE", candidate, raising=False)
+    assert worker.process_next_media_archive_operation() is False
+    if kind != "bare":
+        assert worker.process_next_media_archive_operation(storage=candidate, enabled=True) is False
+
+
+@pytest.mark.parametrize("environment", ["development", "production"])
+def test_volatile_binding_cannot_activate_runtime_or_touch_local_media(tmp_path, monkeypatch, environment):
+    import app.media_archive_executor as executor
+
+    tenant = uuid4()
+    binding = worker.SyntheticMediaArchiveBinding(
+        worker.SyntheticMediaArchiveStorage(), tenant, tenant, "synthetic:owner-media",
+    )
+    source = tmp_path / "synthetic-source.jpg"
+    source.write_bytes(b"preserve-local-source")
+    def forbidden(*args, **kwargs):
+        raise AssertionError("runtime must not access database, claim or cleanup")
+
+    monkeypatch.setenv("APP_ENV", environment)
+    monkeypatch.setenv("MEDIA_ARCHIVE_WORKER_ENABLED", "true")
+    monkeypatch.setattr(worker, "SessionLocal", forbidden)
+    monkeypatch.setattr(executor, "_cleanup_local_media", forbidden)
+    with pytest.raises(TypeError, match="não pode configurar"):
+        worker.configure_media_archive_storage(binding)
+    assert not hasattr(worker, "_MEDIA_ARCHIVE_RUNTIME_STORAGE")
+    assert worker.process_next_media_archive_operation() is False
+    # Nem uma atribuição fora do configurador pode selecionar storage volátil.
+    monkeypatch.setattr(worker, "_MEDIA_ARCHIVE_RUNTIME_STORAGE", binding, raising=False)
+    assert worker.process_next_media_archive_operation() is False
+    if environment == "production":
+        assert worker.process_next_media_archive_operation(storage=binding, enabled=True) is False
+    assert source.read_bytes() == b"preserve-local-source"
+    assert binding.storage.objects == {}

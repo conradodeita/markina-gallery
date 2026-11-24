@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session, aliased
@@ -39,7 +39,7 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)  # noqa: UP017 -- Keep Python 3.10 runtime compatibility.
 
 
-def _candidate_folder_ids(db: Session, *, at: datetime, limit: int) -> list:
+def _candidate_folder_ids(db: Session, *, at: datetime, limit: int, tenant_id: UUID | None = None) -> list:
     latest_cycle_id = (
         select(MediaArchiveCycle.id)
         .where(
@@ -107,10 +107,12 @@ def _candidate_folder_ids(db: Session, *, at: datetime, limit: int) -> list:
         .order_by(PhotoFolder.access_expires_at, PhotoFolder.id)
         .limit(limit)
     )
+    if tenant_id is not None:
+        stmt = stmt.where(PhotoFolder.tenant_id == tenant_id)
     return list(db.scalars(stmt))
 
 
-def _window_notice_candidate_ids(db: Session, *, at: datetime, limit: int) -> list:
+def _window_notice_candidate_ids(db: Session, *, at: datetime, limit: int, tenant_id: UUID | None = None) -> list:
     latest_reopening_expiry = (
         select(func.max(GalleryReopeningRequest.approved_until))
         .where(
@@ -161,6 +163,7 @@ def _window_notice_candidate_ids(db: Session, *, at: datetime, limit: int) -> li
         )
         .where(
             Tenant.status == "active", Tenant.lifecycle != "closed",
+            PhotoFolder.tenant_id == tenant_id if tenant_id is not None else True,
             ParentGallery.active.is_(True),
             ParentGallery.lifecycle_status == "active",
             PhotoFolder.status == "released",
@@ -245,12 +248,15 @@ def enqueue_due_archive_window_notices(
     *,
     at: datetime | None = None,
     limit: int = DEFAULT_DISCOVERY_LIMIT,
+    tenant_id: UUID | None = None,
 ) -> int:
     """Cria no máximo um aviso sete dias antes da elegibilidade efetiva da pasta."""
     if type(limit) is not int or not 1 <= limit <= 10_000:
         raise ValueError("Limite de avisos de arquivo frio inválido.")
+    if tenant_id is not None and not isinstance(tenant_id, UUID):
+        raise ValueError("Tenant de arquivo frio inválido.")
     instant = _utc(at or now())
-    folder_ids = _window_notice_candidate_ids(db, at=instant, limit=limit)
+    folder_ids = _window_notice_candidate_ids(db, at=instant, limit=limit, tenant_id=tenant_id)
     created = 0
 
     for folder_id in folder_ids:
@@ -339,6 +345,7 @@ def enqueue_eligible_archive_operations(
     *,
     at: datetime | None = None,
     limit: int = DEFAULT_DISCOVERY_LIMIT,
+    tenant_id: UUID | None = None,
 ) -> int:
     """Enfileira no máximo ``limit`` operações após revalidar cada pasta sob lock.
 
@@ -350,8 +357,10 @@ def enqueue_eligible_archive_operations(
     """
     if type(limit) is not int or not 1 <= limit <= 10_000:
         raise ValueError("Limite de descoberta inválido.")
+    if tenant_id is not None and not isinstance(tenant_id, UUID):
+        raise ValueError("Tenant de arquivo frio inválido.")
     instant = _utc(at or now())
-    folder_ids = _candidate_folder_ids(db, at=instant, limit=limit)
+    folder_ids = _candidate_folder_ids(db, at=instant, limit=limit, tenant_id=tenant_id)
     enqueued = 0
 
     for folder_id in folder_ids:
