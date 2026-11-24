@@ -12,10 +12,9 @@
 
 ## 3. Gate de integração
 
-- [ ] 3.1 Após revisão humana e integração autorizada, confirmar CI verde na `main` no SHA exato e registrar o run em `validation.md`; nenhuma operação remota é disparada por esta task.
+- [x] 3.1 Após revisão humana e integração autorizada, confirmar CI verde na `main` no SHA exato e registrar o run em `validation.md`; nenhuma operação remota é disparada por esta task. PR #425 integrada em `e8b36204d9467914cfc9da90b5dcaabda087998a`; CI da `main` `45458633617` passou no mesmo SHA.
 
-## Gates pendentes
+## Gates operacionais posteriores
 
 - A CI Linux PR #425 run `45449415944` confirmou as tasks 1.1 e 1.2: ambos os testes POSIX (`test_backup_mode_repair_preserves_directory_identity_and_contents` e `test_backup_mode_repair_fails_closed_if_path_identity_changes_after_chmod`) passaram; o gate `homolog-inventory-policy` e o agregado legado `gemma-runtime` também passaram.
-- A task 3.1 aguarda revisão humana, integração autorizada e CI verde da `main` no SHA exato.
-- Após merge/CI, qualquer operação remota exige novo `support-inventory`, revisão da fingerprint atual, autorização operacional específica e aprovação do ambiente `production`; depois da correção, executar novo inventário antes de considerar `prepare-support`.
+- Esta change não despachou operação remota. Qualquer execução futura exige novo `support-inventory`, revisão da fingerprint atual, autorização operacional específica e aprovação do ambiente `production`; depois da correção, é obrigatório executar outro inventário antes de considerar `prepare-support`.
