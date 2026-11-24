@@ -2,8 +2,8 @@
 
 ## 1. Operação limitada no helper
 
-- [ ] 1.1 Implementar `repair-support-backups-mode` no helper usando somente o diretório fixo, fingerprint atual e classificação exclusiva `target_mode_invalid`; cobrir alvo elegível, conteúdo-preservado e rejeição de diretório ausente/inseguro com testes POSIX sintéticos.
-- [ ] 1.2 Implementar verificação por identidade do inode e falha fail-closed definida no design; cobrir divergência concorrente, falha de pós-verificação sem retry/limpeza e saída sanitizada com testes que confirmem ausência de caminho, metadados brutos e conteúdo.
+- [x] 1.1 Implementar `repair-support-backups-mode` no helper usando somente o diretório fixo, fingerprint atual e classificação exclusiva `target_mode_invalid`; cobrir alvo elegível, conteúdo-preservado e rejeição de diretório ausente/inseguro com testes POSIX sintéticos. Validado em Linux na CI PR #425, run `45449415944`, SHA `7a509abf743c4a76b5719ff68033e52dc8268227`.
+- [x] 1.2 Implementar verificação por identidade do inode e falha fail-closed definida no design; cobrir divergência concorrente, falha de pós-verificação sem retry/limpeza e saída sanitizada com testes que confirmem ausência de caminho, metadados brutos e conteúdo. `test_backup_mode_repair_fails_closed_if_path_identity_changes_after_chmod` e `test_repair_postcheck_failure_is_terminal_and_sanitized` passaram no mesmo run Linux.
 
 ## 2. Canal protegido e integração
 
@@ -16,6 +16,6 @@
 
 ## Gates pendentes
 
-- As tasks 1.1 e 1.2 aguardam nova CI Linux. No primeiro run, uma guarda de capacidade frágil rejeitou os testes POSIX antes de `fchmod` e foi removida. No segundo run, os quatro shards backend passaram, mas os dois testes POSIX falharam porque o fixture sintetizava ownership em `os.stat`/`os.fstat`, mas não em `Path.lstat`; o fixture foi corrigido sem alterar o helper de produção. Só marcar as tasks após novo runner Linux passar pelos dois cenários.
+- A CI Linux PR #425 run `45449415944` confirmou as tasks 1.1 e 1.2: ambos os testes POSIX (`test_backup_mode_repair_preserves_directory_identity_and_contents` e `test_backup_mode_repair_fails_closed_if_path_identity_changes_after_chmod`) passaram; o gate `homolog-inventory-policy` e o agregado legado `gemma-runtime` também passaram.
 - A task 3.1 aguarda revisão humana, integração autorizada e CI verde da `main` no SHA exato.
 - Após merge/CI, qualquer operação remota exige novo `support-inventory`, revisão da fingerprint atual, autorização operacional específica e aprovação do ambiente `production`; depois da correção, executar novo inventário antes de considerar `prepare-support`.
