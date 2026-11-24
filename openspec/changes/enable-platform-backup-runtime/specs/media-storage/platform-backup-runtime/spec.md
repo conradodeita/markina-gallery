@@ -103,6 +103,12 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **THEN** o operador SHALL receber somente um código técnico estático permitido ou uma categoria fixa de I/O/comando; nenhuma fingerprint ou precondição aprovada SHALL ser emitida
 - **AND** mensagens de exceção, caminhos, saídas de comandos, dados de configuração, segredos, tokens, chaves e IDs do Drive MUST NOT aparecer no log
 
+#### Scenario: Classificar exceção interna sem expor detalhes
+
+- **WHEN** o helper de suporte encontra uma exceção interna cuja classe pertence à allowlist estática
+- **THEN** SHALL emitir somente o código de categoria fixo associado; classes desconhecidas SHALL continuar usando support_internal_error
+- **AND** texto, classe dinâmica, traceback, caminhos e valores da exceção MUST NOT aparecer no log, e nenhuma fingerprint ou precondição aprovada SHALL ser emitida
+
 #### Scenario: Registro de container falha na validação
 
 - **WHEN** o registro de API, web ou banco não corresponder ao formato fixo esperado
@@ -132,6 +138,35 @@ A instalação do runtime SHALL aceitar somente artefato construído para o SHA 
 - **WHEN** a revisão do wrapper exato passar pelo CI e o instalador protegido confirmar novamente o fingerprint atual do host
 - **THEN** somente o forced command root-owned SHALL ser trocado atomicamente, SHALL preservar uma cópia anterior, SHALL continuar recusando comandos arbitrários e SHALL provar que todos os containers mantiveram identidade, imagem, estado e início
 - **AND** a operação SHALL adquirir o lock comum de release e SHALL NOT recriar containers, alterar portas, proxy, banco ou recursos compartilhados
+
+#### Scenario: Restaurar o forced command anterior após instalação concluída
+
+- **WHEN** uma instalação do wrapper tiver sido concluída, o inventário seguinte revelar falha, e o operador solicitar restauração protegida de uma cópia anterior identificada pelo recibo
+- **THEN** o canal SHALL aceitar somente a cópia root-only preservada no diretório fixo e cujo SHA-256 corresponda ao recibo aprovado, exigindo fingerprint atual, CI da `main` no SHA exato e aprovação do ambiente protegido
+- **AND** o recibo SHALL ser a linha `previous_wrapper_backup_sha256` do resumo da instalação protegida concluída; a operação SHALL aceitar somente esse digest e localizar exatamente uma cópia correspondente no diretório fixo, sem input de caminho
+- **AND** SHALL preservar a versão atualmente ativa em uma nova cópia verificável antes de substituir o wrapper em troca atômica
+- **AND** SHALL verificar arquivo regular, owner/mode/link, SHA-256, sintaxe e recusa de comando arbitrário, e SHALL confirmar a invariância de todos os containers
+- **AND** se qualquer verificação posterior à troca falhar, SHALL restaurar atomicamente a versão que estava ativa antes da tentativa de rollback e manter ambos os recibos/cópias
+- **AND** MUST NOT aceitar caminho arbitrário, alterar API/web, banco, Compose, Drive, configuração de backup, serviço ou timer, nem executar inventário mutável
+
+#### Scenario: Cópia anterior ausente, ambígua ou divergente
+
+- **WHEN** a cópia fixa não existir, mais de uma cópia corresponder aos critérios, a identidade/metadados forem inseguros ou o SHA-256 divergir do recibo
+- **THEN** a restauração MUST abortar antes da troca, sem remover ou alterar qualquer wrapper ou cópia preservada, e SHALL emitir somente falha sanitizada
+
+#### Scenario: Recuperação compensatória não comprovada
+
+- **WHEN** a validação da versão restaurada falhar e a troca atômica de retorno à versão ativa antes da tentativa falhar ou não puder ser confirmada por metadados, SHA-256, sintaxe, allowlist e invariância dos containers
+- **THEN** o fluxo MUST parar sem nova troca, repetição automática ou limpeza, preservar o alvo no estado observado e todas as versões e recibos envolvidos, e emitir somente o código estático allowlisted `wrapper_restore_fallback_unverified`
+- **AND** o estado ativo SHALL ser informado como não verificado, sem revelar caminhos, hashes, IDs ou conteúdo
+- **AND** qualquer recuperação manual SHALL exigir fluxo protegido próprio com contrato e implementação revisados, merge autorizado, CI verde da `main` no SHA exato, novo preflight somente leitura, fingerprint atual e autorização operacional explícita aprovada pelo ambiente protegido
+- **AND** MUST NOT executar comandos shell/SSH ad hoc nem remover cópias ou recibos
+
+#### Scenario: Staging fixo de recuperação já existe
+
+- **WHEN** o staging fixo da troca ou o staging de recuperação compensatória já existir
+- **THEN** a operação MUST abortar sem sobrescrever nem remover o artefato preexistente e SHALL emitir falha sanitizada
+- **AND** SHALL preservar a cópia ativa e a cópia indicada pelo recibo
 
 #### Scenario: O estado de containers compartilhados divergir
 
@@ -178,3 +213,66 @@ A ponte SHALL oferecer operação fixa de configuração somente da API para o m
 
 - **WHEN** uma fase ficar incompleta ou qualquer identidade divergir
 - **THEN** a ponte MUST bloquear repetição cega e oferecer inventário e recuperação explícitos somente da API, preservando todos os containers
+
+### Requirement: Preparar e restaurar o bootstrap protegido do runtime
+
+Antes do inventário do backup, o suporte SHALL usar operações fixas e protegidas, CI da `main` no SHA exato, fingerprint atual, lock comum e aprovação `production`. SHALL preservar cópias/recibos root-only, alterar somente ponte, forced command e `origin/main`, e oferecer compensação única. A fingerprint de suporte MUST NOT ser aceita como inventário do runtime; checkout, aplicações, banco, containers, Drive e timer MUST NOT ser alterados.
+
+#### Scenario: Inventário read-only usa credenciais protegidas de produção
+
+- **WHEN** `support-inventory` ou `restore-support-inventory` acessa o host pelo canal SSH atual
+- **THEN** SHALL exigir aprovação do ambiente `production`, que contém as credenciais SSH usadas pelo fluxo
+- **AND** MUST NOT disponibilizar essas credenciais no ambiente `production-preflight` sem revisor obrigatório
+- **AND** SHALL limitar a operação aos dados read-only descritos no contrato, sem alterar host, containers ou configuração
+
+#### Scenario: Inventário read-only verifica diretórios do suporte
+
+- **WHEN** support-inventory coleta o estado para preparar o suporte protegido
+- **THEN** SHALL classificar somente por leitura os diretórios fixos de recibos e cópias como ready, creatable, parent_invalid, directory_invalid ou unavailable e incluir as categorias na fingerprint de suporte
+- **AND** a saída SHALL mostrar somente as categorias estáticas, sem caminhos, owner, mode bruto, conteúdo ou metadados de arquivo
+- **AND** MUST NOT criar, alterar permissões, remover ou limpar diretórios, arquivos, recibos ou cópias
+
+#### Scenario: Diretório inseguro bloqueia preparação antes de mutação
+
+- **WHEN** a fingerprint aprovada registra qualquer diretório de suporte como parent_invalid, directory_invalid ou unavailable, ou o estado revalidado sob lock diverge
+- **THEN** prepare-support SHALL abortar antes de buscar candidatos, criar diretórios, cópias ou recibos, ou alterar a referência Git e os executáveis
+- **AND** SHALL emitir somente support_state_directory_invalid ou support_backup_directory_invalid, sem fingerprint de preparação ou recibo
+- **AND** ready e creatable SHALL ser aceitos somente quando os pais fixos passarem pelas verificações root-only; qualquer criação SHALL ocorrer apenas dentro da operação protegida aprovada
+
+#### Scenario: Preparar a base de suporte sem publicar runtime
+
+- **WHEN** `prepare-support` for executado com SHA atual da `main`, CI verde, fingerprint de suporte idêntica e estado revalidado sob o lock
+- **THEN** SHALL registrar em recibo root-only a presença/hash/metadados anteriores dos executáveis, a presença/SHA anterior da referência Git, os blobs candidatos, a impressão agregada dos containers e as cópias verificadas
+- **AND** SHALL atualizar por compare-and-swap somente `refs/remotes/origin/main`, trocar atomicamente os dois executáveis fixos e confirmar blob/hash, owner/mode/link, allowlist e invariância de containers
+- **AND** SHALL preservar todas as cópias/recibos sem limpeza automática e deixar o runtime de backup sem alteração
+
+#### Scenario: Falha parcial durante preparação
+
+- **WHEN** qualquer operação depois da primeira mutação ou qualquer verificação pós-troca falhar
+- **THEN** SHALL executar no máximo uma compensação verificável na ordem inversa, respeitando a presença/ausência e os hashes registrados
+- **AND** se a compensação não puder ser provada, MUST NOT sobrescrever valor desconhecido nem tentar novamente; SHALL preservar os alvos observados, cópias/recibos e emitir somente `support_preparation_rollback_unverified`
+
+#### Scenario: Recibo, backup ou staging preexistente
+
+- **WHEN** nome de cópia, recibo ou staging fixo já existir antes da preparação
+- **THEN** MUST abortar antes de alterar qualquer alvo, sem sobrescrever ou remover o artefato preexistente
+- **AND** SHALL manter o lock/fingerprint sem aprovação para preparação e emitir somente erro sanitizado
+
+#### Scenario: Preparação concluída requer inventário novo do runtime
+
+- **WHEN** `prepare-support` terminar com sucesso
+- **THEN** o operador SHALL executar em despacho separado `operation=inventory`, que coleta a fingerprint completa do runtime, saúde, schema, espaço, portas/subdomínio e serviços/timers
+- **AND** a fingerprint de suporte MUST NOT liberar `install-wrapper`, vínculo, Drive, backup, restore ou ativação de timer
+
+#### Scenario: Restaurar suporte preparado por recibo
+
+- **WHEN** `restore-support` receber somente o digest de recibo apresentado, com fingerprint read-only atual, CI verde da `main` no SHA exato e aprovação do ambiente protegido
+- **THEN** SHALL preservar primeiro os dois executáveis ativos e o estado atual da ref em cópias/recibo root-only e restaurar os valores anteriores registrados pelo recibo de preparação em ordem inversa
+- **AND** SHALL aceitar somente correspondência única e íntegra de recibo/cópias no diretório fixo, confirmar metadados/hash/sintaxe/allowlist/ref e invariância de containers e preservar todos os recibos/cópias
+- **AND** caminho arbitrário, cópia ausente/ambígua/adulterada, fingerprint divergente, ref/arquivo com valor inesperado ou falha de verificação MUST abortar sem sobrescrever estado desconhecido
+
+#### Scenario: Compensar falha na restauração protegida
+
+- **WHEN** a restauração alterar um ou mais alvos e falhar antes de comprovar o estado anterior
+- **THEN** SHALL tentar uma única compensação para o estado exato imediatamente anterior à restauração usando somente cópias e recibo dessa operação
+- **AND** se a compensação falhar ou não puder ser verificada, SHALL parar, preservar estado observado, cópias e recibos e emitir somente `support_restore_fallback_unverified`; MUST NOT limpar, repetir ou chamar shell/SSH ad hoc

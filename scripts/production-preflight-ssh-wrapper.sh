@@ -18,6 +18,7 @@ readonly APP_BASE_IMAGE_EXPORT_BLOB_SHA="988ca208646836ecb965b80ec91c2ada9a38dc3
 readonly BACKUP_ARTIFACT_BLOB_SHA="af6ae65732b94a52ecbcadb7cb0ebf9b455af296"
 readonly BACKUP_INVENTORY_BLOB_SHA="ae8c4dc8113f033bf2416109ff29cb650e67a7a6"
 readonly BACKUP_INSTALLER_BLOB_SHA="efd7299e1817dd516222b413d419a48d8dbd29b7"
+readonly BACKUP_WRAPPER_RESTORE_BLOB_SHA="0c988531559f8f1f60aa7d40624e004133565b14"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
@@ -39,6 +40,7 @@ backup_mode=""
 backup_sha=""
 backup_digest=""
 backup_fingerprint=""
+backup_receipt_sha256=""
 if [[ "$original_command" =~ ^MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=([0-9a-f]{40})$ ]]; then
   backup_mode="inventory"
   backup_sha="${BASH_REMATCH[1]}"
@@ -60,6 +62,11 @@ elif [[ "$original_command" =~ ^MARKINA_PLATFORM_BACKUP_RECONCILE_SHA=([0-9a-f]{
   backup_sha="${BASH_REMATCH[1]}"
   backup_digest="${BASH_REMATCH[2]}"
   backup_fingerprint="${BASH_REMATCH[3]}"
+elif [[ "$original_command" =~ ^MARKINA_PLATFORM_BACKUP_RESTORE_WRAPPER_SHA=([0-9a-f]{40})_RECEIPT=([0-9a-f]{64})_FINGERPRINT=([0-9a-f]{64})$ ]]; then
+  backup_mode="restore-wrapper"
+  backup_sha="${BASH_REMATCH[1]}"
+  backup_receipt_sha256="${BASH_REMATCH[2]}"
+  backup_fingerprint="${BASH_REMATCH[3]}"
 fi
 
 if [[ -n "$backup_mode" ]]; then
@@ -76,6 +83,27 @@ if [[ -n "$backup_mode" ]]; then
   [[ "$(git hash-object -- "$source_dir/inventory.py")" == "$BACKUP_INVENTORY_BLOB_SHA" ]] \
     || fail "blob do inventário do backup diverge"
   inventory_b64="$(base64 -w0 "$source_dir/inventory.py")"
+  if [[ "$backup_mode" == "restore-wrapper" ]]; then
+    curl --location --fail --silent --show-error --proto '=https' --proto-redir '=https' --tlsv1.2 \
+      "$raw_base/platform_backup_wrapper_restore.py" -o "$source_dir/wrapper_restore.py" \
+      || fail "suporte de restauração do wrapper indisponível"
+    [[ "$(git hash-object -- "$source_dir/wrapper_restore.py")" == "$BACKUP_WRAPPER_RESTORE_BLOB_SHA" ]] \
+      || fail "blob de restauração do wrapper diverge"
+    restore_b64="$(base64 -w0 "$source_dir/wrapper_restore.py")"
+    restore_bootstrap="$(cat <<'PY'
+import base64
+import sys
+import types
+
+module = types.ModuleType("platform_backup_wrapper_restore")
+module.__file__ = "platform_backup_wrapper_restore.py"
+sys.modules[module.__name__] = module
+exec(compile(base64.b64decode(sys.argv[1]), module.__file__, "exec"), module.__dict__)
+sys.argv = [module.__file__, *sys.argv[2:]]
+raise SystemExit(module._main())
+PY
+)"
+  fi
   inventory_bootstrap="$(cat <<'PY'
 import base64
 import sys
@@ -143,6 +171,16 @@ PY
         "$artifact_b64" "$inventory_b64" "$installer_b64" \
         --sha "$backup_sha" --bundle-sha256 "$backup_digest" \
         --approval-fingerprint "$backup_fingerprint"
+      exit $?
+      ;;
+    restore-wrapper)
+      [[ "$backup_fingerprint" =~ ^[0-9a-f]{64}$ \
+         && "$backup_receipt_sha256" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint ou recibo inválido"
+      acquire_backup_release_lock
+      sudo -n /usr/bin/python3.10 -B -c "$restore_bootstrap" \
+        "$restore_b64" --support-sha "$backup_sha" \
+        --receipt-backup-sha256 "$backup_receipt_sha256" \
+        --approval-fingerprint "$backup_fingerprint" </dev/null
       exit $?
       ;;
     bind-and-rehearse|reconcile)

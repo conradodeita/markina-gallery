@@ -478,11 +478,14 @@ jobs:
           python -B scripts/test_production_app_artifact.py
           python -B scripts/test_prod_app_api_base_image_export.py
           python -B scripts/test_production_app_artifact_ssh_wrapper.py
+          ruff check scripts/production_app_preflight_support.py scripts/test_production_app_preflight_support.py scripts/test_production_app_preflight_support_workflow.py
+          python -B scripts/test_production_app_preflight_support.py -v
+          python -B scripts/test_production_app_preflight_support_workflow.py
           python -m unittest discover -s scripts -p test_production_app_compose_bridge.py -v
           python -m unittest discover -s scripts -p test_production_app_runtime_adoption.py -v
           sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -B -m unittest discover -s scripts -p 'test_production_app_handoff_*.py' -v
           sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -B -m unittest discover -s scripts -p 'test_production_app_picker.py' -v
-          ruff check scripts/platform_backup_runtime_artifact.py scripts/platform_backup_runtime_inventory.py scripts/install_platform_backup_runtime.py scripts/test_platform_backup_runtime_artifact.py scripts/test_platform_backup_runtime_inventory.py scripts/test_install_platform_backup_runtime.py scripts/test_platform_backup_runtime_workflow.py
+          ruff check scripts/platform_backup_runtime_artifact.py scripts/platform_backup_runtime_inventory.py scripts/install_platform_backup_runtime.py scripts/test_platform_backup_runtime_artifact.py scripts/test_platform_backup_runtime_inventory.py scripts/test_install_platform_backup_runtime.py scripts/platform_backup_wrapper_restore.py scripts/test_platform_backup_wrapper_restore.py scripts/test_platform_backup_runtime_workflow.py
           python -B scripts/test_platform_backup_runtime_artifact.py -v
           sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -B scripts/test_platform_backup_runtime_inventory.py -v
           sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -B scripts/test_install_platform_backup_runtime.py -v
@@ -490,6 +493,7 @@ jobs:
           bash -n scripts/production-preflight-ssh-wrapper.sh
           bash -n scripts/install-prod-platform-backup-wrapper.sh
           python -B scripts/test_platform_backup_runtime_workflow.py
+          python -B scripts/test_platform_backup_wrapper_restore.py -v
           bash scripts/build_platform_backup_runtime.sh "$GITHUB_SHA" "$RUNNER_TEMP/pyp-platform-backup-runtime.tar.gz"
           bash scripts/test_deploy_prod_app_services.sh
           python scripts/test_prod_facial_release_gates.py

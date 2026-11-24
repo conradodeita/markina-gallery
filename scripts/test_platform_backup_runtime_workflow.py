@@ -19,6 +19,7 @@ WRAPPER_INSTALL = (WORKFLOWS / "production-platform-backup-wrapper-install.yml")
 CI = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
 SSH_WRAPPER = (ROOT / "scripts/production-preflight-ssh-wrapper.sh").read_text(encoding="utf-8")
 INSTALL_WRAPPER = (ROOT / "scripts/install-prod-platform-backup-wrapper.sh").read_text(encoding="utf-8")
+WRAPPER_RESTORE = (ROOT / "scripts/platform_backup_wrapper_restore.py").read_text(encoding="utf-8")
 
 
 def require(condition: bool, reason: str) -> None:
@@ -503,6 +504,55 @@ def main() -> int:
             check=False,
         )
         require(result.returncode != 0, "wrapper_install_accepts_invalid_aggregate_diagnostic")
+    require("restore_backup_sha256:" in WRAPPER_INSTALL
+            and "options: [inventory, install-wrapper, restore-wrapper]" in WRAPPER_INSTALL,
+            "restore_wrapper_workflow_input_missing")
+    restore_job = WRAPPER_INSTALL.split("  restore-wrapper:", 1)[1]
+    restore_requirements = (
+        "inputs.operation == 'restore-wrapper'",
+        "needs: [code-evidence, preflight]",
+        "environment: production",
+        'python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"',
+        "RESTORE_BACKUP_SHA256: ${{ inputs.restore_backup_sha256 }}",
+        'REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT',
+        'production_binding" == "$INVENTORY_CONNECTION',
+        "MARKINA_PLATFORM_BACKUP_RESTORE_WRAPPER_SHA=$GITHUB_SHA",
+        'tee -a "$GITHUB_STEP_SUMMARY"',
+    )
+    for requirement in restore_requirements:
+        require(requirement in restore_job, "restore_wrapper_protected_contract_missing:" + requirement)
+    require("BACKUP_WRAPPER_RESTORE_BLOB_SHA" in SSH_WRAPPER
+            and 'git hash-object -- "$source_dir/wrapper_restore.py"' in SSH_WRAPPER
+            and "acquire_backup_release_lock" in SSH_WRAPPER
+            and "--receipt-backup-sha256" in SSH_WRAPPER,
+            "restore_wrapper_source_lock_or_receipt_not_pinned")
+    restore_command = (
+        "MARKINA_PLATFORM_BACKUP_RESTORE_WRAPPER_SHA=([0-9a-f]{40})"
+        "_RECEIPT=([0-9a-f]{64})_FINGERPRINT=([0-9a-f]{64})"
+    )
+    require(restore_command in SSH_WRAPPER and 'backup_mode="restore-wrapper"' in SSH_WRAPPER,
+            "restore_wrapper_ssh_command_not_fixed")
+    require('BACKUP_DIR = Path("/var/backups/markina-gallery")' in WRAPPER_RESTORE
+            and 'WRAPPER_PATH = Path("/usr/local/sbin/markina-gallery-preflight-ssh-wrapper")' in WRAPPER_RESTORE
+            and "--backup-path" not in WRAPPER_RESTORE
+            and '["sudo", "-n", "-H", "-u", "ubuntu", "env"' in WRAPPER_RESTORE
+            and '"SSH_ORIGINAL_COMMAND=id"' in WRAPPER_RESTORE
+            and 'docker = ["sudo", "-n", "-H", "-u", "ubuntu", "docker"]' in WRAPPER_RESTORE
+            and "wrapper_restore_fallback_unverified" in WRAPPER_RESTORE
+            and "docker" in WRAPPER_RESTORE,
+            "restore_wrapper_paths_or_fail_closed_contract_missing")
+    helper_blob = subprocess.run(
+        [
+            "git",
+            "hash-object",
+            "--path=scripts/platform_backup_wrapper_restore.py",
+            "scripts/platform_backup_wrapper_restore.py",
+        ],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    pin = re.search(r'BACKUP_WRAPPER_RESTORE_BLOB_SHA="([0-9a-f]{40})"', SSH_WRAPPER)
+    require(helper_blob.returncode == 0 and pin is not None and pin.group(1) == helper_blob.stdout.strip(),
+            "restore_wrapper_helper_blob_pin_mismatch")
     print("platform_backup_runtime_workflow=valid")
     return 0
 

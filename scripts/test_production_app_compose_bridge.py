@@ -430,6 +430,39 @@ class ProtectedOperationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertRegex(result.stderr, "app-bridge-install: (arguments_invalid|identity_invalid)")
 
+    def test_support_runner_rejects_unlisted_operation_before_host_checks(self):
+        bash = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else shutil.which("bash")
+        self.assertTrue(bash)
+        installer = Path(__file__).with_name("install-prod-app-compose-bridge.sh")
+        env = dict(os.environ, MARKINA_EXPECTED_REPOSITORY="conradodeita/markina-gallery")
+        result = subprocess.run(
+            [bash, str(installer), "--mode", "unlisted", "--support-sha", SHA,
+             "--helper-blob", SHA, "--connection-binding", FINGERPRINT],
+            env=env, capture_output=True, text=True, timeout=15, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stderr.strip(), "app-bridge-install: operation_invalid")
+
+    def test_support_runner_accepts_only_exact_mode_arguments_before_host_checks(self):
+        bash = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else shutil.which("bash")
+        self.assertTrue(bash)
+        installer = Path(__file__).with_name("install-prod-app-compose-bridge.sh")
+        env = dict(os.environ, MARKINA_EXPECTED_REPOSITORY="conradodeita/markina-gallery")
+        valid = subprocess.run(
+            [bash, str(installer), "--mode", "support-inventory", "--support-sha", SHA,
+             "--helper-blob", SHA, "--connection-binding", FINGERPRINT],
+            env=env, capture_output=True, text=True, timeout=15, check=False,
+        )
+        self.assertNotEqual(valid.returncode, 0)
+        self.assertEqual(valid.stderr.strip(), "app-bridge-install: host_or_checkout_invalid")
+        invalid = subprocess.run(
+            [bash, str(installer), "--mode", "support-inventory", "--support-sha", SHA,
+             "--helper-blob", SHA, "--connection-binding", FINGERPRINT, "--approval-fingerprint", FINGERPRINT],
+            env=env, capture_output=True, text=True, timeout=15, check=False,
+        )
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertEqual(invalid.stderr.strip(), "app-bridge-install: arguments_invalid")
+
     def test_installer_accepts_only_exact_canonical_git_origins(self):
         bash = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else shutil.which("bash")
         self.assertTrue(bash)

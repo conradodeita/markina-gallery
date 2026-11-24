@@ -4,10 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Somente inventariar ou instalar o forced command revisado
+        description: Inventariar, instalar ou restaurar o forced command revisado
         required: true
         type: choice
-        options: [inventory, install-wrapper]
+        options: [inventory, install-wrapper, restore-wrapper]
+      restore_backup_sha256:
+        description: SHA-256 da cópia root-only indicado no resumo aprovado da instalação anterior; obrigatório somente em restore-wrapper
+        required: false
+        type: string
+        default: ''
       approval_fingerprint:
         description: Fingerprint do preflight read-only revisado (vazio somente em inventory)
         required: false
@@ -131,3 +136,56 @@ jobs:
           ssh "${options[@]}" "$target" \
             "cd /opt/markina-gallery && MARKINA_EXPECTED_REPOSITORY='$GITHUB_REPOSITORY' bash -s -- --sha '$GITHUB_SHA' --wrapper-blob '$wrapper_blob' --approval-fingerprint '$APPROVAL_FINGERPRINT'" \
             < scripts/install-prod-platform-backup-wrapper.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+  restore-wrapper:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'restore-wrapper' }}
+    needs: [code-evidence, preflight]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Revalidar CI, fingerprint, recibo e destino do canal protegido
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUESTED_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+          INVENTORY_FINGERPRINT: ${{ needs.preflight.outputs.fingerprint }}
+          INVENTORY_CONNECTION: ${{ needs.preflight.outputs.connection_binding }}
+          RESTORE_BACKUP_SHA256: ${{ inputs.restore_backup_sha256 }}
+          SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"
+          [[ "$REQUESTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT" ]]
+          [[ "$RESTORE_BACKUP_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          production_binding="$(printf '%s' "$SSH_HOST|$SSH_PORT|$SSH_USER" | sha256sum | awk '{print $1}')"
+          [[ "$production_binding" == "$INVENTORY_CONNECTION" ]]
+      - name: Restaurar somente o forced command após aprovação protegida
+        shell: bash
+        env:
+          SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+          APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}
+          RESTORE_BACKUP_SHA256: ${{ inputs.restore_backup_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          key_file="$(mktemp)"; known_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          target="$SSH_USER@$SSH_HOST"
+          options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
+          remote_command="MARKINA_PLATFORM_BACKUP_RESTORE_WRAPPER_SHA=$GITHUB_SHA"_RECEIPT="$RESTORE_BACKUP_SHA256"_FINGERPRINT="$APPROVAL_FINGERPRINT"
+          ssh "${options[@]}" "$target" "$remote_command" </dev/null | tee -a "$GITHUB_STEP_SUMMARY"
