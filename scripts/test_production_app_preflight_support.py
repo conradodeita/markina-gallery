@@ -343,6 +343,7 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
             os.chmod(target, 0o750)
             original = target.stat()
             original_payload = payload.stat()
+            real_lstat = Path.lstat
             real_stat = os.stat
             real_fstat = os.fstat
 
@@ -356,7 +357,11 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
             def synthetic_fstat(descriptor):
                 return root_owned(real_fstat(descriptor))
 
+            def synthetic_lstat(path):
+                return root_owned(real_lstat(path))
+
             with (patch.object(support, "BACKUPS_DIR", target),
+                  patch.object(support.Path, "lstat", new=synthetic_lstat),
                   patch.object(support.os, "stat", side_effect=synthetic_stat),
                   patch.object(support.os, "fstat", side_effect=synthetic_fstat)):
                 support.LocalSupportHost().repair_backup_directory_mode()
@@ -378,6 +383,7 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
             target = parent / "markina-gallery"
             target.mkdir(mode=0o750)
             original = target.stat()
+            real_lstat = Path.lstat
             real_stat = os.stat
             real_fstat = os.fstat
             real_fchmod = os.fchmod
@@ -393,6 +399,9 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
             def synthetic_fstat(descriptor):
                 return root_owned(real_fstat(descriptor))
 
+            def synthetic_lstat(path):
+                return root_owned(real_lstat(path))
+
             def replace_after_chmod(descriptor, mode):
                 nonlocal replaced
                 real_fchmod(descriptor, mode)
@@ -404,6 +413,7 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
 
             output = io.StringIO()
             with (patch.object(support, "BACKUPS_DIR", target),
+                  patch.object(support.Path, "lstat", new=synthetic_lstat),
                   patch.object(support.os, "stat", side_effect=synthetic_stat),
                   patch.object(support.os, "fstat", side_effect=synthetic_fstat),
                   patch.object(support.os, "fchmod", side_effect=replace_after_chmod) as chmod,

@@ -16,6 +16,6 @@
 
 ## Gates pendentes
 
-- As tasks 1.1 e 1.2 aguardam nova CI Linux: o primeiro run identificou uma guarda de capacidade frágil nos dois testes POSIX; a checagem local foi corrigida e aguarda rerun.
+- As tasks 1.1 e 1.2 aguardam nova CI Linux. No primeiro run, uma guarda de capacidade frágil rejeitou os testes POSIX antes de `fchmod` e foi removida. No segundo run, os quatro shards backend passaram, mas os dois testes POSIX falharam porque o fixture sintetizava ownership em `os.stat`/`os.fstat`, mas não em `Path.lstat`; o fixture foi corrigido sem alterar o helper de produção. Só marcar as tasks após novo runner Linux passar pelos dois cenários.
 - A task 3.1 aguarda revisão humana, integração autorizada e CI verde da `main` no SHA exato.
 - Após merge/CI, qualquer operação remota exige novo `support-inventory`, revisão da fingerprint atual, autorização operacional específica e aprovação do ambiente `production`; depois da correção, executar novo inventário antes de considerar `prepare-support`.
