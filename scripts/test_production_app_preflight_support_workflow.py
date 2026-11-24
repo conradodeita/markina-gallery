@@ -15,7 +15,8 @@ def require(condition: bool, reason: str) -> None:
 
 
 def main() -> int:
-    operations = ("support-inventory", "prepare-support", "restore-support-inventory", "restore-support")
+    operations = ("support-inventory", "prepare-support", "repair-support-backups-mode",
+                  "restore-support-inventory", "restore-support")
     option_text = "options: [" + ", ".join(operations) + "]"
     require("on:\n  workflow_dispatch:\n    inputs:\n      operation:" in WORKFLOW,
             "support_requires_explicit_workflow_dispatch")
@@ -42,6 +43,27 @@ def main() -> int:
             "support_workflow_does_not_pass_helper_pin")
     require('tee -a "$GITHUB_STEP_SUMMARY"' in WORKFLOW,
             "support_inventory_output_not_presented_in_protected_summary")
+    repair_case = WORKFLOW.split("            repair-support-backups-mode)", 1)[1].split(
+        "            restore-support-inventory)", 1)[0]
+    require('"$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$' in repair_case
+            and '"$PREPARATION_RECEIPT_SHA256"' in repair_case and "-z" in repair_case
+            and "support_args+=(--approval-fingerprint \"$APPROVAL_FINGERPRINT\")" in repair_case,
+            "support_mode_repair_does_not_require_only_the_current_fingerprint")
+    require("--path" not in repair_case and "--mode 0700" not in repair_case
+            and "--owner" not in repair_case and "--group" not in repair_case,
+            "support_mode_repair_exposes_arbitrary_target_parameters")
+    runner_repair = RUNNER.split("  repair-support-backups-mode)", 1)[1].split(
+        "  restore-support-inventory)", 1)[0]
+    require('[[ $# == 2 && "$1" == --approval-fingerprint && "$2" =~ ^[0-9a-f]{64}$ ]]' in runner_repair
+            and "--receipt-sha256" not in runner_repair
+            and "--path" not in runner_repair and "--mode" not in runner_repair,
+            "support_runner_mode_repair_accepts_arbitrary_arguments")
+    inventory_case = WORKFLOW.split("            support-inventory)", 1)[1].split(
+        "            prepare-support)", 1)[0]
+    prepare_case = WORKFLOW.split("            prepare-support)", 1)[1].split(
+        "            repair-support-backups-mode)", 1)[0]
+    require("repair-support-backups-mode" not in inventory_case, "support_inventory_chains_mode_repair")
+    require("repair-support-backups-mode" not in prepare_case, "support_preparation_chains_mode_repair")
 
     require("readonly PROJECT_ROOT=\"/opt/markina-gallery\"" in RUNNER
             and "readonly SUPPORT_HELPER=\"scripts/production_app_preflight_support.py\"" in RUNNER,

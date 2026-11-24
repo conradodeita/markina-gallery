@@ -101,8 +101,8 @@ def main() -> None:
     require("on:\n  workflow_dispatch:\n    inputs:\n      operation:",
             "suporte do preflight apenas por despacho com operação explícita", evidence_gate)
     require("permissions: {}", "sem permissões padrão no workflow de suporte", evidence_gate)
-    require("options: [support-inventory, prepare-support, restore-support-inventory, restore-support]",
-            "somente as quatro operações aprovadas", evidence_gate)
+    require("options: [support-inventory, prepare-support, repair-support-backups-mode, restore-support-inventory, restore-support]",
+            "somente as cinco operações aprovadas", evidence_gate)
     main_dispatch = "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
     verify_evidence = 'scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-bridge-install'
     for block in (evidence_gate, bridge_install):
