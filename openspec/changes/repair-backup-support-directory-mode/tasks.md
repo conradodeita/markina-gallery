@@ -16,6 +16,6 @@
 
 ## Gates pendentes
 
-- As tasks 1.1 e 1.2 aguardam CI Linux para executar os testes POSIX que foram ignorados no Windows; a implementação e cobertura estão no diff local.
+- As tasks 1.1 e 1.2 aguardam nova CI Linux: o primeiro run identificou uma guarda de capacidade frágil nos dois testes POSIX; a checagem local foi corrigida e aguarda rerun.
 - A task 3.1 aguarda revisão humana, integração autorizada e CI verde da `main` no SHA exato.
 - Após merge/CI, qualquer operação remota exige novo `support-inventory`, revisão da fingerprint atual, autorização operacional específica e aprovação do ambiente `production`; depois da correção, executar novo inventário antes de considerar `prepare-support`.

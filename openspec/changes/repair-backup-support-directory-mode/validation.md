@@ -13,6 +13,6 @@
 
 ## Limitações e gates pendentes
 
-- A execução da CI da branch ainda está pendente; a CI Linux precisa executar os dois testes POSIX que ficaram ignorados no Windows.
+- A primeira CI da PR, run `45439480887` no SHA `31105891f45fc54de9eb38a1b3116331b51678a0`, executou os testes POSIX e falhou em dois casos porque a guarda de plataforma comparava `os.stat` com identidade em `os.supports_dir_fd` enquanto o teste o substituía para sintetizar ownership. A checagem rejeitou o runner antes de chamar `fchmod`; os outros testes focados passaram. `gemma-runtime` falhou em cascata depois do gate `homolog-inventory-policy`. A guarda frágil foi removida; a nova CI Linux permanece pendente.
 - A task 3.1 aguarda revisão humana, merge autorizado e CI verde da `main` no SHA exato. Nenhuma operação remota foi despachada; nenhum host, Drive, diretório de backup ou serviço/timer foi acessado ou alterado.
 - Depois da integração, a operação continua exigindo novo `support-inventory`, revisão de fingerprint atual, autorização operacional específica e aprovação do ambiente `production`; após a correção, será necessário outro inventário antes de `prepare-support`.

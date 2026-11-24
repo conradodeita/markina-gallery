@@ -506,8 +506,7 @@ class LocalSupportHost:
     def repair_backup_directory_mode(self) -> None:
         """Set the fixed backup directory to 0700 through a verified directory fd."""
         if (os.name != "posix" or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW")
-                or os.open not in os.supports_dir_fd or os.stat not in os.supports_dir_fd
-                or os.stat not in os.supports_follow_symlinks):
+                or not hasattr(os, "fchmod")):
             raise SupportError("support_platform_unsupported")
 
         parent_fd: int | None = None
