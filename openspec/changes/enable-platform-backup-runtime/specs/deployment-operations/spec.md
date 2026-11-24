@@ -31,6 +31,19 @@ O suporte do preflight SHALL usar operações fixas e protegidas, CI verde da `m
 - **THEN** SHALL abortar com somente `support_container_inventory_invalid`, sem fingerprint ou precondição aprovada
 - **AND** valores do JSON, IDs/imagens de containers, exceção, caminho e saída de comando MUST NOT aparecer no log
 
+#### Scenario: Inventário do suporte classifica as pastas fixas de persistência
+
+- **WHEN** support-inventory inspecionar o estado para preparação
+- **THEN** SHALL ler sem mutação os diretórios fixos de estado e de cópias e incluir na fingerprint somente ready, creatable, parent_invalid, directory_invalid ou unavailable
+- **AND** SHALL omitir paths, conteúdo, UID/GID e modos brutos do resumo do workflow
+- **AND** MUST NOT criar, chmod, substituir ou limpar esses diretórios durante o inventário
+
+#### Scenario: Persistência insegura aborta antes da preparação
+
+- **WHEN** o estado revalidado de qualquer diretório fixo não for ready ou creatable
+- **THEN** prepare-support SHALL abortar antes de buscar candidatos, criar diretórios/cópias/recibos ou alterar os três alvos
+- **AND** SHALL emitir somente o código allowlisted correspondente e não criar recibo de preparação
+
 #### Scenario: Preparação com estado ainda aprovado
 
 - **WHEN** a fingerprint revisada, o SHA de main/CI, os alvos fixos e a identidade dos containers forem revalidados sob o lock comum

@@ -42,6 +42,7 @@ STATE_DIR = Path("/var/lib/markina-gallery/app-compose-bridge")
 LOCK_DIR = Path("/var/lib/markina-gallery/deploy-state")
 LOCK_PATH = LOCK_DIR / "production-release.lock"
 TARGETS = ("bridge", "wrapper")
+SAFE_DIRECTORY_STATES = {"ready", "creatable"}
 TARGET_PATHS = {"bridge": BRIDGE_PATH, "wrapper": WRAPPER_PATH}
 TARGET_SOURCES = {
     "bridge": "scripts/production_app_compose_bridge.py",
@@ -350,6 +351,8 @@ class LocalSupportHost:
             "origin_main_ref": self._ref_sha(),
             "bridge": self.target_state("bridge"),
             "wrapper": self.target_state("wrapper"),
+            "state_directory_state": self.state_directory_state(),
+            "backup_directory_state": self.backup_directory_state(),
             "containers_sha256": self._container_digest(),
         }
 
@@ -415,15 +418,63 @@ class LocalSupportHost:
         self._validate_bridge_content(candidates["bridge"]["content"])
         self._validate_wrapper_content(candidates["wrapper"]["content"])
 
-    def ensure_state_directories(self) -> None:
-        self._assert_parent_directory(STATE_DIR)
+    @staticmethod
+    def _fixed_directory_state(path: Path, *, mode: int, parent_mode: int | None = None,
+                               check_parent_chain: bool = False) -> str:
+        parent = path.parent
+        current = parent
+        while True:
+            try:
+                info = current.lstat()
+            except FileNotFoundError:
+                return "parent_invalid"
+            except OSError:
+                return "unavailable"
+            expected_parent_mode = parent_mode if current == parent else None
+            if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                    or info.st_uid != 0 or info.st_gid != 0
+                    or (expected_parent_mode is not None
+                        and stat.S_IMODE(info.st_mode) != expected_parent_mode)):
+                return "parent_invalid"
+            if not check_parent_chain or current == current.parent:
+                break
+            current = current.parent
         try:
-            STATE_DIR.mkdir(mode=0o700)
-        except FileExistsError:
-            pass
+            target = path.lstat()
+        except FileNotFoundError:
+            return "creatable"
         except OSError:
-            raise SupportError("support_state_directory_invalid") from None
-        self._assert_directory(STATE_DIR, owner="root", group="root", mode=0o700)
+            return "unavailable"
+        if (not stat.S_ISDIR(target.st_mode) or stat.S_ISLNK(target.st_mode)
+                or target.st_uid != 0 or target.st_gid != 0
+                or stat.S_IMODE(target.st_mode) != mode):
+            return "directory_invalid"
+        return "ready"
+
+    @staticmethod
+    def state_directory_state() -> str:
+        return LocalSupportHost._fixed_directory_state(
+            STATE_DIR, mode=0o700, check_parent_chain=True,
+        )
+
+    @staticmethod
+    def backup_directory_state() -> str:
+        return LocalSupportHost._fixed_directory_state(
+            BACKUPS_DIR, mode=0o700, parent_mode=0o755,
+        )
+
+    def ensure_state_directories(self) -> None:
+        state = self.state_directory_state()
+        if state == "creatable":
+            try:
+                STATE_DIR.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+            except OSError:
+                raise SupportError("support_state_directory_invalid") from None
+            state = self.state_directory_state()
+        if state != "ready":
+            raise SupportError("support_state_directory_invalid")
 
     def check_no_staging(self) -> None:
         paths = []
@@ -467,28 +518,16 @@ class LocalSupportHost:
 
     @staticmethod
     def _ensure_backups_directory(*, create: bool = True) -> None:
-        try:
-            parent_info = BACKUPS_DIR.parent.lstat()
-        except OSError:
-            raise SupportError("support_backup_directory_invalid") from None
-        if (not stat.S_ISDIR(parent_info.st_mode) or stat.S_ISLNK(parent_info.st_mode)
-                or parent_info.st_uid != 0 or parent_info.st_gid != 0
-                or stat.S_IMODE(parent_info.st_mode) != 0o755):
-            raise SupportError("support_backup_directory_invalid")
-        try:
-            info = BACKUPS_DIR.lstat()
-        except FileNotFoundError:
-            if not create:
-                raise SupportError("support_backup_directory_invalid")
+        state = LocalSupportHost.backup_directory_state()
+        if state == "creatable" and create:
             try:
                 BACKUPS_DIR.mkdir(mode=0o700)
-                info = BACKUPS_DIR.lstat()
+            except FileExistsError:
+                pass
             except OSError:
                 raise SupportError("support_backup_directory_invalid") from None
-        except OSError:
-            raise SupportError("support_backup_directory_invalid") from None
-        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
-                or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
+            state = LocalSupportHost.backup_directory_state()
+        if state != "ready":
             raise SupportError("support_backup_directory_invalid")
 
     @staticmethod
@@ -790,6 +829,7 @@ class SupportCoordinator:
             snapshot = self.host.collect_snapshot(support_sha, connection_binding)
             if _digest(snapshot) != approval_fingerprint:
                 raise SupportError("support_fingerprint_changed")
+            self._assert_storage_preconditions(snapshot)
             self.host.check_no_staging()
             refs_before_fetch = self.host.refs_digest()
             candidates = self.host.load_candidates(support_sha)
@@ -865,6 +905,7 @@ class SupportCoordinator:
                     "preparation_intent_sha256": complete["intent_sha256"]}
             if _digest(view) != approval_fingerprint:
                 raise SupportError("support_restore_fingerprint_changed")
+            self._assert_storage_preconditions(snapshot)
             self.host.check_no_staging()
             self.host.assert_previous_ref_object(snapshot["origin_main_ref"])
             operation_id = uuid.uuid4().hex
@@ -907,6 +948,13 @@ class SupportCoordinator:
                 except BaseException:  # noqa: BLE001 - compensation must also run after cancellation signals.
                     raise SupportError("support_restore_fallback_unverified") from None
                 raise SupportError("support_restore_failed_rolled_back") from None
+
+    @staticmethod
+    def _assert_storage_preconditions(snapshot: dict[str, Any]) -> None:
+        if snapshot.get("state_directory_state") not in SAFE_DIRECTORY_STATES:
+            raise SupportError("support_state_directory_invalid")
+        if snapshot.get("backup_directory_state") not in SAFE_DIRECTORY_STATES:
+            raise SupportError("support_backup_directory_invalid")
 
     @staticmethod
     def _assert_prepared_active(snapshot: dict[str, Any], complete: dict[str, Any]) -> None:
@@ -1018,9 +1066,11 @@ def main(argv: list[str] | None = None) -> int:
         host = LocalSupportHost()
         coordinator = SupportCoordinator(host)
         if args.mode == "support-inventory":
-            fingerprint, _ = coordinator.inventory(args.support_sha, args.connection_binding)
+            fingerprint, snapshot = coordinator.inventory(args.support_sha, args.connection_binding)
             print("support_inventory=success")
             print(f"support_sha={args.support_sha}")
+            print(f"support_state_directory={snapshot['state_directory_state']}")
+            print(f"support_backup_directory={snapshot['backup_directory_state']}")
             print(f"support_fingerprint={fingerprint}")
             return 0
         if args.mode == "prepare-support":
@@ -1029,9 +1079,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"support_receipt_sha256={digest}")
             return 0
         if args.mode == "restore-support-inventory":
-            fingerprint, _ = coordinator.restore_inventory(args.support_sha, args.connection_binding, args.receipt_sha256)
+            fingerprint, view = coordinator.restore_inventory(
+                args.support_sha, args.connection_binding, args.receipt_sha256,
+            )
+            snapshot = view["snapshot"]
             print("support_restore_inventory=success")
             print(f"support_receipt_sha256={args.receipt_sha256}")
+            print(f"support_state_directory={snapshot['state_directory_state']}")
+            print(f"support_backup_directory={snapshot['backup_directory_state']}")
             print(f"support_fingerprint={fingerprint}")
             return 0
         digest = coordinator.restore(args.support_sha, args.connection_binding, args.approval_fingerprint,

@@ -44,6 +44,10 @@ class FakeHost:
         self.ancestor = True
         self.old_commit_exists = True
         self.other_refs_digest = "refs-stable"
+        self.state_directory_state = "ready"
+        self.backup_directory_state = "ready"
+        self.candidates_loaded = 0
+        self.preserve_calls = 0
         self.lock_count = 0
 
     @contextlib.contextmanager
@@ -57,7 +61,10 @@ class FakeHost:
         return {"host": "fixed-host", "repository": "fixed-repository", "support_sha": sha,
                 "remote_main_sha": self.remote_sha, "connection_binding": binding,
                 "origin_main_ref": self.ref, "bridge": state(self.contents["bridge"]),
-                "wrapper": state(self.contents["wrapper"]), "containers_sha256": self.containers}
+                "wrapper": state(self.contents["wrapper"]),
+                "state_directory_state": self.state_directory_state,
+                "backup_directory_state": self.backup_directory_state,
+                "containers_sha256": self.containers}
 
     def check_no_staging(self):
         return None
@@ -66,6 +73,7 @@ class FakeHost:
         return self.other_refs_digest
 
     def load_candidates(self, sha: str) -> dict:
+        self.candidates_loaded += 1
         if sha != self.remote_sha:
             raise support.SupportError("support_main_changed")
         bridge = b"candidate-bridge"
@@ -94,6 +102,7 @@ class FakeHost:
             raise support.SupportError("support_previous_ref_object_missing")
 
     def preserve_targets(self, snapshot: dict, operation_id: str, label: str) -> dict:
+        self.preserve_calls += 1
         result = {}
         for name in support.TARGETS:
             content = self.contents[name]
@@ -197,6 +206,89 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
             self.assertEqual(host.refs_digest(), "refs-stable")
             digest.assert_called_once_with()
 
+    def test_fixed_directory_state_classifies_safe_missing_and_blocked_states(self):
+        class Node:
+            def __init__(self, name, mode=None, uid=0, gid=0, parent=None, error=None):
+                self.name = name
+                self.mode = mode
+                self.uid = uid
+                self.gid = gid
+                self.parent = parent if parent is not None else self
+                self.error = error
+
+            def lstat(self):
+                if self.error is not None:
+                    raise self.error
+                if self.mode is None:
+                    raise FileNotFoundError
+                return SimpleNamespace(st_mode=self.mode, st_uid=self.uid, st_gid=self.gid)
+
+            def __eq__(self, other):
+                return isinstance(other, Node) and self.name == other.name
+
+        root = Node("/", stat.S_IFDIR | 0o755)
+        parent = Node("/var/lib/markina-gallery", stat.S_IFDIR | 0o755, parent=root)
+        ready = Node("/var/lib/markina-gallery/app-compose-bridge",
+                     stat.S_IFDIR | 0o700, parent=parent)
+        creatable = Node("/var/lib/markina-gallery/app-compose-bridge",
+                         None, parent=parent)
+        bad_parent = Node("/var/lib/markina-gallery", stat.S_IFDIR | 0o755,
+                          uid=0, gid=1000, parent=root)
+        bad_child = Node("/var/lib/markina-gallery/app-compose-bridge",
+                         stat.S_IFDIR | 0o750, parent=parent)
+        unavailable = Node("/var/lib/markina-gallery/app-compose-bridge",
+                           None, parent=parent, error=PermissionError)
+        unavailable_parent = Node("/var/lib/markina-gallery", stat.S_IFDIR | 0o755,
+                                  parent=root, error=PermissionError)
+        parent_unavailable_child = Node("/var/lib/markina-gallery/app-compose-bridge",
+                                        None, parent=unavailable_parent)
+        symlink_parent = Node("/var/lib/markina-gallery", stat.S_IFLNK | 0o777,
+                              parent=root)
+        symlink_parent_child = Node("/var/lib/markina-gallery/app-compose-bridge",
+                                    None, parent=symlink_parent)
+        classify = support.LocalSupportHost._fixed_directory_state
+        self.assertEqual(classify(ready, mode=0o700, check_parent_chain=True), "ready")
+        self.assertEqual(classify(creatable, mode=0o700, check_parent_chain=True), "creatable")
+        self.assertEqual(classify(Node("bad-parent-child", stat.S_IFDIR | 0o700,
+                                       parent=bad_parent), mode=0o700, check_parent_chain=True),
+                         "parent_invalid")
+        self.assertEqual(classify(bad_child, mode=0o700, check_parent_chain=True), "directory_invalid")
+        self.assertEqual(classify(unavailable, mode=0o700, check_parent_chain=True), "unavailable")
+        self.assertEqual(classify(parent_unavailable_child, mode=0o700, check_parent_chain=True), "unavailable")
+        self.assertEqual(classify(symlink_parent_child, mode=0o700, check_parent_chain=True), "parent_invalid")
+
+    def test_state_directory_creation_revalidates_all_parent_directories(self):
+        class Node:
+            def __init__(self, name, mode=None, parent=None):
+                self.name = name
+                self.mode = mode
+                self.parent = parent if parent is not None else self
+                self.created_mode = None
+
+            def lstat(self):
+                if self.mode is None:
+                    raise FileNotFoundError
+                return SimpleNamespace(st_mode=self.mode, st_uid=0, st_gid=0)
+
+            def mkdir(self, *, mode):
+                self.created_mode = mode
+                self.mode = stat.S_IFDIR | mode
+
+            def __eq__(self, other):
+                return isinstance(other, Node) and self.name == other.name
+
+        root = Node("/", stat.S_IFDIR | 0o755)
+        var = Node("/var", stat.S_IFDIR | 0o755, parent=root)
+        lib = Node("/var/lib", stat.S_IFDIR | 0o755, parent=var)
+        markina = Node("/var/lib/markina-gallery", stat.S_IFDIR | 0o755, parent=lib)
+        target = Node("/var/lib/markina-gallery/app-compose-bridge", parent=markina)
+
+        with patch.object(support, "STATE_DIR", target):
+            self.assertEqual(support.LocalSupportHost.state_directory_state(), "creatable")
+            support.LocalSupportHost().ensure_state_directories()
+            self.assertEqual(target.created_mode, 0o700)
+            self.assertEqual(support.LocalSupportHost.state_directory_state(), "ready")
+
 
 class SupportCoordinatorTests(unittest.TestCase):
     def setUp(self):
@@ -219,6 +311,92 @@ class SupportCoordinatorTests(unittest.TestCase):
         self.assertIn("bridge", snapshot)
         self.assertNotIn("container_ids", snapshot)
         self.assertEqual(self.host.lock_count, 2)
+
+    def test_inventory_fingerprint_binds_fixed_directory_readiness(self):
+        self.host.state_directory_state = "creatable"
+        first, snapshot = self.coordinator.inventory(SHA_MAIN, SHA_CONNECTION)
+        self.assertEqual(snapshot["state_directory_state"], "creatable")
+        self.assertEqual(snapshot["backup_directory_state"], "ready")
+        self.host.backup_directory_state = "directory_invalid"
+        second, _ = self.coordinator.inventory(SHA_MAIN, SHA_CONNECTION)
+        self.assertNotEqual(first, second)
+
+    def test_prepare_rejects_unsafe_directory_before_fetch_or_any_persistence(self):
+        for field, value, error in (
+            ("state_directory_state", "parent_invalid", "support_state_directory_invalid"),
+            ("backup_directory_state", "directory_invalid", "support_backup_directory_invalid"),
+        ):
+            with self.subTest(field=field):
+                self.host = FakeHost()
+                self.coordinator = support.SupportCoordinator(self.host)
+                setattr(self.host, field, value)
+                fingerprint = self.inventory_fingerprint()
+                original = copy.deepcopy(self.host.contents)
+                with self.assertRaisesRegex(support.SupportError, error):
+                    self.coordinator.prepare(SHA_MAIN, SHA_CONNECTION, fingerprint)
+                self.assertEqual(self.host.ref, SHA_OLD)
+                self.assertEqual(self.host.contents, original)
+                self.assertEqual(self.host.candidates_loaded, 0)
+                self.assertEqual(self.host.preserve_calls, 0)
+                self.assertFalse(self.host.receipts)
+                self.assertFalse(self.host.backups)
+
+    def test_cli_inventory_reports_only_static_storage_states(self):
+        output = io.StringIO()
+        self.host.state_directory_state = "creatable"
+        self.host.backup_directory_state = "directory_invalid"
+        with patch.object(support, "LocalSupportHost", return_value=self.host), patch("sys.stdout", output):
+            result = support.main([
+                "--mode", "support-inventory", "--support-sha", SHA_MAIN,
+                "--connection-binding", SHA_CONNECTION,
+            ])
+        self.assertEqual(result, 0)
+        self.assertIn("support_state_directory=creatable", output.getvalue())
+        self.assertIn("support_backup_directory=directory_invalid", output.getvalue())
+        self.assertNotIn("/var/", output.getvalue())
+        self.assertNotIn("st_uid", output.getvalue())
+        self.assertNotIn("st_mode", output.getvalue())
+        self.assertFalse(self.host.candidates_loaded)
+        self.assertFalse(self.host.preserve_calls)
+        self.assertFalse(self.host.receipts)
+        self.assertFalse(self.host.backups)
+
+    def test_cli_restore_inventory_reports_only_static_storage_states(self):
+        _, receipt = self.prepared()
+        output = io.StringIO()
+        backups_before = copy.deepcopy(self.host.backups)
+        receipts_before = copy.deepcopy(self.host.receipts)
+        with patch.object(support, "LocalSupportHost", return_value=self.host), patch("sys.stdout", output):
+            result = support.main([
+                "--mode", "restore-support-inventory", "--support-sha", SHA_MAIN,
+                "--connection-binding", SHA_CONNECTION, "--receipt-sha256", receipt,
+            ])
+        self.assertEqual(result, 0)
+        self.assertIn("support_state_directory=ready", output.getvalue())
+        self.assertIn("support_backup_directory=ready", output.getvalue())
+        self.assertNotIn("/var/", output.getvalue())
+        self.assertNotIn("st_uid", output.getvalue())
+        self.assertNotIn("st_mode", output.getvalue())
+        self.assertEqual(self.host.backups, backups_before)
+        self.assertEqual(self.host.receipts, receipts_before)
+
+    def test_restore_rejects_unsafe_directory_before_new_persistence(self):
+        _, receipt = self.prepared()
+        self.host.backup_directory_state = "directory_invalid"
+        fingerprint, _ = self.coordinator.restore_inventory(SHA_MAIN, SHA_CONNECTION, receipt)
+        contents_before = copy.deepcopy(self.host.contents)
+        backups_before = copy.deepcopy(self.host.backups)
+        receipts_before = copy.deepcopy(self.host.receipts)
+        preserve_calls_before = self.host.preserve_calls
+
+        with self.assertRaisesRegex(support.SupportError, "support_backup_directory_invalid"):
+            self.coordinator.restore(SHA_MAIN, SHA_CONNECTION, fingerprint, receipt)
+
+        self.assertEqual(self.host.contents, contents_before)
+        self.assertEqual(self.host.ref, SHA_MAIN)
+        self.assertEqual(self.host.backups, backups_before)
+        self.assertEqual(self.host.receipts, receipts_before)
+        self.assertEqual(self.host.preserve_calls, preserve_calls_before)
 
     def test_prepare_requires_exact_preflight_fingerprint(self):
         before = copy.deepcopy(self.host.contents)
@@ -592,10 +770,37 @@ class SupportCoordinatorTests(unittest.TestCase):
                 return self._info
 
         with patch.object(support, "BACKUPS_DIR", FakePath(0o700)):
+            self.assertEqual(support.LocalSupportHost.backup_directory_state(), "ready")
             support.LocalSupportHost._ensure_backups_directory(create=False)
         with patch.object(support, "BACKUPS_DIR", FakePath(0o750)), \
                 self.assertRaisesRegex(support.SupportError, "support_backup_directory_invalid"):
+            self.assertEqual(support.LocalSupportHost.backup_directory_state(), "directory_invalid")
             support.LocalSupportHost._ensure_backups_directory(create=False)
+
+    def test_backup_directory_creation_revalidates_after_mkdir(self):
+        class FakePath:
+            def __init__(self):
+                self.mode = None
+                self.created_mode = None
+                self.parent = SimpleNamespace(lstat=lambda: SimpleNamespace(
+                    st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=0,
+                ))
+
+            def lstat(self):
+                if self.mode is None:
+                    raise FileNotFoundError
+                return SimpleNamespace(st_mode=stat.S_IFDIR | self.mode, st_uid=0, st_gid=0)
+
+            def mkdir(self, *, mode):
+                self.created_mode = mode
+                self.mode = mode
+
+        path = FakePath()
+        with patch.object(support, "BACKUPS_DIR", path):
+            self.assertEqual(support.LocalSupportHost.backup_directory_state(), "creatable")
+            support.LocalSupportHost._ensure_backups_directory()
+            self.assertEqual(path.created_mode, 0o700)
+            self.assertEqual(support.LocalSupportHost.backup_directory_state(), "ready")
 
 
 class SupportGitFetchTests(unittest.TestCase):
