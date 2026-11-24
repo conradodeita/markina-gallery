@@ -43,6 +43,13 @@ LOCK_DIR = Path("/var/lib/markina-gallery/deploy-state")
 LOCK_PATH = LOCK_DIR / "production-release.lock"
 TARGETS = ("bridge", "wrapper")
 SAFE_DIRECTORY_STATES = {"ready", "creatable"}
+SUPPORT_DIRECTORY_DIAGNOSTICS = {
+    "ready", "creatable", "parent_invalid", "unavailable", "target_symlink",
+    "target_type_invalid", "target_owner_invalid", "target_group_invalid", "target_mode_invalid",
+}
+TARGET_DIRECTORY_DIAGNOSTIC_ORDER = (
+    "target_type_invalid", "target_owner_invalid", "target_group_invalid", "target_mode_invalid",
+)
 TARGET_PATHS = {"bridge": BRIDGE_PATH, "wrapper": WRAPPER_PATH}
 TARGET_SOURCES = {
     "bridge": "scripts/production_app_compose_bridge.py",
@@ -342,6 +349,8 @@ class LocalSupportHost:
         remote_sha = self._remote_main_sha()
         if remote_sha != support_sha:
             raise SupportError("support_main_changed")
+        state_directory_state, state_directory_diagnostics = self.state_directory_status()
+        backup_directory_state, backup_directory_diagnostics = self.backup_directory_status()
         return {
             "host": EXPECTED_HOST,
             "repository": remote,
@@ -351,8 +360,10 @@ class LocalSupportHost:
             "origin_main_ref": self._ref_sha(),
             "bridge": self.target_state("bridge"),
             "wrapper": self.target_state("wrapper"),
-            "state_directory_state": self.state_directory_state(),
-            "backup_directory_state": self.backup_directory_state(),
+            "state_directory_state": state_directory_state,
+            "state_directory_diagnostics": state_directory_diagnostics,
+            "backup_directory_state": backup_directory_state,
+            "backup_directory_diagnostics": backup_directory_diagnostics,
             "containers_sha256": self._container_digest(),
         }
 
@@ -419,49 +430,75 @@ class LocalSupportHost:
         self._validate_wrapper_content(candidates["wrapper"]["content"])
 
     @staticmethod
-    def _fixed_directory_state(path: Path, *, mode: int, parent_mode: int | None = None,
-                               check_parent_chain: bool = False) -> str:
+    def _fixed_directory_status(path: Path, *, mode: int, parent_mode: int | None = None,
+                                check_parent_chain: bool = False) -> tuple[str, list[str]]:
         parent = path.parent
         current = parent
         while True:
             try:
                 info = current.lstat()
             except FileNotFoundError:
-                return "parent_invalid"
+                return "parent_invalid", ["parent_invalid"]
             except OSError:
-                return "unavailable"
+                return "unavailable", ["unavailable"]
             expected_parent_mode = parent_mode if current == parent else None
             if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
                     or info.st_uid != 0 or info.st_gid != 0
                     or (expected_parent_mode is not None
                         and stat.S_IMODE(info.st_mode) != expected_parent_mode)):
-                return "parent_invalid"
+                return "parent_invalid", ["parent_invalid"]
             if not check_parent_chain or current == current.parent:
                 break
             current = current.parent
         try:
             target = path.lstat()
         except FileNotFoundError:
-            return "creatable"
+            return "creatable", ["creatable"]
         except OSError:
-            return "unavailable"
-        if (not stat.S_ISDIR(target.st_mode) or stat.S_ISLNK(target.st_mode)
-                or target.st_uid != 0 or target.st_gid != 0
-                or stat.S_IMODE(target.st_mode) != mode):
-            return "directory_invalid"
-        return "ready"
+            return "unavailable", ["unavailable"]
+        if stat.S_ISLNK(target.st_mode):
+            return "directory_invalid", ["target_symlink"]
+        diagnostics = []
+        if not stat.S_ISDIR(target.st_mode):
+            diagnostics.append("target_type_invalid")
+        if target.st_uid != 0:
+            diagnostics.append("target_owner_invalid")
+        if target.st_gid != 0:
+            diagnostics.append("target_group_invalid")
+        if stat.S_IMODE(target.st_mode) != mode:
+            diagnostics.append("target_mode_invalid")
+        diagnostics.sort(key=TARGET_DIRECTORY_DIAGNOSTIC_ORDER.index)
+        if diagnostics:
+            return "directory_invalid", diagnostics
+        return "ready", ["ready"]
 
     @staticmethod
-    def state_directory_state() -> str:
-        return LocalSupportHost._fixed_directory_state(
+    def _fixed_directory_state(path: Path, *, mode: int, parent_mode: int | None = None,
+                               check_parent_chain: bool = False) -> str:
+        state, _diagnostics = LocalSupportHost._fixed_directory_status(
+            path, mode=mode, parent_mode=parent_mode, check_parent_chain=check_parent_chain,
+        )
+        return state
+
+    @staticmethod
+    def state_directory_status() -> tuple[str, list[str]]:
+        return LocalSupportHost._fixed_directory_status(
             STATE_DIR, mode=0o700, check_parent_chain=True,
         )
 
     @staticmethod
-    def backup_directory_state() -> str:
-        return LocalSupportHost._fixed_directory_state(
+    def backup_directory_status() -> tuple[str, list[str]]:
+        return LocalSupportHost._fixed_directory_status(
             BACKUPS_DIR, mode=0o700, parent_mode=0o755,
         )
+
+    @staticmethod
+    def state_directory_state() -> str:
+        return LocalSupportHost.state_directory_status()[0]
+
+    @staticmethod
+    def backup_directory_state() -> str:
+        return LocalSupportHost.backup_directory_status()[0]
 
     def ensure_state_directories(self) -> None:
         state = self.state_directory_state()
@@ -1051,6 +1088,14 @@ def _validate_mode_arguments(args: argparse.Namespace) -> None:
     raise SupportError("support_arguments_invalid")
 
 
+def _format_directory_diagnostics(value: Any) -> str:
+    if (not isinstance(value, (list, tuple)) or not value
+            or any(not isinstance(item, str) or item not in SUPPORT_DIRECTORY_DIAGNOSTICS for item in value)
+            or len(set(value)) != len(value)):
+        raise SupportError("support_directory_diagnostics_invalid")
+    return ",".join(value)
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         parser = SafeArgumentParser(add_help=False, allow_abbrev=False)
@@ -1067,10 +1112,14 @@ def main(argv: list[str] | None = None) -> int:
         coordinator = SupportCoordinator(host)
         if args.mode == "support-inventory":
             fingerprint, snapshot = coordinator.inventory(args.support_sha, args.connection_binding)
+            state_diagnostics = _format_directory_diagnostics(snapshot["state_directory_diagnostics"])
+            backup_diagnostics = _format_directory_diagnostics(snapshot["backup_directory_diagnostics"])
             print("support_inventory=success")
             print(f"support_sha={args.support_sha}")
             print(f"support_state_directory={snapshot['state_directory_state']}")
+            print(f"support_state_directory_diagnostics={state_diagnostics}")
             print(f"support_backup_directory={snapshot['backup_directory_state']}")
+            print(f"support_backup_directory_diagnostics={backup_diagnostics}")
             print(f"support_fingerprint={fingerprint}")
             return 0
         if args.mode == "prepare-support":
@@ -1083,10 +1132,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.support_sha, args.connection_binding, args.receipt_sha256,
             )
             snapshot = view["snapshot"]
+            state_diagnostics = _format_directory_diagnostics(snapshot["state_directory_diagnostics"])
+            backup_diagnostics = _format_directory_diagnostics(snapshot["backup_directory_diagnostics"])
             print("support_restore_inventory=success")
             print(f"support_receipt_sha256={args.receipt_sha256}")
             print(f"support_state_directory={snapshot['state_directory_state']}")
+            print(f"support_state_directory_diagnostics={state_diagnostics}")
             print(f"support_backup_directory={snapshot['backup_directory_state']}")
+            print(f"support_backup_directory_diagnostics={backup_diagnostics}")
             print(f"support_fingerprint={fingerprint}")
             return 0
         digest = coordinator.restore(args.support_sha, args.connection_binding, args.approval_fingerprint,

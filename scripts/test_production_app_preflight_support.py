@@ -45,7 +45,9 @@ class FakeHost:
         self.old_commit_exists = True
         self.other_refs_digest = "refs-stable"
         self.state_directory_state = "ready"
+        self.state_directory_diagnostics = ["ready"]
         self.backup_directory_state = "ready"
+        self.backup_directory_diagnostics = ["ready"]
         self.candidates_loaded = 0
         self.preserve_calls = 0
         self.lock_count = 0
@@ -63,7 +65,9 @@ class FakeHost:
                 "origin_main_ref": self.ref, "bridge": state(self.contents["bridge"]),
                 "wrapper": state(self.contents["wrapper"]),
                 "state_directory_state": self.state_directory_state,
+                "state_directory_diagnostics": self.state_directory_diagnostics,
                 "backup_directory_state": self.backup_directory_state,
+                "backup_directory_diagnostics": self.backup_directory_diagnostics,
                 "containers_sha256": self.containers}
 
     def check_no_staging(self):
@@ -223,6 +227,9 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
                     raise FileNotFoundError
                 return SimpleNamespace(st_mode=self.mode, st_uid=self.uid, st_gid=self.gid)
 
+            def stat(self):
+                raise AssertionError("fixed_directory_classifier_followed_symlink")
+
             def __eq__(self, other):
                 return isinstance(other, Node) and self.name == other.name
 
@@ -236,6 +243,10 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
                           uid=0, gid=1000, parent=root)
         bad_child = Node("/var/lib/markina-gallery/app-compose-bridge",
                          stat.S_IFDIR | 0o750, parent=parent)
+        invalid_metadata = Node("/var/lib/markina-gallery/app-compose-bridge",
+                                stat.S_IFREG | 0o600, uid=1000, gid=1000, parent=parent)
+        target_symlink = Node("/var/lib/markina-gallery/app-compose-bridge",
+                              stat.S_IFLNK | 0o777, uid=1000, gid=1000, parent=parent)
         unavailable = Node("/var/lib/markina-gallery/app-compose-bridge",
                            None, parent=parent, error=PermissionError)
         unavailable_parent = Node("/var/lib/markina-gallery", stat.S_IFDIR | 0o755,
@@ -247,14 +258,33 @@ class LocalSupportHostAdapterTests(unittest.TestCase):
         symlink_parent_child = Node("/var/lib/markina-gallery/app-compose-bridge",
                                     None, parent=symlink_parent)
         classify = support.LocalSupportHost._fixed_directory_state
+        classify_status = support.LocalSupportHost._fixed_directory_status
         self.assertEqual(classify(ready, mode=0o700, check_parent_chain=True), "ready")
+        self.assertEqual(classify_status(ready, mode=0o700, check_parent_chain=True), ("ready", ["ready"]))
         self.assertEqual(classify(creatable, mode=0o700, check_parent_chain=True), "creatable")
+        self.assertEqual(classify_status(creatable, mode=0o700, check_parent_chain=True), ("creatable", ["creatable"]))
         self.assertEqual(classify(Node("bad-parent-child", stat.S_IFDIR | 0o700,
                                        parent=bad_parent), mode=0o700, check_parent_chain=True),
                          "parent_invalid")
         self.assertEqual(classify(bad_child, mode=0o700, check_parent_chain=True), "directory_invalid")
+        self.assertEqual(
+            classify_status(invalid_metadata, mode=0o700, check_parent_chain=True),
+            ("directory_invalid", ["target_type_invalid", "target_owner_invalid", "target_group_invalid", "target_mode_invalid"]),
+        )
+        self.assertEqual(
+            classify_status(target_symlink, mode=0o700, check_parent_chain=True),
+            ("directory_invalid", ["target_symlink"]),
+        )
         self.assertEqual(classify(unavailable, mode=0o700, check_parent_chain=True), "unavailable")
+        self.assertEqual(
+            classify_status(unavailable, mode=0o700, check_parent_chain=True),
+            ("unavailable", ["unavailable"]),
+        )
         self.assertEqual(classify(parent_unavailable_child, mode=0o700, check_parent_chain=True), "unavailable")
+        self.assertEqual(
+            classify_status(parent_unavailable_child, mode=0o700, check_parent_chain=True),
+            ("unavailable", ["unavailable"]),
+        )
         self.assertEqual(classify(symlink_parent_child, mode=0o700, check_parent_chain=True), "parent_invalid")
 
     def test_state_directory_creation_revalidates_all_parent_directories(self):
@@ -314,10 +344,21 @@ class SupportCoordinatorTests(unittest.TestCase):
 
     def test_inventory_fingerprint_binds_fixed_directory_readiness(self):
         self.host.state_directory_state = "creatable"
+        self.host.state_directory_diagnostics = ["creatable"]
         first, snapshot = self.coordinator.inventory(SHA_MAIN, SHA_CONNECTION)
         self.assertEqual(snapshot["state_directory_state"], "creatable")
+        self.assertEqual(snapshot["state_directory_diagnostics"], ["creatable"])
         self.assertEqual(snapshot["backup_directory_state"], "ready")
         self.host.backup_directory_state = "directory_invalid"
+        self.host.backup_directory_diagnostics = ["target_owner_invalid"]
+        second, _ = self.coordinator.inventory(SHA_MAIN, SHA_CONNECTION)
+        self.assertNotEqual(first, second)
+
+    def test_inventory_fingerprint_binds_diagnostic_reason(self):
+        self.host.backup_directory_state = "directory_invalid"
+        self.host.backup_directory_diagnostics = ["target_owner_invalid"]
+        first, _ = self.coordinator.inventory(SHA_MAIN, SHA_CONNECTION)
+        self.host.backup_directory_diagnostics = ["target_mode_invalid"]
         second, _ = self.coordinator.inventory(SHA_MAIN, SHA_CONNECTION)
         self.assertNotEqual(first, second)
 
@@ -330,6 +371,8 @@ class SupportCoordinatorTests(unittest.TestCase):
                 self.host = FakeHost()
                 self.coordinator = support.SupportCoordinator(self.host)
                 setattr(self.host, field, value)
+                diagnostics_field = field.removesuffix("_state") + "_diagnostics"
+                setattr(self.host, diagnostics_field, ["parent_invalid" if value == "parent_invalid" else "target_mode_invalid"])
                 fingerprint = self.inventory_fingerprint()
                 original = copy.deepcopy(self.host.contents)
                 with self.assertRaisesRegex(support.SupportError, error):
@@ -344,7 +387,9 @@ class SupportCoordinatorTests(unittest.TestCase):
     def test_cli_inventory_reports_only_static_storage_states(self):
         output = io.StringIO()
         self.host.state_directory_state = "creatable"
+        self.host.state_directory_diagnostics = ["creatable"]
         self.host.backup_directory_state = "directory_invalid"
+        self.host.backup_directory_diagnostics = ["target_owner_invalid", "target_mode_invalid"]
         with patch.object(support, "LocalSupportHost", return_value=self.host), patch("sys.stdout", output):
             result = support.main([
                 "--mode", "support-inventory", "--support-sha", SHA_MAIN,
@@ -352,7 +397,9 @@ class SupportCoordinatorTests(unittest.TestCase):
             ])
         self.assertEqual(result, 0)
         self.assertIn("support_state_directory=creatable", output.getvalue())
+        self.assertIn("support_state_directory_diagnostics=creatable", output.getvalue())
         self.assertIn("support_backup_directory=directory_invalid", output.getvalue())
+        self.assertIn("support_backup_directory_diagnostics=target_owner_invalid,target_mode_invalid", output.getvalue())
         self.assertNotIn("/var/", output.getvalue())
         self.assertNotIn("st_uid", output.getvalue())
         self.assertNotIn("st_mode", output.getvalue())
@@ -360,6 +407,17 @@ class SupportCoordinatorTests(unittest.TestCase):
         self.assertFalse(self.host.preserve_calls)
         self.assertFalse(self.host.receipts)
         self.assertFalse(self.host.backups)
+
+    def test_cli_inventory_rejects_unknown_diagnostic_before_reporting_success(self):
+        output = io.StringIO()
+        self.host.backup_directory_diagnostics = ["/host/private/path"]
+        with patch.object(support, "LocalSupportHost", return_value=self.host), patch("sys.stdout", output):
+            result = support.main([
+                "--mode", "support-inventory", "--support-sha", SHA_MAIN,
+                "--connection-binding", SHA_CONNECTION,
+            ])
+        self.assertEqual(result, 1)
+        self.assertEqual(output.getvalue(), "support_error=support_directory_diagnostics_invalid\n")
 
     def test_cli_restore_inventory_reports_only_static_storage_states(self):
         _, receipt = self.prepared()
@@ -373,7 +431,9 @@ class SupportCoordinatorTests(unittest.TestCase):
             ])
         self.assertEqual(result, 0)
         self.assertIn("support_state_directory=ready", output.getvalue())
+        self.assertIn("support_state_directory_diagnostics=ready", output.getvalue())
         self.assertIn("support_backup_directory=ready", output.getvalue())
+        self.assertIn("support_backup_directory_diagnostics=ready", output.getvalue())
         self.assertNotIn("/var/", output.getvalue())
         self.assertNotIn("st_uid", output.getvalue())
         self.assertNotIn("st_mode", output.getvalue())
