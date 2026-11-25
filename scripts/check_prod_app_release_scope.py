@@ -58,6 +58,19 @@ BACKUP_SUPPORT_FILES = {
     "scripts/backup_runtime/pyp-platform-backup.timer",
     "scripts/backup_runtime/requirements-py310-arm64.lock",
 }
+RETIRED_BACKUP_FILES = {
+    "backend/app/google_drive_picker.py",
+    "frontend/app/admin/platform/google-drive-folder-picker.tsx",
+    ".github/workflows/production-google-picker-config.yml",
+    ".github/workflows/production-platform-backup-runtime.yml",
+    ".github/workflows/production-platform-backup-wrapper-install.yml",
+    "scripts/build_platform_backup_runtime.sh",
+    "scripts/install-prod-platform-backup-wrapper.sh",
+    "scripts/install_platform_backup_runtime.py",
+    "scripts/platform_backup_runtime_artifact.py",
+    "scripts/platform_backup_runtime_inventory.py",
+    "scripts/platform_backup_wrapper_restore.py",
+}
 RETIRED_STATISTICS_FILES = {
     "frontend/app/admin/statistics/page.tsx",
     "frontend/app/admin/statistics/page.test.tsx",
@@ -109,7 +122,6 @@ ALLOWED_OPERATIONS = {
     ".github/workflows/production-app-compose-bridge-install.yml",
     ".github/workflows/production-app-runtime-adoption.yml",
     ".github/workflows/production-app-handoff-recovery.yml",
-    ".github/workflows/production-google-picker-config.yml",
     ".github/workflows/production-platform-backup-runtime.yml",
     ".github/workflows/production-platform-backup-wrapper-install.yml",
     "scripts/check_prod_app_release_scope.py",
@@ -127,7 +139,7 @@ ALLOWED_OPERATIONS = {
     "scripts/test_production_app_compose_bridge.py",
     "scripts/test_production_app_preflight_support.py",
     "scripts/test_production_app_preflight_support_workflow.py",
-    "scripts/test_production_app_picker.py",
+    "scripts/test_platform_backup_runtime_workflow.py",
     "scripts/test_production_app_runtime_adoption.py",
     "scripts/test_production_app_first_handoff.py",
     "scripts/test_production_app_handoff_inventory.py",
@@ -144,15 +156,6 @@ ALLOWED_OPERATIONS = {
     "scripts/test_deploy_prod_infinitepay_retirement.sh",
     "scripts/test_retirement_legacy_worker.py",
     "scripts/production-preflight-ssh-wrapper.sh",
-    "scripts/build_platform_backup_runtime.sh",
-    "scripts/install-prod-platform-backup-wrapper.sh",
-    "scripts/install_platform_backup_runtime.py",
-    "scripts/platform_backup_runtime_artifact.py",
-    "scripts/platform_backup_runtime_inventory.py",
-    "scripts/test_install_platform_backup_runtime.py",
-    "scripts/test_platform_backup_runtime_artifact.py",
-    "scripts/test_platform_backup_runtime_inventory.py",
-    "scripts/test_platform_backup_runtime_workflow.py",
     "scripts/test_prod_app_release_scope.py",
     "scripts/test_classify_prod_release.py",
     "scripts/test_deploy_prod_app_services.sh",
@@ -185,7 +188,6 @@ ALLOWED_OPERATIONS = {
     "frontend/app/library/cart/checkout-navigation.test.ts",
     "frontend/app/library/library.test.tsx",
     "frontend/app/admin/retirement.test.ts",
-    "frontend/app/admin/platform/google-drive-folder-picker.test.tsx",
     "frontend/app/admin/platform/page.test.tsx",
     "frontend/scripts/payments-visual-qa.cjs",
     "RELATORIO_IMPLEMENTACAO_VENDAS_PAGAMENTOS.md",
@@ -221,8 +223,11 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
         if changed & BACKUP_SUPPORT_FILES:
             if set(backup_support_blobs) != BACKUP_SUPPORT_FILES:
                 return False, "manifesto_suporte_backup_incompleto"
+            if changed & BACKUP_SUPPORT_FILES != BACKUP_SUPPORT_FILES:
+                return False, "retirada_suporte_backup_incompleta"
             for path, expected in backup_support_blobs.items():
-                actual = git(root, "rev-parse", f"{target}:{path}")
+                ref = base if statuses[path] == "D" else target
+                actual = git(root, "rev-parse", f"{ref}:{path}")
                 if actual != expected:
                     return False, "suporte_backup_diverge_do_blob_aprovado"
         emergency = manifest.get("emergency_api")
@@ -239,6 +244,14 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
                     return False, "api_fora_do_escopo"
             changed |= api_changes
         for path in changed:
+            if path in RETIRED_BACKUP_FILES or path.startswith(("backend/app/platform_backup/", "backend/tests/test_platform_backup_",
+                                                                 "scripts/backup_runtime/", "scripts/test_platform_backup_")):
+                if statuses.get(path) == "D":
+                    continue
+                if path not in ALLOWED_OPERATIONS and path not in RUNTIME_FILES and path not in BACKUP_SUPPORT_FILES:
+                    return False, "arquivo_fora_do_escopo"
+                # Preserve already reviewed historical snapshots; new content
+                # is still classified as protected and cannot auto-publish.
             if path in RETIRED_INFINITEPAY_FILES or path in RETIRED_HOMOLOG_WORKFLOWS:
                 if statuses[path] != "D":
                     return False, "arquivo_fora_do_escopo"
@@ -248,7 +261,8 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
                 continue
             return False, "arquivo_fora_do_escopo"
         for path, expected in {**manifest["runtime_blobs"], **extra_blobs}.items():
-            actual = git(root, "rev-parse", f"{target}:{path}")
+            ref = base if statuses.get(path) == "D" else target
+            actual = git(root, "rev-parse", f"{ref}:{path}")
             if actual != expected:
                 return False, "runtime_diverge_do_blob_aprovado"
         return True, "somente_api_web"

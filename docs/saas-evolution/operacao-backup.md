@@ -1,5 +1,7 @@
 # Backup e recuperação do Pick-your-Pic
 
+> **Rotina aposentada em 25/11/2026.** Os passos de cifragem, agendamento e restauração desta página descrevem a engine própria que foi encerrada; não os use para operar o host. A prova open source substituta está em [`prove-open-source-backup-and-recovery`](../../openspec/changes/prove-open-source-backup-and-recovery/proposal.md). A recuperação de pastas frias por fotógrafo continua como fluxo de produto separado no aplicativo e deverá integrar a mesma ferramenta na prova, preservando seu billing e seus prazos.
+
 ## Disponibilidade
 
 O release do SaaS já teve um dump operacional restaurado em PostgreSQL isolado. A fundação inclui empacotamento cifrado, catálogo e agenda diária. O ensaio sintético confirmou upload, download e restauração pelo Drive. O proprietário escolheu a mesma conta Workspace para a rotina e o app criou a pasta privada `Pick-your-Pic Tenants` na raiz do Meu Drive. A rotina ainda depende de chave protegida, vínculo operacional e instalação e verificação do agendador. [Recibo do ensaio](../../openspec/changes/add-platform-backup-recovery/drive-restore-proof.md) · [Destino](../../openspec/changes/add-google-drive-storage-foundation/production-drive-proof.md#destino-da-rotina-verificado).

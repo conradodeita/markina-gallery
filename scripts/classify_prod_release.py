@@ -28,25 +28,17 @@ APP_RUNTIME = {
     "frontend/app/admin/galleries/private-folder-client-overview.tsx",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
 }
-PLATFORM_BACKUP_RUNTIME = {
-    "backend/app/google_drive_client.py",
-    "backend/app/main.py",
-    "backend/app/platform_backup/archive.py",
-    "backend/app/platform_backup/catalog.py",
-    "backend/app/platform_backup/filesystem.py",
-    "backend/app/platform_backup/offline_recovery.py",
-    "backend/app/platform_backup/payload.py",
-    "backend/app/platform_backup/remote_copy.py",
-    "backend/app/platform_backup/restore.py",
-    "backend/app/platform_backup/runtime_config.py",
-    "backend/app/platform_backup/runtime_worker.py",
-    "frontend/app/admin/platform/page.tsx",
-}
-PLATFORM_BACKUP_WORKERS = {"backend/app/platform_backup/runtime_worker.py"}
-APP_RUNTIME |= PLATFORM_BACKUP_RUNTIME
 BACKUP_RETIREMENT_FILES = {
     "backend/app/google_drive_picker.py",
     "frontend/app/admin/platform/google-drive-folder-picker.tsx",
+}
+BACKUP_RETIREMENT_PREFIXES = (
+    "backend/app/platform_backup/", "scripts/backup_runtime/",
+    "backend/tests/test_platform_backup_", "scripts/test_platform_backup_",
+)
+BACKUP_RETIREMENT_FILES |= {
+    "scripts/production-preflight-ssh-wrapper.sh",
+    "scripts/production_app_compose_bridge.py",
 }
 FACIAL_RUNTIME = {
     "backend/app/auth.py",
@@ -106,11 +98,22 @@ def production_baseline_from_manifest(manifest: dict) -> str:
 def classify(changed: set[str]) -> str:
     app = bool(changed & APP_RUNTIME)
     facial = bool(changed & FACIAL_RUNTIME)
-    if changed & BACKUP_RETIREMENT_FILES:
+    if changed & BACKUP_RETIREMENT_FILES or any(
+        path.startswith(BACKUP_RETIREMENT_PREFIXES)
+        or path in {
+            "scripts/build_platform_backup_runtime.sh",
+            "scripts/install-prod-platform-backup-wrapper.sh",
+            "scripts/install_platform_backup_runtime.py",
+            "scripts/platform_backup_runtime_artifact.py",
+            "scripts/platform_backup_runtime_inventory.py",
+            "scripts/platform_backup_wrapper_restore.py",
+        }
+        for path in changed
+    ):
         return "protected"
     if any("/Dockerfile" in p or p.endswith(".dockerignore") or p.startswith(("docker/", "backend/facial-assets/", "backend/migrations/"))
            or (p.startswith("backend/app/") and "worker" in p
-               and p not in FACIAL_RUNTIME and p not in PLATFORM_BACKUP_WORKERS) for p in changed):
+               and p not in FACIAL_RUNTIME) for p in changed):
         return "protected"
     if any(is_dependency_manifest(p) for p in changed):
         return "mixed" if app or facial else "dependencies"

@@ -4,8 +4,8 @@ O proprietário escolheu avaliar ferramentas open source para substituir a tenta
 
 ## What Changes
 
-- Provar um backup PostgreSQL cifrado e sua recuperação independente em banco descartável.
-- Recuperar de forma isolada os dados de um fotógrafo e uma pasta de mídia fria pelo fluxo do produto.
+- Provar uma solução open source comum para backup PostgreSQL cifrado e recuperação, extração isolada de um fotógrafo e arquivo/recuperação de pasta fria pelo fluxo atual do produto.
+- Preservar o contrato existente de prazos e créditos da recuperação de mídia; não criar uma segunda fila, catálogo ou cobrança paralela.
 - Avaliar Restic e Rclone como componentes comuns, com Backrest opcional para acompanhamento operacional.
 
 ## Capabilities

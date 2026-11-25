@@ -1,5 +1,9 @@
 # Reaproveitamento do backup global no arquivo de fotos
 
+> **Atualização de 25/11/2026 — este registro é histórico.** O proprietário encerrou a implementação própria do backup global. A PR de limpeza #436 remove o runtime dedicado; a proposta `prove-open-source-backup-and-recovery` exige agora uma prova conjunta do conjunto open source para backup global, extração de fotógrafo e recuperação de pasta fria. O código de mídia e o ciclo de prazos/créditos continuam sendo a referência do produto; não reutilizar os módulos `platform_backup/workspace_store.py` ou `workspace_credentials.py`, que foram retirados. As provas antigas abaixo não demonstram configuração ou recuperação operacional atual.
+
+O piloto da nova engine SHALL preservar o fluxo de recuperação existente do fotógrafo: janela fria de 30 dias após o prazo da pasta, escolha de 7/14/30 dias, taxa dinâmica por pasta/ciclo, reserva idempotente, débito somente após readback/checksum integral, liberação em falha, reconciliação sem débito quando incerto, isenção do proprietário e ausência de expurgo automático. O armazenamento pode compartilhar ferramentas com o backup global, mas manterá identidade, raiz, chaves, namespace e retenção próprios.
+
 Registro de continuidade de 20/11/2026, solicitado pelo proprietário para evitar repetição de investigação, configuração e desenvolvimento na próxima etapa. Inventário de código na main `77cf2788` (PR #397). Este documento descreve evidência existente e pontos de integração; não autoriza novas operações remotas.
 
 ## Estado e fontes de verdade

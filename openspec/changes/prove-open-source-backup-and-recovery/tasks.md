@@ -2,5 +2,6 @@
 
 - [ ] 1.1 Provar cópia PostgreSQL cifrada, leitura de retorno e restauração em banco isolado. Registrar versão, duração e recuperação com chave externa.
 - [ ] 1.2 Provar extração de um fotógrafo a partir da cópia global restaurada, com dois fotógrafos distintos e verificação de relações e ausência de dados cruzados.
-- [ ] 1.3 Exercitar upload e solicitação de recuperação de uma pasta fria pelo aplicativo com dois fotógrafos sintéticos. Verificar isolamento, falha sem débito e sucesso após checksums. Comparar Restic e Rclone com o contrato de arquivo por objeto.
-- [ ] 1.4 Registrar resultado único da prova, compatibilidade com a retenção e a exclusão por objeto, duração e o escopo viável para uma entrega conjunta.
+- [ ] 1.3 Exercitar upload e solicitação de recuperação de uma pasta fria pelo aplicativo com dois fotógrafos sintéticos e o mesmo conjunto de ferramentas da cópia global. Verificar catálogo/isolamento, readback integral, exclusão por objeto e falha sem débito; preservar UI/fila existentes.
+- [ ] 1.4 Validar prazo de elegibilidade de 30 dias, opções 7/14/30, taxa configurável por pasta/ciclo, reserva idempotente, débito só após checksum integral, liberação em falha, reserva em reconciliação incerta, isenção do proprietário e ausência de expurgo automático.
+- [ ] 1.5 Registrar resultado único da prova, compatibilidade operacional dos mesmos componentes com restauração global e seletiva, retenção/exclusão por objeto, duração e escopo de implementação conjunta.

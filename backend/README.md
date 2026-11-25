@@ -14,5 +14,3 @@ Comandos (Windows; no Linux use `.venv/bin/...`):
 - Rodar: `.venv/Scripts/python -m uvicorn app.main:app --port 8000`
 - Lint: `.venv/Scripts/python -m ruff check app tests`
 - Testes: `.venv/Scripts/python -m pytest -q`
-
-Backup global em desenvolvimento local: contratos, comandos de ensaio sintético e gates em [`docs/saas-evolution/platform-backup-local.md`](../docs/saas-evolution/platform-backup-local.md). O módulo não está ligado ao runtime de produção e não altera o job externo existente.

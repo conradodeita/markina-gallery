@@ -13,7 +13,7 @@ readonly ENV_FILE="docker/.env.homolog"
 readonly STATE_DIR="/var/lib/markina-gallery/deploy-state"
 readonly ARTIFACT_DIR="/tmp/markina-gallery-app-artifacts-${UID}"
 readonly APP_COMPOSE_BRIDGE="/usr/local/sbin/markina-gallery-app-compose-bridge"
-readonly APP_COMPOSE_BRIDGE_BLOB="e52d3b791471fdbff568ea89b09ee343f7ffbe16"
+readonly APP_COMPOSE_BRIDGE_BLOB="4d22584fc89f1b22ab56c9705a1f8e36587015e8"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly SERVICES=(api web)
 readonly EXPECTED_DATABASE_REVISION="20261113_0126"
@@ -70,11 +70,11 @@ parse_arguments() {
     esac
   done
   case "$MODE" in
-    picker-inventory|picker-release|inventory|adoption-inventory|adopt|release|rollback-inventory|rollback|handoff-inventory|handoff-release|handoff-witness-inventory|handoff-witness-register|handoff-legacy-recovery-inventory|handoff-legacy-recover|handoff-recovery-inventory|handoff-recover) ;;
+    inventory|adoption-inventory|adopt|release|rollback-inventory|rollback|handoff-inventory|handoff-release|handoff-witness-inventory|handoff-witness-register|handoff-legacy-recovery-inventory|handoff-legacy-recover|handoff-recovery-inventory|handoff-recover) ;;
     *) fail "modo inválido" ;;
   esac
   [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "SHA alvo inválido"
-  if [[ "$MODE" == "release" || "$MODE" == "rollback" || "$MODE" == "adopt" || "$MODE" == handoff-release || "$MODE" == handoff-witness-register || "$MODE" == handoff-*-recover || "$MODE" == handoff-recover || "$MODE" == picker-release ]]; then
+  if [[ "$MODE" == "release" || "$MODE" == "rollback" || "$MODE" == "adopt" || "$MODE" == handoff-release || "$MODE" == handoff-witness-register || "$MODE" == handoff-*-recover || "$MODE" == handoff-recover ]]; then
     [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint obrigatório"
   fi
   if [[ "$MODE" == release || "$MODE" == handoff-release || "$MODE" == handoff-inventory ]]; then
@@ -105,7 +105,7 @@ bridge_call() {
   local operation="$1" bridge_mode="$MODE" bridge_approval="$APPROVAL_FINGERPRINT"
   shift
   # Ordinary reads keep their original closed vocabulary during a handoff.
-  if [[ "$MODE" == handoff-* || "$MODE" == picker-* ]]; then bridge_mode=inventory; bridge_approval=""; fi
+  if [[ "$MODE" == handoff-* ]]; then bridge_mode=inventory; bridge_approval=""; fi
   [[ "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$APP_COMPOSE_BRIDGE_BLOB" ]] || fail "ponte root-only diverge do blob revisado"
   sudo -n "$APP_COMPOSE_BRIDGE" --mode "$bridge_mode" --sha "$TARGET_SHA" \
     --app-version "$COMPOSE_APP_VERSION" --approval-fingerprint "$bridge_approval" \
@@ -117,8 +117,8 @@ handoff_bridge() {
   local operation="$1" bridge_mode
   local -a arguments=()
   case "$operation" in
-    picker-inventory|handoff-inventory|handoff-witness-inventory) bridge_mode=inventory ;;
-    picker-prepare|picker-apply|handoff-prepare|handoff-apply|handoff-proxy|handoff-witness-register) bridge_mode=release ;;
+    handoff-inventory|handoff-witness-inventory) bridge_mode=inventory ;;
+    handoff-prepare|handoff-apply|handoff-proxy|handoff-witness-register) bridge_mode=release ;;
     handoff-recovery-inventory|handoff-legacy-recovery-inventory) bridge_mode=rollback-inventory ;;
     handoff-recovery-prepare|handoff-recovery-apply|handoff-legacy-recovery-prepare|handoff-legacy-recovery-finalize|handoff-legacy-recovery-proxy) bridge_mode=rollback ;;
     *) fail "operação handoff não permitida" ;;
@@ -512,28 +512,6 @@ handoff_inventory() {
   echo 'serviços=api,web; impacto=breve interrupção HTTP; migrations=nenhuma; workers=preservados'
 }
 
-picker_release() {
-  local receipt version checkout
-  handoff_host_guard
-  runtime_snapshot
-  version="$(docker inspect --format '{{json .Config.Env}}' "$(compose ps -q api)" \
-    | python3 -c 'import json,sys; values=[v.split("=",1)[1] for v in json.load(sys.stdin) if v.startswith("APP_VERSION=")]; print(values[0] if len(values)==1 else "")')"
-  [[ "$version" =~ ^[0-9a-f]{40}$ ]] || fail "APP_VERSION ativa inválida para Picker"
-  COMPOSE_APP_VERSION="$version"
-  checkout="$(git rev-parse HEAD)"
-  [[ "$checkout" == "$version" ]] || fail "checkout diverge da API; reconciliar antes do Picker"
-  handoff_bridge picker-prepare
-  release_write_file app-previous.sha "$checkout" || fail "checkout anterior não salvo"
-  release_write_file app-in-flight.sha "$version" || fail "marcador não salvo"
-  receipt="$(handoff_bridge picker-apply)" || fail "troca Picker interrompida; recuperação própria necessária"
-  [[ "$(handoff_receipt_value "$receipt" picker_status)" == healthy ]] || fail "Picker sem recibo saudável"
-  runtime_snapshot
-  handoff_https
-  handoff_save_receipt "$receipt"
-  handoff_clear_markers "$version"
-  echo "Picker configurado; API saudável; web preservada"
-}
-
 handoff_release() {
   local declared_api="$CANDIDATE_API_IMAGE_ID" declared_web="$CANDIDATE_WEB_IMAGE_ID" service id image tag receipt
   trap cleanup_candidate_artifact EXIT
@@ -835,10 +813,8 @@ main() {
   parse_arguments "$@"
   [[ "$EXPECTED_URL" == "$PUBLIC_URL" ]] || fail "domínio diverge do alvo"
   release_load_support || fail "suporte não verificável; preparação autorizada necessária"
-  if [[ "$MODE" == release || "$MODE" == rollback || "$MODE" == handoff-release || "$MODE" == handoff-witness-register || "$MODE" == handoff-legacy-recover || "$MODE" == handoff-recover || "$MODE" == picker-release ]]; then acquire_app_deploy_lock; fi
+  if [[ "$MODE" == release || "$MODE" == rollback || "$MODE" == handoff-release || "$MODE" == handoff-witness-register || "$MODE" == handoff-legacy-recover || "$MODE" == handoff-recover ]]; then acquire_app_deploy_lock; fi
   case "$MODE" in
-    picker-release) picker_release ;;
-    picker-inventory) handoff_host_guard; runtime_snapshot; handoff_bridge picker-inventory ;;
     inventory) inventory ;;
     adoption-inventory) adoption_inventory ;;
     adopt) adopt_runtime_base ;;

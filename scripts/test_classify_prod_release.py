@@ -49,17 +49,17 @@ class ReleaseClassifierTests(unittest.TestCase):
             "app",
         )
 
-    def test_backup_operator_only_changes_do_not_publish_application_images(self):
+    def test_retiring_backup_runtime_requires_a_separate_release_review(self):
         operator = {"backend/app/platform_backup/production_cli.py", "backend/app/platform_backup/runtime_source.py"}
-        self.assertEqual(classify(operator), "none")
+        self.assertEqual(classify(operator), "protected")
 
     def test_picker_retirement_requires_a_separate_release_review(self):
         self.assertEqual(classify({"backend/app/main.py", "backend/app/google_drive_picker.py"}), "protected")
         self.assertEqual(classify({"frontend/app/admin/platform/google-drive-folder-picker.tsx"}), "protected")
 
-    def test_platform_backup_worker_module_is_app_but_other_workers_remain_protected(self):
-        self.assertEqual(classify({"backend/app/platform_backup/runtime_worker.py"}), "app")
-        self.assertEqual(classify({"backend/app/platform_backup/worker.py"}), "protected")
+    def test_removed_backup_operations_are_protected(self):
+        self.assertEqual(classify({"scripts/production-preflight-ssh-wrapper.sh"}), "protected")
+        self.assertEqual(classify({"scripts/backup_runtime/pyp-platform-backup.timer"}), "protected")
         self.assertEqual(classify({"backend/app/unreviewed_worker.py"}), "protected")
 
     def test_unreconciled_main_history_does_not_trigger_release(self):

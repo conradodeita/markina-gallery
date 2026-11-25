@@ -1,5 +1,12 @@
 # Estado da execução
 
+## Armazenamento, backup global e arquivo frio — atualização de 25/11/2026
+
+- A tentativa de backup global própria foi aposentada. A PR de higienização #436 está em revisão/CI; workflows exclusivos estão desativados, segredos SSH exclusivos foram removidos e duas pastas de ensaio vazias foram movidas para a lixeira do Drive. Recursos antigos ainda observados no host aguardam retirada pelo canal protegido. Banco, dados de clientes, mídia, pasta compartilhada e OAuth da plataforma foram preservados.
+- O fluxo de recuperação de pastas frias pelo fotógrafo já existe em código e foi validado com transporte sintético: pedido autenticado e tenant-scoped, fila, catálogo, manifesto/checksums, download e staging, estado na UI e ledger de créditos. O caminho de produção ainda não foi comprovado com Drive real; a composição provider-specific está na PR #428 aberta/draft.
+- O contrato do fluxo frio permanece: a pasta fica elegível após o prazo configurado e 30 dias completos; o fotógrafo escolhe reabertura de 7, 14 ou 30 dias. A taxa é configurável pelo proprietário por pasta/ciclo; os créditos são reservados no pedido e debitados uma vez somente após recuperação integral verificada. Falha comprovada libera a reserva sem débito; resultado incerto exige reconciliação e mantém a reserva. O proprietário é isento e não há expurgo automático.
+- A restauração lógica do banco de um tenant continua adiada e é diferente de recuperar uma pasta fria. A nova change `prove-open-source-backup-and-recovery` torna obrigatória uma única prova sintética que inclua backup global, extração isolada de fotógrafo e recuperação de pasta fria com o mesmo conjunto open source, preservando raízes, chaves, retenção e autorização separados.
+
 ## Produção — release de 16/11/2026
 
 SaaS aplicado para a operação do proprietário no runtime9df3b735/schema0126. Treze serviços saudáveis, dados financeiros e fator TOTP preservados, facialtrue e18891 embeddings intactos. Mercado Pago/PIX ativos e WhatsApp reconectado/ready. Provas, rollback e limites no [registro do release](production-release-2026-11-16.md). Configurações pré-tenants permanecem no [checklist pós-deploy](post-deploy-configuration-checklist.md). A revisão visual autenticada pós-deploy permanece pendente pela conexão Browser. Os checkpoints abaixo mantêm seu contexto histórico.

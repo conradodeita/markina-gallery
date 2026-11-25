@@ -1,5 +1,7 @@
 # Checklist de configuração após o deploy SaaS
 
+> **Registro histórico, substituído em 25/11/2026.** As tarefas de Picker, runtime próprio, chave do backup e instalação do timer abaixo descrevem a tentativa aposentada e não são mais executáveis. Consulte [`retire-platform-backup-runtime`](../../openspec/changes/retire-platform-backup-runtime/tasks.md) para a higienização e [`prove-open-source-backup-and-recovery`](../../openspec/changes/prove-open-source-backup-and-recovery/tasks.md) para a prova nova. O fluxo de arquivo frio do fotógrafo continua vigente; sua integração com ferramentas deve seguir a prova nova, preservando o contrato de prazo/crédito.
+
 Atualizado em 17/11/2026. Solicitação do proprietário: reunir as configurações deliberadamente deixadas para quando o candidato estiver no servidor, incluindo Drive e backup por tenant. Este documento acompanha o release; as tarefas abaixo não voltam a ser requisitos do primeiro push, que já ocorreu.
 
 `[x]` indica uma decisão registrada ou uma prova executada, conforme o texto do item. `[ ]` indica trabalho pendente. Cada item identifica configuração, ensaio, implementação ou decisão comercial. Uma fundação validada localmente não equivale a serviço recorrente instalado.

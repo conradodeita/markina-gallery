@@ -1,5 +1,7 @@
 # Backup global — implementação e ensaio local
 
+> **Aposentado em 25/11/2026.** O módulo e os instaladores descritos abaixo foram removidos na higienização; os comandos/testes desta página não devem ser executados. O documento permanece como histórico da tentativa. O substituto está em [`prove-open-source-backup-and-recovery`](../../openspec/changes/prove-open-source-backup-and-recovery/proposal.md) e inclui obrigatoriamente o fluxo existente de arquivo frio por fotógrafo.
+
 ## Escopo aprovado em 06/11/2026
 
 Um conjunto global reúne o PostgreSQL de todos os tenants e configurações essenciais cifradas. A política é diária, retenção 7 diários/4 semanais/3 mensais, RPO alvo 24 h, RTO alvo 8 h a comprovar e ensaio mensal. Esses números não são cotas ou cópias separadas por fotógrafo. Arquivos de fotos, arquivos biométricos/WhatsApp e recuperação lógica por tenant ficaram para etapa posterior.

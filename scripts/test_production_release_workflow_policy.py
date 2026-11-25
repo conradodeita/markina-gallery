@@ -438,6 +438,8 @@ def main() -> None:
         raise AssertionError("preflight não pode executar script enviado pelo runner")
 
     require('^MARKINA_TARGET_SHA=([0-9a-f]{40})$', "comando SSH validado por regex estrita", WRAPPER)
+    if "MARKINA_PLATFORM_BACKUP_" in WRAPPER or "MARKINA_PICKER_SUPPORT_SHA" in WRAPPER:
+        raise AssertionError("wrapper não pode mais expor operações de backup global ou Google Picker")
     require('inventory_mode="inventory"', "wrapper fixa modo somente-leitura padrão", WRAPPER)
     require('inventory_mode="rollback-inventory"', "wrapper limita o segundo modo a inventário de rollback", WRAPPER)
     require('MARKINA_RETIREMENT_TARGET_SHA=([0-9a-f]{40})', "comando de aposentadoria exige SHA completo", WRAPPER)
@@ -492,21 +494,8 @@ def main() -> None:
     require("MARKINA_APP_ROLLBACK_SHA=([0-9a-f]{40})", "wrapper aceita apenas SHA para inventário de rollback", WRAPPER)
     if "--mode release" in WRAPPER or '"$SSH_ORIGINAL_COMMAND"' in WRAPPER:
         raise AssertionError("wrapper não pode encaminhar comando arbitrário nem release")
-    backup_dispatch = WRAPPER.split('if [[ -n "$backup_mode" ]]; then', 1)[1].split(
-        '\ninventory_runtime="bash"', 1
-    )[0]
-    temporary_assignment = 'source_dir="$(mktemp -d)"'
-    temporary_cleanup = 'trap \'rm -rf -- "$source_dir"\' EXIT'
-    require('git ls-remote origin refs/heads/main', "SHA remoto da main validado", backup_dispatch)
-    require(temporary_assignment, "staging isolado do suporte de backup", backup_dispatch)
-    require(temporary_cleanup, "staging temporário sempre removido", backup_dispatch)
-    if not (
-        backup_dispatch.index('git ls-remote origin refs/heads/main')
-        < backup_dispatch.index(temporary_assignment)
-        < backup_dispatch.index(temporary_cleanup)
-        < backup_dispatch.index("curl --location")
-    ):
-        raise AssertionError("staging do suporte deve ser criado após validar o SHA e antes do download")
+    if "MARKINA_PLATFORM_BACKUP_" in WRAPPER or "MARKINA_PICKER_SUPPORT_SHA" in WRAPPER:
+        raise AssertionError("wrapper não pode mais expor operações de backup global ou Google Picker")
     legacy_inventory = WRAPPER.split('\ninventory_runtime="bash"', 1)[1]
     if "mktemp" in legacy_inventory:
         raise AssertionError("caminho de preflight legado não pode criar temporários")
@@ -516,6 +505,8 @@ def main() -> None:
     require("printf '%s\\n' \"$script_body\" | MARKINA_EXPECTED_REPOSITORY=", "somente conteúdo validado alimenta stdin", WRAPPER)
     script = INVENTORY_SCRIPT.decode("utf-8")
     app_script = APP_INVENTORY_SCRIPT.decode("utf-8")
+    if "picker-" in app_script:
+        raise AssertionError("executor app não pode manter modos retirados do Google Picker")
     retirement_script = RETIREMENT_INVENTORY_SCRIPT.decode("utf-8")
     require('MODE" == inventory', "script remoto aceita somente modo de inventário", retirement_script)
     require('"20261021_0086"', "preflight confere schema anterior exato", retirement_script)
