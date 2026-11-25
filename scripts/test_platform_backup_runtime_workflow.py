@@ -233,10 +233,18 @@ def main() -> int:
     require("inputs.approval_fingerprint" in RUNTIME and "inputs.approval_bundle_sha256" in RUNTIME,
             "runtime_approval_inputs_missing")
     require("backup_runtime_install_approval_fingerprint_v2=" in RUNTIME
-            and 'if [[ "$OPERATION" == install ]]' in RUNTIME
+            and 'if [[ "$OPERATION" == install || "$OPERATION" == bind-and-rehearse ]]' in RUNTIME
             and 'fingerprint="$approval_fingerprint"' in RUNTIME
             and 'fingerprint="$full_fingerprint"' in RUNTIME,
             "runtime_operation_specific_approval_fingerprint_missing")
+    binding = SSH_WRAPPER.split("    bind-and-rehearse|reconcile)", 1)[1].split("\n    ;;", 1)[0]
+    require('fingerprint_label="backup_runtime_fingerprint"' in binding
+            and 'if [[ "$backup_mode" == bind-and-rehearse ]]; then' in binding
+            and 'fingerprint_label="backup_runtime_install_approval_fingerprint_v2"' in binding
+            and binding.index("acquire_backup_release_lock") < binding.index("backup_runtime_install_preconditions=pass")
+            < binding.index('[[ "$actual_fingerprint" == "$backup_fingerprint" ]]')
+            < binding.index("--bind-selected-destination"),
+            "backup_bind_must_validate_stable_identity_and_fresh_capacity_under_lock")
     require("REQUESTED_FINGERPRINT\" == \"$INVENTORY_FINGERPRINT" in RUNTIME
             and "REQUESTED_BUNDLE\" == \"$BUNDLE_SHA256" in RUNTIME,
             "runtime_preflight_approval_not_compared")

@@ -191,7 +191,13 @@ PY
         || fail "runtime instalado diverge da revisão aprovada"
       inventory_report="$(sudo -n /usr/bin/python3.10 -B -c "$inventory_bootstrap" \
         "$inventory_b64" inventory "$backup_sha" </dev/null)" || fail "inventário do backup falhou"
-      actual_fingerprint="$(printf '%s\n' "$inventory_report" | sed -nE 's/^backup_runtime_fingerprint=([0-9a-f]{64})$/\1/p' | tail -n1)"
+      fingerprint_label="backup_runtime_fingerprint"
+      if [[ "$backup_mode" == bind-and-rehearse ]]; then
+        fingerprint_label="backup_runtime_install_approval_fingerprint_v2"
+        grep -Fxq 'backup_runtime_install_preconditions=pass' <<<"$inventory_report" \
+          || fail "precondições de vínculo do backup não atendidas"
+      fi
+      actual_fingerprint="$(printf '%s\n' "$inventory_report" | sed -nE "s/^${fingerprint_label}=([0-9a-f]{64})$/\\1/p" | tail -n1)"
       [[ "$actual_fingerprint" == "$backup_fingerprint" ]] || fail "fingerprint diverge do preflight aprovado"
       printf '%s\n' "$inventory_report"
       runtime_python="/opt/pyp-backup-runtime/current/venv/bin/python"
