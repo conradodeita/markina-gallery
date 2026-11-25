@@ -1,3 +1,5 @@
+> **SUPERCEDIDA — NÃO IMPLEMENTAR NEM DESPACHAR.** O canal SSH era exclusivo do runtime de backup global Google/Picker cancelado em 25/11/2026. As tarefas abertas ficam somente como histórico. A retirada está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md); a direção vigente é [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
+
 ## Why
 
 O run 45545034072 confirmou CI, fingerprint v2 e hash do pacote, mas abortou antes do envio porque o job em `production` recebeu variáveis SSH vazias. As referências do job apontam para nomes disponíveis somente em `production-preflight`.

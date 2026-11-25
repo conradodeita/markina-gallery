@@ -1,3 +1,5 @@
+> **SUPERCEDIDA — NÃO IMPLEMENTAR NEM DESPACHAR.** Este plano de credenciais e operações SSH pertencia ao runtime de backup cancelado em 25/11/2026. Mantido apenas como histórico; não provisionar credenciais para esse fluxo. Consulte [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md) e [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
+
 ## Context
 
 A API do GitHub confirmou por nomes que `production` contém `PRODUCTION_SSH_*` e que `production-preflight` contém `PRODUCTION_PREFLIGHT_SSH_*`. Os valores de host, porta e usuário coincidem entre os ambientes. Essa igualdade não identifica a chave nem prova que ela aciona o wrapper restrito.
