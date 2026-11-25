@@ -34,6 +34,13 @@ SHARED_CONTAINER_INSPECT = "{{.Id}}|{{.Image}}|{{.State.Status}}|{{.State.Starte
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
+APPROVAL_FINGERPRINT_VERSION = 2
+APPROVAL_FINGERPRINT_LABEL = "backup_runtime_install_approval_fingerprint_v2"
+DISK_TARGETS = {
+    "disk_var_lib": "/var/lib",
+    "disk_install_root": str(INSTALL_ROOT),
+    "disk_systemd_root": "/etc/systemd/system",
+}
 SCHEMA_REVISION = re.compile(r"[A-Za-z0-9_]{1,64}\Z")
 ACTIVE_APP_PROJECT = re.compile(r"(?:markina-gallery|markina-gallery-app-[0-9a-f]{32})\Z")
 CONTAINER_VALIDATION_ERROR_KINDS = frozenset({
@@ -78,6 +85,7 @@ SAFE_INVENTORY_ERROR_CODES = frozenset({
     "schema_inventory_failed", "schema_inventory_invalid",
     "disk_inventory_failed", "disk_inventory_invalid",
     "systemd_inventory_failed", "systemd_inventory_invalid",
+    "approval_inventory_invalid",
     "installed_release_identity_invalid", "installed_release_root_unsafe",
     "installed_release_file_unavailable", "installed_release_file_unsafe",
     "installed_release_file_changed", "installed_release_current_mismatch",
@@ -438,6 +446,140 @@ def _digest(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def filesystem_capacity(path: str, runner: Runner = _run) -> tuple[dict[str, int], str, str]:
+    """Read one filesystem's current capacity and private source/mount identity."""
+    raw = _output(runner(["/usr/bin/df", "-P", "-k", path]), "disk_inventory_failed")
+    lines = raw.splitlines()
+    if len(lines) != 2:
+        raise InventoryError("disk_inventory_invalid")
+    parts = lines[1].split()
+    if (len(parts) < 6 or not all(value.isdigit() for value in parts[1:4])
+            or not re.fullmatch(r"[0-9]{1,3}%", parts[4])
+            or not parts[-1].startswith("/")):
+        raise InventoryError("disk_inventory_invalid")
+    total_kib, used_kib, available_kib = (int(value) for value in parts[1:4])
+    use_percent = int(parts[4][:-1])
+    if (total_kib <= 0 or used_kib < 0 or available_kib < 0
+            or used_kib > total_kib or available_kib > total_kib or use_percent > 100):
+        raise InventoryError("disk_inventory_invalid")
+    return ({"total_kib": total_kib, "used_kib": used_kib,
+             "available_kib": available_kib, "use_percent": use_percent}, parts[0], parts[-1])
+
+
+def _install_approval_fingerprint(
+    inventory: object,
+    *,
+    host_binding: str,
+    sensitive_configuration_bindings: object,
+) -> str:
+    """Hash stable install identity while excluding only volatile capacity counters."""
+    expected_inventory_keys = {
+        "schema_version", "checkout_sha", "containers", "shared_containers",
+        "database_schema", *DISK_TARGETS, "units", "paths",
+    }
+    if (type(inventory) is not dict or set(inventory) != expected_inventory_keys
+            or type(inventory.get("schema_version")) is not int or inventory["schema_version"] != 1
+            or not isinstance(inventory.get("checkout_sha"), str)
+            or not GIT_SHA.fullmatch(inventory["checkout_sha"])
+            or not isinstance(inventory.get("database_schema"), str)
+            or not SCHEMA_REVISION.fullmatch(inventory["database_schema"])
+            or not isinstance(host_binding, str) or not re.fullmatch(r"[0-9a-f]{64}", host_binding)):
+        raise InventoryError("approval_inventory_invalid")
+
+    containers = inventory["containers"]
+    container_keys = {"id", "image", "state", "running", "started_at", "health"}
+    if type(containers) is not dict or set(containers) != set(CONTAINER_ROLES):
+        raise InventoryError("approval_inventory_invalid")
+    for container in containers.values():
+        if (type(container) is not dict or set(container) != container_keys
+                or not isinstance(container["id"], str) or not CONTAINER_ID.fullmatch(container["id"])
+                or not isinstance(container["image"], str) or not IMAGE_ID.fullmatch(container["image"])
+                or not isinstance(container["state"], str)
+                or container["state"] not in {"running", "exited", "created", "restarting"}
+                or type(container["running"]) is not bool
+                or not isinstance(container["started_at"], str) or len(container["started_at"]) > 64
+                or not isinstance(container["health"], str)
+                or container["health"] not in {"healthy", "unhealthy", "starting", "none"}):
+            raise InventoryError("approval_inventory_invalid")
+
+    shared = inventory["shared_containers"]
+    if (type(shared) is not dict or set(shared) != {"count", "fingerprint"}
+            or type(shared["count"]) is not int or not 1 <= shared["count"] <= 512
+            or not isinstance(shared["fingerprint"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", shared["fingerprint"])):
+        raise InventoryError("approval_inventory_invalid")
+
+    units = inventory["units"]
+    if type(units) is not dict or set(units) != {"service", "timer"}:
+        raise InventoryError("approval_inventory_invalid")
+    for state in units.values():
+        if (type(state) is not dict or set(state) != {"load", "enabled", "active"}
+                or any(not isinstance(value, str) for value in state.values())):
+            raise InventoryError("approval_inventory_invalid")
+
+    expected_paths = {
+        "config_directory", "source", "keyring", "destination", "picker_config_directory",
+        "picker_config", "install_root", "release_directory", "current_release",
+    }
+    paths = inventory["paths"]
+    if type(paths) is not dict or set(paths) != expected_paths:
+        raise InventoryError("approval_inventory_invalid")
+    for metadata in paths.values():
+        if type(metadata) is not dict or type(metadata.get("present")) is not bool:
+            raise InventoryError("approval_inventory_invalid")
+        if not metadata["present"]:
+            if set(metadata) != {"present"}:
+                raise InventoryError("approval_inventory_invalid")
+            continue
+        kind = metadata.get("kind")
+        expected_metadata = ({"present", "kind", "target", "uid", "gid", "links"}
+                             if kind == "symlink"
+                             else {"present", "kind", "uid", "gid", "mode", "links", "size", "mtime_ns"})
+        if (not isinstance(kind, str) or kind not in {"symlink", "regular", "directory", "other"}
+                or set(metadata) != expected_metadata
+                or any(type(metadata[key]) is not int for key in ("uid", "gid", "links"))
+                or (kind != "symlink" and any(type(metadata[key]) is not int
+                                               for key in ("mode", "size", "mtime_ns")))
+                or (kind == "symlink" and not isinstance(metadata["target"], str))):
+            raise InventoryError("approval_inventory_invalid")
+
+    disk_keys = {"filesystem_binding", "total_kib", "used_kib", "available_kib", "use_percent"}
+    for name in DISK_TARGETS:
+        disk = inventory[name]
+        if (type(disk) is not dict or set(disk) != disk_keys
+                or not isinstance(disk["filesystem_binding"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", disk["filesystem_binding"])
+                or any(type(disk[key]) is not int for key in disk_keys - {"filesystem_binding"})
+                or disk["total_kib"] <= 0 or disk["used_kib"] < 0 or disk["available_kib"] < 0
+                or disk["used_kib"] > disk["total_kib"]
+                or disk["available_kib"] > disk["total_kib"]
+                or not 0 <= disk["use_percent"] <= 100):
+            raise InventoryError("approval_inventory_invalid")
+
+    expected_bindings = {"source", "keyring", "destination", "picker_config"}
+    if (type(sensitive_configuration_bindings) is not dict
+            or set(sensitive_configuration_bindings) != expected_bindings
+            or any(not isinstance(value, str)
+                   or value not in {"absent", "unsafe", "unreadable", "changed"}
+                   and not re.fullmatch(r"[0-9a-f]{64}", value)
+                   for value in sensitive_configuration_bindings.values())):
+        raise InventoryError("approval_inventory_invalid")
+
+    stable_inventory = dict(inventory)
+    for name in DISK_TARGETS:
+        disk = inventory[name]
+        stable_inventory[name] = {
+            "filesystem_binding": disk["filesystem_binding"],
+            "total_kib": disk["total_kib"],
+        }
+    return _digest({
+        "contract": f"pyp-platform-backup-install-approval-v{APPROVAL_FINGERPRINT_VERSION}",
+        "host_binding": host_binding,
+        "inventory": stable_inventory,
+        "sensitive_configuration_bindings": sensitive_configuration_bindings,
+    })
+
+
 def _safe_failure_code(
     error: BaseException, allowed_codes: frozenset[str] = SAFE_INVENTORY_ERROR_CODES,
 ) -> str:
@@ -521,7 +663,11 @@ def verify_installed_release(source_sha: str, bundle_sha256: str,
         "timer_active": False,
         "destination_enabled": False,
     }
-    if (not isinstance(receipt, dict) or any(receipt.get(key) != value for key, value in expected.items())
+    if not isinstance(receipt, dict):
+        raise InventoryError("installed_release_receipt_mismatch")
+    approval_version = receipt.get("approval_fingerprint_version", 1)
+    if (type(approval_version) is not int or approval_version not in {1, APPROVAL_FINGERPRINT_VERSION}
+            or any(receipt.get(key) != value for key, value in expected.items())
             or not isinstance(receipt.get("approval_fingerprint"), str)
             or not re.fullmatch(r"[0-9a-f]{64}", receipt["approval_fingerprint"])
             or not isinstance(receipt.get("rollback_receipt_sha256"), str)
@@ -618,16 +764,23 @@ def collect_inventory(
     ]), "schema_inventory_failed")
     if not SCHEMA_REVISION.fullmatch(schema):
         raise InventoryError("schema_inventory_invalid")
-    disk = _output(runner(["/usr/bin/df", "-P", "-k", "/var/lib"]), "disk_inventory_failed")
-    disk_lines = disk.splitlines()
-    if len(disk_lines) != 2:
-        raise InventoryError("disk_inventory_invalid")
-    disk_parts = disk_lines[1].split()
-    if (len(disk_parts) < 6 or not all(value.isdigit() for value in disk_parts[1:4])
-            or not re.fullmatch(r"[0-9]{1,3}%", disk_parts[4])):
-        raise InventoryError("disk_inventory_invalid")
-    disk_info = {"total_kib": int(disk_parts[1]), "used_kib": int(disk_parts[2]),
-                 "available_kib": int(disk_parts[3]), "use_percent": int(disk_parts[4][:-1])}
+    disk_inventory: dict[str, dict[str, int | str]] = {}
+    for name, target in DISK_TARGETS.items():
+        probe = Path(target)
+        while not probe.exists() or probe.is_symlink():
+            parent = probe.parent
+            if parent == probe:
+                raise InventoryError("disk_inventory_invalid")
+            probe = parent
+        capacity, source, mountpoint = filesystem_capacity(str(probe), runner)
+        disk_inventory[name] = {
+            **capacity,
+            "filesystem_binding": _digest({
+                "host_binding": hashlib.sha256(machine_id.lower().encode("ascii")).hexdigest(),
+                "source": source,
+                "mountpoint": mountpoint,
+            }),
+        }
     units = {
         "service": read_systemd_unit_state("pyp-platform-backup.service", runner),
         "timer": read_systemd_unit_state("pyp-platform-backup.timer", runner),
@@ -659,10 +812,15 @@ def collect_inventory(
         "containers": containers,
         "shared_containers": shared_containers,
         "database_schema": schema,
-        "disk_var_lib": disk_info,
+        **disk_inventory,
         "units": units,
         "paths": configs,
     }
+    approval_hash = _install_approval_fingerprint(
+        inventory,
+        host_binding=host_binding,
+        sensitive_configuration_bindings=sensitive_bindings,
+    )
     runtime_hash = _digest({
         "host_binding": host_binding,
         "checkout_sha": checkout_sha,
@@ -677,6 +835,8 @@ def collect_inventory(
         sort_keys=True, separators=(",", ":")
     ).encode("utf-8")).hexdigest()
     return {"inventory": inventory, "fingerprint": inventory_hash,
+            "approval_fingerprint": approval_hash,
+            "approval_fingerprint_version": APPROVAL_FINGERPRINT_VERSION,
             "runtime_fingerprint": runtime_hash}
 
 
@@ -686,6 +846,15 @@ def install_preconditions(inventory: dict[str, object]) -> bool:
         items = inventory["containers"]
         units = inventory["units"]
         paths = inventory["paths"]
+        for name in DISK_TARGETS:
+            disk = inventory[name]
+            if (type(disk) is not dict or type(disk.get("total_kib")) is not int
+                    or type(disk.get("used_kib")) is not int or disk["total_kib"] <= 0
+                    or disk["used_kib"] < 0 or disk["used_kib"] > disk["total_kib"]
+                    or type(disk.get("use_percent")) is not int
+                    or not 0 <= disk["use_percent"] < 75
+                    or 4 * disk["used_kib"] >= 3 * disk["total_kib"]):
+                return False
         if not all(items[name]["running"] for name in ("api", "web", "db")):
             return False
         if any(items[name]["health"] != "healthy" for name in ("api", "web")):
@@ -727,7 +896,6 @@ def public_inventory_summary(inventory: dict[str, object]) -> dict[str, object]:
     """Expose fixed operational facts without container or protected-file identities."""
     containers = inventory["containers"]
     units = inventory["units"]
-    disk = inventory["disk_var_lib"]
     return {
         "schema_version": 1,
         "checkout_sha": inventory["checkout_sha"],
@@ -740,9 +908,14 @@ def public_inventory_summary(inventory: dict[str, object]) -> dict[str, object]:
             for service in CONTAINER_ROLES
         },
         "database_schema": inventory["database_schema"],
-        "disk_var_lib": {
-            "available_kib": disk["available_kib"],
-            "use_percent": disk["use_percent"],
+        **{
+            name: {
+                "total_bytes": inventory[name]["total_kib"] * 1024,
+                "used_bytes": inventory[name]["used_kib"] * 1024,
+                "available_bytes": inventory[name]["available_kib"] * 1024,
+                "use_percent": inventory[name]["use_percent"],
+            }
+            for name in DISK_TARGETS
         },
         "units": {
             name: {"load": units[name]["load"], "enabled": units[name]["enabled"],
@@ -771,6 +944,7 @@ def main(bridge_sha: str | None = None) -> int:
                             sort_keys=True, separators=(",", ":"))
         print(f"backup_runtime_inventory_summary={report}")
         print(f"backup_runtime_fingerprint={result['fingerprint']}")
+        print(f"{APPROVAL_FINGERPRINT_LABEL}={result['approval_fingerprint']}")
         print(f"backup_runtime_install_preconditions={'pass' if install_preconditions(result['inventory']) else 'fail'}")
         return 0
     except (InventoryError, OSError, subprocess.SubprocessError) as exc:

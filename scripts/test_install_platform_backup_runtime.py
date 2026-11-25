@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import io
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import install_platform_backup_runtime as installer
@@ -24,7 +29,13 @@ class RuntimeInstallTests(unittest.TestCase):
         self._git("init", "--quiet")
         self._git("config", "user.email", "test@example.invalid")
         self._git("config", "user.name", "Synthetic Test")
-        wheel = b"synthetic wheel bytes"
+        wheel_stream = io.BytesIO()
+        with zipfile.ZipFile(wheel_stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("demo/__init__.py", "VALUE = 1\n")
+            archive.writestr("demo-1.0.dist-info/METADATA", "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n")
+            archive.writestr("demo-1.0.dist-info/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+            archive.writestr("demo-1.0.dist-info/RECORD", "demo/__init__.py,,\n")
+        wheel = wheel_stream.getvalue()
         digest = hashlib.sha256(wheel).hexdigest()
         self._write("backend/app/__init__.py", b"")
         self._write("backend/app/platform_backup/production_cli.py", b"# synthetic cli\n")
@@ -58,11 +69,25 @@ class RuntimeInstallTests(unittest.TestCase):
         self.lock_owner = (os.geteuid(), os.getegid()) if os.name == "posix" else None
         self.inventory_result = {
             "fingerprint": self.fingerprint,
+            "approval_fingerprint": self.fingerprint,
+            "approval_fingerprint_version": 2,
             "runtime_fingerprint": "c" * 64,
             "inventory": {
                 "containers": {name: {"running": True, "health": "healthy"}
                                for name in ("api", "web", "db")},
                 "database_schema": "20261113_0126",
+                "disk_var_lib": {
+                    "filesystem_binding": "d" * 64, "total_kib": 100000,
+                    "used_kib": 50000, "available_kib": 50000, "use_percent": 50,
+                },
+                "disk_install_root": {
+                    "filesystem_binding": "e" * 64, "total_kib": 100000,
+                    "used_kib": 50000, "available_kib": 50000, "use_percent": 50,
+                },
+                "disk_systemd_root": {
+                    "filesystem_binding": "f" * 64, "total_kib": 100000,
+                    "used_kib": 50000, "available_kib": 50000, "use_percent": 50,
+                },
                 "units": {name: {"load": "not-found", "enabled": "unknown", "active": "inactive"}
                           for name in ("service", "timer")},
                 "paths": {
@@ -84,7 +109,7 @@ class RuntimeInstallTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
-    def _install(self, *, runner=None, fingerprint: str | None = None):
+    def _install(self, *, runner=None, fingerprint: str | None = None, inventory_provider=None):
         def fake_wheels(stage, files, _runner, _python):
             python = stage / "venv/bin/python"
             python.parent.mkdir(parents=True, mode=0o700)
@@ -100,13 +125,15 @@ class RuntimeInstallTests(unittest.TestCase):
                         argv, 0, f"ActiveState=inactive\nLoadState=loaded\nUnitFileState={state}\n", "",
                     )
                 return subprocess.CompletedProcess(argv, 0, "", "")
-        with patch.object(installer, "_install_wheels", side_effect=fake_wheels):
+        with (patch.object(installer, "_install_wheels", side_effect=fake_wheels),
+              patch.object(installer, "_filesystem_block_size", return_value=4096)):
             return installer.install_verified_bundle(
                 self.bundle, source_sha=self.sha, bundle_sha256=self.bundle_sha,
                 approval_fingerprint=fingerprint or self.fingerprint,
-                inventory_provider=lambda: self.inventory_result,
+                inventory_provider=inventory_provider or (lambda: self.inventory_result),
                 runner=runner or (lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "", "")),
                 install_root=self.install_root, systemd_root=self.systemd_root, config_root=self.config_root,
+                python_executable=sys.executable,
                 lock_path=self.lock_path, lock_owner=self.lock_owner,
                 require_root=(os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0),
             )
@@ -156,6 +183,8 @@ class RuntimeInstallTests(unittest.TestCase):
         receipt = self._install()
         release = self.install_root / "releases" / self.sha
         self.assertEqual(receipt["status"], "installed_inert")
+        self.assertEqual(receipt["approval_fingerprint_version"], 2)
+        self.assertEqual(receipt["approval_fingerprint"], self.fingerprint)
         self.assertEqual(receipt["current_release"], f"releases/{self.sha}")
         self.assertFalse(receipt["service_enabled"])
         self.assertFalse(receipt["timer_enabled"])
@@ -174,6 +203,139 @@ class RuntimeInstallTests(unittest.TestCase):
     def test_fingerprint_mismatch_aborts_before_any_persistent_write(self) -> None:
         with self.assertRaisesRegex(installer.InstallError, "inventory_fingerprint_mismatch"):
             self._install(fingerprint="a" * 64)
+        self.assertFalse(self.install_root.exists())
+        self.assertEqual(list(self.systemd_root.iterdir()), [])
+
+    def test_capacity_bound_uses_verified_wheel_contents_and_stage_payload(self) -> None:
+        files = installer._read_bundle_files(self.bundle)
+        requirement = installer._installation_capacity_requirements(
+            files, python_executable=sys.executable,
+            install_block_size=4096, systemd_block_size=4096,
+        )
+        self.assertGreater(requirement["disk_install_root"], sum(map(len, files.values())))
+        self.assertGreater(requirement["disk_systemd_root"], 0)
+
+    def test_capacity_bound_rejects_unreadable_wheel(self) -> None:
+        files = installer._read_bundle_files(self.bundle)
+        wheel_path = next(name for name in files if name.startswith("wheelhouse/"))
+        files[wheel_path] = b"not a wheel archive"
+        with self.assertRaisesRegex(installer.InstallError, "^install_capacity_bound_invalid$"):
+            installer._installation_capacity_requirements(
+                files, python_executable=sys.executable,
+                install_block_size=4096, systemd_block_size=4096,
+            )
+
+    def test_capacity_bound_rejects_wheel_expansion_over_fixed_limit(self) -> None:
+        class LargeWheel:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def infolist():
+                return [SimpleNamespace(
+                    filename="demo/module.py", external_attr=0,
+                    file_size=installer.MAX_WHEEL_EXPANDED_BYTES + 1,
+                    is_dir=lambda: False,
+                )]
+
+        with patch.object(installer.zipfile, "ZipFile", return_value=LargeWheel()), \
+                self.assertRaisesRegex(installer.InstallError, "^install_capacity_bound_invalid$"):
+            installer._wheel_install_size_bound({"wheelhouse/demo.whl": b"synthetic"}, 4096)
+
+    def test_capacity_guard_requires_space_and_projected_usage_below_75_percent(self) -> None:
+        installer._assert_install_capacity(self.inventory_result["inventory"], {
+            "disk_install_root": 1024 * 1024, "disk_systemd_root": 64 * 1024,
+        })
+        low_space = self.inventory_result["inventory"]
+        original_available = low_space["disk_install_root"]["available_kib"]
+        low_space["disk_install_root"]["available_kib"] = 1
+        with self.assertRaisesRegex(installer.InstallError, "^install_capacity_insufficient$"):
+            installer._assert_install_capacity(low_space, {"disk_install_root": 2 * 1024})
+        low_space["disk_install_root"]["available_kib"] = original_available
+
+        near_limit = self.inventory_result["inventory"]
+        near_limit["disk_install_root"]["used_kib"] = 74000
+        near_limit["disk_install_root"]["available_kib"] = 26000
+        with self.assertRaisesRegex(installer.InstallError, "^install_capacity_limit_exceeded$"):
+            installer._assert_install_capacity(near_limit, {"disk_install_root": 1024 * 1024})
+
+    def test_capacity_guard_sums_destinations_sharing_one_filesystem(self) -> None:
+        shared = self.inventory_result["inventory"]
+        shared["disk_install_root"]["used_kib"] = 70000
+        shared["disk_install_root"]["available_kib"] = 30000
+        shared["disk_systemd_root"]["filesystem_binding"] = shared["disk_install_root"]["filesystem_binding"]
+        shared["disk_systemd_root"]["total_kib"] = 100000
+        shared["disk_systemd_root"]["used_kib"] = 70000
+        shared["disk_systemd_root"]["available_kib"] = 30000
+        with self.assertRaisesRegex(installer.InstallError, "^install_capacity_limit_exceeded$"):
+            installer._assert_install_capacity(shared, {
+                "disk_install_root": 3 * 1024 * 1024,
+                "disk_systemd_root": 3 * 1024 * 1024,
+            })
+
+    def test_capacity_filesystem_binding_and_total_must_remain_approved(self) -> None:
+        approved = self.inventory_result["inventory"]
+        changed = copy.deepcopy(approved)
+        changed["disk_install_root"]["filesystem_binding"] = "0" * 64
+        with self.assertRaisesRegex(installer.InstallError, "^install_capacity_filesystem_changed$"):
+            installer._assert_capacity_filesystems_unchanged(approved, changed)
+        changed = copy.deepcopy(approved)
+        changed["disk_systemd_root"]["total_kib"] += 1
+        with self.assertRaisesRegex(installer.InstallError, "^install_capacity_filesystem_changed$"):
+            installer._assert_capacity_filesystems_unchanged(approved, changed)
+
+    def test_capacity_filesystem_change_aborts_before_first_write(self) -> None:
+        calls = 0
+
+        def inventory_provider():
+            nonlocal calls
+            calls += 1
+            snapshot = copy.deepcopy(self.inventory_result)
+            if calls >= 2:
+                snapshot["inventory"]["disk_install_root"]["filesystem_binding"] = "0" * 64
+            return snapshot
+
+        with patch.object(installer, "_filesystem_block_size", return_value=4096), \
+                self.assertRaisesRegex(installer.InstallError, "^install_capacity_filesystem_changed$"):
+            self._install(inventory_provider=inventory_provider)
+        self.assertEqual(calls, 2)
+        self.assertFalse(self.install_root.exists())
+        self.assertEqual(list(self.systemd_root.iterdir()), [])
+
+    def test_insufficient_capacity_aborts_before_install_root_creation(self) -> None:
+        self.inventory_result["inventory"]["disk_install_root"]["available_kib"] = 1
+        with patch.object(installer, "_filesystem_block_size", return_value=4096), \
+                self.assertRaisesRegex(installer.InstallError, "^install_capacity_insufficient$"):
+            self._install()
+        self.assertFalse(self.install_root.exists())
+        self.assertEqual(list(self.systemd_root.iterdir()), [])
+
+    def test_capacity_reduction_after_staging_aborts_before_active_swap(self) -> None:
+        if os.name != "posix":
+            self.skipTest("systemd-style filesystem transaction requires POSIX")
+        calls = 0
+
+        def inventory_provider():
+            nonlocal calls
+            calls += 1
+            snapshot = copy.deepcopy(self.inventory_result)
+            if calls >= 3:
+                snapshot["inventory"]["disk_install_root"]["available_kib"] = 1
+            return snapshot
+
+        with self.assertRaisesRegex(installer.InstallError, "^install_capacity_insufficient$"):
+            self._install(inventory_provider=inventory_provider)
+        self.assertEqual(calls, 3)
+        self.assertFalse(self.install_root.exists())
+        self.assertEqual(list(self.systemd_root.iterdir()), [])
+
+    def test_inventory_without_versioned_approval_fingerprint_aborts_before_write(self) -> None:
+        self.inventory_result.pop("approval_fingerprint")
+        with self.assertRaisesRegex(installer.InstallError, "inventory_fingerprint_mismatch"):
+            self._install()
         self.assertFalse(self.install_root.exists())
         self.assertEqual(list(self.systemd_root.iterdir()), [])
 
@@ -206,10 +368,11 @@ class RuntimeInstallTests(unittest.TestCase):
             nonlocal calls
             calls += 1
             result = dict(self.inventory_result)
-            result["runtime_fingerprint"] = "d" * 64 if calls > 1 else "c" * 64
+            result["runtime_fingerprint"] = "d" * 64 if calls > 2 else "c" * 64
             return result
         # The only inventory recheck is made after artifact preparation.
         with patch.object(installer, "_install_wheels") as fake_wheels, \
+                patch.object(installer, "_filesystem_block_size", return_value=4096), \
                 self.assertRaisesRegex(installer.InstallError, "runtime_changed_during_install"):
             installer.install_verified_bundle(
                 self.bundle, source_sha=self.sha, bundle_sha256=self.bundle_sha,
@@ -220,9 +383,10 @@ class RuntimeInstallTests(unittest.TestCase):
                     else subprocess.CompletedProcess(argv, 0, "", ""),
                 install_root=self.install_root, systemd_root=self.systemd_root,
                 config_root=self.config_root, lock_path=self.lock_path, lock_owner=self.lock_owner,
+                python_executable=sys.executable,
                 require_root=(os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0),
             )
-        self.assertEqual(calls, 2)
+        self.assertEqual(calls, 3)
         self.assertFalse((self.install_root / "current").exists())
         self.assertFalse((self.systemd_root / "pyp-platform-backup.service").exists())
         self.assertFalse((self.install_root / "install-journal.json").exists())

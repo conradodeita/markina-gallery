@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import io
 import json
@@ -28,7 +29,11 @@ class InventoryTests(unittest.TestCase):
     def _result(argv: list[str], stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, returncode, stdout, "synthetic stderr")
 
-    def _runner(self, *, timer_enabled: str = "unknown", third_party_image: str = "8"):
+    def _runner(
+        self, *, timer_enabled: str = "unknown", third_party_image: str = "8",
+        filesystem: str = "/dev/test", total_kib: int = 100000, used_kib: int = 50000,
+        available_kib: int = 50000, use_percent: int = 50, mountpoint: str | None = None,
+    ):
         service_ids = {"api": "c" * 64, "web": "e" * 64, "db": "d" * 64}
         service_projects = {
             "api": "markina-gallery-app-" + "1" * 32,
@@ -79,7 +84,12 @@ class InventoryTests(unittest.TestCase):
             if " exec " in " ".join(argv):
                 return self._result(list(argv), "20261113_0126\n")
             if argv[:3] == ["/usr/bin/df", "-P", "-k"]:
-                return self._result(list(argv), "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/test 100000 50000 50000 50% /var/lib\n")
+                actual_mountpoint = mountpoint or ("/var/lib" if argv[-1] == "/var/lib" else "/")
+                return self._result(
+                    list(argv),
+                    "Filesystem 1024-blocks Used Available Capacity Mounted on\n"
+                    f"{filesystem} {total_kib} {used_kib} {available_kib} {use_percent}% {actual_mountpoint}\n",
+                )
             if argv[0] == "/usr/bin/systemctl":
                 if argv[-1] == "pyp-platform-backup.timer":
                     return self._result(list(argv), f"ActiveState=inactive\nLoadState=not-found\nUnitFileState={timer_enabled}\n")
@@ -126,6 +136,8 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(result["inventory"]["shared_containers"]["count"], 4)
         self.assertNotIn("9" * 64, serialized)
         self.assertEqual(len(result["fingerprint"]), 64)
+        self.assertEqual(len(result["approval_fingerprint"]), 64)
+        self.assertEqual(result["approval_fingerprint_version"], 2)
         self.assertEqual(len(result["runtime_fingerprint"]), 64)
         self.assertTrue(inventory.install_preconditions(result["inventory"]))
 
@@ -136,12 +148,17 @@ class InventoryTests(unittest.TestCase):
               contextlib.redirect_stdout(output)):
             self.assertEqual(inventory.main("a" * 40), 0)
         lines = output.getvalue().splitlines()
-        self.assertEqual(len(lines), 3)
+        self.assertEqual(len(lines), 4)
         self.assertTrue(lines[0].startswith("backup_runtime_inventory_summary="))
         self.assertEqual(lines[1], "backup_runtime_fingerprint=" + result["fingerprint"])
+        self.assertEqual(
+            lines[2], inventory.APPROVAL_FINGERPRINT_LABEL + "=" + result["approval_fingerprint"],
+        )
+        self.assertEqual(lines[3], "backup_runtime_install_preconditions=pass")
         summary = json.loads(lines[0].split("=", 1)[1])
         self.assertEqual(set(summary), {
-            "schema_version", "checkout_sha", "containers", "database_schema", "disk_var_lib", "units",
+            "schema_version", "checkout_sha", "containers", "database_schema",
+            *inventory.DISK_TARGETS, "units",
         })
         for service in inventory.CONTAINER_ROLES:
             self.assertEqual(set(summary["containers"][service]), {"state", "running", "health"})
@@ -151,19 +168,88 @@ class InventoryTests(unittest.TestCase):
             self.assertNotIn(container["started_at"], output.getvalue())
 
     def test_fingerprint_changes_when_machine_identity_changes(self) -> None:
-        first = inventory.collect_inventory(self._runner(), root=self.root)["fingerprint"]
+        first = inventory.collect_inventory(self._runner(), root=self.root)
         (self.root / "etc/machine-id").write_text("0123456789abcdef0123456789abcdef\n", encoding="ascii")
-        second = inventory.collect_inventory(self._runner(), root=self.root)["fingerprint"]
-        self.assertNotEqual(first, second)
+        second = inventory.collect_inventory(self._runner(), root=self.root)
+        self.assertNotEqual(first["fingerprint"], second["fingerprint"])
+        self.assertNotEqual(first["approval_fingerprint"], second["approval_fingerprint"])
 
     def test_enabled_backup_timer_blocks_install(self) -> None:
         result = inventory.collect_inventory(self._runner(timer_enabled="enabled"), root=self.root)
+        self.assertFalse(inventory.install_preconditions(result["inventory"]))
+
+    def test_use_percent_at_operational_limit_blocks_install(self) -> None:
+        result = inventory.collect_inventory(self._runner(use_percent=75), root=self.root)
         self.assertFalse(inventory.install_preconditions(result["inventory"]))
 
     def test_runtime_fingerprint_binds_shared_container_invariance(self) -> None:
         first = inventory.collect_inventory(self._runner(), root=self.root)
         second = inventory.collect_inventory(self._runner(third_party_image="7"), root=self.root)
         self.assertNotEqual(first["runtime_fingerprint"], second["runtime_fingerprint"])
+        self.assertNotEqual(first["approval_fingerprint"], second["approval_fingerprint"])
+
+    def test_approval_fingerprint_ignores_only_volatile_disk_capacity(self) -> None:
+        first = inventory.collect_inventory(self._runner(), root=self.root)
+        second = inventory.collect_inventory(
+            self._runner(used_kib=50080, available_kib=49920, use_percent=51), root=self.root,
+        )
+        self.assertNotEqual(first["fingerprint"], second["fingerprint"])
+        self.assertEqual(first["approval_fingerprint"], second["approval_fingerprint"])
+
+    def test_approval_fingerprint_binds_filesystem_source_and_total_capacity(self) -> None:
+        baseline = inventory.collect_inventory(self._runner(), root=self.root)
+        changed_source = inventory.collect_inventory(
+            self._runner(filesystem="/dev/other"), root=self.root,
+        )
+        changed_total = inventory.collect_inventory(
+            self._runner(total_kib=100001, used_kib=50001, available_kib=50000), root=self.root,
+        )
+        changed_mountpoint = inventory.collect_inventory(
+            self._runner(mountpoint="/srv/other"), root=self.root,
+        )
+        self.assertNotEqual(baseline["approval_fingerprint"], changed_source["approval_fingerprint"])
+        self.assertNotEqual(baseline["approval_fingerprint"], changed_total["approval_fingerprint"])
+        self.assertNotEqual(baseline["approval_fingerprint"], changed_mountpoint["approval_fingerprint"])
+
+    def test_approval_fingerprint_rejects_missing_extra_or_invalid_inventory_fields(self) -> None:
+        result = inventory.collect_inventory(self._runner(), root=self.root)
+        binding = {name: "e" * 64 for name in ("source", "keyring", "destination", "picker_config")}
+        base = result["inventory"]
+        common = {
+            "host_binding": "d" * 64,
+            "sensitive_configuration_bindings": binding,
+        }
+        for label, mutate in (
+            ("missing", lambda value: value.pop("units")),
+            ("extra", lambda value: value.__setitem__("unexpected", True)),
+            ("invalid capacity", lambda value: value["disk_var_lib"].__setitem__("used_kib", True)),
+        ):
+            with self.subTest(label=label):
+                candidate = copy.deepcopy(base)
+                mutate(candidate)
+                with self.assertRaisesRegex(inventory.InventoryError, "^approval_inventory_invalid$"):
+                    inventory._install_approval_fingerprint(candidate, **common)
+
+    def test_approval_fingerprint_binds_runtime_and_path_witnesses(self) -> None:
+        result = inventory.collect_inventory(self._runner(), root=self.root)
+        binding = {name: "e" * 64 for name in ("source", "keyring", "destination", "picker_config")}
+        common = {
+            "host_binding": "d" * 64,
+            "sensitive_configuration_bindings": binding,
+        }
+        base = result["inventory"]
+        baseline = inventory._install_approval_fingerprint(base, **common)
+        changed_schema = copy.deepcopy(base)
+        changed_schema["database_schema"] = "20261114_0127"
+        changed_unit = copy.deepcopy(base)
+        changed_unit["units"]["timer"]["active"] = "active"
+        changed_path = copy.deepcopy(base)
+        changed_path["paths"]["destination"] = {
+            "present": True, "kind": "regular", "uid": 0, "gid": 0,
+            "mode": 0o400, "links": 1, "size": 40, "mtime_ns": 1,
+        }
+        for candidate in (changed_schema, changed_unit, changed_path):
+            self.assertNotEqual(baseline, inventory._install_approval_fingerprint(candidate, **common))
 
     def test_fixed_inventory_rejects_wrong_container_identity_or_schema(self) -> None:
         base = self._runner()

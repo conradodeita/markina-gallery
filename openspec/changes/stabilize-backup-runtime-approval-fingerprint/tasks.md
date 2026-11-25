@@ -1,0 +1,29 @@
+# Tasks
+
+## 1. Fingerprint de aprovação versionada
+
+- [x] 1.1 Implementar projeção canônica e versionada da identidade do host/runtime e dos bindings/capacidades totais de `/var/lib`, `/opt/pyp-backup-runtime` e `/etc/systemd/system`; validar separadamente a conexão autorizada, SHA/CI e pacote no mesmo gate. Falhar fechado para campos ausentes, extras ou inválidos e rejeitar hashes legados. Verificar com testes de mudança de cada testemunha e de invariância dos campos de capacidade voláteis.
+- [x] 1.2 Revisar consumidores atuais de `runtime_fingerprint` e a política de refatoração contínua na área afetada; preservar ou remover somente uso comprovadamente substituído. Verificar ausência de duplicação/consumidor quebrado com busca de referências e suíte focada.
+
+## 2. Precondições atuais de capacidade
+
+- [ ] 2.1 Calcular limite superior verificável de espaço para arquivos staged, expansão validada dos wheels (limitada a 8 GiB agregados), bytecode/metadados, venv, recibos, runtime anterior preservado e unidades systemd; medir cada filesystem de destino e agregar os que compartilham binding antes da primeira escrita e antes da troca ativa, sob lock. Falhar fechado quando uso projetado não for estritamente inferior a 75%, espaço for insuficiente ou a leitura/bound não puder ser comprovado. Verificar espaço adequado, insuficiente, inválido, destinos compartilhados e redução após staging.
+- [x] 2.2 Integrar o gate versionado ao workflow e ao forced command com seus pins de blob, usar v2 somente em `install` e preservar fingerprints integrais em `bind-and-rehearse`/`reconcile`; apresentar ambas as fingerprints conforme a operação, SHA/CI, pacote, percentual e bytes livres por destino em campos distintos e sanitizados. Atualizar o release-preflight para exigir a instalação protegida do wrapper antes do inventário v2; verificar guardas estáticas dos workflows, casos de divergência e `git diff --check`.
+
+## 3. Integração e fechamento
+
+- [ ] 3.1 Executar validação OpenSpec estrita, testes focados do inventário/instalador/workflow e gates de qualidade aplicáveis; revisar o diff para confirmar que a alteração se limita ao gate do `install` inerte, sem credenciais, alterações de dados ou efeitos em outros workflows. Registrar comandos, SHAs e limitações no `tasks.md`/`release-preflight.md`; só marcar esta task após evidência completa.
+
+## Workflow follow-up
+
+### Evidência local — 24/11/2026
+
+- Tasks 1.1, 1.2 e 2.2 foram implementadas e verificadas no branch `codex/backup-fingerprint-contract`, sobre a base `bfac44a1a59d81a9830b6d05df3b76b6cec7e109`. `runtime_fingerprint` permanece como guarda de mudança operacional entre leituras do instalador; a aprovação usa o campo v2, e a busca nos consumidores afetados não encontrou duplicação a remover.
+- `python -m unittest test_platform_backup_runtime_inventory test_install_platform_backup_runtime -v`: 47 testes executados, 41 passaram e 6 foram ignorados por dependências de POSIX/root indisponíveis no Windows. Um dos skips é a redução de capacidade depois do staging; permanece pendente de execução no CI Linux.
+- Passaram a guarda estática `python test_platform_backup_runtime_workflow.py`, Ruff dos cinco arquivos Python alterados, `compileall`, `git diff --check`, `openspec validate stabilize-backup-runtime-approval-fingerprint --strict`, parse YAML dos dois workflows envolvidos e `bash -n scripts/production-preflight-ssh-wrapper.sh`. Os pins do forced command correspondem aos hashes Git dos dois módulos fixados.
+- A task 2.1 permanece aberta até o teste POSIX de redução pós-staging ser executado no CI. A task 3.1 permanece aberta até os gates de integração/CI, revisão final do escopo/segredos e registro da evidência no SHA publicado. Até este checkpoint, não houve push, merge, dispatch, SSH, escrita em host/Drive ou operação de produção.
+
+- Rever e aprovar esta change antes de iniciar implementação.
+- Após implementação e revisão do código, obter autorização de merge e confirmar CI verde da `main` no SHA exato.
+- Atualizar o forced command por seu workflow protegido, após inventário/fingerprint e aprovação específicos; essa instalação não libera o runtime.
+- Fazer inventário read-only novo e obter aprovação humana da fingerprint estável, capacidade atual e pacote antes de solicitar a aprovação separada do ambiente `production` para `install` inerte.
