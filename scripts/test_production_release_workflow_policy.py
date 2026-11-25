@@ -101,8 +101,8 @@ def main() -> None:
     require("on:\n  workflow_dispatch:\n    inputs:\n      operation:",
             "suporte do preflight apenas por despacho com operação explícita", evidence_gate)
     require("permissions: {}", "sem permissões padrão no workflow de suporte", evidence_gate)
-    require("options: [support-inventory, prepare-support, repair-support-backups-mode, restore-support-inventory, restore-support]",
-            "somente as cinco operações aprovadas", evidence_gate)
+    require("options: [support-inventory, prepare-support, repair-support-backups-mode, restore-support-inventory, restore-support, backup-retirement-inventory, retire-backup-runtime]",
+            "operações de suporte e aposentadoria aprovadas", evidence_gate)
     main_dispatch = "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
     verify_evidence = 'scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-bridge-install'
     for block in (evidence_gate, bridge_install):
@@ -579,8 +579,7 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    # Active API/web release attested by image identities and healthy receipts;
-    # see enable-platform-backup-runtime/validation-picker-scope.md.
+    # The versioned manifest contains only runtime paths that remain supported.
     if app_manifest.get("production_baseline_sha") != "492c141cd998efc87ebde1ee81ea9101effb4f7c":
         raise AssertionError("baseline API/web diverge da publicação comprovada")
     if "emergency_api" in app_manifest:
@@ -637,18 +636,14 @@ def main() -> None:
         actual = git(ROOT, "rev-parse", f"{runtime_source}:{path}")
         if actual != expected:
             raise AssertionError("arquivo de runtime app diverge do blob revisado")
-    expected_backup_support = {
-        "scripts/backup_runtime/pyp-platform-backup.service",
-        "scripts/backup_runtime/pyp-platform-backup.timer",
-        "scripts/backup_runtime/requirements-py310-arm64.lock",
-    }
-    support_blobs = app_manifest.get("support_blobs", {})
-    if set(support_blobs) != expected_backup_support:
-        raise AssertionError("arquivos de suporte do backup não estão fixados no manifesto")
-    for path, expected in support_blobs.items():
-        actual = git(ROOT, "rev-parse", f"{runtime_source}:{path}")
-        if actual != expected:
-            raise AssertionError("arquivo de suporte do backup diverge do blob revisado")
+    retired_prefixes = ("backend/app/platform_backup/", "scripts/backup_runtime/")
+    if (app_manifest.get("support_blobs")
+            or any(path in app_manifest["runtime_blobs"] for path in (
+                "backend/app/google_drive_picker.py",
+                "frontend/app/admin/platform/google-drive-folder-picker.tsx",
+            ))
+            or any(path.startswith(retired_prefixes) for path in app_manifest["runtime_blobs"])):
+        raise AssertionError("manifesto app/web ainda fixa caminhos da tentativa de backup aposentada")
     for forbidden in ("systemctl enable pyp-platform-backup.timer",
                       "systemctl start pyp-platform-backup.service",
                       "scripts/backup_runtime/pyp-platform-backup.timer"):

@@ -1,5 +1,7 @@
 # Design: cópia de backup no Google Workspace
 
+> **SUPERCEDIDA — NÃO IMPLEMENTAR NEM DESPACHAR.** Este design pertence à tentativa encerrada em 25/11/2026; consulte [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md) e [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
+
 ## Contexto
 
 O proprietário escolheu Google Workspace para a segunda cópia global. Em 17/11/2026 escolheu a conta Workspace já conectada também para a rotina. O app criou e verificou uma pasta dedicada em Meu Drive. D15–D16 continuam definindo frequência, retenção, escopo cifrado e custódia da chave offline. O chamador produtivo deve validar a configuração e comprovar a cópia recorrente e a recuperação sem depender do servidor de origem.

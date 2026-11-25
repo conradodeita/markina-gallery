@@ -46,6 +46,13 @@ case "$mode" in
       && "$3" == --receipt-sha256 && "$4" =~ ^[0-9a-f]{64}$ ]] || fail arguments_invalid
     support_args+=(--approval-fingerprint "$2" --receipt-sha256 "$4")
     ;;
+  backup-retirement-inventory)
+    [[ $# == 0 ]] || fail arguments_invalid
+    ;;
+  retire-backup-runtime)
+    [[ $# == 2 && "$1" == --approval-fingerprint && "$2" =~ ^[0-9a-f]{64}$ ]] || fail arguments_invalid
+    support_args+=(--approval-fingerprint "$2")
+    ;;
   *) fail operation_invalid ;;
 esac
 

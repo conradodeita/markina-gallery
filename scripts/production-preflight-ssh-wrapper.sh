@@ -18,6 +18,7 @@ readonly APP_BASE_IMAGE_EXPORT_BLOB_SHA="988ca208646836ecb965b80ec91c2ada9a38dc3
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
+original_command="${SSH_ORIGINAL_COMMAND:-}"
 
 inventory_runtime="bash"
 inventory_arguments=()

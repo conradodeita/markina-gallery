@@ -11,7 +11,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -1159,6 +1159,235 @@ class SupportReceiptStorageTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(support.SupportError, "support_receipt_missing_or_ambiguous"):
                     support.LocalSupportHost().read_receipt(digest)
+
+
+class FakeBackupRetirementHost:
+    def __init__(self):
+        self.snapshot = {
+            "host": support.EXPECTED_HOST,
+            "repository": support.REPOSITORY,
+            "support_sha": SHA_MAIN,
+            "remote_main_sha": SHA_MAIN,
+            "connection_binding": SHA_CONNECTION,
+            "checkout_clean": True,
+            "support_state_directory": "ready",
+            "support_receipt_directory": "ready",
+            "runtime": {"present": True, "entries": []},
+            "config": {"present": True, "entries": []},
+            "state": {"present": True, "entries": []},
+            "state_summary": {
+                "encrypted_artifacts": 0, "partial_artifacts": 0,
+                "catalog_files": 0, "files": 0, "bytes": 0,
+            },
+            "units": {
+                "pyp-platform-backup.service": {
+                    "file": "present", "load": "loaded", "active": "inactive",
+                    "enabled": "static", "fragment": str(support.BACKUP_SYSTEMD_DIR / "pyp-platform-backup.service"),
+                },
+                "pyp-platform-backup.timer": {
+                    "file": "present", "load": "loaded", "active": "inactive",
+                    "enabled": "disabled", "fragment": str(support.BACKUP_SYSTEMD_DIR / "pyp-platform-backup.timer"),
+                },
+            },
+            "picker_config": {"present": True},
+            "picker_mount": "absent",
+            "picker_mount_details": [],
+            "containers_sha256": SHA_CONTAINERS,
+            "health": {name: "healthy" for name in support.PUBLIC_HEALTH_URLS},
+            "incomplete_install": False,
+        }
+        self.receipts = []
+        self.removal_calls = 0
+        self.partial = False
+        self.change_containers = False
+
+    @contextlib.contextmanager
+    def lock(self):
+        yield
+
+    def collect_backup_retirement_snapshot(self, sha: str, connection: str):
+        if sha != SHA_MAIN or connection != SHA_CONNECTION:
+            raise support.SupportError("support_identity_invalid")
+        return copy.deepcopy(self.snapshot)
+
+    def create_receipt(self, payload: dict) -> str:
+        self.receipts.append(copy.deepcopy(payload))
+        return hashlib.sha256(support._canonical_json(payload)).hexdigest()
+
+    def remove_backup_retirement_targets(self):
+        self.removal_calls += 1
+        if self.partial:
+            self.snapshot["config"] = {"present": False, "entries": []}
+            raise support.SupportError("backup_retirement_partial")
+        for name in ("runtime", "config", "state"):
+            self.snapshot[name] = {"present": False, "entries": []}
+        self.snapshot["picker_config"] = {"present": False}
+        self.snapshot["units"] = {
+            name: {"file": "absent", "load": "not-found", "active": "inactive",
+                   "enabled": "not-found", "fragment": ""}
+            for name in support.BACKUP_UNITS
+        }
+        if self.change_containers:
+            self.snapshot["containers_sha256"] = "5" * 64
+
+
+class BackupRuntimeRetirementTests(unittest.TestCase):
+    def inventory(self, host):
+        return support.SupportCoordinator(host).backup_retirement_inventory(SHA_MAIN, SHA_CONNECTION)
+
+    def test_retirement_inventory_identifies_picker_mount_source_and_compose_file(self):
+        container_id = "a" * 64
+        source = "/etc/pyp-google-drive/picker-config.json"
+        target = "/run/secrets/google-drive-picker-config.json"
+        record = {
+            "Id": container_id,
+            "Image": f"sha256:{'b' * 64}",
+            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "Mounts": [{"Type": "bind", "Source": source, "Destination": target, "RW": False}],
+            "Config": {"Labels": {
+                "com.docker.compose.service": "api",
+                "com.docker.compose.project.config_files": "/opt/markina-gallery/docker/docker-compose.yml",
+            }},
+        }
+        ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
+        inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
+        host = support.LocalSupportHost()
+        with patch.object(support, "PICKER_CONFIG_PATH", PurePosixPath(source)), patch.object(
+                host, "_run", side_effect=[ps, inspect]):
+            digest, status, details = host._retirement_container_state()
+
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        self.assertEqual(status, "present")
+        self.assertEqual(details, [{
+            "container": container_id[:12],
+            "source": source,
+            "target": target,
+            "service": "api",
+            "compose_files": "/opt/markina-gallery/docker/docker-compose.yml",
+        }])
+
+    def test_retirement_inventory_rejects_unsafe_picker_mount_path_without_echoing_it(self):
+        container_id = "a" * 64
+        unsafe_source = "/etc/pyp-google-drive/picker-config.json\nsecret=hidden"
+        record = {
+            "Id": container_id,
+            "Image": f"sha256:{'b' * 64}",
+            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "Mounts": [{"Type": "bind", "Source": unsafe_source,
+                        "Destination": "/run/secrets/google-drive-picker-config.json", "RW": False}],
+        }
+        ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
+        inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
+        host = support.LocalSupportHost()
+        with patch.object(support, "PICKER_CONFIG_PATH", PurePosixPath("/etc/pyp-google-drive/picker-config.json")), \
+                patch.object(host, "_run", side_effect=[ps, inspect]), \
+                self.assertRaises(support.SupportError) as caught:
+            host._retirement_container_state()
+
+        self.assertEqual(caught.exception.code, "backup_retirement_container_inventory_invalid")
+        self.assertNotIn("secret=hidden", str(caught.exception))
+
+    def test_retirement_state_summary_counts_only_known_encrypted_artifact_layout(self):
+        artifact_id = "a1b2c3d4-e5f6-4789-8123-456789abcdef"
+        state = {"present": True, "entries": [
+            {"path": "catalog", "kind": "directory"},
+            {"path": "artifacts", "kind": "directory"},
+            {"path": "service.lock", "kind": "file", "mode": 0o600, "size": 0},
+            {"path": "catalog/day-2026-11-25.json", "kind": "file", "mode": 0o600, "size": 100},
+            {"path": f"catalog/{artifact_id}.events", "kind": "file", "mode": 0o600, "size": 200},
+            {"path": f"artifacts/{artifact_id}.pypb", "kind": "file", "mode": 0o600, "size": 300},
+            {"path": f"artifacts/{artifact_id}.building", "kind": "file", "mode": 0o600, "size": 40},
+        ]}
+
+        self.assertEqual(support.LocalSupportHost._backup_state_summary(state), {
+            "encrypted_artifacts": 1, "partial_artifacts": 1,
+            "catalog_files": 2, "files": 5, "bytes": 640,
+        })
+
+    def test_retirement_state_summary_blocks_unknown_local_data(self):
+        state = {"present": True, "entries": [
+            {"path": "artifacts", "kind": "directory"},
+            {"path": "artifacts/customer-export.zip", "kind": "file", "mode": 0o600, "size": 20},
+        ]}
+        with self.assertRaisesRegex(support.SupportError, "backup_retirement_state_entry_unexpected"):
+            support.LocalSupportHost._backup_state_summary(state)
+
+    def test_inventory_is_read_only_and_fingerprint_binds_all_retirement_state(self):
+        host = FakeBackupRetirementHost()
+        fingerprint, before = self.inventory(host)
+        self.assertEqual(host.removal_calls, 0)
+        self.assertTrue(before["runtime"]["present"])
+        host.snapshot["state"]["entries"].append({"path": "receipt", "size": 17})
+        changed, _ = self.inventory(host)
+        self.assertNotEqual(fingerprint, changed)
+        host.snapshot["picker_mount_details"].append({
+            "container": "a" * 12,
+            "source": "/etc/pyp-google-drive/picker-config.json",
+            "target": "/run/secrets/google-drive-picker-config.json",
+            "service": "api",
+            "compose_files": "/opt/markina-gallery/docker/docker-compose.yml",
+        })
+        changed_mount, _ = self.inventory(host)
+        self.assertNotEqual(fingerprint, changed_mount)
+
+    def test_stale_fingerprint_aborts_before_any_removal(self):
+        host = FakeBackupRetirementHost()
+        fingerprint, _ = self.inventory(host)
+        host.snapshot["picker_config"] = {"present": False}
+        with self.assertRaisesRegex(support.SupportError, "backup_retirement_fingerprint_changed"):
+            support.SupportCoordinator(host).retire_backup_runtime(SHA_MAIN, SHA_CONNECTION, fingerprint)
+        self.assertEqual(host.removal_calls, 0)
+        self.assertEqual(host.receipts, [])
+
+    def test_active_service_or_picker_mount_blocks_removal(self):
+        for field, value, code in (
+            ("picker_mount", "present", "backup_retirement_picker_mount_present"),
+            ("health", {"root": "healthy", "healthz": "healthy", "api": "unavailable"},
+             "backup_retirement_application_unhealthy"),
+        ):
+            with self.subTest(field=field):
+                host = FakeBackupRetirementHost()
+                host.snapshot[field] = value
+                fingerprint, _ = self.inventory(host)
+                with self.assertRaisesRegex(support.SupportError, code):
+                    support.SupportCoordinator(host).retire_backup_runtime(SHA_MAIN, SHA_CONNECTION, fingerprint)
+                self.assertEqual(host.removal_calls, 0)
+                self.assertEqual(host.receipts, [])
+        host = FakeBackupRetirementHost()
+        host.snapshot["units"]["pyp-platform-backup.timer"]["active"] = "active"
+        fingerprint, _ = self.inventory(host)
+        with self.assertRaisesRegex(support.SupportError, "backup_retirement_unit_active"):
+            support.SupportCoordinator(host).retire_backup_runtime(SHA_MAIN, SHA_CONNECTION, fingerprint)
+        self.assertEqual(host.removal_calls, 0)
+
+    def test_success_removes_only_fixed_categories_and_writes_sanitized_receipts(self):
+        host = FakeBackupRetirementHost()
+        fingerprint, _ = self.inventory(host)
+        digest = support.SupportCoordinator(host).retire_backup_runtime(SHA_MAIN, SHA_CONNECTION, fingerprint)
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        self.assertEqual(host.removal_calls, 1)
+        self.assertEqual([r["kind"] for r in host.receipts], [
+            "backup-runtime-retirement-intent", "backup-runtime-retirement-complete",
+        ])
+        self.assertEqual(host.receipts[-1]["removed"], [
+            "runtime", "config", "state", "systemd_units", "picker_config",
+        ])
+        self.assertNotIn("database", host.receipts[-1])
+
+    def test_partial_removal_and_postcheck_drift_are_terminal_and_sanitized(self):
+        for mutate in ("partial", "container_drift"):
+            with self.subTest(mutate=mutate):
+                host = FakeBackupRetirementHost()
+                fingerprint, _ = self.inventory(host)
+                if mutate == "partial":
+                    host.partial = True
+                else:
+                    host.change_containers = True
+                with self.assertRaisesRegex(support.SupportError, "backup_retirement_incomplete"):
+                    support.SupportCoordinator(host).retire_backup_runtime(SHA_MAIN, SHA_CONNECTION, fingerprint)
+                self.assertEqual(host.removal_calls, 1)
+                self.assertEqual(host.receipts[-1]["kind"], "backup-runtime-retirement-incomplete")
+                self.assertNotIn("exception", host.receipts[-1])
 
 
 if __name__ == "__main__":

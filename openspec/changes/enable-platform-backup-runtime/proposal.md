@@ -1,6 +1,6 @@
 # Proposal: Rotina de backup global em produção
 
-> Tentativa descontinuada por decisão do proprietário em 25/11/2026. A retirada está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md).
+> **SUPERCEDIDA — NÃO IMPLEMENTAR NEM DESPACHAR.** O proprietário encerrou esta tentativa em 25/11/2026. As tarefas ainda abertas são somente registro histórico e não podem ser retomadas. A retirada está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md); a direção vigente da próxima solução é [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
 
 ## Why
 

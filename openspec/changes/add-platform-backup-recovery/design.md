@@ -1,5 +1,7 @@
 # Design: backups e recuperação global da plataforma
 
+> **IMPLEMENTAÇÃO APOSENTADA — HISTÓRICO SOMENTE.** As decisões abaixo descrevem o pacote removido em 25/11/2026; não reinstalar nem usar seus adapters como desenho vigente. Consulte `retire-platform-backup-runtime` para a higienização e `prove-open-source-backup-and-recovery` para a prova substituta.
+
 ## Context
 
 Política aprovada pelo proprietário em 06/11/2026, após esclarecer que os valores são globais: cópia diária, RPO alvo de 24 h, RTO alvo de 8 h ainda não medido, retenção 7 diários/4 semanais/3 mensais e ensaio mensal. Escopo PostgreSQL completo e configurações essenciais cifradas; classes pessoais, financeiras e biométricas existentes no banco incluídas. Arquivos de mídia/biometria/WhatsApp e restore lógico por tenant ficam para etapa posterior. A chave fica sob custódia offline do proprietário. Em 17/11, o proprietário escolheu a mesma conta Workspace já conectada para a rotina e autorizou a criação da pasta privada `Pick-your-Pic Tenants` na raiz do Meu Drive. O vínculo operacional dessa conta, a chave e o agendamento ainda precisam ser configurados.

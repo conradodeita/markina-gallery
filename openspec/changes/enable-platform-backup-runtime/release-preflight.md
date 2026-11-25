@@ -1,5 +1,7 @@
 # Pré-revisão da rotina de backup global
 
+> **SUPERSEDED — NÃO EXECUTAR NEM DESPACHAR.** Este checklist pertence à tentativa encerrada em 25/11/2026. Não habilitar Picker, vincular pasta ou instalar runtime. A retirada está em `retire-platform-backup-runtime`; a direção substituta está em `prove-open-source-backup-and-recovery`.
+
 ## Inventário observado em 17/11/2026
 
 - Host Oracle compartilhado `clearbudget-vnic`, Ubuntu ARM64, glibc 2.35, Python 3.10.12 e systemd 249. Entrada existente do Pick-your-Pic `markina.pickyourpic.com.br` pelo Nginx da Markina em `127.0.0.1:8080`. O backup não publica portas.

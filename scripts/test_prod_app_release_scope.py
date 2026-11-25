@@ -100,24 +100,28 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest), (False, 'arquivo_fora_do_escopo'))
 
-    def test_backup_support_files_require_exact_set_and_pins(self):
-        for name in policy.BACKUP_SUPPORT_FILES:
-            path = self.root / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("reviewed backup support\n", encoding="utf-8")
+    def _assert_retired_backup_path_can_only_be_deleted(self, name):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("legacy backup runtime\n", encoding="utf-8")
         self.commit()
-        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                         (False, "manifesto_suporte_backup_incompleto"))
-        self.manifest["support_blobs"] = {
-            name: self.run_git("rev-parse", f"HEAD:{name}") for name in policy.BACKUP_SUPPORT_FILES
-        }
+        path.unlink()
+        self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (True, "somente_api_web"))
-        changed = next(iter(policy.BACKUP_SUPPORT_FILES))
-        (self.root / changed).write_text("different support content\n", encoding="utf-8")
+        path.write_text("reintroduced legacy backup runtime\n", encoding="utf-8")
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                         (False, "suporte_backup_diverge_do_blob_aprovado"))
+                         (False, "arquivo_fora_do_escopo"))
+
+    def test_retired_picker_module_can_only_be_deleted_not_reintroduced(self):
+        self._assert_retired_backup_path_can_only_be_deleted("backend/app/google_drive_picker.py")
+
+    def test_retired_backup_package_path_can_only_be_deleted_not_reintroduced(self):
+        self._assert_retired_backup_path_can_only_be_deleted("backend/app/platform_backup/runtime_worker.py")
+
+    def test_retired_backup_unit_path_can_only_be_deleted_not_reintroduced(self):
+        self._assert_retired_backup_path_can_only_be_deleted("scripts/backup_runtime/pyp-platform-backup.timer")
 
     def test_release_classifier_and_its_test_are_allowed_policy_files(self):
         for name in ("scripts/classify_prod_release.py", "scripts/test_classify_prod_release.py"):

@@ -1,5 +1,7 @@
 # Spec Delta
 
+> **SUPERCEDIDA — NÃO IMPLEMENTAR.** Esta especificação de cópia global no Google Workspace foi aposentada pelo proprietário em 25/11/2026. Mantida apenas como registro histórico; consulte [prove-open-source-backup-and-recovery](../../../../prove-open-source-backup-and-recovery/proposal.md).
+
 ## Purpose
 
 Definir uma cópia externa cifrada do backup global no Google Workspace do proprietário e a validação de recuperação exigida antes de abrir o cadastro do SaaS a tenants.

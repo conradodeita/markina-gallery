@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Inventariar, reparar modo da pasta de backups, preparar ou restaurar suporte
+        description: Inventariar ou retirar o runtime legado e gerenciar o suporte protegido
         required: true
         type: choice
-        options: [support-inventory, prepare-support, repair-support-backups-mode, restore-support-inventory, restore-support]
+        options: [support-inventory, prepare-support, repair-support-backups-mode, restore-support-inventory, restore-support, backup-retirement-inventory, retire-backup-runtime]
       approval_fingerprint:
-        description: Fingerprint atual; obrigatória para prepare-support, repair-support-backups-mode e restore-support
+        description: Fingerprint atual; obrigatória para operações que alteram o host
         required: false
         type: string
         default: ''
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   ci-evidence:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && contains(fromJSON('["support-inventory","prepare-support","repair-support-backups-mode","restore-support-inventory","restore-support"]'), inputs.operation) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && contains(fromJSON('["support-inventory","prepare-support","repair-support-backups-mode","restore-support-inventory","restore-support","backup-retirement-inventory","retire-backup-runtime"]'), inputs.operation) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,7 +45,7 @@ jobs:
           python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-bridge-install | tee -a "$GITHUB_STEP_SUMMARY"
 
   production-app-compose-bridge-install:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && contains(fromJSON('["support-inventory","prepare-support","repair-support-backups-mode","restore-support-inventory","restore-support"]'), inputs.operation) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && contains(fromJSON('["support-inventory","prepare-support","repair-support-backups-mode","restore-support-inventory","restore-support","backup-retirement-inventory","retire-backup-runtime"]'), inputs.operation) }}
     needs: [ci-evidence]
     runs-on: ubuntu-latest
     # All support operations use production-scoped SSH credentials. Even the
@@ -112,6 +112,13 @@ jobs:
             restore-support)
               [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$PREPARATION_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
               support_args+=(--approval-fingerprint "$APPROVAL_FINGERPRINT" --receipt-sha256 "$PREPARATION_RECEIPT_SHA256")
+              ;;
+            backup-retirement-inventory)
+              [[ -z "$APPROVAL_FINGERPRINT" && -z "$PREPARATION_RECEIPT_SHA256" ]]
+              ;;
+            retire-backup-runtime)
+              [[ "$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$ && -z "$PREPARATION_RECEIPT_SHA256" ]]
+              support_args+=(--approval-fingerprint "$APPROVAL_FINGERPRINT")
               ;;
             *) echo 'Operação de suporte inválida' >&2; exit 1 ;;
           esac

@@ -1,5 +1,7 @@
 # Validação local — 03/11/2026
 
+> **HISTÓRICO DE 03–13/11/2026.** A antiga implementação de backup local citada abaixo foi retirada em 25/11; não usar seus resultados como estado ou capacidade atual. A prova substituta é `prove-open-source-backup-and-recovery`.
+
 ## Revisão pré-push — 13/11/2026, continuação
 
 - A revisão semântica dos handlers financeiros encontrou ausência da revalidação final de autorização após montar o resultado, tanto em replay como após commit. As cinco rotas agora passam por `_credit_owner_response`, reutilizando a revalidação de sessão/propriedade do console. Uma recusa depois do commit conserva o ledger e a intenção já confirmados; o retry continua idempotente e não consome outro TOTP.

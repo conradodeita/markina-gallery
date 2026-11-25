@@ -1,5 +1,7 @@
 # Validação — seleção e revalidação de foco do console
 
+> **EVIDÊNCIA HISTÓRICA — NÃO RETOMAR.** O Picker foi retirado em 25/11/2026; estes resultados não autorizam provisionar chave, pasta ou runtime.
+
 Data: 20/11/2026
 
 ## Sintoma e fronteiras

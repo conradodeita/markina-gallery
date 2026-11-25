@@ -1,4 +1,4 @@
-> Tentativa descontinuada por decisão do proprietário em 25/11/2026. A retirada está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md).
+> **SUPERCEDIDA — NÃO IMPLEMENTAR NEM DESPACHAR.** A preparação da origem pertencia à tentativa encerrada em 25/11/2026. Tarefas abertas ficam somente como histórico. A retirada está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md); a direção vigente é [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
 
 ## Why
 

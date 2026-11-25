@@ -1,5 +1,7 @@
 # Proposal: Cópia externa de backup no Google Workspace
 
+> **SUPERCEDIDA — NÃO IMPLEMENTAR NEM DESPACHAR.** O fluxo próprio de cópia global via Google Workspace foi encerrado pelo proprietário em 25/11/2026. Tarefas abertas e provas abaixo ficam somente como histórico. A retirada está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md); a direção vigente é [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
+
 ## Why
 
 O backup global e a conexão Google Drive já têm fundamentos locais, mas ainda não existe uma cópia externa verificável do conjunto cifrado. O proprietário definiu Google Workspace como destino e quer concluir um teste com sua conta antes de abrir o SaaS a qualquer tenant, priorizando a segurança dos dados.

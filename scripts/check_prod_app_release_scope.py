@@ -17,19 +17,6 @@ RUNTIME_FILES = {
     "backend/app/auth.py",
     "backend/app/main.py",
     "backend/app/google_drive_client.py",
-    "backend/app/google_drive_picker.py",
-    "backend/app/platform_backup/archive.py",
-    "backend/app/platform_backup/catalog.py",
-    "backend/app/platform_backup/filesystem.py",
-    "backend/app/platform_backup/offline_recovery.py",
-    "backend/app/platform_backup/payload.py",
-    "backend/app/platform_backup/production_cli.py",
-    "backend/app/platform_backup/remote_copy.py",
-    "backend/app/platform_backup/restore.py",
-    "backend/app/platform_backup/runtime_config.py",
-    "backend/app/platform_backup/runtime_source.py",
-    "backend/app/platform_backup/runtime_worker.py",
-    "backend/app/platform_backup/workspace_store.py",
     "backend/app/payment_availability.py",
     "backend/app/order_visibility.py",
     "backend/app/payment_export.py",
@@ -45,7 +32,6 @@ RUNTIME_FILES = {
     "frontend/app/admin/galleries/private-folder-client-overview.tsx",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
     "frontend/app/admin/galleries/[galleryId]/orders/page.tsx",
-    "frontend/app/admin/platform/google-drive-folder-picker.tsx",
     "frontend/app/admin/platform/page.tsx",
     "frontend/app/admin/platform/use-console-access.ts",
     "frontend/app/admin/platform/console-link.tsx",
@@ -53,17 +39,10 @@ RUNTIME_FILES = {
     "frontend/app/library/purchase-card.tsx",
     "frontend/app/library/purchases/page.tsx",
 }
-BACKUP_SUPPORT_FILES = {
-    "scripts/backup_runtime/pyp-platform-backup.service",
-    "scripts/backup_runtime/pyp-platform-backup.timer",
-    "scripts/backup_runtime/requirements-py310-arm64.lock",
-}
 RETIRED_BACKUP_FILES = {
     "backend/app/google_drive_picker.py",
     "frontend/app/admin/platform/google-drive-folder-picker.tsx",
     ".github/workflows/production-google-picker-config.yml",
-    ".github/workflows/production-platform-backup-runtime.yml",
-    ".github/workflows/production-platform-backup-wrapper-install.yml",
     "scripts/build_platform_backup_runtime.sh",
     "scripts/install-prod-platform-backup-wrapper.sh",
     "scripts/install_platform_backup_runtime.py",
@@ -139,7 +118,6 @@ ALLOWED_OPERATIONS = {
     "scripts/test_production_app_compose_bridge.py",
     "scripts/test_production_app_preflight_support.py",
     "scripts/test_production_app_preflight_support_workflow.py",
-    "scripts/test_platform_backup_runtime_workflow.py",
     "scripts/test_production_app_runtime_adoption.py",
     "scripts/test_production_app_first_handoff.py",
     "scripts/test_production_app_handoff_inventory.py",
@@ -219,17 +197,6 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
             status, path = line.split("\t", 1)
             statuses[path] = status
         changed = set(statuses)
-        backup_support_blobs = manifest.get("support_blobs", {})
-        if changed & BACKUP_SUPPORT_FILES:
-            if set(backup_support_blobs) != BACKUP_SUPPORT_FILES:
-                return False, "manifesto_suporte_backup_incompleto"
-            if changed & BACKUP_SUPPORT_FILES != BACKUP_SUPPORT_FILES:
-                return False, "retirada_suporte_backup_incompleta"
-            for path, expected in backup_support_blobs.items():
-                ref = base if statuses[path] == "D" else target
-                actual = git(root, "rev-parse", f"{ref}:{path}")
-                if actual != expected:
-                    return False, "suporte_backup_diverge_do_blob_aprovado"
         emergency = manifest.get("emergency_api")
         extra_blobs = {}
         if emergency is not None:
@@ -248,15 +215,12 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
                                                                  "scripts/backup_runtime/", "scripts/test_platform_backup_")):
                 if statuses.get(path) == "D":
                     continue
-                if path not in ALLOWED_OPERATIONS and path not in RUNTIME_FILES and path not in BACKUP_SUPPORT_FILES:
-                    return False, "arquivo_fora_do_escopo"
-                # Preserve already reviewed historical snapshots; new content
-                # is still classified as protected and cannot auto-publish.
+                return False, "arquivo_fora_do_escopo"
             if path in RETIRED_INFINITEPAY_FILES or path in RETIRED_HOMOLOG_WORKFLOWS:
                 if statuses[path] != "D":
                     return False, "arquivo_fora_do_escopo"
                 continue
-            if (path in RUNTIME_FILES or path in extra_blobs or path in BACKUP_SUPPORT_FILES
+            if (path in RUNTIME_FILES or path in extra_blobs
                     or path in ALLOWED_OPERATIONS or path.startswith(ALLOWED_PREFIXES)):
                 continue
             return False, "arquivo_fora_do_escopo"
