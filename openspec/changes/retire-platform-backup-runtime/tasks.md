@@ -13,6 +13,7 @@
 ## Evidências de 25/11/2026
 
 - GitHub confirmou a desativação dos três workflows dedicados e a ausência dos dois segredos SSH específicos do runtime após a retirada.
+- A chave de API `Pick-your-Pic Google Picker navegador` foi excluída da lista ativa do projeto `pick-your-pic` após confirmação explícita do proprietário. O Console passou a exibir `Nenhuma chave de API a ser exibida`; a área de credenciais excluídas permite restauração durante 30 dias. Nenhuma chave/valor foi exibido ou copiado. O cliente OAuth `Pick-your-Pic Drive - servidor` não foi alterado.
 - Na inspeção somente de leitura, o serviço estava inativo e o timer inativo e desabilitado. Foram observadas quatro entradas de release, as três configurações do runtime e a configuração do Picker. O diretório de trabalho não foi localizado, e o diretório de configuração não continha journals de ensaio. O domínio `markina.pickyourpic.com.br` respondeu HTTP 200 em `/`, `/healthz` e `/api/health`.
 - A custódia anterior registra uma chave offline dedicada em `D:`. A unidade estava indisponível na estação durante o inventário.
 - Uma API ativa estava montando a configuração do Picker. O proxy publica a aplicação em `127.0.0.1:8080` e o acesso público HTTPS usa o domínio registrado acima. A liberação da nova API e a retirada do mount precedem a exclusão do arquivo do Picker.
