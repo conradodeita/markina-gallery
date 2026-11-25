@@ -6,7 +6,6 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/production-app-compose-bridge-install.yml").read_text(encoding="utf-8")
 RUNNER = (ROOT / "scripts/install-prod-app-compose-bridge.sh").read_text(encoding="utf-8")
 HELPER = (ROOT / "scripts/production_app_preflight_support.py").read_text(encoding="utf-8")
-WRAPPER_WORKFLOW = (ROOT / ".github/workflows/production-platform-backup-wrapper-install.yml").read_text(encoding="utf-8")
 
 
 def require(condition: bool, reason: str) -> None:
@@ -109,17 +108,6 @@ def main() -> int:
     for forbidden in ("git checkout", "git reset", "git clean", "git prune", "docker compose up",
                       "systemctl start", "systemctl enable", "pg_dump"):
         require(forbidden not in HELPER, "support_helper_contains_forbidden_operation:" + forbidden)
-
-    require("options: [inventory, install-wrapper, restore-wrapper]" in WRAPPER_WORKFLOW,
-            "existing_restore_wrapper_operations_changed")
-    restore_job = WRAPPER_WORKFLOW.split("  restore-wrapper:", 1)[1]
-    for gate in ("environment: production", "inputs.operation == 'restore-wrapper'",
-                 'python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"',
-                 'RESTORE_BACKUP_SHA256: ${{ inputs.restore_backup_sha256 }}',
-                 'REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT',
-                 'production_binding" == "$INVENTORY_CONNECTION',
-                 "MARKINA_PLATFORM_BACKUP_RESTORE_WRAPPER_SHA=$GITHUB_SHA"):
-        require(gate in restore_job, "existing_restore_wrapper_gate_missing:" + gate)
 
     print("production_app_preflight_support_workflow=valid")
     return 0

@@ -1,0 +1,7 @@
+## Decisions
+
+1. Usar um PostgreSQL descartável e duas contas fictícias. Começar a prova global com uma exportação consistente e medir a recuperação. Avaliar pgBackRest se a recuperação diária ou o tempo medido forem insuficientes.
+2. Provar um repositório cifrado Restic com chave recuperável fora do ambiente simulado de origem. Medir a transferência via Rclone quando o destino de ensaio comportar sua autorização. Usar Backrest como painel opcional do operador.
+3. Restaurar a cópia global em banco isolado e testar a seleção dos registros associados ao fotógrafo. Conferir relacionamentos, conflitos e ausência dos dados do segundo fotógrafo antes de considerar uma recuperação individual.
+4. Preservar o fluxo de arquivo frio no Pick-your-Pic. Reusar seu contrato de armazenamento, catálogo, fila e verificação de tamanho e SHA-256. Comparar recuperação de pasta com Restic e transporte de objetos com Rclone no destino do ensaio. Usar credenciais e raízes distintas do backup global. Filtros de caminho são conveniência de recuperação. O servidor determina acesso pelo tenant da sessão e pelo catálogo.
+5. Incluir a etapa de mídia no mesmo piloto se integridade, isolamento, tamanho, tempo e política de exclusão por objeto forem compatíveis. Preservar a aplicação do débito após recuperação verificada. Consolidar a evidência das três etapas em uma única prova antes de qualquer escolha operacional.

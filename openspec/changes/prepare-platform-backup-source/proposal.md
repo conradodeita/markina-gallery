@@ -1,3 +1,5 @@
+> Tentativa descontinuada por decisão do proprietário em 25/11/2026. A retirada está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md).
+
 ## Why
 
 O run 45656452636 atestou o runtime e passou a fingerprint estável, mas o vínculo parou com `unsafe` antes da escrita. O runtime esperava a ordem dos campos do systemd, enquanto a resposta real veio em outra ordem. A inspeção somente leitura confirmou que falta a configuração da origem, que a API ativa usa uma geração Compose e que os diretórios de estado do primeiro backup ainda não existem. A API em produção e o PostgreSQL alvo responderam à mesma consulta de identidade em transações somente leitura.

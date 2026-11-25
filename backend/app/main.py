@@ -15389,7 +15389,6 @@ register_folder_processing_routes(
 
 # Opt-in monitor uses the existing engine; it never creates schema or grants.
 from app.google_drive_oauth import router as google_drive_oauth_router
-from app.google_drive_picker import router as google_drive_picker_router
 from app.photographer_access_recovery import owner_router as access_recovery_owner_router
 from app.photographer_access_recovery import public_router as access_recovery_public_router
 from app.photographer_onboarding import router as photographer_onboarding_router
@@ -15407,7 +15406,6 @@ from app.tenant_closure_identity import router as tenant_closure_identity_router
 app.include_router(system_monitor_router)
 app.include_router(platform_console_router)
 app.include_router(google_drive_oauth_router)
-app.include_router(google_drive_picker_router)
 app.include_router(photographer_signup_router)
 app.include_router(tenant_closure_identity_router)
 app.include_router(tenant_closure_api_router)

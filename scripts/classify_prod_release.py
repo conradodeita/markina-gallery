@@ -30,7 +30,6 @@ APP_RUNTIME = {
 }
 PLATFORM_BACKUP_RUNTIME = {
     "backend/app/google_drive_client.py",
-    "backend/app/google_drive_picker.py",
     "backend/app/main.py",
     "backend/app/platform_backup/archive.py",
     "backend/app/platform_backup/catalog.py",
@@ -41,11 +40,14 @@ PLATFORM_BACKUP_RUNTIME = {
     "backend/app/platform_backup/restore.py",
     "backend/app/platform_backup/runtime_config.py",
     "backend/app/platform_backup/runtime_worker.py",
-    "frontend/app/admin/platform/google-drive-folder-picker.tsx",
     "frontend/app/admin/platform/page.tsx",
 }
 PLATFORM_BACKUP_WORKERS = {"backend/app/platform_backup/runtime_worker.py"}
 APP_RUNTIME |= PLATFORM_BACKUP_RUNTIME
+BACKUP_RETIREMENT_FILES = {
+    "backend/app/google_drive_picker.py",
+    "frontend/app/admin/platform/google-drive-folder-picker.tsx",
+}
 FACIAL_RUNTIME = {
     "backend/app/auth.py",
     "backend/app/facial/config.py",
@@ -104,6 +106,8 @@ def production_baseline_from_manifest(manifest: dict) -> str:
 def classify(changed: set[str]) -> str:
     app = bool(changed & APP_RUNTIME)
     facial = bool(changed & FACIAL_RUNTIME)
+    if changed & BACKUP_RETIREMENT_FILES:
+        return "protected"
     if any("/Dockerfile" in p or p.endswith(".dockerignore") or p.startswith(("docker/", "backend/facial-assets/", "backend/migrations/"))
            or (p.startswith("backend/app/") and "worker" in p
                and p not in FACIAL_RUNTIME and p not in PLATFORM_BACKUP_WORKERS) for p in changed):

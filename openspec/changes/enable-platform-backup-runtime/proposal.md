@@ -1,5 +1,7 @@
 # Proposal: Rotina de backup global em produção
 
+> Tentativa descontinuada por decisão do proprietário em 25/11/2026. A retirada está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md).
+
 ## Why
 
 O backup PostgreSQL cifrado já foi enviado ao Workspace, relido e restaurado em ensaio sintético. O proprietário escolheu a conta Workspace já conectada. A pasta antiga `Oracle-Production-Backups/Pick-your-Pic`, usada pelo timer compartilhado e com arquivos existentes, deve permanecer intacta. O novo destino global é `Oracle-Production-Backups/Pick-your-Pic Global`; `Oracle-Production-Backups/Pick-your-Pic Tenants` fica reservado para subpastas futuras por UUID, sem habilitar backup ou restauração lógica por tenant nesta change. O proprietário selecionou e autorizou a pasta global pelo app com o escopo `drive.file`; o vínculo protegido ainda está pendente.

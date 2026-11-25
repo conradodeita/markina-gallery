@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
-import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
@@ -16,7 +15,6 @@ from sqlalchemy import select
 
 from app import google_drive_client
 from app import google_drive_oauth as drive
-from app import google_drive_picker as picker
 from app.auth import (
     AuditEvent,
     AuthSession,
@@ -29,7 +27,6 @@ from tests.test_photographer_credits import create_accounts
 from tests.test_tenant_client_isolation import client_db as _client_db
 
 client_db = _client_db
-PICKER_TEST_DEVELOPER_KEY = "AIza" + ("x" * 35)
 
 
 def _write_oauth_client_file(monkeypatch, tmp_path, *, client_secret="synthetic-secret",
@@ -56,11 +53,9 @@ def drive_http(client_db, monkeypatch):
     session = SimpleNamespace(id=auth_session.id, subject_id=owner.id, tenant_id=owner_tenant.id)
     session.photographer_b_id, session.tenant_b_id = photographer_b.id, tenant_b.id
     monkeypatch.setattr(drive, "SessionLocal", lambda: client_db)
-    monkeypatch.setattr(picker, "SessionLocal", lambda: client_db)
     monkeypatch.setattr(drive, "current_session", lambda *_args: session)
     app = FastAPI()
     app.include_router(drive.router)
-    app.include_router(picker.router)
     return TestClient(app), session
 
 
@@ -579,205 +574,3 @@ def test_failed_connect_reauthentication_is_rate_limited_and_audited(drive_http,
     events = client_db.scalars(select(AuditEvent).where(AuditEvent.event == "rate_limited.request")).all()
     assert len(events) == 1
     assert events[0].subject.startswith(f"google_drive_connect:{session.subject_id}:")
-
-
-def _connect_workspace_for_picker(client_db, session):
-    cipher = IntegrationCipher()
-    connection_id = uuid4()
-    envelope = cipher.encrypt("synthetic-refresh-token", tenant_id=session.tenant_id,
-                              credential_id=connection_id).payload()
-    row = GoogleDriveConnection(
-        id=connection_id, tenant_id=session.tenant_id, connected_by_admin_id=session.subject_id,
-        refresh_token_envelope=envelope, scopes=drive.SCOPE, state="connected",
-        connected_at=now(), updated_at=now(),
-    )
-    client_db.add(row)
-    client_db.commit()
-    return cipher
-
-
-class PickerDriveTransport:
-    def __init__(self, folder=None):
-        self.folder = folder
-        self.patches = []
-        self.token_requests = []
-
-    def post(self, url, **kwargs):
-        self.token_requests.append((url, kwargs))
-        return httpx.Response(200, json={
-            "access_token": "synthetic-short-access-token", "expires_in": 900,
-            "token_type": "Bearer", "scope": drive.SCOPE,
-        })
-
-    def get(self, url, **kwargs):
-        return httpx.Response(200, json=self.folder)
-
-    def patch(self, url, **kwargs):
-        self.patches.append((url, kwargs))
-        updated = {**self.folder, "appProperties": dict(picker.DESTINATION_MARKER)}
-        return httpx.Response(200, json=updated)
-
-
-def _prepare_picker(monkeypatch, *, transport=None):
-    from app import main
-
-    monkeypatch.setenv("APP_ENV", "development")
-    monkeypatch.setattr(drive, "_is_production", lambda: True)
-    monkeypatch.setattr(main, "require_same_origin", lambda *_args: None)
-    monkeypatch.setattr(picker, "_picker_config", lambda: picker.PickerConfig(
-        PICKER_TEST_DEVELOPER_KEY, "123456789012", "synthetic-parent"))
-    monkeypatch.setattr(drive, "_config", lambda: (
-        "synthetic-client", "synthetic-client-secret", drive.GOOGLE_DRIVE_EXPECTED_REDIRECT_URI))
-    monkeypatch.setattr(picker, "reauthenticate_admin", lambda _admin, password:
-                        (_ for _ in ()).throw(AssertionError()) if password != "synthetic-password" else None)
-    monkeypatch.setattr(picker, "matching_unused_totp_step", lambda *_args: 123456)
-    if transport is not None:
-        monkeypatch.setattr(picker, "HttpxDriveTransport", lambda: transport)
-
-
-def test_picker_session_returns_only_short_lived_drive_file_access(drive_http, client_db, monkeypatch):
-    client, session = drive_http
-    cipher = _connect_workspace_for_picker(client_db, session)
-    transport = PickerDriveTransport()
-    _prepare_picker(monkeypatch, transport=transport)
-    monkeypatch.setattr(drive, "_cipher", lambda: cipher)
-
-    response = client.post("/admin/platform/drive/picker/session",
-        headers={"Origin": "http://testserver"},
-        json={"current_password": "synthetic-password", "totp_code": "123456"})
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body == {
-        "access_token": "synthetic-short-access-token", "scope": drive.SCOPE,
-        "expires_in": 900, "developer_key": PICKER_TEST_DEVELOPER_KEY,
-        "project_number": "123456789012", "expected_parent_folder_id": "synthetic-parent",
-    }
-    assert "no-store" in response.headers["cache-control"]
-    assert "synthetic-refresh-token" not in response.text
-    assert transport.token_requests[0][1]["data"]["refresh_token"] == "synthetic-refresh-token"
-    assert transport.token_requests[0][1]["data"]["client_secret"] == "synthetic-client-secret"
-
-
-def test_picker_authorizes_only_expected_private_app_folder_and_audits_without_token(
-        drive_http, client_db, monkeypatch):
-    client, session = drive_http
-    cipher = _connect_workspace_for_picker(client_db, session)
-    folder_id = "synthetic-global-folder"
-    transport = PickerDriveTransport({
-        "id": folder_id, "name": picker.GLOBAL_FOLDER_NAME,
-        "mimeType": "application/vnd.google-apps.folder", "parents": ["synthetic-parent"],
-        "driveId": None, "ownedByMe": True, "isAppAuthorized": True, "trashed": False,
-        "capabilities": {"canAddChildren": True}, "appProperties": {},
-    })
-    _prepare_picker(monkeypatch, transport=transport)
-    monkeypatch.setattr(drive, "_cipher", lambda: cipher)
-
-    response = client.post("/admin/platform/drive/picker/authorize",
-        headers={"Origin": "http://testserver"},
-        json={"folder_id": folder_id, "current_password": "synthetic-password", "totp_code": "123456"})
-
-    assert response.status_code == 200, response.text
-    assert response.json() == {
-        "state": "selected", "folder_name": picker.GLOBAL_FOLDER_NAME, "folder_id": folder_id,
-    }
-    assert "no-store" in response.headers["cache-control"]
-    assert len(transport.patches) == 1
-    assert transport.patches[0][1]["json"]["appProperties"] == dict(picker.DESTINATION_MARKER)
-    event = client_db.scalars(select(AuditEvent).where(
-        AuditEvent.event == "google_drive.backup_folder_selected")).one()
-    assert event.subject == folder_id
-    assert "synthetic-short-access-token" not in response.text
-
-
-def test_picker_rejects_folder_outside_expected_root_before_marker_write(
-        drive_http, client_db, monkeypatch):
-    client, session = drive_http
-    cipher = _connect_workspace_for_picker(client_db, session)
-    transport = PickerDriveTransport({
-        "id": "synthetic-global-folder", "name": picker.GLOBAL_FOLDER_NAME,
-        "mimeType": "application/vnd.google-apps.folder", "parents": ["wrong-parent"],
-        "driveId": None, "ownedByMe": True, "isAppAuthorized": True, "trashed": False,
-        "capabilities": {"canAddChildren": True}, "appProperties": {},
-    })
-    _prepare_picker(monkeypatch, transport=transport)
-    monkeypatch.setattr(drive, "_cipher", lambda: cipher)
-
-    response = client.post("/admin/platform/drive/picker/authorize",
-        headers={"Origin": "http://testserver"},
-        json={"folder_id": "synthetic-global-folder", "current_password": "synthetic-password",
-              "totp_code": "123456"})
-
-    assert response.status_code == 409, response.text
-    assert transport.patches == []
-    assert client_db.scalars(select(AuditEvent).where(
-        AuditEvent.event == "google_drive.backup_folder_selected")).all() == []
-
-
-def test_picker_configuration_metadata_requires_root_private_single_link_file():
-    regular_file = SimpleNamespace(
-        st_mode=picker.stat.S_IFREG | 0o400, st_uid=0, st_gid=0, st_nlink=1, st_size=256,
-    )
-    assert picker._config_metadata_is_safe(regular_file, posix=True)
-    assert not picker._config_metadata_is_safe(
-        SimpleNamespace(**{**vars(regular_file), "st_uid": 12345}), posix=True)
-    assert not picker._config_metadata_is_safe(
-        SimpleNamespace(**{**vars(regular_file), "st_gid": 12345}), posix=True)
-    assert not picker._config_metadata_is_safe(
-        SimpleNamespace(**{**vars(regular_file), "st_mode": picker.stat.S_IFREG | 0o444}), posix=True)
-    assert not picker._config_metadata_is_safe(
-        SimpleNamespace(**{**vars(regular_file), "st_nlink": 2}), posix=True)
-    assert not picker._config_metadata_is_safe(
-        SimpleNamespace(**{**vars(regular_file), "st_size": 0}), posix=True)
-    assert picker._config_metadata_is_safe(
-        SimpleNamespace(**{**vars(regular_file), "st_uid": 12345, "st_mode": picker.stat.S_IFREG | 0o644}),
-        posix=False,
-    )
-
-
-def test_picker_configuration_requires_private_exact_file(monkeypatch, tmp_path):
-    monkeypatch.setenv("APP_ENV", "production")
-    host_is_posix = os.name == "posix"
-    path = tmp_path / "picker-config.json"
-    path.write_text(json.dumps({
-        "developer_key": PICKER_TEST_DEVELOPER_KEY,
-        "project_number": "123456789012", "expected_parent_folder_id": "synthetic-parent",
-    }), encoding="utf-8")
-    path.chmod(0o400)
-    monkeypatch.setattr(picker, "GOOGLE_DRIVE_PICKER_CONFIG_PATH", path)
-    if host_is_posix:
-        actual_fstat = os.fstat
-
-        def root_owned_fstat(descriptor):
-            metadata = actual_fstat(descriptor)
-            return SimpleNamespace(
-                st_mode=metadata.st_mode, st_uid=0, st_gid=0,
-                st_nlink=metadata.st_nlink, st_size=metadata.st_size,
-            )
-
-        monkeypatch.setattr(picker.os, "fstat", root_owned_fstat)
-    assert picker._picker_config() == picker.PickerConfig(
-        PICKER_TEST_DEVELOPER_KEY, "123456789012", "synthetic-parent")
-
-    if host_is_posix:
-        path.chmod(0o444)
-        with pytest.raises(HTTPException) as rejected:
-            picker._picker_config()
-        assert rejected.value.status_code == 503
-
-        path.chmod(0o400)
-        hardlink = tmp_path / "picker-config-hardlink.json"
-        hardlink.hardlink_to(path)
-        with pytest.raises(HTTPException) as linked:
-            picker._picker_config()
-        assert linked.value.status_code == 503
-        hardlink.unlink()
-
-        target = tmp_path / "picker-config-target.json"
-        target.write_bytes(path.read_bytes())
-        target.chmod(0o400)
-        path.unlink()
-        path.symlink_to(target)
-        with pytest.raises(HTTPException) as symlinked:
-            picker._picker_config()
-        assert symlinked.value.status_code == 503
