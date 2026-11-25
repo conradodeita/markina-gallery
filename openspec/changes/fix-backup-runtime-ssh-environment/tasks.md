@@ -9,3 +9,7 @@
 - A API do GitHub confirmou a ausência de `PRODUCTION_BACKUP_SSH_PRIVATE_KEY` e `PRODUCTION_BACKUP_SSH_KNOWN_HOSTS` no ambiente `production`. O modo protegido `verify-channel` usa somente inventário e precisa passar antes da próxima tentativa de instalação. O job também repete a comprovação do canal antes de cada mutação.
 - O instalador relata o SHA e o hash do pacote no recibo JSON e verifica o estado instalado localmente. O workflow valida esse recibo e depois confirma as precondições no inventário sanitizado. O caminho da release não integra esse inventário.
 - Guarda de política, Ruff, parse YAML, sintaxe Bash dos steps alterados, OpenSpec estrito e `git diff --check` passaram localmente.
+
+## 2. Diagnóstico da instalação
+
+- [ ] 2.1 Corrigir a perda de diagnóstico observada no run 45596376126. Classificar pelo status SSH e pela resposta estruturada do instalador, sem publicar saída bruta em falha. Preservar o recibo em sucesso e validar o contrato em CI.

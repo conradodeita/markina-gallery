@@ -13,3 +13,8 @@ O job de operação SHALL resolver sua configuração SSH no ambiente protegido 
 
 - **WHEN** a associação entre a credencial de produção e o wrapper de backup não foi comprovada
 - **THEN** uma leitura protegida SHALL comprovar o canal antes de qualquer tentativa mutável e o workflow MUST NOT usar credencial genérica como fallback
+
+#### Scenario: Falha na chamada de instalação
+
+- **WHEN** a chamada SSH de instalação termina sem sucesso
+- **THEN** o workflow SHALL registrar uma categoria fixa para falha de transporte, recusa estruturada do instalador ou outra falha remota, e MUST NOT publicar a saída bruta da chamada
