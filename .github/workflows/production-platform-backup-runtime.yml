@@ -7,14 +7,14 @@ on:
         description: Preparar inventário/diagnóstico ou executar uma etapa aprovada
         required: true
         type: choice
-        options: [inventory, diagnose, install, bind-and-rehearse, reconcile]
+        options: [inventory, diagnose, verify-channel, install, bind-and-rehearse, reconcile]
       approval_fingerprint:
-        description: Fingerprint apropriada para a operação (v2 para install; integral para as demais; vazia em inventory/diagnose)
+        description: Fingerprint apropriada para a operação (v2 para install; integral para as demais; vazia em inventory/diagnose/verify-channel)
         required: false
         type: string
         default: ''
       approval_bundle_sha256:
-        description: SHA-256 do pacote ARM64 (vazio em inventory/diagnose)
+        description: SHA-256 do pacote ARM64 (vazio em inventory/diagnose/verify-channel)
         required: false
         type: string
         default: ''
@@ -116,7 +116,7 @@ jobs:
           approval_fingerprint="$(sed -nE 's/^backup_runtime_install_approval_fingerprint_v2=([0-9a-f]{64})$/\1/p' "$output" | tail -n1)"
           preconditions="$(sed -nE 's/^backup_runtime_install_preconditions=(pass|fail)$/\1/p' "$output" | tail -n1)"
           [[ "$full_fingerprint" =~ ^[0-9a-f]{64}$ && "$approval_fingerprint" =~ ^[0-9a-f]{64}$ && -n "$EXPECTED_BUNDLE" ]]
-          if [[ "$OPERATION" != inventory && "$preconditions" != pass ]]; then
+          if [[ "$OPERATION" != inventory && "$OPERATION" != verify-channel && "$preconditions" != pass ]]; then
             echo 'O inventário não atende às precondições para a operação solicitada' >&2
             exit 1
           fi
@@ -311,6 +311,10 @@ jobs:
       contents: read
       actions: read
     timeout-minutes: 35
+    env:
+      SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+      SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -318,23 +322,48 @@ jobs:
       - name: Revalidar SHA, CI, fingerprint e destino SSH aprovado
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          OPERATION: ${{ inputs.operation }}
           REQUESTED_FINGERPRINT: ${{ inputs.approval_fingerprint }}
           REQUESTED_BUNDLE: ${{ inputs.approval_bundle_sha256 }}
           INVENTORY_FINGERPRINT: ${{ needs.preflight.outputs.fingerprint }}
           INVENTORY_CONNECTION: ${{ needs.preflight.outputs.connection_binding }}
-          SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
-          SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
-          SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
           BUNDLE_SHA256: ${{ needs.runtime-artifact.outputs.bundle_sha256 }}
         shell: bash
         run: |
           set -Eeuo pipefail
           python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"
-          [[ "$REQUESTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT" ]]
-          [[ "$REQUESTED_BUNDLE" =~ ^[0-9a-f]{64}$ && "$REQUESTED_BUNDLE" == "$BUNDLE_SHA256" ]]
+          if [[ "$OPERATION" != verify-channel ]]; then
+            [[ "$REQUESTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ && "$REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT" ]]
+            [[ "$REQUESTED_BUNDLE" =~ ^[0-9a-f]{64}$ && "$REQUESTED_BUNDLE" == "$BUNDLE_SHA256" ]]
+          fi
+          for name in SSH_HOST SSH_PORT SSH_USER; do
+            [[ -n "${!name}" ]] || { echo 'backup_ssh_destination_missing' >&2; exit 1; }
+          done
           binding="$(printf '%s' "$SSH_HOST|$SSH_PORT|$SSH_USER" | sha256sum | awk '{print $1}')"
-          [[ "$binding" == "$INVENTORY_CONNECTION" ]]
+          [[ "$binding" == "$INVENTORY_CONNECTION" ]] || { echo 'backup_ssh_destination_mismatch' >&2; exit 1; }
+      - name: Comprovar o canal restrito com inventário somente leitura
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_BACKUP_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_BACKUP_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$SSH_KEY" && -n "$SSH_KNOWN_HOSTS" ]] || { echo 'backup_ssh_credentials_missing' >&2; exit 1; }
+          key_file="$(mktemp)"; known_file="$(mktemp)"; output="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file" "$output"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          target="$SSH_USER@$SSH_HOST"
+          options=(-i "$key_file" -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
+          if ! ssh "${options[@]}" "$target" "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$GITHUB_SHA" </dev/null >"$output" 2>/dev/null ||
+              ! grep -Eq '^backup_runtime_install_approval_fingerprint_v2=[0-9a-f]{64}$' "$output"; then
+            echo 'backup_ssh_channel_unverified' >&2
+            exit 1
+          fi
+          echo 'backup_ssh_channel=verified' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/download-artifact@v4
+        if: ${{ inputs.operation == 'install' }}
         with:
           name: pyp-platform-backup-runtime-${{ github.sha }}
           path: ${{ runner.temp }}/pyp-platform-backup-runtime
@@ -348,16 +377,14 @@ jobs:
           bundle="$RUNNER_TEMP/pyp-platform-backup-runtime/pyp-platform-backup-runtime.tar.gz"
           [[ "$(sha256sum "$bundle" | awk '{print $1}')" == "$BUNDLE_SHA256" ]]
       - name: Executar somente o modo protegido solicitado
+        if: ${{ inputs.operation != 'verify-channel' }}
         shell: bash
         env:
           OPERATION: ${{ inputs.operation }}
           APPROVAL_FINGERPRINT: ${{ inputs.approval_fingerprint }}
           BUNDLE_SHA256: ${{ needs.runtime-artifact.outputs.bundle_sha256 }}
-          SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
-          SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
-          SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
-          SSH_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+          SSH_KEY: ${{ secrets.PRODUCTION_BACKUP_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_BACKUP_SSH_KNOWN_HOSTS }}
         run: |
           set -Eeuo pipefail
           key_file="$(mktemp)"; known_file="$(mktemp)"
@@ -366,12 +393,21 @@ jobs:
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
           chmod 600 "$key_file" "$known_file"
           target="$SSH_USER@$SSH_HOST"
-          options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
+          options=(-i "$key_file" -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
           case "$OPERATION" in
             install)
               command="MARKINA_PLATFORM_BACKUP_INSTALL_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_FINGERPRINT=${APPROVAL_FINGERPRINT}"
               bundle="$RUNNER_TEMP/pyp-platform-backup-runtime/pyp-platform-backup-runtime.tar.gz"
-              ssh "${options[@]}" "$target" "$command" < "$bundle" | tee -a "$GITHUB_STEP_SUMMARY"
+              receipt="$(ssh "${options[@]}" "$target" "$command" < "$bundle")"
+              python -c '
+          import json, sys
+          receipt = json.load(sys.stdin)
+          if not (receipt.get("status") == "installed_inert"
+                  and receipt.get("source_sha") == sys.argv[1]
+                  and receipt.get("bundle_sha256") == sys.argv[2]):
+              sys.exit("backup_install_receipt_mismatch")
+          ' "$GITHUB_SHA" "$BUNDLE_SHA256" <<<"$receipt"
+              printf '%s\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
               ;;
             bind-and-rehearse)
               command="MARKINA_PLATFORM_BACKUP_BIND_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_FINGERPRINT=${APPROVAL_FINGERPRINT}"
@@ -384,15 +420,11 @@ jobs:
             *) echo 'Modo operacional inválido' >&2; exit 1 ;;
           esac
       - name: Confirmar pós-estado somente de leitura
+        if: ${{ inputs.operation != 'verify-channel' }}
         shell: bash
         env:
-          SSH_HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
-          SSH_PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
-          SSH_USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
-          SSH_KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
-          OPERATION: ${{ inputs.operation }}
-          BUNDLE_SHA256: ${{ needs.runtime-artifact.outputs.bundle_sha256 }}
+          SSH_KEY: ${{ secrets.PRODUCTION_BACKUP_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_BACKUP_SSH_KNOWN_HOSTS }}
         run: |
           set -Eeuo pipefail
           key_file="$(mktemp)"; known_file="$(mktemp)"; output="$(mktemp)"
@@ -401,11 +433,8 @@ jobs:
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_file"
           chmod 600 "$key_file" "$known_file"
           target="$SSH_USER@$SSH_HOST"
-          options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
+          options=(-i "$key_file" -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
           ssh "${options[@]}" "$target" "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$GITHUB_SHA" </dev/null | tee "$output" | tee -a "$GITHUB_STEP_SUMMARY"
           grep -q '"active":"inactive"' "$output"
           grep -q '"enabled":"disabled"\|"enabled":"static"\|"enabled":"unknown"' "$output"
           grep -q 'backup_runtime_install_preconditions=pass' "$output"
-          if [[ "$OPERATION" == install ]]; then
-            grep -q "releases/$GITHUB_SHA" "$output"
-          fi

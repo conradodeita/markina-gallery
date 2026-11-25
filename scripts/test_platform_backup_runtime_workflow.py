@@ -49,6 +49,22 @@ def main() -> int:
     diagnose_start = RUNTIME.index("  diagnose:\n")
     operate_start = RUNTIME.index("  operate:\n", diagnose_start)
     diagnose_job = RUNTIME[diagnose_start:operate_start]
+    operate_job = RUNTIME[operate_start:]
+    require("PRODUCTION_PREFLIGHT_SSH_" not in operate_job
+            and "secrets.PRODUCTION_SSH_PRIVATE_KEY" not in operate_job
+            and operate_job.count("secrets.PRODUCTION_BACKUP_SSH_PRIVATE_KEY") == 3
+            and operate_job.count("secrets.PRODUCTION_BACKUP_SSH_KNOWN_HOSTS") == 3,
+            "backup_operate_requires_restricted_production_credentials")
+    require(operate_job.index("backup_ssh_destination_mismatch")
+            < operate_job.index("backup_ssh_channel=verified")
+            < operate_job.index("actions/download-artifact")
+            < operate_job.index("MARKINA_PLATFORM_BACKUP_INSTALL_SHA=")
+            and "backup_ssh_credentials_missing" in operate_job,
+            "backup_channel_must_be_verified_before_download_or_mutation")
+    require(operate_job.count("if: ${{ inputs.operation != 'verify-channel' }}") == 2
+            and "backup_install_receipt_mismatch" in operate_job
+            and 'grep -q "releases/$GITHUB_SHA"' not in operate_job,
+            "backup_channel_only_mode_and_install_result_contract")
     require("inputs.operation == 'diagnose'" in diagnose_job
             and "environment: production-preflight" in diagnose_job
             and "needs: [code-evidence]" in diagnose_job
