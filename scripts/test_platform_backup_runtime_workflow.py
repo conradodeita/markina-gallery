@@ -149,7 +149,12 @@ def main() -> int:
                 for role in ("api", "web", "db")
             },
             "database_schema": "20261113_0126",
-            "disk_var_lib": {"available_kib": 50000, "use_percent": 50},
+            "disk_var_lib": {"total_bytes": 102400000, "used_bytes": 51200000,
+                             "available_bytes": 51200000, "use_percent": 50},
+            "disk_install_root": {"total_bytes": 102400000, "used_bytes": 51200000,
+                                  "available_bytes": 51200000, "use_percent": 50},
+            "disk_systemd_root": {"total_bytes": 102400000, "used_bytes": 51200000,
+                                   "available_bytes": 51200000, "use_percent": 50},
             "units": {
                 "service": {"load": "not-found", "enabled": "unknown", "active": "inactive"},
                 "timer": {"load": "not-found", "enabled": "unknown", "active": "inactive"},
@@ -159,13 +164,15 @@ def main() -> int:
             inventory_parser,
             "backup_runtime_inventory_summary=" + json.dumps(inventory_payload, sort_keys=True, separators=(",", ":"))
             + "\nbackup_runtime_fingerprint=" + "f" * 64
+            + "\nbackup_runtime_install_approval_fingerprint_v2=" + "e" * 64
             + "\nbackup_runtime_install_preconditions=pass\n",
         )
         require(successful_inventory.returncode == 0
                 and successful_inventory.stdout ==
                     "backup_runtime_normal_inventory=success\n"
                     "backup_runtime_install_preconditions=pass\n"
-                and "f" * 64 not in successful_inventory.stdout,
+                and "f" * 64 not in successful_inventory.stdout
+                and "e" * 64 not in successful_inventory.stdout,
                 "backup_diagnostic_workflow_exposed_success_inventory_fingerprint")
         leaked_summary = json.loads(json.dumps(inventory_payload))
         leaked_summary["containers"]["api"]["id"] = active_id
@@ -173,6 +180,7 @@ def main() -> int:
             inventory_parser,
             "backup_runtime_inventory_summary=" + json.dumps(leaked_summary, sort_keys=True, separators=(",", ":"))
             + "\nbackup_runtime_fingerprint=" + "f" * 64
+            + "\nbackup_runtime_install_approval_fingerprint_v2=" + "e" * 64
             + "\nbackup_runtime_install_preconditions=pass\n",
         )
         require(invalid_success.returncode != 0
@@ -200,6 +208,11 @@ def main() -> int:
                 "backup_diagnostic_workflow_leaked_unexpected_inventory_failure")
     require("inputs.approval_fingerprint" in RUNTIME and "inputs.approval_bundle_sha256" in RUNTIME,
             "runtime_approval_inputs_missing")
+    require("backup_runtime_install_approval_fingerprint_v2=" in RUNTIME
+            and 'if [[ "$OPERATION" == install ]]' in RUNTIME
+            and 'fingerprint="$approval_fingerprint"' in RUNTIME
+            and 'fingerprint="$full_fingerprint"' in RUNTIME,
+            "runtime_operation_specific_approval_fingerprint_missing")
     require("REQUESTED_FINGERPRINT\" == \"$INVENTORY_FINGERPRINT" in RUNTIME
             and "REQUESTED_BUNDLE\" == \"$BUNDLE_SHA256" in RUNTIME,
             "runtime_preflight_approval_not_compared")

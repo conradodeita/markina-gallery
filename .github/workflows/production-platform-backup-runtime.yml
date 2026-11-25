@@ -9,7 +9,7 @@ on:
         type: choice
         options: [inventory, diagnose, install, bind-and-rehearse, reconcile]
       approval_fingerprint:
-        description: Fingerprint revisada (vazia em inventory/diagnose)
+        description: Fingerprint apropriada para a operação (v2 para install; integral para as demais; vazia em inventory/diagnose)
         required: false
         type: string
         default: ''
@@ -112,12 +112,17 @@ jobs:
           target="$SSH_USER@$SSH_HOST"
           options=(-i "$key_file" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file")
           ssh "${options[@]}" "$target" "MARKINA_PLATFORM_BACKUP_INVENTORY_SHA=$GITHUB_SHA" </dev/null | tee "$output" | tee -a "$GITHUB_STEP_SUMMARY"
-          fingerprint="$(sed -nE 's/^backup_runtime_fingerprint=([0-9a-f]{64})$/\1/p' "$output" | tail -n1)"
+          full_fingerprint="$(sed -nE 's/^backup_runtime_fingerprint=([0-9a-f]{64})$/\1/p' "$output" | tail -n1)"
+          approval_fingerprint="$(sed -nE 's/^backup_runtime_install_approval_fingerprint_v2=([0-9a-f]{64})$/\1/p' "$output" | tail -n1)"
           preconditions="$(sed -nE 's/^backup_runtime_install_preconditions=(pass|fail)$/\1/p' "$output" | tail -n1)"
-          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ && -n "$EXPECTED_BUNDLE" ]]
+          [[ "$full_fingerprint" =~ ^[0-9a-f]{64}$ && "$approval_fingerprint" =~ ^[0-9a-f]{64}$ && -n "$EXPECTED_BUNDLE" ]]
           if [[ "$OPERATION" != inventory && "$preconditions" != pass ]]; then
             echo 'O inventário não atende às precondições para a operação solicitada' >&2
             exit 1
+          fi
+          fingerprint="$full_fingerprint"
+          if [[ "$OPERATION" == install ]]; then
+            fingerprint="$approval_fingerprint"
           fi
           echo "bundle_sha256=$EXPECTED_BUNDLE" >> "$GITHUB_STEP_SUMMARY"
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
@@ -225,9 +230,10 @@ jobs:
               prefixes = (
                   "backup_runtime_inventory_summary=",
                   "backup_runtime_fingerprint=",
+                  "backup_runtime_install_approval_fingerprint_v2=",
                   "backup_runtime_install_preconditions=",
               )
-              if len(lines) != 3 or any(not line.startswith(prefix) for line, prefix in zip(lines, prefixes)):
+              if len(lines) != 4 or any(not line.startswith(prefix) for line, prefix in zip(lines, prefixes)):
                   print("backup_runtime_normal_inventory=invalid_output")
                   raise SystemExit(1)
               try:
@@ -237,7 +243,8 @@ jobs:
                   raise SystemExit(1)
               containers = inventory.get("containers") if type(inventory) is dict else None
               if (type(inventory) is not dict or set(inventory) != {
-                      "schema_version", "checkout_sha", "containers", "database_schema", "disk_var_lib", "units",
+                      "schema_version", "checkout_sha", "containers", "database_schema",
+                      "disk_var_lib", "disk_install_root", "disk_systemd_root", "units",
                   } or type(inventory.get("schema_version")) is not int
                   or inventory.get("schema_version") != 1
                   or type(containers) is not dict or set(containers) != {"api", "web", "db"}
@@ -245,14 +252,11 @@ jobs:
                   or not re.fullmatch(r"[0-9a-f]{40}", inventory["checkout_sha"])
                   or type(inventory.get("database_schema")) is not str
                   or not re.fullmatch(r"[A-Za-z0-9_]{1,64}", inventory["database_schema"])
-                  or type(inventory.get("disk_var_lib")) is not dict
-                  or set(inventory["disk_var_lib"]) != {"available_kib", "use_percent"}
-                  or type(inventory["disk_var_lib"].get("available_kib")) is not int
-                  or type(inventory["disk_var_lib"].get("use_percent")) is not int
                   or type(inventory.get("units")) is not dict
                   or set(inventory["units"]) != {"service", "timer"}
                   or not re.fullmatch(r"[0-9a-f]{64}", lines[1][len(prefixes[1]):])
-                  or lines[2][len(prefixes[2]):] not in {"pass", "fail"}):
+                  or not re.fullmatch(r"[0-9a-f]{64}", lines[2][len(prefixes[2]):])
+                  or lines[3][len(prefixes[3]):] not in {"pass", "fail"}):
                   print("backup_runtime_normal_inventory=invalid_output")
                   raise SystemExit(1)
               for container in containers.values():
@@ -269,12 +273,20 @@ jobs:
                       or any(type(value) is not str for value in unit.values())):
                       print("backup_runtime_normal_inventory=invalid_output")
                       raise SystemExit(1)
-              if (inventory["disk_var_lib"]["available_kib"] < 0
-                  or not 0 <= inventory["disk_var_lib"]["use_percent"] <= 100):
-                  print("backup_runtime_normal_inventory=invalid_output")
-                  raise SystemExit(1)
+              for name in ("disk_var_lib", "disk_install_root", "disk_systemd_root"):
+                  disk = inventory[name]
+                  if (type(disk) is not dict
+                      or set(disk) != {"total_bytes", "used_bytes", "available_bytes", "use_percent"}
+                      or any(type(disk.get(key)) is not int for key in
+                             ("total_bytes", "used_bytes", "available_bytes", "use_percent"))
+                      or disk["total_bytes"] <= 0 or disk["used_bytes"] < 0
+                      or disk["available_bytes"] < 0 or disk["used_bytes"] > disk["total_bytes"]
+                      or disk["available_bytes"] > disk["total_bytes"]
+                      or not 0 <= disk["use_percent"] <= 100):
+                      print("backup_runtime_normal_inventory=invalid_output")
+                      raise SystemExit(1)
               print("backup_runtime_normal_inventory=success")
-              print("backup_runtime_install_preconditions=" + lines[2][len(prefixes[2]):])
+              print("backup_runtime_install_preconditions=" + lines[3][len(prefixes[3]):])
           else:
               sys.path.insert(0, str(Path("scripts").resolve()))
               import platform_backup_runtime_inventory as runtime_inventory
