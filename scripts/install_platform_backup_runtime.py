@@ -31,6 +31,7 @@ from platform_backup_runtime_inventory import (
     collect_inventory,
     install_preconditions,
     read_systemd_unit_state,
+    verify_installed_release,
 )
 
 INSTALL_ROOT = Path("/opt/pyp-backup-runtime")
@@ -669,7 +670,6 @@ def _install_verified_bundle_under_lock(
     rollback_receipt_created = False
     try:
         _write_tree(staging, files, root_only=require_root)
-        _write_file(staging / "manifest.json", files["manifest.json"], root_only=require_root)
         _install_wheels(staging, files, runner, python_executable)
         if (staging / "wheelhouse").exists():
             raise InstallError("wheelhouse_cleanup_failed")
@@ -691,6 +691,7 @@ def _install_verified_bundle_under_lock(
         _assert_existing_units_unchanged(systemd_root, previous_units)
         _rebase_shebangs(staging, release_path)
         _privatize_tree(staging, root_only=require_root)
+        _write_file(staging / "manifest.json", files["manifest.json"], mode=0o400, root_only=require_root)
         os.rename(staging, release_path)
         release_created = True
         release_info = release_path.lstat()
@@ -770,6 +771,8 @@ def _install_verified_bundle_under_lock(
                 "destination_enabled": False,
             }
             _write_receipt(release_path / "install-receipt.json", receipt, root_only=require_root)
+            if require_root:
+                verify_installed_release(source_sha, bundle_sha256, install_root=install_root)
             transaction_path.unlink()
             directory_fd = os.open(install_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
             try:
