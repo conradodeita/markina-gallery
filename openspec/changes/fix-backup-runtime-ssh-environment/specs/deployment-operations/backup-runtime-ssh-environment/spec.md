@@ -18,3 +18,8 @@ O job de operação SHALL resolver sua configuração SSH no ambiente protegido 
 
 - **WHEN** a chamada SSH de instalação termina sem sucesso
 - **THEN** o workflow SHALL registrar uma categoria fixa para falha de transporte, recusa estruturada do instalador ou outra falha remota, e MUST NOT publicar a saída bruta da chamada
+
+#### Scenario: Alias lib64 padrão do venv ARM64
+
+- **WHEN** o Python cria `venv/lib64` como link relativo para o diretório real irmão `lib` dentro da árvore privada de staging
+- **THEN** o instalador SHALL preservar somente esse alias esperado após validar metadados e destino; links divergentes, alvos inseguros e outros links na árvore MUST ser recusados

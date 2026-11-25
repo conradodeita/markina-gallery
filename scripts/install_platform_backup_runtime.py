@@ -536,6 +536,16 @@ def _privatize_tree(root: Path, *, root_only: bool) -> None:
         for name in directories:
             path = current_path / name
             info = path.lstat()
+            if stat.S_ISLNK(info.st_mode) and path == root / "venv/lib64":
+                target = path.with_name("lib")
+                _require(os.readlink(path) == "lib" and info.st_nlink == 1
+                         and (not root_only or (info.st_uid, info.st_gid) == (0, 0)),
+                         "install_tree_unsafe")
+                target_info = target.lstat()
+                _require(stat.S_ISDIR(target_info.st_mode)
+                         and (not root_only or (target_info.st_uid, target_info.st_gid) == (0, 0)),
+                         "install_tree_unsafe")
+                continue
             _require(stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
                      and (not root_only or info.st_uid == 0 and info.st_gid == 0), "install_tree_unsafe")
             os.chmod(path, 0o700)
