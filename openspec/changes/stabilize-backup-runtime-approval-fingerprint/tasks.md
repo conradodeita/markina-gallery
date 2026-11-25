@@ -7,12 +7,12 @@
 
 ## 2. Precondições atuais de capacidade
 
-- [ ] 2.1 Calcular limite superior verificável de espaço para arquivos staged, expansão validada dos wheels (limitada a 8 GiB agregados), bytecode/metadados, venv, recibos, runtime anterior preservado e unidades systemd; medir cada filesystem de destino e agregar os que compartilham binding antes da primeira escrita e antes da troca ativa, sob lock. Falhar fechado quando uso projetado não for estritamente inferior a 75%, espaço for insuficiente ou a leitura/bound não puder ser comprovado. Verificar espaço adequado, insuficiente, inválido, destinos compartilhados e redução após staging.
+- [x] 2.1 Calcular limite superior verificável de espaço para arquivos staged, expansão validada dos wheels (limitada a 8 GiB agregados), bytecode/metadados, venv, recibos, runtime anterior preservado e unidades systemd; medir cada filesystem de destino e agregar os que compartilham binding antes da primeira escrita e antes da troca ativa, sob lock. Falhar fechado quando uso projetado não for estritamente inferior a 75%, espaço for insuficiente ou a leitura/bound não puder ser comprovado. Verificar espaço adequado, insuficiente, inválido, destinos compartilhados e redução após staging.
 - [x] 2.2 Integrar o gate versionado ao workflow e ao forced command com seus pins de blob, usar v2 somente em `install` e preservar fingerprints integrais em `bind-and-rehearse`/`reconcile`; apresentar ambas as fingerprints conforme a operação, SHA/CI, pacote, percentual e bytes livres por destino em campos distintos e sanitizados. Atualizar o release-preflight para exigir a instalação protegida do wrapper antes do inventário v2; verificar guardas estáticas dos workflows, casos de divergência e `git diff --check`.
 
 ## 3. Integração e fechamento
 
-- [ ] 3.1 Executar validação OpenSpec estrita, testes focados do inventário/instalador/workflow e gates de qualidade aplicáveis; revisar o diff para confirmar que a alteração se limita ao gate do `install` inerte, sem credenciais, alterações de dados ou efeitos em outros workflows. Registrar comandos, SHAs e limitações no `tasks.md`/`release-preflight.md`; só marcar esta task após evidência completa.
+- [x] 3.1 Executar validação OpenSpec estrita, testes focados do inventário/instalador/workflow e gates de qualidade aplicáveis; revisar o diff para confirmar que a alteração se limita ao gate do `install` inerte, sem credenciais, alterações de dados ou efeitos em outros workflows. Registrar comandos, SHAs e limitações no `tasks.md`/`release-preflight.md`; só marcar esta task após evidência completa.
 
 ## Workflow follow-up
 
@@ -34,3 +34,9 @@
 - A fixture agora fornece um arquivo de interpretador sintético de tamanho fixo, coerente com a instalação de wheels simulada. Nenhum gate de capacidade do instalador foi relaxado.
 - Em Docker Desktop `desktop-linux`, container descartável sem rede, worktree somente leitura e `/tmp` efêmero: `python -B -m unittest test_platform_backup_runtime_inventory test_install_platform_backup_runtime -q` executou 47 testes, todos passaram sem skips. Imagem local de validação `pyp-backup-contract-validation:20261124`, Python 3.13 e Git. A primeira imagem consultada não tinha Git; a execução válida usou imagem própria com Git.
 - Tasks 2.1 e 3.1 aguardam confirmação da nova CI no SHA corrigido; nenhuma operação de produção foi executada.
+
+### Fechamento da implementação — 24/11/2026 BRT
+
+- CI `45520382114` concluiu success no SHA exato `f65ffe14556dd6434f259b73ad990bcc04d7f376`: quatro shards backend, backend-quality, frontend, imagens AMD64/ARM64, OpenSpec, Gitleaks e agregados passaram. O log confirma `test_capacity_reduction_after_staging_aborts_before_active_swap ... ok` e os 17 testes do instalador aprovados no Linux.
+- Tasks 2.1 e 3.1 concluídas com essa evidência e com a revisão do diff/escopo registrada acima. A implementação está completa na PR #429; revisão humana, autorização de merge, CI da main e gates operacionais posteriores continuam pendentes. A spec principal não foi sincronizada e a change não foi arquivada.
+- Nenhum dispatch operacional, acesso ao host/Drive, instalação, backup ou timer foi executado nesta change.
