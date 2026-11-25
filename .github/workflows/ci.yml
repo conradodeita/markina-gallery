@@ -89,6 +89,9 @@ jobs:
         run: pip install -r backend/requirements.txt -r backend/face-requirements.txt -r backend/benchmark-requirements.txt
       - name: Lint (ruff)
         run: ruff check backend/app backend/tests
+      - name: Ensaio POSIX da preparação, vínculo e prova sintética do backup
+        working-directory: backend
+        run: sudo -n -- "$(command -v python)" -B -m pytest -q -p no:cacheprovider tests/test_platform_backup_production_cli.py
       - name: Lint do inventário APP_ENV
         run: ruff check scripts/app_env_transition_inventory.py scripts/app_env_transition_inventory_report.py scripts/test_app_env_transition_inventory.py scripts/test_production_release_workflow_policy.py scripts/test_prod_release_state.py
       - name: Lint do bundle de release API/web

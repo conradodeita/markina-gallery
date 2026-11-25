@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import asdict
@@ -19,7 +20,7 @@ from app.google_drive_client import HttpxDriveTransport
 
 from . import filesystem as fs
 from .filesystem import BackupStorageError
-from .runtime_config import CONFIG_ROOT, RuntimeConfig, load_runtime_config
+from .runtime_config import CONFIG_ROOT, RuntimeConfig, _private_root, load_runtime_config
 from .runtime_config import bind_selected_destination as bind_folder_id
 from .runtime_source import (
     SourceConfig,
@@ -27,6 +28,7 @@ from .runtime_source import (
     _docker,
     attest_container,
     load_source_config,
+    prepare_source_config,
     snapshot,
 )
 from .runtime_worker import WORK_ROOT, RuntimeResult, _attest_destination, run_due
@@ -111,15 +113,22 @@ _REHEARSAL_JOURNAL = re.compile(r"synthetic-rehearsal-[0-9a-f]{32}\.json\Z")
 def _assert_backup_units_inert() -> None:
     for unit in ("pyp-platform-backup.service", "pyp-platform-backup.timer"):
         result = subprocess.run(
-            ["/usr/bin/systemctl", "show", "--property=LoadState,UnitFileState,ActiveState", "--value", unit],
+            ["/usr/bin/systemctl", "show", "--property=LoadState,UnitFileState,ActiveState", unit],
             capture_output=True, check=False, text=True, timeout=10,
         )
         if result.returncode:
             raise BackupStorageError("unsafe")
-        fields = result.stdout.rstrip("\n").split("\n")
-        if len(fields) != 3:
+        fields: dict[str, str] = {}
+        for line in result.stdout.splitlines():
+            name, separator, value = line.partition("=")
+            if not separator or name in fields:
+                raise BackupStorageError("unsafe")
+            fields[name] = value
+        if set(fields) != {"LoadState", "UnitFileState", "ActiveState"}:
             raise BackupStorageError("unsafe")
-        load_state, enabled_state, active_state = fields
+        load_state, enabled_state, active_state = (
+            fields["LoadState"], fields["UnitFileState"], fields["ActiveState"],
+        )
         if active_state != "inactive":
             raise BackupStorageError("unsafe")
         if load_state == "not-found":
@@ -405,7 +414,54 @@ def _bind_selected_destination() -> RuntimeResult:
         raise BackupStorageError("authorization") from None
 
 
+def _prepare_source() -> RuntimeResult:
+    if load_runtime_config().enabled:
+        raise BackupStorageError("unsafe")
+    _assert_backup_units_inert()
+    if _pending_rehearsal_journals():
+        raise BackupStorageError("conflict")
+    raw = sys.stdin.buffer.read(4097)
+    if not 0 < len(raw) <= 4096:
+        raise BackupStorageError("unsafe")
+    try:
+        witness = json.loads(raw)
+    except (ValueError, RecursionError):
+        raise BackupStorageError("unsafe") from None
+    prepare_source_config(witness)
+    return RuntimeResult("source_prepared")
+
+
+def _prepare_work_directories() -> None:
+    directory = _private_root(WORK_ROOT)
+    try:
+        missing = []
+        for name in ("catalog", "artifacts"):
+            try:
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                missing.append(name)
+                continue
+            if (not stat.S_ISDIR(info.st_mode) or (info.st_uid, info.st_gid) != (0, 0)
+                    or stat.S_IMODE(info.st_mode) != 0o700):
+                raise BackupStorageError("unsafe")
+        for name in missing:
+            os.mkdir(name, mode=0o700, dir_fd=directory)
+        if missing:
+            os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--prepare-source"]:
+        try:
+            report = _prepare_source()
+        except BackupStorageError as error:
+            report = RuntimeResult("failed", error=error.code)
+        except Exception:  # noqa: BLE001 -- a saída não reflete dados da configuração.
+            report = RuntimeResult("failed", error="io")
+        print(json.dumps(asdict(report), default=str, sort_keys=True))
+        return 0 if report.status == "source_prepared" else 1
     if sys.argv[1:] == ["--synthetic-destination-rehearsal"]:
         try:
             report = _run_synthetic_destination_rehearsal()
@@ -446,6 +502,7 @@ def main() -> int:
             # Política conservadora para dump, embalagem, ciphertext e leitura de retorno.
             if shutil.disk_usage(WORK_ROOT).free < 4 * source.max_dump_bytes:
                 raise BackupStorageError("quota")
+            _prepare_work_directories()
             report = run_due(schema_revision=source.schema_revision,
                              at=datetime.now(timezone.utc),  # noqa: UP017 -- host Python 3.10
                              snapshot=lambda revision: snapshot(source, revision),
