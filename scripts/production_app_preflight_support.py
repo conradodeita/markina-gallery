@@ -462,6 +462,17 @@ class LocalSupportHost:
                         except OSError:
                             raise SupportError("backup_retirement_current_link_invalid") from None
                         self._retirement_entry_metadata(release, release_info, kind="directory")
+                    elif re.fullmatch(r"releases/[0-9a-f]{40}/venv/lib64", relative):
+                        if target != "lib":
+                            raise SupportError("backup_retirement_target_mode_or_type_invalid")
+                        library = path.with_name("lib")
+                        try:
+                            library_info = library.lstat()
+                        except OSError:
+                            raise SupportError("backup_retirement_target_changed") from None
+                        self._retirement_entry_metadata(library, library_info, kind="directory")
+                    else:
+                        raise SupportError("backup_retirement_target_mode_or_type_invalid")
                     entries.append({"path": relative, **state})
                 else:
                     raise SupportError("backup_retirement_target_mode_or_type_invalid")

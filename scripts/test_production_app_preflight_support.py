@@ -1235,6 +1235,44 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
     def inventory(self, host):
         return support.SupportCoordinator(host).backup_retirement_inventory(SHA_MAIN, SHA_CONNECTION)
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
+    def test_retirement_runtime_inventory_allows_only_known_release_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "runtime"
+            release = root / "releases" / ("a" * 40)
+            library = release / "venv" / "lib"
+            library.mkdir(parents=True)
+            (release / "venv" / "lib64").symlink_to("lib", target_is_directory=True)
+            (root / "current").symlink_to(f"releases/{'a' * 40}", target_is_directory=True)
+            host = support.LocalSupportHost()
+            def fake_entry_metadata(_path, _info, *, kind, symlink_target=None):
+                metadata = {"kind": kind}
+                if symlink_target is not None:
+                    metadata["target"] = symlink_target
+                return metadata
+
+            with patch.object(host, "_assert_parent_directory"), \
+                    patch.object(host, "_retirement_entry_metadata", side_effect=fake_entry_metadata), \
+                    patch("os.path.ismount", return_value=False):
+                state = host._retirement_tree_state(
+                    root, allow_symlinks=True,
+                    allowed_root_names={"current", "releases", "rollback", "install-journal.json"},
+                )
+            self.assertTrue(state["present"])
+            kinds = {entry["path"]: entry["kind"] for entry in state["entries"]}
+            self.assertEqual(kinds["current"], "symlink")
+            self.assertEqual(kinds[f"releases/{'a' * 40}/venv/lib64"], "symlink")
+
+            (release / "unexpected").symlink_to("venv/lib", target_is_directory=True)
+            with patch.object(host, "_assert_parent_directory"), \
+                    patch.object(host, "_retirement_entry_metadata", side_effect=fake_entry_metadata), \
+                    patch("os.path.ismount", return_value=False), \
+                    self.assertRaisesRegex(support.SupportError, "backup_retirement_target_mode_or_type_invalid"):
+                host._retirement_tree_state(
+                    root, allow_symlinks=True,
+                    allowed_root_names={"current", "releases", "rollback", "install-journal.json"},
+                )
+
     def test_retirement_inventory_identifies_picker_mount_source_and_compose_file(self):
         container_id = "a" * 64
         source = "/etc/pyp-google-drive/picker-config.json"

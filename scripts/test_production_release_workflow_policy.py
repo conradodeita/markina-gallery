@@ -13,7 +13,11 @@ from check_infinitepay_retirement_scope import (
     evaluate_followup_scope as evaluate_retirement_followup_scope,
 )
 from check_prod_app_release_scope import evaluate, git
-from classify_prod_release import classify
+from classify_prod_release import (
+    BACKUP_RETIREMENT_FILES,
+    BACKUP_RETIREMENT_PREFIXES,
+    classify,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -56,8 +60,9 @@ def release_candidate_snapshot(root: Path, manifest: dict, *, target: str = "HEA
         original_retirement = evaluate_retirement_scope(changed, compose_diff)[0]
         parent = git(root, "rev-parse", f"{source}^")
         integrated_followup = evaluate_retirement_followup_scope(root, parent, source)[0]
-        if classify(changed) != "protected" or not (original_retirement or integrated_followup):
-            raise AssertionError("snapshot do manifesto não é candidato API/web nem change de aposentadoria aprovada")
+        backup_retirement = _is_backup_retirement_snapshot(root, baseline, source, changed)
+        if classify(changed) != "protected" or not (original_retirement or integrated_followup or backup_retirement):
+            raise AssertionError("snapshot do manifesto não é candidato API/web nem change de aposentadoria protegida reconhecida")
     ready, reason = evaluate(root, baseline, target, manifest)
     if not ready:
         # Classify only changes after the reviewed manifest snapshot. The
@@ -71,6 +76,54 @@ def release_candidate_snapshot(root: Path, manifest: dict, *, target: str = "HEA
         }:
             raise AssertionError(f"candidato não comprova a recusa protegida esperada: {reason}")
     return source, ready, reason
+
+
+def _is_backup_retirement_snapshot(root: Path, baseline: str, source: str,
+                                   changed: set[str]) -> bool:
+    required = {
+        ".github/workflows/production-app-compose-bridge-install.yml",
+        "scripts/production_app_preflight_support.py",
+        "scripts/test_production_app_preflight_support.py",
+        "openspec/changes/retire-platform-backup-runtime/tasks.md",
+        "openspec/changes/retire-platform-backup-runtime/specs/deployment-operations/platform-backup-retirement/spec.md",
+    }
+    if not required.issubset(changed):
+        return False
+    try:
+        task_text = git(root, "show", f"{source}:openspec/changes/retire-platform-backup-runtime/tasks.md")
+        spec_text = git(root, "show", f"{source}:openspec/changes/retire-platform-backup-runtime/specs/deployment-operations/platform-backup-retirement/spec.md")
+        workflow_text = git(root, "show", f"{source}:.github/workflows/production-app-compose-bridge-install.yml")
+    except subprocess.CalledProcessError:
+        return False
+    if ("backup-retirement-inventory" not in workflow_text or "retire-backup-runtime" not in workflow_text
+            or "identificar o container" not in task_text
+            or "caminhos de origem e destino" not in spec_text):
+        return False
+
+    retired_exact = BACKUP_RETIREMENT_FILES - {
+        "scripts/production-preflight-ssh-wrapper.sh", "scripts/production_app_compose_bridge.py",
+    } | {
+        ".github/workflows/production-google-picker-config.yml",
+        "scripts/build_platform_backup_runtime.sh",
+        "scripts/install-prod-platform-backup-wrapper.sh",
+        "scripts/install_platform_backup_runtime.py",
+        "scripts/platform_backup_runtime_artifact.py",
+        "scripts/platform_backup_runtime_inventory.py",
+        "scripts/platform_backup_wrapper_restore.py",
+    }
+    status_lines = git(root, "diff", "--name-status", baseline, source).splitlines()
+    retired_deletions = 0
+    for line in status_lines:
+        fields = line.split("\t")
+        if len(fields) != 2:
+            continue
+        status, path = fields
+        retired = path in retired_exact or path.startswith(BACKUP_RETIREMENT_PREFIXES)
+        if retired:
+            if status != "D":
+                return False
+            retired_deletions += 1
+    return retired_deletions > 0
 
 
 def main() -> None:
@@ -696,8 +749,8 @@ def main() -> None:
         ("127.0.0.1:8080", "porta Markina documentada"),
         ("https://markina.pickyourpic.com.br", "domínio documentado"),
         ("worker OTP", "exclusão do worker OTP documentada"),
-        ("pyp-platform-backup.service", "serviço de backup fora do deploy API/web"),
-        ("pyp-platform-backup.timer", "timer de backup fora do deploy API/web"),
+        ("remoção dos arquivos instalados no host segue workflow protegido separado",
+         "retirada do runtime legado fora do deploy API/web"),
     ):
         require(fragment, label, APP_RUNBOOK)
     require("compose exec -T nginx nginx -t", "validação confinada ao nginx Markina", release_script)
