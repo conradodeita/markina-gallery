@@ -41,7 +41,7 @@ EXPECTED_REFERENCE_LINE_COUNTS = {
     "backend/app/platform_backup/archive.py": 1,
     "backend/app/platform_backup/production_cli.py": 2,
     "backend/app/platform_backup/runtime_config.py": 2,
-    "backend/app/platform_backup/runtime_source.py": 1,
+    "backend/app/platform_backup/runtime_source.py": 3,
     "backend/app/google_drive_picker.py": 1,
     "backend/app/private_fields.py": 2,
     "backend/app/push_subscriptions.py": 2,
