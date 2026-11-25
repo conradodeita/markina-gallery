@@ -7,7 +7,6 @@ import hashlib
 import io
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 import zipfile
@@ -24,6 +23,8 @@ class RuntimeInstallTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="pyp-backup-install-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        self.python_executable = self.root / "synthetic-python"
+        self.python_executable.write_bytes(b"synthetic interpreter")
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self._git("init", "--quiet")
@@ -133,7 +134,7 @@ class RuntimeInstallTests(unittest.TestCase):
                 inventory_provider=inventory_provider or (lambda: self.inventory_result),
                 runner=runner or (lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "", "")),
                 install_root=self.install_root, systemd_root=self.systemd_root, config_root=self.config_root,
-                python_executable=sys.executable,
+                python_executable=str(self.python_executable),
                 lock_path=self.lock_path, lock_owner=self.lock_owner,
                 require_root=(os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0),
             )
@@ -209,7 +210,7 @@ class RuntimeInstallTests(unittest.TestCase):
     def test_capacity_bound_uses_verified_wheel_contents_and_stage_payload(self) -> None:
         files = installer._read_bundle_files(self.bundle)
         requirement = installer._installation_capacity_requirements(
-            files, python_executable=sys.executable,
+            files, python_executable=str(self.python_executable),
             install_block_size=4096, systemd_block_size=4096,
         )
         self.assertGreater(requirement["disk_install_root"], sum(map(len, files.values())))
@@ -221,7 +222,7 @@ class RuntimeInstallTests(unittest.TestCase):
         files[wheel_path] = b"not a wheel archive"
         with self.assertRaisesRegex(installer.InstallError, "^install_capacity_bound_invalid$"):
             installer._installation_capacity_requirements(
-                files, python_executable=sys.executable,
+                files, python_executable=str(self.python_executable),
                 install_block_size=4096, systemd_block_size=4096,
             )
 
@@ -383,7 +384,7 @@ class RuntimeInstallTests(unittest.TestCase):
                     else subprocess.CompletedProcess(argv, 0, "", ""),
                 install_root=self.install_root, systemd_root=self.systemd_root,
                 config_root=self.config_root, lock_path=self.lock_path, lock_owner=self.lock_owner,
-                python_executable=sys.executable,
+                python_executable=str(self.python_executable),
                 require_root=(os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0),
             )
         self.assertEqual(calls, 3)

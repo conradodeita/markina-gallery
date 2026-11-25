@@ -27,3 +27,10 @@
 - Após implementação e revisão do código, obter autorização de merge e confirmar CI verde da `main` no SHA exato.
 - Atualizar o forced command por seu workflow protegido, após inventário/fingerprint e aprovação específicos; essa instalação não libera o runtime.
 - Fazer inventário read-only novo e obter aprovação humana da fingerprint estável, capacidade atual e pacote antes de solicitar a aprovação separada do ambiente `production` para `install` inerte.
+
+### Correção após CI Linux — 24/11/2026
+
+- CI `45517178750`, SHA `41e000890602505a989079d3681607769e832865`: backend (quatro shards), frontend, qualidade, imagens e Gitleaks passaram; o agregado falhou em quatro testes do instalador porque o bound incluía o interpretador real do runner, incompatível com o disco sintético de 100 MB. A falha ocorreu antes dos cenários de transação pretendidos.
+- A fixture agora fornece um arquivo de interpretador sintético de tamanho fixo, coerente com a instalação de wheels simulada. Nenhum gate de capacidade do instalador foi relaxado.
+- Em Docker Desktop `desktop-linux`, container descartável sem rede, worktree somente leitura e `/tmp` efêmero: `python -B -m unittest test_platform_backup_runtime_inventory test_install_platform_backup_runtime -q` executou 47 testes, todos passaram sem skips. Imagem local de validação `pyp-backup-contract-validation:20261124`, Python 3.13 e Git. A primeira imagem consultada não tinha Git; a execução válida usou imagem própria com Git.
+- Tasks 2.1 e 3.1 aguardam confirmação da nova CI no SHA corrigido; nenhuma operação de produção foi executada.
