@@ -76,3 +76,11 @@ Reutilizar resultados quando código, dependências, configuração e ambiente r
 - A v1 de arquivo não habilita expurgo remoto de fotos por idade. A autorização de backup global não autoriza remover mídia ou operar outras contas/serviços.
 
 Próxima ação após comprovar o backup global: retomar a task 1.4 do arquivo para provisionar/verificar identidade, raiz, permissões e limites, e só então executar o ensaio real do proprietário. O adaptador local da task 1.4a e suas provas sintéticas devem ser reaproveitados, sem repetir a implementação do zero.
+
+## Preparação local da composição — 24/11/2026
+
+A change `compose-media-archive-worker-storage` acrescenta composição exclusivamente sintética ao dispatcher existente: `SyntheticMediaArchiveBinding` declara tenant selecionado, tenant do storage, raiz `synthetic:`, namespace e finalidade; configuração divergente recusa antes de descoberta/claim. Descoberta de avisos/ciclos e claim recebem o mesmo filtro opcional por tenant. Lease global fora do tenant permanece intacto e impede retomada pelo piloto; callers sem filtro preservam o comportamento anterior.
+
+Essa declaração de fixture não autentica o proprietário nem comprova OAuth, acesso, quota ou custódia. A decisão de identidade Workspace dedicada distinta da conta/credencial de backup e raiz própria continua obrigatória. Nenhuma factory Google é selecionada ou conectada por esse trabalho. O futuro binding operacional exige o gate próprio da task 1.4; não usar esse binding sintético como evidência de autorização real.
+
+Após revisão da durabilidade, o loop sem argumento permanece totalmente fechado e o configurador recusa qualquer storage/binding sintético. O slot legado não é selecionado. Composição em memória é exclusiva da chamada direta do harness local com SessionLocal/raízes descartáveis; em production até a chamada direta é recusada antes de claim/cleanup. Metadados da fixture não provam identidade nem durabilidade. A futura ativação exige contrato e vínculo operacional durável aprovados no gate próprio.

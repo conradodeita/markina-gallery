@@ -373,3 +373,74 @@ def test_postgres_two_workers_cannot_claim_two_transfers(postgres_schema, monkey
         resumed = claim_next_operation(db, at=_AT + timedelta(seconds=122))
         assert resumed and resumed.operation_id == operation_id
         assert resumed.lease_token != original_claim.lease_token
+
+
+@pytest.fixture(params=["sqlite", "postgresql"])
+def scoped_claim_engine(request):
+    if request.param == "sqlite":
+        engine = _engine_with_runtime_schema()
+        try:
+            yield engine
+        finally:
+            engine.dispose()
+    else:
+        from tests.schema_fixtures import create_test_schema
+        engine = request.getfixturevalue("postgres_schema")
+        create_test_schema(engine)
+        yield engine
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_scoped_claim_preserves_other_tenant_global_lease(expired, scoped_claim_engine):
+    engine = scoped_claim_engine
+    other, rows = _seed(engine, [{"type": "archive", "created_at": _AT}])
+    owner, _ = _seed(engine, [{"type": "restore", "created_at": _AT}])
+    with Session(engine, expire_on_commit=False) as db:
+        claim = claim_next_operation(db, tenant_id=other, at=_AT, lease_seconds=1)
+        assert claim and claim.operation_id == rows[0][2]
+        at = _AT + timedelta(seconds=2 if expired else 0)
+        assert claim_next_operation(db, tenant_id=owner, at=at) is None
+        db.expire_all()
+        operation = db.get(MediaArchiveOperation, claim.operation_id)
+        coordinator = db.get(MediaArchiveCoordinator, 1)
+        assert operation.lease_token == claim.lease_token
+        assert operation.attempts == 1
+        assert coordinator.active_operation_id == claim.operation_id
+        assert coordinator.lease_token == claim.lease_token
+    engine.dispose()
+
+
+def test_scoped_claim_selects_only_requested_tenant_and_resumes_own_lease(scoped_claim_engine):
+    engine = scoped_claim_engine
+    _other, other_rows = _seed(engine, [{"type": "restore", "created_at": _AT}])
+    owner, owner_rows = _seed(engine, [{"type": "archive", "created_at": _AT}])
+    with Session(engine, expire_on_commit=False) as db:
+        claim = claim_next_operation(db, tenant_id=owner, at=_AT, lease_seconds=1)
+        assert claim and claim.operation_id == owner_rows[0][2]
+        assert db.get(MediaArchiveOperation, other_rows[0][2]).status == "queued"
+        resumed = claim_next_operation(db, tenant_id=owner, at=_AT + timedelta(seconds=2))
+        assert resumed and resumed.operation_id == claim.operation_id
+        assert resumed.lease_token != claim.lease_token
+        assert db.get(MediaArchiveOperation, other_rows[0][2]).attempts == 0
+    engine.dispose()
+
+
+def test_postgres_scoped_workers_preserve_single_global_lease(postgres_schema):
+    from tests.schema_fixtures import create_test_schema
+    create_test_schema(postgres_schema)
+    owner, owner_rows = _seed(postgres_schema, [{"type": "archive", "created_at": _AT}])
+    other, other_rows = _seed(postgres_schema, [{"type": "restore", "created_at": _AT}])
+    barrier = Barrier(2)
+    def scoped_claim():
+        with Session(postgres_schema, expire_on_commit=False) as db:
+            barrier.wait(timeout=10)
+            return claim_next_operation(db, tenant_id=owner, at=_AT)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claims = list(executor.map(lambda _: scoped_claim(), range(2)))
+    assert sum(claim is not None for claim in claims) == 1
+    assert {claim.operation_id for claim in claims if claim} == {owner_rows[0][2]}
+    with Session(postgres_schema) as db:
+        assert claim_next_operation(db, tenant_id=other, at=_AT + timedelta(seconds=121)) is None
+        operation = db.get(MediaArchiveOperation, other_rows[0][2])
+        assert operation.status == "queued" and operation.attempts == 0
+        assert db.get(MediaArchiveCoordinator, 1).active_operation_id == owner_rows[0][2]
