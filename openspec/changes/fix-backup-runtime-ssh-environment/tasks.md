@@ -13,3 +13,7 @@
 ## 2. Diagnóstico da instalação
 
 - [ ] 2.1 Corrigir a perda de diagnóstico observada no run 45596376126. Classificar pelo status SSH e pela resposta estruturada do instalador, sem publicar saída bruta em falha. Preservar o recibo em sucesso e validar o contrato em CI.
+
+- [ ] 2.2 Corrigir a recusa `install_tree_unsafe` reproduzida em Python 3.10 ARM64 com o alias padrão `venv/lib64`. Verificar que o alvo relativo padrão funciona, que desvios continuam bloqueados e que o pacote completo passa no staging offline. Atualizar o pin do wrapper.
+
+Evidência local da task 2.2: em 25/11/2026, a inspeção protegida do host por leitura confirmou a presença da lógica de criação de `lib64` no venv Python 3.10.12 e as precondições anteriores à escrita passaram em uma prova interrompida antes da criação da árvore. O candidato anterior falhou em ambiente Linux ARM64 isolado com `venv --without-pip --copies` seguido de `_privatize_tree`, código `install_tree_unsafe`. A correção preserva o alias relativo e verifica tipo, alvo, proprietário e links. Passaram 48 testes focados em Linux e o ensaio ARM64 offline com o pacote do run 45605080820, incluindo staging, permissões, troca e import posterior. CI da PR e novo gate de produção pendentes.

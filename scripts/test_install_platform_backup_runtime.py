@@ -139,6 +139,29 @@ class RuntimeInstallTests(unittest.TestCase):
                 require_root=(os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0),
             )
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX symlinks")
+    def test_privatize_tree_preserves_only_the_standard_venv_lib64_alias(self) -> None:
+        stage = self.root / "staging"
+        venv = stage / "venv"
+        library = venv / "lib"
+        library.mkdir(parents=True)
+        alias = venv / "lib64"
+        alias.symlink_to("lib", target_is_directory=True)
+        installer._privatize_tree(stage, root_only=os.geteuid() == 0)
+        self.assertEqual(os.readlink(alias), "lib")
+        self.assertEqual(library.stat().st_mode & 0o777, 0o700)
+
+        alias.unlink()
+        alias.symlink_to(library, target_is_directory=True)
+        with self.assertRaisesRegex(installer.InstallError, "^install_tree_unsafe$"):
+            installer._privatize_tree(stage, root_only=os.geteuid() == 0)
+
+        alias.unlink()
+        alias.symlink_to("lib", target_is_directory=True)
+        (venv / "extra").symlink_to("lib", target_is_directory=True)
+        with self.assertRaisesRegex(installer.InstallError, "^install_tree_unsafe$"):
+            installer._privatize_tree(stage, root_only=os.geteuid() == 0)
+
     def test_inert_check_requires_inactive_units_and_explicit_missing_phase(self) -> None:
         def absent(argv):
             return subprocess.CompletedProcess(
