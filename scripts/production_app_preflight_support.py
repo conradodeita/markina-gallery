@@ -1430,6 +1430,24 @@ class SupportCoordinator:
             value = snapshot.get(target)
             if not isinstance(value, dict) or type(value.get("present")) is not bool:
                 raise SupportError("backup_retirement_inventory_invalid")
+        config = snapshot["config"]
+        config_entries = config.get("entries")
+        if not isinstance(config_entries, list):
+            raise SupportError("backup_retirement_inventory_invalid")
+        config_files: set[str] = set()
+        for entry in config_entries:
+            if not isinstance(entry, dict):
+                raise SupportError("backup_retirement_inventory_invalid")
+            path = entry.get("path")
+            if (not isinstance(path, str)
+                    or path not in {"destination.json", "keyring.json"}
+                    or entry.get("kind") != "file"
+                    or entry.get("mode") != 0o400
+                    or path in config_files):
+                raise SupportError("backup_retirement_unexpected_entry")
+            config_files.add(path)
+        if config.get("present") is False and config_entries:
+            raise SupportError("backup_retirement_inventory_invalid")
 
     def backup_retirement_inventory(self, support_sha: str,
                                     connection_binding: str) -> tuple[str, dict[str, Any]]:

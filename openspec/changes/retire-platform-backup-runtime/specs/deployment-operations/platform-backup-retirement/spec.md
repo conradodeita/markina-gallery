@@ -32,6 +32,11 @@ A remoção no servidor SHALL ocorrer somente pelo workflow protegido `productio
 - **THEN** o workflow MUST abortar antes de excluir
 - **AND** não executa SQL, migration, Compose, restart, Drive ou operação em outro projeto
 
+#### Scenario: Layout da configuração antiga é inesperado
+- **WHEN** `/etc/pyp-backup` contém caminhos aninhados, outros nomes, diretórios no lugar de arquivos ou modos diferentes do layout conhecido
+- **THEN** a pré-condição da retirada MUST bloqueá-la antes de excluir qualquer alvo
+- **AND** o layout conhecido contém somente `destination.json` e `keyring.json` como arquivos regulares diretos `root:root` no modo `0400`, podendo qualquer um deles estar ausente
+
 #### Scenario: Falha durante ou depois da exclusão
 - **WHEN** a retirada parcial ou a verificação posterior falha
 - **THEN** a operação SHALL parar, preservar todos os alvos ainda existentes e gravar somente diagnóstico estático sanitizado quando possível

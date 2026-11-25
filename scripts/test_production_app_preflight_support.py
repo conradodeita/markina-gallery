@@ -1235,6 +1235,29 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
     def inventory(self, host):
         return support.SupportCoordinator(host).backup_retirement_inventory(SHA_MAIN, SHA_CONNECTION)
 
+    def test_retirement_blocks_unexpected_backup_config_layout(self):
+        entries = (
+            {"path": "destination.json", "kind": "directory", "mode": 0o700},
+            {"path": "destination.json/extra.json", "kind": "file", "mode": 0o400},
+            {"path": "keyring.json", "kind": "file", "mode": 0o600},
+            {"path": "unknown.json", "kind": "file", "mode": 0o400},
+        )
+        for entry in entries:
+            with self.subTest(entry=entry):
+                host = FakeBackupRetirementHost()
+                host.snapshot["config"]["entries"] = [entry]
+                with self.assertRaisesRegex(support.SupportError, "backup_retirement_unexpected_entry"):
+                    support.SupportCoordinator._assert_backup_retirement_ready(host.snapshot)
+
+    def test_retirement_accepts_known_backup_config_layout(self):
+        host = FakeBackupRetirementHost()
+        host.snapshot["config"]["entries"] = [
+            {"path": "destination.json", "kind": "file", "mode": 0o400},
+            {"path": "keyring.json", "kind": "file", "mode": 0o400},
+        ]
+
+        support.SupportCoordinator._assert_backup_retirement_ready(host.snapshot)
+
     @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
     def test_retirement_runtime_inventory_allows_only_known_release_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
