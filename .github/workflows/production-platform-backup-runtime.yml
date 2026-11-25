@@ -9,7 +9,7 @@ on:
         type: choice
         options: [inventory, diagnose, verify-channel, install, bind-and-rehearse, reconcile]
       approval_fingerprint:
-        description: Fingerprint apropriada para a operação (v2 para install; integral para as demais; vazia em inventory/diagnose/verify-channel)
+        description: Fingerprint apropriada para a operação (v2 para install e bind-and-rehearse, integral para reconcile; vazia em inventory/diagnose/verify-channel)
         required: false
         type: string
         default: ''
@@ -121,7 +121,7 @@ jobs:
             exit 1
           fi
           fingerprint="$full_fingerprint"
-          if [[ "$OPERATION" == install ]]; then
+          if [[ "$OPERATION" == install || "$OPERATION" == bind-and-rehearse ]]; then
             fingerprint="$approval_fingerprint"
           fi
           echo "bundle_sha256=$EXPECTED_BUNDLE" >> "$GITHUB_STEP_SUMMARY"
