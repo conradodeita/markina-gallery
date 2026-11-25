@@ -1,6 +1,7 @@
 """Guard the fixed SSH and protected environment contract for backup operations."""
 
 import ast
+import base64
 import hashlib
 import json
 import os
@@ -44,7 +45,7 @@ def main() -> int:
                 "protected_environments_missing")
         require("cancel-in-progress: false" in workflow, "operation_cancellation_not_disabled")
 
-    for mode in ("inventory", "diagnose", "install", "bind-and-rehearse", "reconcile"):
+    for mode in ("inventory", "diagnose", "install", "prepare-source", "bind-and-rehearse", "reconcile"):
         require(mode in RUNTIME, "runtime_operation_missing:" + mode)
     diagnose_start = RUNTIME.index("  diagnose:\n")
     operate_start = RUNTIME.index("  operate:\n", diagnose_start)
@@ -233,11 +234,11 @@ def main() -> int:
     require("inputs.approval_fingerprint" in RUNTIME and "inputs.approval_bundle_sha256" in RUNTIME,
             "runtime_approval_inputs_missing")
     require("backup_runtime_install_approval_fingerprint_v2=" in RUNTIME
-            and 'if [[ "$OPERATION" == install || "$OPERATION" == bind-and-rehearse ]]' in RUNTIME
+            and 'if [[ "$OPERATION" == install || "$OPERATION" == prepare-source || "$OPERATION" == bind-and-rehearse ]]' in RUNTIME
             and 'fingerprint="$approval_fingerprint"' in RUNTIME
             and 'fingerprint="$full_fingerprint"' in RUNTIME,
             "runtime_operation_specific_approval_fingerprint_missing")
-    binding = SSH_WRAPPER.split("    bind-and-rehearse|reconcile)", 1)[1].split("\n    ;;", 1)[0]
+    binding = SSH_WRAPPER.split("    prepare-source|bind-and-rehearse|reconcile)", 1)[1].split("\n      ;;", 1)[0]
     require('fingerprint_label="backup_runtime_fingerprint"' in binding
             and 'if [[ "$backup_mode" == bind-and-rehearse ]]; then' in binding
             and 'fingerprint_label="backup_runtime_install_approval_fingerprint_v2"' in binding
@@ -245,6 +246,47 @@ def main() -> int:
             < binding.index('[[ "$actual_fingerprint" == "$backup_fingerprint" ]]')
             < binding.index("--bind-selected-destination"),
             "backup_bind_must_validate_stable_identity_and_fresh_capacity_under_lock")
+    source_case = operate_job.split("            prepare-source)", 1)[1].split(";;", 1)[0]
+    require("MARKINA_PLATFORM_BACKUP_PREPARE_SOURCE_SHA=" in source_case and '</dev/null' in source_case
+            and binding.index("acquire_backup_release_lock") < binding.index("assert-installed")
+            < binding.index('source-witness "$backup_sha" "$backup_fingerprint"')
+            < binding.index('--prepare-source')
+            and 'printf \'%s\\n\' "$source_witness" | sudo' in binding
+            and 'result["approval_fingerprint"] != args[1] or not module.install_preconditions(inventory)' in SSH_WRAPPER,
+            "backup_prepare_source_must_be_attested_and_use_private_witness_under_lock")
+    source_bootstrap = SSH_WRAPPER.split("inventory_bootstrap=\"$(cat <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    test_inventory = {
+        "containers": {
+            "api": {"id": "a" * 64, "image": "sha256:" + "b" * 64, "internal": "excluded-api-metadata"},
+            "db": {"id": "c" * 64, "image": "sha256:" + "d" * 64},
+            "web": {"id": "e" * 64, "image": "sha256:" + "f" * 64},
+        },
+        "database_schema": "20261113_0126",
+        "private": "excluded-inventory-data",
+    }
+    inventory_result = {"approval_fingerprint": "1" * 64, "inventory": test_inventory}
+    for preconditions, approved, accepted in ((True, "1" * 64, True), (True, "2" * 64, False),
+                                               (False, "1" * 64, False)):
+        module_source = (
+            "def collect_inventory(*, bridge_sha):\n"
+            "    assert bridge_sha == '3' * 40\n"
+            f"    return {inventory_result!r}\n"
+            f"def install_preconditions(inventory): return {preconditions!r}\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", source_bootstrap, base64.b64encode(module_source.encode()).decode(),
+             "source-witness", "3" * 40, approved],
+            capture_output=True, check=False, text=True,
+        )
+        if accepted:
+            require(result.returncode == 0 and json.loads(result.stdout) == {
+                "api": {"id": "a" * 64, "image": "sha256:" + "b" * 64},
+                "db": test_inventory["containers"]["db"],
+                "schema_revision": "20261113_0126",
+            } and not result.stderr, "backup_source_witness_contains_unexpected_metadata")
+        else:
+            require(result.returncode == 1 and not (result.stdout or result.stderr),
+                    "backup_source_witness_leaked_on_failed_preconditions")
     require("REQUESTED_FINGERPRINT\" == \"$INVENTORY_FINGERPRINT" in RUNTIME
             and "REQUESTED_BUNDLE\" == \"$BUNDLE_SHA256" in RUNTIME,
             "runtime_preflight_approval_not_compared")

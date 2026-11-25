@@ -7,9 +7,9 @@ on:
         description: Preparar inventário/diagnóstico ou executar uma etapa aprovada
         required: true
         type: choice
-        options: [inventory, diagnose, verify-channel, install, bind-and-rehearse, reconcile]
+        options: [inventory, diagnose, verify-channel, install, prepare-source, bind-and-rehearse, reconcile]
       approval_fingerprint:
-        description: Fingerprint apropriada para a operação (v2 para install e bind-and-rehearse, integral para reconcile; vazia em inventory/diagnose/verify-channel)
+        description: Fingerprint apropriada para a operação (v2 para install, prepare-source e bind-and-rehearse, integral para reconcile; vazia em inventory/diagnose/verify-channel)
         required: false
         type: string
         default: ''
@@ -121,7 +121,7 @@ jobs:
             exit 1
           fi
           fingerprint="$full_fingerprint"
-          if [[ "$OPERATION" == install || "$OPERATION" == bind-and-rehearse ]]; then
+          if [[ "$OPERATION" == install || "$OPERATION" == prepare-source || "$OPERATION" == bind-and-rehearse ]]; then
             fingerprint="$approval_fingerprint"
           fi
           echo "bundle_sha256=$EXPECTED_BUNDLE" >> "$GITHUB_STEP_SUMMARY"
@@ -422,6 +422,10 @@ jobs:
               sys.exit("backup_install_receipt_mismatch")
           ' "$GITHUB_SHA" "$BUNDLE_SHA256" <<<"$receipt"
               printf '%s\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            prepare-source)
+              command="MARKINA_PLATFORM_BACKUP_PREPARE_SOURCE_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_FINGERPRINT=${APPROVAL_FINGERPRINT}"
+              ssh "${options[@]}" "$target" "$command" </dev/null | tee -a "$GITHUB_STEP_SUMMARY"
               ;;
             bind-and-rehearse)
               command="MARKINA_PLATFORM_BACKUP_BIND_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_FINGERPRINT=${APPROVAL_FINGERPRINT}"

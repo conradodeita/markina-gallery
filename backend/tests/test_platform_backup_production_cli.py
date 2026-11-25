@@ -1,15 +1,57 @@
 """Provas sintéticas do vínculo owner-only do destino de backup."""
 
+import base64
+import io
 import json
 import os
 import stat
+import subprocess
+import sys
+from functools import partial
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
 from app.platform_backup import production_cli as cli
+from app.platform_backup import runtime_config as config_module
+from app.platform_backup import runtime_source as source_module
 from app.platform_backup.filesystem import BackupStorageError
+
+
+def _inert_systemctl(argv, **_kwargs):
+    assert "--value" not in argv
+    unit = argv[-1]
+    assert unit in {"pyp-platform-backup.service", "pyp-platform-backup.timer"}
+    enabled = "static" if unit.endswith(".service") else "disabled"
+    return subprocess.CompletedProcess(
+        argv, 0, f"LoadState=loaded\nActiveState=inactive\nUnitFileState={enabled}\n", "",
+    )
+
+
+def test_inert_systemd_check_accepts_named_properties_in_host_order(monkeypatch):
+    monkeypatch.setattr(cli.subprocess, "run", _inert_systemctl)
+    cli._assert_backup_units_inert()
+
+
+@pytest.mark.parametrize("bad_timer", [
+    "LoadState=loaded\nActiveState=active\nUnitFileState=disabled\n",
+    "LoadState=loaded\nActiveState=inactive\nUnitFileState=static\n",
+    "LoadState=loaded\nActiveState=inactive\nUnitFileState=enabled\n",
+    "LoadState=loaded\nActiveState=inactive\nActiveState=inactive\nUnitFileState=disabled\n",
+    "LoadState=loaded\nUnitFileState=disabled\n",
+])
+def test_inert_systemd_check_rejects_unsafe_or_incomplete_properties(monkeypatch, bad_timer):
+    def systemctl(argv, **kwargs):
+        if argv[-1].endswith(".timer"):
+            return subprocess.CompletedProcess(argv, 0, bad_timer, "")
+        return _inert_systemctl(argv, **kwargs)
+
+    monkeypatch.setattr(cli.subprocess, "run", systemctl)
+    with pytest.raises(BackupStorageError, match="unsafe"):
+        cli._assert_backup_units_inert()
 
 
 def _config(folder_id: str, *, enabled: bool = False):
@@ -125,6 +167,158 @@ class SyntheticRehearsalStore:
 
     def find_rehearsal_item(self, *, name):
         return self.found_id if self.uploaded and name == self.uploaded[0][0] else None
+
+
+@pytest.fixture
+def private_backup_root(monkeypatch):
+    if os.name != "posix" or os.geteuid() != 0:
+        pytest.skip("O fluxo com filesystem real exige Linux root isolado")
+    monkeypatch.setenv("APP_ENV", "production")
+    with TemporaryDirectory(dir="/root") as temporary:
+        root = Path(temporary)
+        monkeypatch.setattr(cli, "CONFIG_ROOT", root)
+        monkeypatch.setattr(config_module, "CONFIG_ROOT", root)
+        monkeypatch.setattr(source_module, "CONFIG_ROOT", root)
+        monkeypatch.setattr(cli, "prepare_source_config", partial(source_module.prepare_source_config, root=root))
+        monkeypatch.setattr(cli, "bind_folder_id", partial(config_module.bind_selected_destination, root=root))
+        yield root
+
+
+@pytest.fixture
+def synthetic_source_witness(monkeypatch):
+    witness = {"api": {"id": "a" * 64, "image": "sha256:" + "b" * 64},
+               "db": {"id": "c" * 64, "image": "sha256:" + "d" * 64},
+               "schema_revision": "20261113_0126"}
+    postgres = "synthetic_db|on|170011|1000000000000000000|20261113_0126"
+    proof = {"release": "e" * 40, "witness": postgres}
+    project = {"api": "markina-gallery-app-" + "f" * 32, "db": "markina-gallery"}
+
+    def docker(*args):
+        if args[:2] == ("container", "inspect"):
+            for role in ("api", "db"):
+                item = witness[role]
+                if args[-1] == item["id"]:
+                    name = f"/{project[role]}-{role}-1"
+                    return f'{item["id"]}|{item["image"]}|{name}|true|{project[role]}|{role}'.encode()
+        if args[0] == "exec" and args[-1] == source_module._SOURCE_QUERY and witness["db"]["id"] in args:
+            assert "default_transaction_read_only=on" in args[2]
+            return postgres.encode()
+        if args[:2] == ("exec", witness["api"]["id"]) and source_module._API_SOURCE_PROVIDER in args:
+            assert args[-1] == source_module._SOURCE_QUERY
+            assert "SET TRANSACTION READ ONLY" in source_module._API_SOURCE_PROVIDER
+            return json.dumps(proof).encode()
+        pytest.fail("Comando fora das consultas sintéticas esperadas")
+
+    monkeypatch.setattr(source_module, "_docker", docker)
+    return witness, proof, project
+
+
+def test_prepare_bind_and_rehearse_runs_the_real_local_guards(
+    private_backup_root, synthetic_source_witness, monkeypatch, capsys,
+):
+    root = private_backup_root
+    witness, _, _ = synthetic_source_witness
+    install_id = str(uuid4())
+    destination_id = str(uuid4())
+    files = {
+        "keyring.json": {"version": 1, "installation_id": install_id, "active_key_id": "backup-f123456789ab",
+                         "keys": {"backup-f123456789ab": base64.b64encode(bytes(32)).decode()}},
+        "destination.json": {"version": 1, "installation_id": install_id, "destination_id": destination_id,
+                             "environment": "production", "scope": "drive.file", "provider": "google-workspace",
+                             "parent_folder_id": "old-folder", "marker": dict(config_module.DESTINATION_MARKER),
+                             "enabled": False},
+    }
+    for name, document in files.items():
+        path = root / name
+        path.write_text(json.dumps(document), encoding="utf-8")
+        path.chmod(0o400)
+    monkeypatch.setattr(cli.subprocess, "run", _inert_systemctl)
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(json.dumps(witness).encode())))
+    monkeypatch.setattr(cli, "_attest_database", lambda *_: pytest.fail("ensaio não faz snapshot"))
+    store = SyntheticRehearsalStore()
+
+    def picker_selection(*args):
+        assert cli._SELECTED_FOLDER_PROVIDER in args and args[1] == witness["api"]["id"]
+        assert args[-1] == "e" * 40
+        return b'{"folder_id":"selected-global-folder"}'
+
+    def drive_workspace(source, config):
+        assert source.api_container == witness["api"]["id"]
+        assert config.parent_folder_id == "selected-global-folder" and not config.enabled
+        return store
+
+    monkeypatch.setattr(cli, "_docker", picker_selection)
+    monkeypatch.setattr(cli, "_workspace", drive_workspace)
+    monkeypatch.setattr(cli, "_attest_destination", lambda _, actual: actual is store or pytest.fail())
+    # Cada entrada passa pelo dispatcher usado pelo wrapper. Apenas Docker, systemd e Drive são simulados.
+    for mode, status in (("--prepare-source", "source_prepared"),
+                         ("--bind-selected-destination", "destination_bound"),
+                         ("--synthetic-destination-rehearsal", "destination_synthetic_verified")):
+        monkeypatch.setattr(sys, "argv", ["production_cli.py", mode])
+        assert cli.main() == 0
+        captured = capsys.readouterr().out
+        assert json.loads(captured)["status"] == status
+        assert witness["api"]["id"] not in captured and store.found_id not in captured
+
+    source_path = root / "source.json"
+    assert stat.S_IMODE(source_path.stat().st_mode) == 0o400
+    assert source_module.load_source_config().max_dump_bytes == 1024 ** 3
+    assert config_module.load_runtime_config().parent_folder_id == "selected-global-folder"
+    assert config_module.load_runtime_config().enabled is False
+    assert len(store.uploaded) == 1
+    assert store.deleted == [(store.found_id, store.uploaded[0][0])]
+    assert {p.name for p in root.iterdir()} == {*files, "source.json"}
+
+
+def test_source_preparation_preserves_existing_file_and_rejects_drift(
+    private_backup_root, synthetic_source_witness,
+):
+    root = private_backup_root
+    witness, proof, project = synthetic_source_witness
+    path = root / "source.json"
+    matching = proof["witness"]
+    proof["witness"] += "|different"
+    with pytest.raises(BackupStorageError, match="unsafe"):
+        source_module.prepare_source_config(witness, root=root)
+    assert not path.exists()
+    proof["witness"] = matching
+
+    other = project["api"]
+    project["api"] = "third-party"
+    with pytest.raises(BackupStorageError, match="unsafe"):
+        source_module.prepare_source_config(witness, root=root)
+    assert not path.exists()
+    project["api"] = other
+
+    source_module.prepare_source_config(witness, root=root)
+    inode = path.stat().st_ino
+    original = path.read_bytes()
+    source_module.prepare_source_config(witness, root=root)
+    assert path.stat().st_ino == inode
+    proof["release"] = "1" * 40
+    with pytest.raises(BackupStorageError, match="conflict"):
+        source_module.prepare_source_config(witness, root=root)
+    assert path.read_bytes() == original
+    path.chmod(0o600)
+    with pytest.raises(BackupStorageError, match="unsafe"):
+        source_module.prepare_source_config(witness, root=root)
+    assert {item.name for item in root.iterdir()} == {"source.json"}
+
+
+def test_backup_work_directories_prepare_only_fixed_children(private_backup_root, monkeypatch):
+    monkeypatch.setattr(cli, "WORK_ROOT", private_backup_root)
+    foreign = private_backup_root / "foreign"
+    foreign.mkdir(mode=0o700)
+    artifacts = private_backup_root / "artifacts"
+    artifacts.symlink_to(foreign, target_is_directory=True)
+    with pytest.raises(BackupStorageError, match="unsafe"):
+        cli._prepare_work_directories()
+    assert not (private_backup_root / "catalog").exists()
+    artifacts.unlink()
+    cli._prepare_work_directories()
+    cli._prepare_work_directories()
+    assert {p.name for p in private_backup_root.iterdir()} == {"catalog", "artifacts", "foreign"}
+    assert all(stat.S_IMODE(p.stat().st_mode) == 0o700 for p in private_backup_root.iterdir())
 
 
 def _prepare_synthetic_rehearsal(monkeypatch, store, *, pending=None):

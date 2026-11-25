@@ -10,9 +10,9 @@ from pathlib import Path
 from classify_prod_release import (
     APP_RUNTIME,
     FACIAL_RUNTIME,
+    classification_exit_code,
     classify,
     classify_from_baseline,
-    classification_exit_code,
     git_is_ancestor,
     production_baseline_from_manifest,
 )
@@ -48,6 +48,11 @@ class ReleaseClassifierTests(unittest.TestCase):
             }),
             "app",
         )
+
+    def test_backup_operator_only_changes_do_not_publish_application_images(self):
+        operator = {"backend/app/platform_backup/production_cli.py", "backend/app/platform_backup/runtime_source.py"}
+        self.assertEqual(classify(operator), "none")
+        self.assertEqual(classify(operator | {"backend/app/google_drive_picker.py"}), "app")
 
     def test_platform_backup_worker_module_is_app_but_other_workers_remain_protected(self):
         self.assertEqual(classify({"backend/app/platform_backup/runtime_worker.py"}), "app")

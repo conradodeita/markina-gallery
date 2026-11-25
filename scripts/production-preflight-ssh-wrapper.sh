@@ -52,6 +52,11 @@ elif [[ "$original_command" =~ ^MARKINA_PLATFORM_BACKUP_INSTALL_SHA=([0-9a-f]{40
   backup_sha="${BASH_REMATCH[1]}"
   backup_digest="${BASH_REMATCH[2]}"
   backup_fingerprint="${BASH_REMATCH[3]}"
+elif [[ "$original_command" =~ ^MARKINA_PLATFORM_BACKUP_PREPARE_SOURCE_SHA=([0-9a-f]{40})_BUNDLE=([0-9a-f]{64})_FINGERPRINT=([0-9a-f]{64})$ ]]; then
+  backup_mode="prepare-source"
+  backup_sha="${BASH_REMATCH[1]}"
+  backup_digest="${BASH_REMATCH[2]}"
+  backup_fingerprint="${BASH_REMATCH[3]}"
 elif [[ "$original_command" =~ ^MARKINA_PLATFORM_BACKUP_BIND_SHA=([0-9a-f]{40})_BUNDLE=([0-9a-f]{64})_FINGERPRINT=([0-9a-f]{64})$ ]]; then
   backup_mode="bind-and-rehearse"
   backup_sha="${BASH_REMATCH[1]}"
@@ -118,6 +123,22 @@ if operation == "inventory" and len(args) == 1:
     raise SystemExit(module.main(args[0]))
 if operation == "diagnose" and not args:
     raise SystemExit(module.diagnostic_main())
+if operation == "source-witness" and len(args) == 2:
+    import json
+
+    try:
+        result = module.collect_inventory(bridge_sha=args[0])
+        inventory = result["inventory"]
+        if result["approval_fingerprint"] != args[1] or not module.install_preconditions(inventory):
+            raise ValueError
+        containers = inventory["containers"]
+        witness = {role: {field: containers[role][field] for field in ("id", "image")}
+                   for role in ("api", "db")}
+        witness["schema_revision"] = inventory["database_schema"]
+    except Exception:
+        raise SystemExit(1) from None
+    print(json.dumps(witness, separators=(",", ":")))
+    raise SystemExit(0)
 if operation == "assert-installed" and len(args) == 2:
     try:
         module.verify_installed_release(args[0], args[1])
@@ -183,12 +204,21 @@ PY
         --approval-fingerprint "$backup_fingerprint" </dev/null
       exit $?
       ;;
-    bind-and-rehearse|reconcile)
+    prepare-source|bind-and-rehearse|reconcile)
       [[ "$backup_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "fingerprint inválida"
       acquire_backup_release_lock
       sudo -n /usr/bin/python3.10 -B -c "$inventory_bootstrap" \
         "$inventory_b64" assert-installed "$backup_sha" "$backup_digest" >/dev/null \
         || fail "runtime instalado diverge da revisão aprovada"
+      runtime_python="/opt/pyp-backup-runtime/current/venv/bin/python"
+      cli_code='import os,sys; os.environ["APP_ENV"]="production"; sys.path.insert(0,"/opt/pyp-backup-runtime/current/backend"); from app.platform_backup import production_cli; sys.argv=["production_cli.py",sys.argv[1]]; raise SystemExit(production_cli.main())'
+      if [[ "$backup_mode" == prepare-source ]]; then
+        source_witness="$(sudo -n /usr/bin/python3.10 -B -c "$inventory_bootstrap" \
+          "$inventory_b64" source-witness "$backup_sha" "$backup_fingerprint" </dev/null)" \
+          || fail "preflight da origem do backup divergiu"
+        printf '%s\n' "$source_witness" | sudo -n "$runtime_python" -B -c "$cli_code" --prepare-source
+        exit $?
+      fi
       inventory_report="$(sudo -n /usr/bin/python3.10 -B -c "$inventory_bootstrap" \
         "$inventory_b64" inventory "$backup_sha" </dev/null)" || fail "inventário do backup falhou"
       fingerprint_label="backup_runtime_fingerprint"
@@ -200,8 +230,6 @@ PY
       actual_fingerprint="$(printf '%s\n' "$inventory_report" | sed -nE "s/^${fingerprint_label}=([0-9a-f]{64})$/\\1/p" | tail -n1)"
       [[ "$actual_fingerprint" == "$backup_fingerprint" ]] || fail "fingerprint diverge do preflight aprovado"
       printf '%s\n' "$inventory_report"
-      runtime_python="/opt/pyp-backup-runtime/current/venv/bin/python"
-      cli_code='import os,sys; os.environ["APP_ENV"]="production"; sys.path.insert(0,"/opt/pyp-backup-runtime/current/backend"); from app.platform_backup import production_cli; sys.argv=["production_cli.py",sys.argv[1]]; raise SystemExit(production_cli.main())'
       if [[ "$backup_mode" == "reconcile" ]]; then
         sudo -n "$runtime_python" -B -c "$cli_code" --reconcile-synthetic-destination
       else
