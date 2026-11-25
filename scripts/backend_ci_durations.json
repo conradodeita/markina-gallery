@@ -958,6 +958,24 @@
       "seconds": 0.007
     }
   },
+  "profile_adjustments": {
+    "excluded_items_across_samples": 420,
+    "excluded_modules": [
+      "tests/test_platform_backup_archive.py",
+      "tests/test_platform_backup_payload.py",
+      "tests/test_platform_backup_postgres.py",
+      "tests/test_platform_backup_production_cli.py",
+      "tests/test_platform_backup_restore.py",
+      "tests/test_platform_backup_retention.py",
+      "tests/test_platform_backup_runtime_config.py",
+      "tests/test_platform_backup_runtime_worker.py",
+      "tests/test_platform_backup_storage.py",
+      "tests/test_platform_backup_worker.py",
+      "tests/test_platform_backup_workspace_credentials.py",
+      "tests/test_platform_backup_workspace_store.py"
+    ],
+    "reason": "Pruned historical duration entries for the retired global backup runtime; source measurements remain unchanged."
+  },
   "schema_version": 1,
   "source": {
     "captured_at_utc": "2026-11-19T10:26:46Z",
