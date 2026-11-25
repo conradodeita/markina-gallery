@@ -215,6 +215,12 @@ class RuntimeInstallTests(unittest.TestCase):
         self.assertFalse(receipt["destination_enabled"])
         self.assertEqual(os.readlink(self.install_root / "current"), f"releases/{self.sha}")
         self.assertTrue((release / "install-receipt.json").is_file())
+        self.assertEqual((release / "manifest.json").stat().st_mode & 0o777, 0o400)
+        if os.geteuid() == 0:
+            self.assertEqual(
+                installer.verify_installed_release(self.sha, self.bundle_sha, install_root=self.install_root),
+                {"source_sha": self.sha, "bundle_sha256": self.bundle_sha, "status": "installed_inert"},
+            )
         rollback = self.install_root / "rollback" / f"{self.sha}.json"
         self.assertTrue(rollback.is_file())
         self.assertFalse((self.config_root / "destination.json").exists())
