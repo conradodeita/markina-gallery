@@ -398,7 +398,21 @@ jobs:
             install)
               command="MARKINA_PLATFORM_BACKUP_INSTALL_SHA=${GITHUB_SHA}_BUNDLE=${BUNDLE_SHA256}_FINGERPRINT=${APPROVAL_FINGERPRINT}"
               bundle="$RUNNER_TEMP/pyp-platform-backup-runtime/pyp-platform-backup-runtime.tar.gz"
-              receipt="$(ssh "${options[@]}" "$target" "$command" < "$bundle")"
+              if receipt="$(ssh "${options[@]}" "$target" "$command" < "$bundle" 2>/dev/null)"; then
+                :
+              else
+                ssh_status=$?
+                if [[ "$ssh_status" == 255 ]]; then
+                  failure=backup_install_ssh_transport_failed
+                elif [[ "$receipt" == '{"error": "install_rejected", "status": "failed"}' ]]; then
+                  failure=backup_install_rejected
+                else
+                  failure=backup_install_remote_failed
+                fi
+                echo "$failure" >&2
+                echo "backup_install_failure=$failure" >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
               python -c '
           import json, sys
           receipt = json.load(sys.stdin)

@@ -65,6 +65,14 @@ def main() -> int:
             and "backup_install_receipt_mismatch" in operate_job
             and 'grep -q "releases/$GITHUB_SHA"' not in operate_job,
             "backup_channel_only_mode_and_install_result_contract")
+    require('if receipt="$(ssh ' in operate_job
+            and '< "$bundle" 2>/dev/null)' in operate_job
+            and '[[ "$ssh_status" == 255 ]]' in operate_job
+            and all(code in operate_job for code in (
+                "backup_install_ssh_transport_failed", "backup_install_rejected", "backup_install_remote_failed",
+            ))
+            and operate_job.index('backup_install_failure=$failure') < operate_job.index('json.load(sys.stdin)'),
+            "backup_install_safe_failure_diagnostics_required")
     require("inputs.operation == 'diagnose'" in diagnose_job
             and "environment: production-preflight" in diagnose_job
             and "needs: [code-evidence]" in diagnose_job
