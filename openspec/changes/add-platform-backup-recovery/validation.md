@@ -1,5 +1,7 @@
 # Validação — backups e recuperação da plataforma
 
+> **EVIDÊNCIA HISTÓRICA.** Os testes abaixo validaram uma implementação local removida em 25/11/2026. Não executar comandos antigos nem tratar o resultado como prova do plano atual ou da produção.
+
 ## Revalidação PostgreSQL local pré-push — 15/11/2026
 
 - `PYP_BACKUP_POSTGRES_TEST=1`, `APP_ENV=test`, somente `test_platform_backup_postgres.py`: **1 passed em 24,94 s**, sem skips. JUnit externo `C:/codex-data/local-review/prepush-backup-postgres-20261115.xml`.

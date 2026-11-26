@@ -1,5 +1,7 @@
 # Inventário e roteiro pré-abertura — backup Google Workspace
 
+> **INVENTÁRIO HISTÓRICO — NÃO OPERACIONAL.** Os estados abaixo antecedem a aposentadoria de 25/11/2026 e não comprovam disponibilidade, destino, credenciais ou conteúdo atuais.
+
 ## Estado desta preparação
 
 - API Google Drive: ativada pelo proprietário no projeto Pick-your-Pic; não revalidada nesta execução.

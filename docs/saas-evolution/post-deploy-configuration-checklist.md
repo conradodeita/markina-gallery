@@ -1,5 +1,7 @@
 # Checklist de configuração após o deploy SaaS
 
+> **Registro histórico, substituído em 25/11/2026.** As tarefas de Picker, runtime próprio, chave do backup e instalação do timer abaixo descrevem a tentativa aposentada e não são mais executáveis. Consulte [`retire-platform-backup-runtime`](../../openspec/changes/retire-platform-backup-runtime/tasks.md) para a higienização e [`prove-open-source-backup-and-recovery`](../../openspec/changes/prove-open-source-backup-and-recovery/tasks.md) para a prova nova. O fluxo de arquivo frio do fotógrafo continua vigente; sua integração com ferramentas deve seguir a prova nova, preservando o contrato de prazo/crédito.
+
 Atualizado em 17/11/2026. Solicitação do proprietário: reunir as configurações deliberadamente deixadas para quando o candidato estiver no servidor, incluindo Drive e backup por tenant. Este documento acompanha o release; as tarefas abaixo não voltam a ser requisitos do primeiro push, que já ocorreu.
 
 `[x]` indica uma decisão registrada ou uma prova executada, conforme o texto do item. `[ ]` indica trabalho pendente. Cada item identifica configuração, ensaio, implementação ou decisão comercial. Uma fundação validada localmente não equivale a serviço recorrente instalado.
@@ -36,27 +38,15 @@ Fontes: [D15–D17](decisions.md#decisões-de-backup-de-06112026), [gates pós-r
 
 Fontes: [configuração OAuth](../../openspec/changes/add-google-drive-storage-foundation/configuration-inventory.md), [operação Drive](../../openspec/changes/add-google-drive-storage-foundation/operations.md), tasks 1.1/3.1 da [fundação Drive](../../openspec/changes/add-google-drive-storage-foundation/tasks.md).
 
-## 3. Backup do banco e configuração solicitada por tenant
+## 3. Backup global, restauração seletiva e recuperação de pasta fria
 
-O escopo inicial aprovado é PostgreSQL completo e configurações essenciais cifradas, com recuperação global. Backup/recuperação lógica individual por tenant foi faseado para etapa própria. A organização de fotos em subpastas por UUID de tenant pertence ao arquivo de mídia, na seção 4. O pedido atual de backup por tenant fica explicitamente rastreado abaixo, sem declarar uma capacidade individual já entregue.
+> A tentativa própria de backup global via Google Workspace foi encerrada em 25/11/2026. Os itens antigos deste checklist foram retirados porque descreviam um runtime e workflows aposentados.
 
-[Operação da rotina e recuperação manual](operacao-backup.md).
+A direção atual é a prova sintética integrada da change [prove-open-source-backup-and-recovery](../../openspec/changes/prove-open-source-backup-and-recovery/proposal.md): backup global cifrado do PostgreSQL, extração isolada de um fotógrafo e arquivo/recuperação de pasta fria pelo fluxo existente, avaliando Restic e Rclone (Backrest opcional). Nenhuma dessas provas autoriza produção, uso de dados de clientes ou configuração real do Drive.
 
-- [x] **Configuração inicial Drive:** a pasta app-autorizada na raiz do Meu Drive segue criada e intacta; deixou de ser o destino pretendido depois da decisão de separar os destinos dentro de `Oracle-Production-Backups`.
-- [x] **Configuração da chave e vínculo desativado.** Chave AES-256 própria do backup provisionada no Oracle e copiada para a unidade removível escolhida, com leitura autenticada em ambas. A pasta global agora está autorizada pelo app; o ID da configuração protegida ainda não foi trocado. [Recibo de custódia e próximas etapas](../../openspec/changes/enable-platform-backup-runtime/tasks.md).
-- [ ] **Ensaio sintético no destino definitivo:** depois da autorização e do vínculo desativado, enviar, reler, comparar SHA-256 e excluir somente os itens criados pelo ensaio. Não usar dados de tenant nem executar backup real nesta prova.
-- [x] **Ensaio sintético de recuperação pelo Drive.** Backup PostgreSQL cifrado → upload → readback → autenticação → restore global em PostgreSQL descartável. A conta do proprietário e uma pasta temporária foram usadas. Arquivo, pasta e ambientes de ensaio foram removidos e a ausência confirmada. [Recibo](../../openspec/changes/add-platform-backup-recovery/drive-restore-proof.md).
-- [ ] **Implementação/publicação:** integrar e publicar o caller/worker/scheduler produtivo de backup, mantendo serviço e timer desativados até o destino global e a prova sintética serem aprovados. A fundação e o adapter Workspace existentes não instalam a rotina de produção; não usar flags de teste para contornar esse limite.
-- [ ] **Configuração, após o caller:** definir horário/fuso e habilitar a rotina diária somente para o projeto Pick-your-Pic, preservando timers e cópias dos demais projetos do servidor.
-- [ ] **Ensaio:** comprovar cópia recorrente e retry idempotente com a conta Workspace escolhida e o destino definitivo. Falha ou estado desconhecido deve ficar visível.
-- [ ] **Configuração/ensaio:** aplicar a retenção global 7/4/3 com preservação do último ponto recuperável; só descartar cópia após existir outra independente e restaurável.
-- [ ] **Configuração/ensaio:** agendar e registrar o restore mensal, medir RPO/RTO efetivos e comprovar recuperação com as chaves correspondentes ao snapshot.
-- [ ] **Implementação — backup por tenant:** definir e implementar o recorte de dados, dependências compartilhadas, cifragem, destino e restauração seletiva preservando IDs, vínculos e histórico financeiro; testar isolamento antes de oferecer essa capacidade.
-- [ ] **Ensaio — backup por tenant:** comprovar restauração do tenant em ambiente separado, sem alterar outros tenants nem restaurar sobre a base produtiva ativa.
-- [ ] **Implementação/configuração:** alimentar o console do proprietário com fonte durável do último backup, cópias verificadas, falhas, idade e restore comprovado.
+Não retomar as changes enable-platform-backup-runtime, prepare-platform-backup-source ou add-google-workspace-backup-copy. A retirada de arquivos do servidor segue [retire-platform-backup-runtime](../../openspec/changes/retire-platform-backup-runtime/tasks.md) pelo workflow protegido, sem SQL, migration, Compose ou restart.
 
-Fontes: [política aprovada](../../openspec/changes/add-platform-backup-recovery/policy-decision-draft.md), [alcance e limites da fundação](platform-backup-local.md), [tasks 4.2–4.4 Workspace](../../openspec/changes/add-google-workspace-backup-copy/tasks.md), [console, task 2.7](../../openspec/changes/add-platform-owner-console/tasks.md).
-
+O contrato atual de pasta fria, incluindo prazo de 30 dias, opções de 7/14/30 dias, taxa por pasta/ciclo, reserva e débito após checksum integral, reconciliação de resultado incerto, isenção do proprietário e ausência de expurgo automático, permanece vigente. O código, o catálogo e as migrations media_archive são preservados.
 ## 4. Arquivo de fotos e recuperação por tenant no Drive
 
 Antes de implementar a ligação real, consultar o [mapa de reuso do backup global e do núcleo de mídia existente](backup-global-reuso-arquivo-midia.md), com código, provas concluídas e pontos de integração para evitar repetição de trabalho.

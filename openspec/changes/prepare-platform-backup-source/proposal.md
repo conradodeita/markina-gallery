@@ -1,3 +1,5 @@
+> **SUPERCEDIDA — NÃO IMPLEMENTAR NEM DESPACHAR.** A preparação da origem pertencia à tentativa encerrada em 25/11/2026. Tarefas abertas ficam somente como histórico. A retirada está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md); a direção vigente é [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
+
 ## Why
 
 O run 45656452636 atestou o runtime e passou a fingerprint estável, mas o vínculo parou com `unsafe` antes da escrita. O runtime esperava a ordem dos campos do systemd, enquanto a resposta real veio em outra ordem. A inspeção somente leitura confirmou que falta a configuração da origem, que a API ativa usa uma geração Compose e que os diretórios de estado do primeiro backup ainda não existem. A API em produção e o PostgreSQL alvo responderam à mesma consulta de identidade em transações somente leitura.

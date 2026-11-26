@@ -1,5 +1,7 @@
 # Tasks
 
+> **SUPERCEDIDA — NÃO EXECUTAR tarefas pendentes nem despachar workflows.** As caixas ainda vazias registram apenas etapas não concluídas da tentativa cancelada em 25/11/2026; não são trabalho autorizado. Consulte [retire-platform-backup-runtime](../retire-platform-backup-runtime/tasks.md) e a prova vigente [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/tasks.md).
+
 - [x] 3.2g Corrigir o fechamento imediato do Picker: eventos intermediários SHALL preservar a janela aberta; seleção e cancelamento SHALL encerrar a janela. Regressão falhou antes e passou depois; 9 testes UI, ESLint, typecheck, build, OpenSpec e 28 testes de escopo passaram. Evidências e limitações em `validation-picker-dialog.md`; publicação depende de revisão e gate operacional.
 
 - [x] 1.1 Preparar a chave operacional e o vínculo desativado depois da escolha humana da unidade. Evidência de 17/11/2026 às 17h28 BRT: chave AES-256 inédita em arquivo root-only e cópia fora do Oracle em pasta separada na unidade removível `D:`; ACL Windows confirmada. A chave lida da mídia cifrou um desafio sintético autenticado com a chave lida do servidor. O vínculo inicial apontava para a pasta previamente verificada e permaneceu com `enabled=false`. Após a decisão de separar os destinos, o proprietário autorizou `Pick-your-Pic Global` pelo app; o vínculo protegido continua sem alteração e desativado. Nenhuma chave, senha, token ou conteúdo de banco consta no recibo técnico. A retirada física da unidade é do proprietário.

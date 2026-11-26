@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import stat
 import subprocess
@@ -20,6 +21,8 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import urlopen
 
 try:  # Linux-only host operations; the transaction coordinator is portable for local tests.
     import fcntl
@@ -41,6 +44,17 @@ BACKUPS_DIR = Path("/var/backups/markina-gallery")
 STATE_DIR = Path("/var/lib/markina-gallery/app-compose-bridge")
 LOCK_DIR = Path("/var/lib/markina-gallery/deploy-state")
 LOCK_PATH = LOCK_DIR / "production-release.lock"
+BACKUP_RUNTIME_DIR = Path("/opt/pyp-backup-runtime")
+BACKUP_CONFIG_DIR = Path("/etc/pyp-backup")
+BACKUP_STATE_DIR = Path("/var/lib/pyp-backup")
+BACKUP_SYSTEMD_DIR = Path("/etc/systemd/system")
+BACKUP_UNITS = ("pyp-platform-backup.service", "pyp-platform-backup.timer")
+PICKER_CONFIG_PATH = Path("/etc/pyp-google-drive/picker-config.json")
+PUBLIC_HEALTH_URLS = {
+    "root": "https://markina.pickyourpic.com.br/",
+    "healthz": "https://markina.pickyourpic.com.br/healthz",
+    "api": "https://markina.pickyourpic.com.br/api/health",
+}
 TARGETS = ("bridge", "wrapper")
 SAFE_DIRECTORY_STATES = {"ready", "creatable"}
 SUPPORT_DIRECTORY_DIAGNOSTICS = {
@@ -61,6 +75,7 @@ OBJECT_ID = re.compile(r"^[0-9a-f]{64}$")
 VALID_MODES = {
     "support-inventory", "prepare-support", "repair-support-backups-mode",
     "restore-support-inventory", "restore-support",
+    "backup-retirement-inventory", "retire-backup-runtime",
 }
 INTERNAL_ERROR_CODES: tuple[tuple[type[BaseException], str], ...] = (
     (UnicodeError, "support_internal_encoding_error"),
@@ -110,6 +125,15 @@ def _safe_sha(value: str, pattern: re.Pattern[str], code: str) -> str:
     if not pattern.fullmatch(value):
         raise SupportError(code)
     return value
+
+
+def _safe_retirement_mount_path(value: str) -> bool:
+    return (
+        len(value) <= 512
+        and re.fullmatch(r"/[A-Za-z0-9._/-]{1,511}", value) is not None
+        and "//" not in value
+        and all(part not in {".", ".."} for part in value.split("/"))
+    )
 
 
 def _static_error(result: subprocess.CompletedProcess[bytes], code: str) -> subprocess.CompletedProcess[bytes]:
@@ -344,6 +368,418 @@ class LocalSupportHost:
             raise SupportError("support_container_inventory_invalid")
         rows.sort(key=lambda row: row["id"])
         return _file_digest(_canonical_json(rows))
+
+    @staticmethod
+    def _retirement_entry_metadata(path: Path, info: os.stat_result, *, kind: str,
+                                   symlink_target: str | None = None) -> dict[str, Any]:
+        if info.st_uid != 0 or info.st_gid != 0:
+            raise SupportError("backup_retirement_target_owner_invalid")
+        if kind == "directory":
+            if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
+                raise SupportError("backup_retirement_target_mode_or_type_invalid")
+        elif kind == "file":
+            if (not stat.S_ISREG(info.st_mode)
+                    or stat.S_IMODE(info.st_mode) not in {0o400, 0o600, 0o644, 0o700}
+                    or info.st_nlink != 1):
+                raise SupportError("backup_retirement_target_mode_or_type_invalid")
+        elif kind == "symlink":
+            if not stat.S_ISLNK(info.st_mode) or info.st_nlink != 1 or symlink_target is None:
+                raise SupportError("backup_retirement_target_mode_or_type_invalid")
+        else:
+            raise SupportError("backup_retirement_target_mode_or_type_invalid")
+        return {
+            "kind": kind,
+            "uid": info.st_uid,
+            "gid": info.st_gid,
+            "mode": stat.S_IMODE(info.st_mode),
+            "links": info.st_nlink,
+            "size": info.st_size,
+            "mtime_ns": info.st_mtime_ns,
+            "device": info.st_dev,
+            "inode": info.st_ino,
+            **({"target": symlink_target} if symlink_target is not None else {}),
+        }
+
+    def _retirement_tree_state(self, root: Path, *, allow_symlinks: bool = False,
+                               allowed_root_names: set[str] | None = None) -> dict[str, Any]:
+        self._assert_parent_directory(root)
+        try:
+            root_info = root.lstat()
+        except FileNotFoundError:
+            return {"present": False, "entries": []}
+        except OSError:
+            raise SupportError("backup_retirement_target_unreadable") from None
+        if os.path.ismount(root):
+            raise SupportError("backup_retirement_nested_mount")
+        root_state = self._retirement_entry_metadata(root, root_info, kind="directory")
+        entries: list[dict[str, Any]] = []
+        pending = [(root, "")]
+        root_names: set[str] = set()
+        while pending:
+            directory, prefix = pending.pop()
+            try:
+                children = sorted(os.scandir(directory), key=lambda entry: entry.name)
+            except OSError:
+                raise SupportError("backup_retirement_target_unreadable") from None
+            for child in children:
+                relative = f"{prefix}/{child.name}" if prefix else child.name
+                if not prefix:
+                    root_names.add(child.name)
+                path = Path(child.path)
+                try:
+                    info = path.lstat()
+                except OSError:
+                    raise SupportError("backup_retirement_target_changed") from None
+                if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                    if os.path.ismount(path):
+                        raise SupportError("backup_retirement_nested_mount")
+                    state = self._retirement_entry_metadata(path, info, kind="directory")
+                    entries.append({"path": relative, **state})
+                    pending.append((path, relative))
+                elif stat.S_ISREG(info.st_mode):
+                    if stat.S_IMODE(info.st_mode) not in {0o400, 0o600, 0o700}:
+                        raise SupportError("backup_retirement_target_mode_or_type_invalid")
+                    state = self._retirement_entry_metadata(path, info, kind="file")
+                    entries.append({"path": relative, **state})
+                elif stat.S_ISLNK(info.st_mode) and allow_symlinks:
+                    try:
+                        target = os.readlink(path)
+                    except OSError:
+                        raise SupportError("backup_retirement_target_changed") from None
+                    state = self._retirement_entry_metadata(path, info, kind="symlink", symlink_target=target)
+                    if relative == "current":
+                        if re.fullmatch(r"releases/[0-9a-f]{40}", target) is None:
+                            raise SupportError("backup_retirement_current_link_invalid")
+                        releases = root / "releases"
+                        try:
+                            releases_info = releases.lstat()
+                        except OSError:
+                            raise SupportError("backup_retirement_current_link_invalid") from None
+                        self._retirement_entry_metadata(releases, releases_info, kind="directory")
+                        release = root / target
+                        try:
+                            release_info = release.lstat()
+                        except OSError:
+                            raise SupportError("backup_retirement_current_link_invalid") from None
+                        self._retirement_entry_metadata(release, release_info, kind="directory")
+                    elif re.fullmatch(r"releases/[0-9a-f]{40}/venv/lib64", relative):
+                        if target != "lib":
+                            raise SupportError("backup_retirement_target_mode_or_type_invalid")
+                        library = path.with_name("lib")
+                        try:
+                            library_info = library.lstat()
+                        except OSError:
+                            raise SupportError("backup_retirement_target_changed") from None
+                        self._retirement_entry_metadata(library, library_info, kind="directory")
+                    else:
+                        raise SupportError("backup_retirement_target_mode_or_type_invalid")
+                    entries.append({"path": relative, **state})
+                else:
+                    raise SupportError("backup_retirement_target_mode_or_type_invalid")
+                try:
+                    after = path.lstat()
+                except OSError:
+                    raise SupportError("backup_retirement_target_changed") from None
+                if ((info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+                     info.st_size, info.st_mtime_ns, info.st_nlink)
+                        != (after.st_dev, after.st_ino, after.st_mode, after.st_uid, after.st_gid,
+                            after.st_size, after.st_mtime_ns, after.st_nlink)):
+                    raise SupportError("backup_retirement_target_changed")
+        if allowed_root_names is not None and not root_names.issubset(allowed_root_names):
+            raise SupportError("backup_retirement_unexpected_entry")
+        entries.sort(key=lambda item: item["path"])
+        try:
+            root_after = root.lstat()
+        except OSError:
+            raise SupportError("backup_retirement_target_changed") from None
+        if ((root_info.st_dev, root_info.st_ino, root_info.st_mode, root_info.st_uid, root_info.st_gid,
+             root_info.st_size, root_info.st_mtime_ns)
+                != (root_after.st_dev, root_after.st_ino, root_after.st_mode, root_after.st_uid, root_after.st_gid,
+                    root_after.st_size, root_after.st_mtime_ns)):
+            raise SupportError("backup_retirement_target_changed")
+        return {"present": True, "root": root_state, "entries": entries}
+
+    def _retirement_file_state(self, path: Path, *, expected_mode: int) -> dict[str, Any]:
+        self._assert_parent_directory(path)
+        try:
+            before = path.lstat()
+        except FileNotFoundError:
+            return {"present": False}
+        except OSError:
+            raise SupportError("backup_retirement_target_unreadable") from None
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                or stat.S_IMODE(before.st_mode) != expected_mode or before.st_nlink != 1):
+            raise SupportError("backup_retirement_target_mode_or_type_invalid")
+        return {"present": True, **self._retirement_entry_metadata(path, before, kind="file")}
+
+    @staticmethod
+    def _backup_state_summary(state: dict[str, Any]) -> dict[str, int]:
+        if state.get("present") is False:
+            return {
+                "encrypted_artifacts": 0, "partial_artifacts": 0,
+                "catalog_files": 0, "files": 0, "bytes": 0,
+            }
+        entries = state.get("entries")
+        if state.get("present") is not True or not isinstance(entries, list):
+            raise SupportError("backup_retirement_state_inventory_invalid")
+        uuid_pattern = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+        catalog_pattern = re.compile(
+            rf"(?:day-[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}\.json(?:\.lock)?|{uuid_pattern}\.events(?:\.lock)?)"
+        )
+        artifact_pattern = re.compile(rf"{uuid_pattern}\.(?:pypb|building)")
+        encrypted = partial = catalog = files = total_bytes = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise SupportError("backup_retirement_state_inventory_invalid")
+            path = entry.get("path")
+            kind = entry.get("kind")
+            if path in {"catalog", "artifacts"} and kind == "directory":
+                continue
+            if not isinstance(path, str) or kind != "file":
+                raise SupportError("backup_retirement_state_entry_unexpected")
+            size = entry.get("size")
+            if type(size) is not int or size < 0 or entry.get("mode") != 0o600:
+                raise SupportError("backup_retirement_state_entry_unexpected")
+            if path == "service.lock":
+                pass
+            elif path.startswith("catalog/") and catalog_pattern.fullmatch(path.removeprefix("catalog/")):
+                catalog += 1
+            elif path.startswith("artifacts/"):
+                name = path.removeprefix("artifacts/")
+                if not artifact_pattern.fullmatch(name):
+                    raise SupportError("backup_retirement_state_entry_unexpected")
+                if name.endswith(".pypb"):
+                    encrypted += 1
+                else:
+                    partial += 1
+            else:
+                raise SupportError("backup_retirement_state_entry_unexpected")
+            files += 1
+            total_bytes += size
+        return {
+            "encrypted_artifacts": encrypted,
+            "partial_artifacts": partial,
+            "catalog_files": catalog,
+            "files": files,
+            "bytes": total_bytes,
+        }
+
+    def _retirement_unit_state(self, name: str) -> dict[str, str]:
+        path = BACKUP_SYSTEMD_DIR / name
+        file_state = self._retirement_file_state(path, expected_mode=0o644)
+        try:
+            result = subprocess.run(
+                ["/usr/bin/systemctl", "show", "--no-pager", "--property=LoadState",
+                 "--property=ActiveState", "--property=UnitFileState", "--property=FragmentPath",
+                 "--property=DropInPaths", name],
+                capture_output=True, timeout=15, check=False,
+                env={**os.environ, "LC_ALL": "C", "LANG": "C"},
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            raise SupportError("backup_retirement_unit_state_unavailable") from None
+        if result.returncode != 0:
+            raise SupportError("backup_retirement_unit_state_unavailable")
+        try:
+            values = dict(line.split("=", 1) for line in result.stdout.decode("ascii").splitlines() if "=" in line)
+        except UnicodeDecodeError:
+            raise SupportError("backup_retirement_unit_state_invalid") from None
+        load_state = values.get("LoadState", "")
+        active_state = values.get("ActiveState", "")
+        unit_file_state = values.get("UnitFileState", "")
+        fragment_path = values.get("FragmentPath", "")
+        drop_in_paths = values.get("DropInPaths", "")
+        if (load_state not in {"loaded", "not-found"}
+                or active_state not in {"inactive", "failed"}
+                or unit_file_state not in {"", "disabled", "static", "indirect", "not-found"}
+                or (fragment_path and fragment_path != str(BACKUP_SYSTEMD_DIR / name))
+                or drop_in_paths):
+            raise SupportError("backup_retirement_unit_state_invalid")
+        return {"file": "present" if file_state["present"] else "absent",
+                "load": load_state, "active": active_state, "enabled": unit_file_state,
+                "fragment": fragment_path}
+
+    def _retirement_container_state(self) -> tuple[str, str, list[dict[str, str]]]:
+        result = self._run(["docker", "ps", "-aq", "--no-trunc"], code="backup_retirement_container_inventory_failed")
+        try:
+            ids = result.stdout.decode("ascii").splitlines()
+        except UnicodeDecodeError:
+            raise SupportError("backup_retirement_container_inventory_invalid") from None
+        if any(not OBJECT_ID.fullmatch(item) for item in ids) or len(ids) != len(set(ids)):
+            raise SupportError("backup_retirement_container_inventory_invalid")
+        if not ids:
+            return _file_digest(_canonical_json([])), "absent", []
+        inspected = self._run(["docker", "inspect", *sorted(ids)], code="backup_retirement_container_inventory_failed")
+        try:
+            records = json.loads(inspected.stdout)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise SupportError("backup_retirement_container_inventory_invalid") from None
+        if not isinstance(records, list) or len(records) != len(ids):
+            raise SupportError("backup_retirement_container_inventory_invalid")
+        config_source = str(PICKER_CONFIG_PATH)
+        config_parent = str(PICKER_CONFIG_PATH.parent)
+        config_target = "/run/secrets/google-drive-picker-config.json"
+        rows: list[dict[str, str]] = []
+        picker_mounts: list[dict[str, str]] = []
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(record.get("Mounts"), list):
+                raise SupportError("backup_retirement_container_inventory_invalid")
+            try:
+                container_id = record["Id"]
+                image_id = record["Image"]
+                state = record["State"]["Status"]
+                started = record["State"]["StartedAt"]
+            except (KeyError, TypeError):
+                raise SupportError("backup_retirement_container_inventory_invalid") from None
+            if (not isinstance(container_id, str) or not isinstance(image_id, str)
+                    or not isinstance(state, str) or not isinstance(started, str)
+                    or container_id not in ids or not OBJECT_ID.fullmatch(container_id)
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
+                    or state not in {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
+                    or not started or len(started) > 64):
+                raise SupportError("backup_retirement_container_inventory_invalid")
+            rows.append({"id": container_id, "image": image_id, "state": state, "started": started})
+            mount_rows: list[dict[str, Any]] = []
+            for mount in record["Mounts"]:
+                if not isinstance(mount, dict):
+                    raise SupportError("backup_retirement_container_inventory_invalid")
+                source = mount.get("Source")
+                target = mount.get("Destination")
+                mount_type = mount.get("Type")
+                read_write = mount.get("RW")
+                if (not isinstance(source, str) or len(source) > 4096
+                        or not isinstance(target, str) or not target or len(target) > 4096
+                        or not isinstance(mount_type, str)
+                        or mount_type not in {"bind", "volume", "tmpfs"}
+                        or type(read_write) is not bool):
+                    raise SupportError("backup_retirement_container_inventory_invalid")
+                mount_rows.append({
+                    "type": mount_type, "source": source, "target": target, "rw": read_write,
+                })
+                if (source in {config_source, config_parent}
+                        or source.startswith(config_parent + os.sep)
+                        or target == config_target
+                        or target.startswith("/run/secrets/google-drive-picker-config/")):
+                    if (not _safe_retirement_mount_path(source)
+                            or not _safe_retirement_mount_path(target)):
+                        raise SupportError("backup_retirement_container_inventory_invalid")
+                    config = record.get("Config")
+                    labels = config.get("Labels") if isinstance(config, dict) else None
+                    labels = labels if isinstance(labels, dict) else {}
+                    service = labels.get("com.docker.compose.service")
+                    config_files = labels.get("com.docker.compose.project.config_files")
+                    if (not isinstance(service, str)
+                            or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", service)):
+                        service = "unknown"
+                    if (not isinstance(config_files, str)
+                            or not re.fullmatch(r"[A-Za-z0-9_./,-]{1,1024}", config_files)):
+                        config_files = "unknown"
+                    picker_mounts.append({
+                        "container": container_id[:12],
+                        "source": source,
+                        "target": target,
+                        "service": service,
+                        "compose_files": config_files,
+                    })
+            rows[-1]["mounts"] = _canonical_json(sorted(
+                mount_rows, key=lambda item: (item["target"], item["type"], item["source"], item["rw"]),
+            )).decode("utf-8")
+        if {row["id"] for row in rows} != set(ids):
+            raise SupportError("backup_retirement_container_inventory_invalid")
+        rows.sort(key=lambda row: row["id"])
+        picker_mounts.sort(key=lambda item: (item["container"], item["source"], item["target"]))
+        return _file_digest(_canonical_json(rows)), "present" if picker_mounts else "absent", picker_mounts
+
+    @staticmethod
+    def _retirement_health_state() -> dict[str, str]:
+        result: dict[str, str] = {}
+        for name, url in PUBLIC_HEALTH_URLS.items():
+            try:
+                with urlopen(url, timeout=12) as response:
+                    result[name] = "healthy" if 200 <= response.status < 300 else "unhealthy"
+            except (OSError, URLError, TimeoutError):
+                result[name] = "unavailable"
+        return result
+
+    def collect_backup_retirement_snapshot(self, support_sha: str,
+                                           connection_binding: str) -> dict[str, Any]:
+        _safe_sha(support_sha, HEX40, "support_sha_invalid")
+        _safe_sha(connection_binding, HEX64, "support_connection_invalid")
+        remote = self._assert_host_repository()
+        if self._remote_main_sha() != support_sha:
+            raise SupportError("support_main_changed")
+        _, status = self._git(["status", "--porcelain"])
+        if status.strip():
+            raise SupportError("backup_retirement_checkout_dirty")
+        state_directory_state, _ = self.state_directory_status()
+        backup_directory_state, _ = self.backup_directory_status()
+        runtime = self._retirement_tree_state(
+            BACKUP_RUNTIME_DIR, allow_symlinks=True,
+            allowed_root_names={"current", "releases", "rollback", "install-journal.json"},
+        )
+        config = self._retirement_tree_state(
+            BACKUP_CONFIG_DIR, allowed_root_names={"destination.json", "keyring.json"},
+        )
+        state = self._retirement_tree_state(
+            BACKUP_STATE_DIR, allowed_root_names={"artifacts", "catalog", "service.lock"},
+        )
+        state_summary = self._backup_state_summary(state)
+        units = {name: self._retirement_unit_state(name) for name in BACKUP_UNITS}
+        try:
+            with os.scandir(BACKUP_SYSTEMD_DIR) as entries:
+                unit_related_names = {
+                    entry.name for entry in entries if entry.name.startswith("pyp-platform-backup.")
+                }
+        except OSError:
+            raise SupportError("backup_retirement_unit_inventory_unavailable") from None
+        if unit_related_names - set(BACKUP_UNITS):
+            raise SupportError("backup_retirement_unexpected_unit_entry")
+        picker = self._retirement_file_state(PICKER_CONFIG_PATH, expected_mode=0o400)
+        containers_sha256, picker_mount, picker_mount_details = self._retirement_container_state()
+        return {
+            "host": EXPECTED_HOST,
+            "repository": remote,
+            "support_sha": support_sha,
+            "remote_main_sha": support_sha,
+            "connection_binding": connection_binding,
+            "checkout_clean": True,
+            "support_state_directory": state_directory_state,
+            "support_receipt_directory": backup_directory_state,
+            "runtime": runtime,
+            "config": config,
+            "state": state,
+            "state_summary": state_summary,
+            "units": units,
+            "picker_config": picker,
+            "picker_mount": picker_mount,
+            "picker_mount_details": picker_mount_details,
+            "containers_sha256": containers_sha256,
+            "health": self._retirement_health_state(),
+            "incomplete_install": bool(
+                runtime["present"] and any(
+                    item["path"] == "install-journal.json"
+                    or item["path"].startswith("releases/.staging-")
+                    or re.fullmatch(r"\.current-[0-9a-f]{40}", item["path"]) is not None
+                    for item in runtime["entries"]
+                )
+            ),
+        }
+
+    def remove_backup_retirement_targets(self) -> None:
+        self._assert_root()
+        try:
+            # A timer remains disabled and the service remains stopped. No
+            # container or database command is issued by this removal.
+            for name in BACKUP_UNITS:
+                (BACKUP_SYSTEMD_DIR / name).unlink(missing_ok=True)
+            self._run(["/usr/bin/systemctl", "daemon-reload"], code="backup_retirement_systemd_reload_failed")
+            for directory in (BACKUP_CONFIG_DIR, BACKUP_STATE_DIR, BACKUP_RUNTIME_DIR):
+                if directory.exists() and not directory.is_symlink():
+                    shutil.rmtree(directory)
+            PICKER_CONFIG_PATH.unlink(missing_ok=True)
+        except SupportError:
+            raise
+        except OSError:
+            raise SupportError("backup_retirement_partial") from None
 
     def collect_snapshot(self, support_sha: str, connection_binding: str) -> dict[str, Any]:
         _safe_sha(support_sha, HEX40, "support_sha_invalid")
@@ -673,7 +1109,11 @@ class LocalSupportHost:
         kind = payload.get("kind")
         if not isinstance(operation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", operation_id):
             raise SupportError("support_receipt_invalid")
-        if kind not in {"preparation-intent", "preparation-complete", "restoration-intent", "restoration-complete"}:
+        if kind not in {
+            "preparation-intent", "preparation-complete", "restoration-intent", "restoration-complete",
+            "backup-runtime-retirement-intent", "backup-runtime-retirement-complete",
+            "backup-runtime-retirement-incomplete",
+        }:
             raise SupportError("support_receipt_invalid")
         filename = f"preflight-support-{kind}-{operation_id}.json"
         destination = STATE_DIR / filename
@@ -713,7 +1153,8 @@ class LocalSupportHost:
             if not path.name.startswith("preflight-support-"):
                 continue
             if not re.fullmatch(
-                    r"preflight-support-(?:preparation|restoration)-(?:intent|complete)-[0-9a-f]{32}\.json",
+                    r"preflight-support-(?:preparation|restoration)-(?:intent|complete)-[0-9a-f]{32}\.json"
+                    r"|preflight-support-backup-runtime-retirement-(?:intent|complete|incomplete)-[0-9a-f]{32}\.json",
                     path.name):
                 raise SupportError("support_receipt_invalid")
             self._assert_file(path, owner="root", group="root", mode=0o600, links=1)
@@ -948,6 +1389,130 @@ class SupportCoordinator:
         with self.host.lock():
             snapshot = self.host.collect_snapshot(support_sha, connection_binding)
             return _digest(snapshot), snapshot
+
+    @staticmethod
+    def _assert_backup_retirement_ready(snapshot: dict[str, Any]) -> None:
+        if snapshot.get("checkout_clean") is not True:
+            raise SupportError("backup_retirement_checkout_dirty")
+        if (snapshot.get("support_state_directory") != "ready"
+                or snapshot.get("support_receipt_directory") != "ready"):
+            raise SupportError("backup_retirement_receipt_storage_unavailable")
+        if snapshot.get("incomplete_install") is True:
+            raise SupportError("backup_retirement_install_incomplete")
+        if snapshot.get("picker_mount") != "absent":
+            raise SupportError("backup_retirement_picker_mount_present")
+        if snapshot.get("picker_mount_details") != []:
+            raise SupportError("backup_retirement_picker_mount_present")
+        state_summary = snapshot.get("state_summary")
+        if (not isinstance(state_summary, dict)
+                or set(state_summary) != {"encrypted_artifacts", "partial_artifacts", "catalog_files", "files", "bytes"}
+                or any(type(value) is not int or value < 0 for value in state_summary.values())):
+            raise SupportError("backup_retirement_state_inventory_invalid")
+        if snapshot.get("health") != {name: "healthy" for name in PUBLIC_HEALTH_URLS}:
+            raise SupportError("backup_retirement_application_unhealthy")
+        units = snapshot.get("units")
+        if not isinstance(units, dict) or set(units) != set(BACKUP_UNITS):
+            raise SupportError("backup_retirement_unit_state_invalid")
+        for name, state in units.items():
+            if not isinstance(state, dict) or state.get("active") != "inactive":
+                raise SupportError("backup_retirement_unit_active")
+            if state.get("file") == "present":
+                if state.get("load") != "loaded" or state.get("fragment") != str(BACKUP_SYSTEMD_DIR / name):
+                    raise SupportError("backup_retirement_unit_state_invalid")
+            elif state.get("load") != "not-found":
+                raise SupportError("backup_retirement_unit_state_invalid")
+            allowed_enabled = {"disabled", "not-found"}
+            if name.endswith(".service"):
+                allowed_enabled |= {"static", "indirect"}
+            if state.get("enabled") not in allowed_enabled:
+                raise SupportError("backup_retirement_unit_enabled")
+        for target in ("runtime", "config", "state"):
+            value = snapshot.get(target)
+            if not isinstance(value, dict) or type(value.get("present")) is not bool:
+                raise SupportError("backup_retirement_inventory_invalid")
+        config = snapshot["config"]
+        config_entries = config.get("entries")
+        if not isinstance(config_entries, list):
+            raise SupportError("backup_retirement_inventory_invalid")
+        config_files: set[str] = set()
+        for entry in config_entries:
+            if not isinstance(entry, dict):
+                raise SupportError("backup_retirement_inventory_invalid")
+            path = entry.get("path")
+            if (not isinstance(path, str)
+                    or path not in {"destination.json", "keyring.json"}
+                    or entry.get("kind") != "file"
+                    or entry.get("mode") != 0o400
+                    or path in config_files):
+                raise SupportError("backup_retirement_unexpected_entry")
+            config_files.add(path)
+        if config.get("present") is False and config_entries:
+            raise SupportError("backup_retirement_inventory_invalid")
+
+    def backup_retirement_inventory(self, support_sha: str,
+                                    connection_binding: str) -> tuple[str, dict[str, Any]]:
+        with self.host.lock():
+            snapshot = self.host.collect_backup_retirement_snapshot(support_sha, connection_binding)
+            return _digest(snapshot), snapshot
+
+    def retire_backup_runtime(self, support_sha: str, connection_binding: str,
+                              approval_fingerprint: str) -> str:
+        _safe_sha(approval_fingerprint, HEX64, "support_fingerprint_invalid")
+        with self.host.lock():
+            before = self.host.collect_backup_retirement_snapshot(support_sha, connection_binding)
+            if _digest(before) != approval_fingerprint:
+                raise SupportError("backup_retirement_fingerprint_changed")
+            self._assert_backup_retirement_ready(before)
+            operation_id = uuid.uuid4().hex
+            intent = {
+                "schema": "pyp-backup-runtime-retirement-v1",
+                "kind": "backup-runtime-retirement-intent",
+                "operation_id": operation_id,
+                "status": "started",
+                "support_sha": support_sha,
+                "fingerprint": approval_fingerprint,
+            }
+            self.host.create_receipt(intent)
+            try:
+                latest = self.host.collect_backup_retirement_snapshot(support_sha, connection_binding)
+                if _digest(latest) != approval_fingerprint:
+                    raise SupportError("backup_retirement_fingerprint_changed")
+                self._assert_backup_retirement_ready(latest)
+                self.host.remove_backup_retirement_targets()
+                after = self.host.collect_backup_retirement_snapshot(support_sha, connection_binding)
+                self._assert_backup_retirement_ready(after)
+                if (any(after[name]["present"] for name in ("runtime", "config", "state"))
+                        or any(state.get("file") != "absent" or state.get("load") != "not-found"
+                               for state in after["units"].values())
+                        or after["picker_config"].get("present") is True
+                        or after["picker_mount"] != "absent"
+                        or after["picker_mount_details"] != []
+                        or after["containers_sha256"] != before["containers_sha256"]):
+                    raise SupportError("backup_retirement_postcheck_failed")
+                completed = {
+                    "schema": "pyp-backup-runtime-retirement-v1",
+                    "kind": "backup-runtime-retirement-complete",
+                    "operation_id": operation_id,
+                    "status": "complete",
+                    "support_sha": support_sha,
+                    "approved_fingerprint": approval_fingerprint,
+                    "postcheck_fingerprint": _digest(after),
+                    "removed": ["runtime", "config", "state", "systemd_units", "picker_config"],
+                }
+                return self.host.create_receipt(completed)
+            except BaseException:  # noqa: BLE001 - cleanup is irreversible and uncertain state is terminal.
+                try:
+                    self.host.create_receipt({
+                        "schema": "pyp-backup-runtime-retirement-v1",
+                        "kind": "backup-runtime-retirement-incomplete",
+                        "operation_id": operation_id,
+                        "status": "incomplete",
+                        "support_sha": support_sha,
+                        "approved_fingerprint": approval_fingerprint,
+                    })
+                except BaseException:  # noqa: BLE001 - never disclose host exception details.
+                    raise SupportError("backup_retirement_incomplete") from None
+                raise SupportError("backup_retirement_incomplete") from None
 
     def repair_backup_directory_mode(self, support_sha: str, connection_binding: str,
                                      approval_fingerprint: str) -> None:
@@ -1201,6 +1766,15 @@ def _validate_mode_arguments(args: argparse.Namespace) -> None:
         _safe_sha(approval, HEX64, "support_fingerprint_invalid")
         _safe_sha(receipt, HEX64, "support_receipt_invalid")
         return
+    if args.mode == "backup-retirement-inventory":
+        if approval or receipt:
+            raise SupportError("support_arguments_invalid")
+        return
+    if args.mode == "retire-backup-runtime":
+        if not approval or receipt:
+            raise SupportError("support_arguments_invalid")
+        _safe_sha(approval, HEX64, "support_fingerprint_invalid")
+        return
     raise SupportError("support_arguments_invalid")
 
 
@@ -1263,6 +1837,38 @@ def main(argv: list[str] | None = None) -> int:
             print(f"support_backup_directory={snapshot['backup_directory_state']}")
             print(f"support_backup_directory_diagnostics={backup_diagnostics}")
             print(f"support_fingerprint={fingerprint}")
+            return 0
+        if args.mode == "backup-retirement-inventory":
+            fingerprint, snapshot = coordinator.backup_retirement_inventory(
+                args.support_sha, args.connection_binding,
+            )
+            print("backup_retirement_inventory=success")
+            for name in ("runtime", "config", "state"):
+                print(f"backup_{name}={'present' if snapshot[name]['present'] else 'absent'}")
+            for name, value in snapshot["state_summary"].items():
+                print(f"backup_local_{name}={value}")
+            for name, state in snapshot["units"].items():
+                unit = "service" if name.endswith(".service") else "timer"
+                print(f"backup_{unit}={state['active']},{state['enabled']}")
+            print(f"backup_picker_config={'present' if snapshot['picker_config']['present'] else 'absent'}")
+            print(f"backup_picker_mount={snapshot['picker_mount']}")
+            for index, mount in enumerate(snapshot["picker_mount_details"], start=1):
+                print(f"backup_picker_mount_{index}_container={mount['container']}")
+                print(f"backup_picker_mount_{index}_source={mount['source']}")
+                print(f"backup_picker_mount_{index}_target={mount['target']}")
+                print(f"backup_picker_mount_{index}_service={mount['service']}")
+                print(f"backup_picker_mount_{index}_compose_files={mount['compose_files']}")
+            for name, state in snapshot["health"].items():
+                print(f"health_{name}={state}")
+            print(f"backup_install_incomplete={'yes' if snapshot['incomplete_install'] else 'no'}")
+            print(f"backup_retirement_fingerprint={fingerprint}")
+            return 0
+        if args.mode == "retire-backup-runtime":
+            digest = coordinator.retire_backup_runtime(
+                args.support_sha, args.connection_binding, args.approval_fingerprint,
+            )
+            print("backup_retirement=success")
+            print(f"backup_retirement_receipt_sha256={digest}")
             return 0
         digest = coordinator.restore(args.support_sha, args.connection_binding, args.approval_fingerprint,
                                      args.receipt_sha256)

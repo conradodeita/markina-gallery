@@ -1,5 +1,7 @@
 ## 1. Correção e preparação
 
+> **SUPERCEDIDA — NÃO EXECUTAR tarefas pendentes nem despachar workflows.** Este change não deve ser retomado. As caixas vazias são histórico da tentativa cancelada em 25/11/2026; o trabalho vigente está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/tasks.md) e [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/tasks.md).
+
 - [x] 1.1 Corrigir a leitura do systemd e a atestação da geração Compose da API. Cobrir a ordem observada e a recusa de estados inseguros ou identidade divergente.
 - [x] 1.2 Implementar preparo protegido da origem com testemunhas de banco concordantes, fingerprint sob lock e persistência sem sobrescrever vínculo existente divergente. Cobrir preparação repetida, metadados inseguros e falha sem escrita.
 - [x] 1.3 Preparar os diretórios fixos do primeiro backup apenas na execução habilitada e proteger a classificação de releases do aplicativo sem relaxar seus gates.

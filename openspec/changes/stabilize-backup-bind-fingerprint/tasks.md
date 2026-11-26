@@ -1,3 +1,5 @@
+> **SUPERCEDIDA — NÃO EXECUTAR tarefas pendentes nem despachar workflows.** As caixas abertas registram passos não concluídos do vínculo do runtime Google Picker cancelado em 25/11/2026. O trabalho vigente é [retire-platform-backup-runtime](../retire-platform-backup-runtime/tasks.md), seguido pela prova em [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/tasks.md).
+
 ## 1. Implementação
 
 - [ ] 1.1 Selecionar a projeção v2 no workflow e no wrapper para bind-and-rehearse, revalidar precondições sob lock e preservar reconcile.

@@ -13,7 +13,11 @@ from check_infinitepay_retirement_scope import (
     evaluate_followup_scope as evaluate_retirement_followup_scope,
 )
 from check_prod_app_release_scope import evaluate, git
-from classify_prod_release import classify
+from classify_prod_release import (
+    BACKUP_RETIREMENT_FILES,
+    BACKUP_RETIREMENT_PREFIXES,
+    classify,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -56,8 +60,9 @@ def release_candidate_snapshot(root: Path, manifest: dict, *, target: str = "HEA
         original_retirement = evaluate_retirement_scope(changed, compose_diff)[0]
         parent = git(root, "rev-parse", f"{source}^")
         integrated_followup = evaluate_retirement_followup_scope(root, parent, source)[0]
-        if classify(changed) != "protected" or not (original_retirement or integrated_followup):
-            raise AssertionError("snapshot do manifesto não é candidato API/web nem change de aposentadoria aprovada")
+        backup_retirement = _is_backup_retirement_snapshot(root, baseline, source, changed)
+        if classify(changed) != "protected" or not (original_retirement or integrated_followup or backup_retirement):
+            raise AssertionError("snapshot do manifesto não é candidato API/web nem change de aposentadoria protegida reconhecida")
     ready, reason = evaluate(root, baseline, target, manifest)
     if not ready:
         # Classify only changes after the reviewed manifest snapshot. The
@@ -71,6 +76,54 @@ def release_candidate_snapshot(root: Path, manifest: dict, *, target: str = "HEA
         }:
             raise AssertionError(f"candidato não comprova a recusa protegida esperada: {reason}")
     return source, ready, reason
+
+
+def _is_backup_retirement_snapshot(root: Path, baseline: str, source: str,
+                                   changed: set[str]) -> bool:
+    required = {
+        ".github/workflows/production-app-compose-bridge-install.yml",
+        "scripts/production_app_preflight_support.py",
+        "scripts/test_production_app_preflight_support.py",
+        "openspec/changes/retire-platform-backup-runtime/tasks.md",
+        "openspec/changes/retire-platform-backup-runtime/specs/deployment-operations/platform-backup-retirement/spec.md",
+    }
+    if not required.issubset(changed):
+        return False
+    try:
+        task_text = git(root, "show", f"{source}:openspec/changes/retire-platform-backup-runtime/tasks.md")
+        spec_text = git(root, "show", f"{source}:openspec/changes/retire-platform-backup-runtime/specs/deployment-operations/platform-backup-retirement/spec.md")
+        workflow_text = git(root, "show", f"{source}:.github/workflows/production-app-compose-bridge-install.yml")
+    except subprocess.CalledProcessError:
+        return False
+    if ("backup-retirement-inventory" not in workflow_text or "retire-backup-runtime" not in workflow_text
+            or "identificar o container" not in task_text
+            or "caminhos de origem e destino" not in spec_text):
+        return False
+
+    retired_exact = BACKUP_RETIREMENT_FILES - {
+        "scripts/production-preflight-ssh-wrapper.sh", "scripts/production_app_compose_bridge.py",
+    } | {
+        ".github/workflows/production-google-picker-config.yml",
+        "scripts/build_platform_backup_runtime.sh",
+        "scripts/install-prod-platform-backup-wrapper.sh",
+        "scripts/install_platform_backup_runtime.py",
+        "scripts/platform_backup_runtime_artifact.py",
+        "scripts/platform_backup_runtime_inventory.py",
+        "scripts/platform_backup_wrapper_restore.py",
+    }
+    status_lines = git(root, "diff", "--name-status", baseline, source).splitlines()
+    retired_deletions = 0
+    for line in status_lines:
+        fields = line.split("\t")
+        if len(fields) != 2:
+            continue
+        status, path = fields
+        retired = path in retired_exact or path.startswith(BACKUP_RETIREMENT_PREFIXES)
+        if retired:
+            if status != "D":
+                return False
+            retired_deletions += 1
+    return retired_deletions > 0
 
 
 def main() -> None:
@@ -101,8 +154,8 @@ def main() -> None:
     require("on:\n  workflow_dispatch:\n    inputs:\n      operation:",
             "suporte do preflight apenas por despacho com operação explícita", evidence_gate)
     require("permissions: {}", "sem permissões padrão no workflow de suporte", evidence_gate)
-    require("options: [support-inventory, prepare-support, repair-support-backups-mode, restore-support-inventory, restore-support]",
-            "somente as cinco operações aprovadas", evidence_gate)
+    require("options: [support-inventory, prepare-support, repair-support-backups-mode, restore-support-inventory, restore-support, backup-retirement-inventory, retire-backup-runtime]",
+            "operações de suporte e aposentadoria aprovadas", evidence_gate)
     main_dispatch = "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
     verify_evidence = 'scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA" --app-bridge-install'
     for block in (evidence_gate, bridge_install):
@@ -438,6 +491,8 @@ def main() -> None:
         raise AssertionError("preflight não pode executar script enviado pelo runner")
 
     require('^MARKINA_TARGET_SHA=([0-9a-f]{40})$', "comando SSH validado por regex estrita", WRAPPER)
+    if "MARKINA_PLATFORM_BACKUP_" in WRAPPER or "MARKINA_PICKER_SUPPORT_SHA" in WRAPPER:
+        raise AssertionError("wrapper não pode mais expor operações de backup global ou Google Picker")
     require('inventory_mode="inventory"', "wrapper fixa modo somente-leitura padrão", WRAPPER)
     require('inventory_mode="rollback-inventory"', "wrapper limita o segundo modo a inventário de rollback", WRAPPER)
     require('MARKINA_RETIREMENT_TARGET_SHA=([0-9a-f]{40})', "comando de aposentadoria exige SHA completo", WRAPPER)
@@ -492,21 +547,8 @@ def main() -> None:
     require("MARKINA_APP_ROLLBACK_SHA=([0-9a-f]{40})", "wrapper aceita apenas SHA para inventário de rollback", WRAPPER)
     if "--mode release" in WRAPPER or '"$SSH_ORIGINAL_COMMAND"' in WRAPPER:
         raise AssertionError("wrapper não pode encaminhar comando arbitrário nem release")
-    backup_dispatch = WRAPPER.split('if [[ -n "$backup_mode" ]]; then', 1)[1].split(
-        '\ninventory_runtime="bash"', 1
-    )[0]
-    temporary_assignment = 'source_dir="$(mktemp -d)"'
-    temporary_cleanup = 'trap \'rm -rf -- "$source_dir"\' EXIT'
-    require('git ls-remote origin refs/heads/main', "SHA remoto da main validado", backup_dispatch)
-    require(temporary_assignment, "staging isolado do suporte de backup", backup_dispatch)
-    require(temporary_cleanup, "staging temporário sempre removido", backup_dispatch)
-    if not (
-        backup_dispatch.index('git ls-remote origin refs/heads/main')
-        < backup_dispatch.index(temporary_assignment)
-        < backup_dispatch.index(temporary_cleanup)
-        < backup_dispatch.index("curl --location")
-    ):
-        raise AssertionError("staging do suporte deve ser criado após validar o SHA e antes do download")
+    if "MARKINA_PLATFORM_BACKUP_" in WRAPPER or "MARKINA_PICKER_SUPPORT_SHA" in WRAPPER:
+        raise AssertionError("wrapper não pode mais expor operações de backup global ou Google Picker")
     legacy_inventory = WRAPPER.split('\ninventory_runtime="bash"', 1)[1]
     if "mktemp" in legacy_inventory:
         raise AssertionError("caminho de preflight legado não pode criar temporários")
@@ -516,6 +558,8 @@ def main() -> None:
     require("printf '%s\\n' \"$script_body\" | MARKINA_EXPECTED_REPOSITORY=", "somente conteúdo validado alimenta stdin", WRAPPER)
     script = INVENTORY_SCRIPT.decode("utf-8")
     app_script = APP_INVENTORY_SCRIPT.decode("utf-8")
+    if "picker-" in app_script:
+        raise AssertionError("executor app não pode manter modos retirados do Google Picker")
     retirement_script = RETIREMENT_INVENTORY_SCRIPT.decode("utf-8")
     require('MODE" == inventory', "script remoto aceita somente modo de inventário", retirement_script)
     require('"20261021_0086"', "preflight confere schema anterior exato", retirement_script)
@@ -588,8 +632,7 @@ def main() -> None:
     manifest = json.loads((ROOT / "openspec/changes/improve-client-face-reference-capture/production-gates.json").read_text(encoding="utf-8"))
     maintenance = manifest["maintenance_release"]
     app_manifest = json.loads((ROOT / "openspec/changes/add-production-app-release-workflow/runtime-gates.json").read_text(encoding="utf-8"))
-    # Active API/web release attested by image identities and healthy receipts;
-    # see enable-platform-backup-runtime/validation-picker-scope.md.
+    # The versioned manifest contains only runtime paths that remain supported.
     if app_manifest.get("production_baseline_sha") != "492c141cd998efc87ebde1ee81ea9101effb4f7c":
         raise AssertionError("baseline API/web diverge da publicação comprovada")
     if "emergency_api" in app_manifest:
@@ -646,18 +689,14 @@ def main() -> None:
         actual = git(ROOT, "rev-parse", f"{runtime_source}:{path}")
         if actual != expected:
             raise AssertionError("arquivo de runtime app diverge do blob revisado")
-    expected_backup_support = {
-        "scripts/backup_runtime/pyp-platform-backup.service",
-        "scripts/backup_runtime/pyp-platform-backup.timer",
-        "scripts/backup_runtime/requirements-py310-arm64.lock",
-    }
-    support_blobs = app_manifest.get("support_blobs", {})
-    if set(support_blobs) != expected_backup_support:
-        raise AssertionError("arquivos de suporte do backup não estão fixados no manifesto")
-    for path, expected in support_blobs.items():
-        actual = git(ROOT, "rev-parse", f"{runtime_source}:{path}")
-        if actual != expected:
-            raise AssertionError("arquivo de suporte do backup diverge do blob revisado")
+    retired_prefixes = ("backend/app/platform_backup/", "scripts/backup_runtime/")
+    if (app_manifest.get("support_blobs")
+            or any(path in app_manifest["runtime_blobs"] for path in (
+                "backend/app/google_drive_picker.py",
+                "frontend/app/admin/platform/google-drive-folder-picker.tsx",
+            ))
+            or any(path.startswith(retired_prefixes) for path in app_manifest["runtime_blobs"])):
+        raise AssertionError("manifesto app/web ainda fixa caminhos da tentativa de backup aposentada")
     for forbidden in ("systemctl enable pyp-platform-backup.timer",
                       "systemctl start pyp-platform-backup.service",
                       "scripts/backup_runtime/pyp-platform-backup.timer"):
@@ -710,8 +749,8 @@ def main() -> None:
         ("127.0.0.1:8080", "porta Markina documentada"),
         ("https://markina.pickyourpic.com.br", "domínio documentado"),
         ("worker OTP", "exclusão do worker OTP documentada"),
-        ("pyp-platform-backup.service", "serviço de backup fora do deploy API/web"),
-        ("pyp-platform-backup.timer", "timer de backup fora do deploy API/web"),
+        ("remoção dos arquivos instalados no host segue workflow protegido separado",
+         "retirada do runtime legado fora do deploy API/web"),
     ):
         require(fragment, label, APP_RUNBOOK)
     require("compose exec -T nginx nginx -t", "validação confinada ao nginx Markina", release_script)

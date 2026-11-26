@@ -63,9 +63,16 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(2625, profile["source"]["collected_items"])
         self.assertEqual(251, profile["source"]["module_count"])
         self.assertEqual(3, profile["source"]["sample_count"])
-        self.assertEqual(7875, sum(item["items"] for item in profile["modules"].values()))
+        adjustments = profile["profile_adjustments"]
+        self.assertEqual(12, len(adjustments["excluded_modules"]))
+        self.assertTrue(all(name.startswith("tests/test_platform_backup_")
+                            for name in adjustments["excluded_modules"]))
+        self.assertEqual(420, adjustments["excluded_items_across_samples"])
+        self.assertEqual(profile["source"]["module_count"] - len(adjustments["excluded_modules"]),
+                         len(profile["modules"]))
         self.assertEqual(
-            profile["source"]["collected_items"] * profile["source"]["sample_count"],
+            profile["source"]["collected_items"] * profile["source"]["sample_count"]
+            - adjustments["excluded_items_across_samples"],
             sum(item["items"] for item in profile["modules"].values()),
         )
         self.assertEqual(64, len(duration_profile_sha256(profile)))

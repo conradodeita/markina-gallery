@@ -1,3 +1,5 @@
+> **SUPERCEDIDA — NÃO EXECUTAR tarefas pendentes nem provisionar credenciais.** Este change era exclusivo do runtime Google Picker cancelado em 25/11/2026. As caixas abertas ficam como registro histórico; consulte [retire-platform-backup-runtime](../retire-platform-backup-runtime/tasks.md) e a prova vigente [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/tasks.md).
+
 ## 1. Correção e validação
 
 - [ ] 1.1 Confirmar o canal SSH restrito do backup disponível a `production`; se faltar credencial apropriada, documentar provisionamento protegido e obter autorização própria.

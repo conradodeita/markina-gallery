@@ -11,7 +11,6 @@ import { PhotographerTermsEditor } from "./photographer-terms-editor";
 import { PhotographerTermsHistory } from "./photographer-terms-history";
 import { TenantClosureConsole } from "./tenant-closure-console";
 import { GoogleDriveConnectForm } from "./google-drive-connect";
-import { GoogleDriveBackupFolderPicker } from "./google-drive-folder-picker";
 
 type Tenant = { tenant_id: string; status: string; lifecycle: string; canonical_host: string | null; canonical_host_status: "reserved" | "ready" | null; photographer_name?: string | null; admin_email: string | null };
 type Detail = Omit<Tenant, "admin_email"> & { gallery_count: number; photo_count: number; observed_at: string };
@@ -270,11 +269,9 @@ function ConsoleContent() {
             {drive.quota_observed_at ? <p>Última quota registrada: {formatBytes(drive.quota_usage)} usados de {formatBytes(drive.quota_limit)} · consulta em {new Date(drive.quota_observed_at).toLocaleString("pt-BR")}</p> : <p>Quota ainda não observada.</p>}
             <small>{drive.connection_updated_at ? `Estado salvo em ${new Date(drive.connection_updated_at).toLocaleString("pt-BR")} · ` : ""}Registro consultado em {drive.observed_at ? new Date(drive.observed_at).toLocaleString("pt-BR") : "instante desconhecido"}</small>
             {drive.availability !== "authorization_recorded" ? <GoogleDriveConnectForm /> : null}
-            {drive.availability === "authorization_recorded" && drive.scope === "platform_owner"
-              ? <GoogleDriveBackupFolderPicker /> : null}
           </div>;
         })()}
-        <p>Backup, arquivo e restauração: sem fonte integrada; estado desconhecido.</p>
+        <p>Estado do arquivo de mídia e da restauração indisponível.</p>
       </> : null}
     </SurfaceCard>
   </div>;

@@ -6,7 +6,6 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/production-app-compose-bridge-install.yml").read_text(encoding="utf-8")
 RUNNER = (ROOT / "scripts/install-prod-app-compose-bridge.sh").read_text(encoding="utf-8")
 HELPER = (ROOT / "scripts/production_app_preflight_support.py").read_text(encoding="utf-8")
-WRAPPER_WORKFLOW = (ROOT / ".github/workflows/production-platform-backup-wrapper-install.yml").read_text(encoding="utf-8")
 
 
 def require(condition: bool, reason: str) -> None:
@@ -16,7 +15,8 @@ def require(condition: bool, reason: str) -> None:
 
 def main() -> int:
     operations = ("support-inventory", "prepare-support", "repair-support-backups-mode",
-                  "restore-support-inventory", "restore-support")
+                  "restore-support-inventory", "restore-support", "backup-retirement-inventory",
+                  "retire-backup-runtime")
     option_text = "options: [" + ", ".join(operations) + "]"
     require("on:\n  workflow_dispatch:\n    inputs:\n      operation:" in WORKFLOW,
             "support_requires_explicit_workflow_dispatch")
@@ -43,6 +43,16 @@ def main() -> int:
             "support_workflow_does_not_pass_helper_pin")
     require('tee -a "$GITHUB_STEP_SUMMARY"' in WORKFLOW,
             "support_inventory_output_not_presented_in_protected_summary")
+    for retirement_detail in (
+        "backup_picker_mount_{index}_container=",
+        "backup_picker_mount_{index}_source=",
+        "backup_picker_mount_{index}_target=",
+        "backup_picker_mount_{index}_service=",
+        "backup_picker_mount_{index}_compose_files=",
+    ):
+        require(retirement_detail in HELPER, "retirement_inventory_source_details_missing:" + retirement_detail)
+    require('print(f"backup_local_{name}={value}")' in HELPER,
+            "retirement_inventory_does_not_report_aggregate_local_artifacts")
     repair_case = WORKFLOW.split("            repair-support-backups-mode)", 1)[1].split(
         "            restore-support-inventory)", 1)[0]
     require('"$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$' in repair_case
@@ -64,12 +74,29 @@ def main() -> int:
         "            repair-support-backups-mode)", 1)[0]
     require("repair-support-backups-mode" not in inventory_case, "support_inventory_chains_mode_repair")
     require("repair-support-backups-mode" not in prepare_case, "support_preparation_chains_mode_repair")
+    retirement_inventory_case = WORKFLOW.split("            backup-retirement-inventory)", 1)[1].split(
+        "            retire-backup-runtime)", 1)[0]
+    retirement_case = WORKFLOW.split("            retire-backup-runtime)", 1)[1].split(
+        "            *)", 1)[0]
+    require('"$APPROVAL_FINGERPRINT"' in retirement_inventory_case
+            and "-z" in retirement_inventory_case
+            and "support_args+=(--approval-fingerprint" not in retirement_inventory_case,
+            "backup_retirement_inventory_must_not_accept_approval_or_mutate")
+    require('"$APPROVAL_FINGERPRINT" =~ ^[0-9a-f]{64}$' in retirement_case
+            and '"$PREPARATION_RECEIPT_SHA256"' in retirement_case
+            and "-z" in retirement_case
+            and "support_args+=(--approval-fingerprint \"$APPROVAL_FINGERPRINT\")" in retirement_case,
+            "backup_retirement_must_require_only_exact_fingerprint")
 
     require("readonly PROJECT_ROOT=\"/opt/markina-gallery\"" in RUNNER
             and "readonly SUPPORT_HELPER=\"scripts/production_app_preflight_support.py\"" in RUNNER,
             "support_runner_identity_or_helper_path_not_fixed")
     for operation in operations:
         require(operation in RUNNER, "support_runner_missing_operation:" + operation)
+    runner_retirement = RUNNER.split("  retire-backup-runtime)", 1)[1].split("  *)", 1)[0]
+    require('[[ $# == 2 && "$1" == --approval-fingerprint && "$2" =~ ^[0-9a-f]{64}$ ]]' in runner_retirement
+            and "--path" not in runner_retirement and "--receipt-sha256" not in runner_retirement,
+            "backup_retirement_runner_accepts_unreviewed_targets")
     require("git ls-remote --exit-code origin refs/heads/main" in RUNNER,
             "support_runner_does_not_revalidate_remote_main")
     require("git fetch --no-tags --no-write-fetch-head --refmap= origin refs/heads/main" in RUNNER,
@@ -97,6 +124,25 @@ def main() -> int:
     require('LOCK_DIR = Path("/var/lib/markina-gallery/deploy-state")' in HELPER
             and 'LOCK_PATH = LOCK_DIR / "production-release.lock"' in HELPER,
             "support_helper_common_lock_changed")
+    for target in (
+        'BACKUP_RUNTIME_DIR = Path("/opt/pyp-backup-runtime")',
+        'BACKUP_CONFIG_DIR = Path("/etc/pyp-backup")',
+        'BACKUP_STATE_DIR = Path("/var/lib/pyp-backup")',
+        'PICKER_CONFIG_PATH = Path("/etc/pyp-google-drive/picker-config.json")',
+    ):
+        require(target in HELPER, "backup_retirement_target_changed:" + target)
+    retirement_removal = HELPER.split("    def remove_backup_retirement_targets(self) -> None:", 1)[1].split(
+        "    def collect_snapshot(", 1)[0]
+    require("def remove_backup_retirement_targets(self) -> None:" in HELPER
+            and '["/usr/bin/systemctl", "daemon-reload"]' in retirement_removal,
+            "backup_retirement_workflow_is_not_fixed")
+    for forbidden in ("docker", "docker compose", "pg_dump", "psql", "alembic", "DROP TABLE",
+                      "systemctl start", "systemctl enable"):
+        require(forbidden not in retirement_removal,
+                "backup_retirement_removal_touches_unrelated_resource:" + forbidden)
+    require("for directory in (BACKUP_CONFIG_DIR, BACKUP_STATE_DIR, BACKUP_RUNTIME_DIR)" in retirement_removal
+            and "PICKER_CONFIG_PATH.unlink(missing_ok=True)" in retirement_removal,
+            "backup_retirement_deletion_targets_are_not_exact")
     for diagnostic_field in (
         "support_state_directory_diagnostics", "support_backup_directory_diagnostics",
     ):
@@ -109,17 +155,6 @@ def main() -> int:
     for forbidden in ("git checkout", "git reset", "git clean", "git prune", "docker compose up",
                       "systemctl start", "systemctl enable", "pg_dump"):
         require(forbidden not in HELPER, "support_helper_contains_forbidden_operation:" + forbidden)
-
-    require("options: [inventory, install-wrapper, restore-wrapper]" in WRAPPER_WORKFLOW,
-            "existing_restore_wrapper_operations_changed")
-    restore_job = WRAPPER_WORKFLOW.split("  restore-wrapper:", 1)[1]
-    for gate in ("environment: production", "inputs.operation == 'restore-wrapper'",
-                 'python scripts/verify_main_ci_evidence.py --sha "$GITHUB_SHA"',
-                 'RESTORE_BACKUP_SHA256: ${{ inputs.restore_backup_sha256 }}',
-                 'REQUESTED_FINGERPRINT" == "$INVENTORY_FINGERPRINT',
-                 'production_binding" == "$INVENTORY_CONNECTION',
-                 "MARKINA_PLATFORM_BACKUP_RESTORE_WRAPPER_SHA=$GITHUB_SHA"):
-        require(gate in restore_job, "existing_restore_wrapper_gate_missing:" + gate)
 
     print("production_app_preflight_support_workflow=valid")
     return 0

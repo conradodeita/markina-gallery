@@ -89,9 +89,6 @@ jobs:
         run: pip install -r backend/requirements.txt -r backend/face-requirements.txt -r backend/benchmark-requirements.txt
       - name: Lint (ruff)
         run: ruff check backend/app backend/tests
-      - name: Ensaio POSIX da preparação, vínculo e prova sintética do backup
-        working-directory: backend
-        run: sudo -n -- "$(command -v python)" -B -m pytest -q -p no:cacheprovider tests/test_platform_backup_production_cli.py
       - name: Lint do inventário APP_ENV
         run: ruff check scripts/app_env_transition_inventory.py scripts/app_env_transition_inventory_report.py scripts/test_app_env_transition_inventory.py scripts/test_production_release_workflow_policy.py scripts/test_prod_release_state.py
       - name: Lint do bundle de release API/web
@@ -487,17 +484,7 @@ jobs:
           python -m unittest discover -s scripts -p test_production_app_compose_bridge.py -v
           python -m unittest discover -s scripts -p test_production_app_runtime_adoption.py -v
           sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -B -m unittest discover -s scripts -p 'test_production_app_handoff_*.py' -v
-          sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -B -m unittest discover -s scripts -p 'test_production_app_picker.py' -v
-          ruff check scripts/platform_backup_runtime_artifact.py scripts/platform_backup_runtime_inventory.py scripts/install_platform_backup_runtime.py scripts/test_platform_backup_runtime_artifact.py scripts/test_platform_backup_runtime_inventory.py scripts/test_install_platform_backup_runtime.py scripts/platform_backup_wrapper_restore.py scripts/test_platform_backup_wrapper_restore.py scripts/test_platform_backup_runtime_workflow.py
-          python -B scripts/test_platform_backup_runtime_artifact.py -v
-          sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -B scripts/test_platform_backup_runtime_inventory.py -v
-          sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -B scripts/test_install_platform_backup_runtime.py -v
-          bash -n scripts/build_platform_backup_runtime.sh
           bash -n scripts/production-preflight-ssh-wrapper.sh
-          bash -n scripts/install-prod-platform-backup-wrapper.sh
-          python -B scripts/test_platform_backup_runtime_workflow.py
-          python -B scripts/test_platform_backup_wrapper_restore.py -v
-          bash scripts/build_platform_backup_runtime.sh "$GITHUB_SHA" "$RUNNER_TEMP/pyp-platform-backup-runtime.tar.gz"
           bash scripts/test_deploy_prod_app_services.sh
           python scripts/test_prod_facial_release_gates.py
           python scripts/test_prod_app_release_scope.py

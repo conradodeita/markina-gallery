@@ -1,3 +1,5 @@
+> **SUPERCEDIDA — NÃO IMPLEMENTAR NEM DESPACHAR.** Este ajuste de fingerprint pertencia ao vínculo do runtime Google Picker cancelado em 25/11/2026. As tarefas abertas ficam somente como histórico; consulte [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md) e a direção vigente [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
+
 ## Why
 
 O run 45615204063 recusou o vínculo antes de escrever porque 84 KiB de variação de espaço alteraram a fingerprint integral. A v2 permaneceu igual.

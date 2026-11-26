@@ -1,5 +1,7 @@
 # Inventário de backup — 06/11/2026
 
+> **INVENTÁRIO HISTÓRICO.** Os estados e caminhos abaixo são snapshots de 06/11/2026, anteriores à aposentadoria do runtime em 25/11. Não usar como estado atual do host, Drive ou backups.
+
 ## Estado confirmado e correção do diagnóstico
 
 A task 1.1c foi concluída por comparação somente de metadata. No Pick-your-Pic, as duas entradas imediatas do destino são exatamente as duas esperadas pelo estado `last-success.json`. No ClearBudget, o estado e o arquivo esperado estão presentes, mas existe uma entrada adicional. Nenhum objeto foi removido, promovido ou restaurado. Correspondência de nomes não comprova checksum, conteúdo, independência ou recuperação.

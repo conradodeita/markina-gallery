@@ -1,5 +1,7 @@
 # Design: Execução interna do backup no servidor
 
+> **SUPERCEDIDA — NÃO IMPLEMENTAR NEM DESPACHAR.** Decisão do proprietário em 25/11/2026. Este documento e o restante desta change ficam apenas como histórico. Consulte [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md) e [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
+
 ## Context
 
 A prova externa sintética de 17/11/2026 recuperou o conteúdo baixado do Drive. O adapter Workspace e o coordenador local existem, porém `_local_runtime` impede o uso dos adapters locais em produção. D15, D16 e a decisão D17 atualizada regem o escopo, retenção, custódia e destino da rotina.
