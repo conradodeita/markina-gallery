@@ -67,9 +67,20 @@ A remoção no servidor SHALL ocorrer somente pelo workflow protegido `productio
 O inventário protegido SHALL incluir os metadados dos mounts na fingerprint e MUST NOT ler ou imprimir o conteúdo dos arquivos montados.
 
 #### Scenario: Mount do Picker encontrado
-- **WHEN** um container monta o caminho de configuração do Picker ou seu destino conhecido
+- **WHEN** um container monta o arquivo de configuração do Picker, seu destino conhecido ou um diretório ancestral que cubra qualquer um desses caminhos
 - **THEN** o inventário SHALL informar o prefixo do ID do container, os caminhos de origem e destino, o serviço Compose e a label de arquivos Compose quando disponíveis
 - **AND** mount presente, origem desconhecida ou origem não reconciliada com a revisão protegida MUST bloquear a retirada
+
+#### Scenario: OAuth compartilhado sem configuração do Picker
+- **WHEN** um container monta somente `/etc/pyp-google-drive/oauth-client.json` em `/run/secrets/google-drive-oauth-client.json`
+- **THEN** o inventário SHALL classificar `picker_mount` como ausente e MUST NOT apresentar esse bind como configuração do Picker
+- **AND** o digest agregado dos containers SHALL continuar incluindo todos os mounts, inclusive o OAuth compartilhado
+- **AND** a retirada MUST NOT alterar ou remover o cliente OAuth, sua configuração ou seus dados
+
+#### Scenario: Bind de diretório que cobre o Picker
+- **WHEN** a origem ou o destino de um bind é um diretório ancestral que cobre o caminho configurado do Picker
+- **THEN** o inventário SHALL classificar o Picker como montado e bloquear a retirada
+- **AND** caminho relativo, não canônico ou inválido MUST falhar fechado sem divulgar valores
 
 ### Requirement: Inventário restringe dados locais à estrutura antiga
 
