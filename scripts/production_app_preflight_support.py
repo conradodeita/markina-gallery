@@ -784,7 +784,7 @@ class LocalSupportHost:
             unexpected_root_category="runtime",
         )
         config = self._retirement_tree_state(
-            BACKUP_CONFIG_DIR, allowed_root_names={"destination.json", "keyring.json"},
+            BACKUP_CONFIG_DIR, allowed_root_names={"destination.json", "keyring.json", "source.json"},
             unexpected_root_category="config",
         )
         state = self._retirement_tree_state(
@@ -1519,7 +1519,7 @@ class SupportCoordinator:
                 raise SupportError("backup_retirement_inventory_invalid")
             path = entry.get("path")
             if (not isinstance(path, str)
-                    or path not in {"destination.json", "keyring.json"}
+                    or path not in {"destination.json", "keyring.json", "source.json"}
                     or entry.get("kind") != "file"
                     or entry.get("mode") != 0o400
                     or path in config_files):
