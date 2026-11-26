@@ -1,5 +1,7 @@
 # Tasks
 
+> **Registro histórico — contrato de runtime aposentado em 25/11/2026.** A implementação descrita nesta change não deve ser retomada: o código exclusivo foi removido pela PR #436 (`eff4d504`). A retirada remanescente está em `retire-platform-backup-runtime`; a nova prova de backup/recuperação está em `prove-open-source-backup-and-recovery`. Preserve os checkboxes como evidência histórica e preserve a fingerprint genérica dos workflows compartilhados de suporte.
+
 ## 1. Fingerprint de aprovação versionada
 
 - [x] 1.1 Implementar projeção canônica e versionada da identidade do host/runtime e dos bindings/capacidades totais de `/var/lib`, `/opt/pyp-backup-runtime` e `/etc/systemd/system`; validar separadamente a conexão autorizada, SHA/CI e pacote no mesmo gate. Falhar fechado para campos ausentes, extras ou inválidos e rejeitar hashes legados. Verificar com testes de mudança de cada testemunha e de invariância dos campos de capacidade voláteis.

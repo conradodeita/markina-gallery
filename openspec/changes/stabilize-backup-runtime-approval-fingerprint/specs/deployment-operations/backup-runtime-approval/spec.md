@@ -1,5 +1,7 @@
 # Spec Delta
 
+> **Registro histórico — contrato de runtime aposentado em 25/11/2026.** Os requisitos abaixo descrevem a fingerprint do runtime global removido pela PR #436 (`eff4d504`); não são contrato para reimplementação. A retirada remanescente está em `retire-platform-backup-runtime`, e a nova prova está em `prove-open-source-backup-and-recovery`. Preserve a fingerprint genérica independente que ainda é usada pelos workflows de suporte compartilhados.
+
 ## Purpose
 
 Define como uma aprovação humana de instalação do runtime de backup permanece vinculada ao host e ao estado operacional pretendidos, enquanto precondições voláteis de espaço são reavaliadas no momento da operação protegida.

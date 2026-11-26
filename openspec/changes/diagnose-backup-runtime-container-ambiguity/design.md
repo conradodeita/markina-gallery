@@ -1,5 +1,7 @@
 # Design
 
+> **Registro histórico — fluxo aposentado em 25/11/2026.** O diagnóstico de ambiguidade do runtime global descrito nesta change foi tornado obsoleto pela retirada do código exclusivo na PR #436 (`eff4d504`). Não reativar este fluxo. A retirada remanescente está em `retire-platform-backup-runtime`; a nova prova de backup/recuperação está em `prove-open-source-backup-and-recovery`. O conteúdo abaixo permanece apenas para rastreabilidade; nenhuma spec principal compartilhada foi removida.
+
 ## Context
 
 Ver proposal.md — Why. O runtime já possui inventário normal que falha fechado quando não consegue identificar univocamente os containers Compose fixos. O diagnóstico precisa explicar essa falha sem virar fonte de identidade operacional nem ampliar a superfície de comandos.

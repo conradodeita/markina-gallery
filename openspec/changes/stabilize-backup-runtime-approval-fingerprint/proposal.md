@@ -1,5 +1,7 @@
 # Proposal
 
+> **Registro histórico — contrato de runtime aposentado em 25/11/2026.** A fingerprint de aprovação do runtime global descrita nesta change não é mais usada desde a retirada do código exclusivo na PR #436 (`eff4d504`). Não reativar este fluxo. A retirada remanescente está em `retire-platform-backup-runtime`; a nova prova de backup/recuperação está em `prove-open-source-backup-and-recovery`. A fingerprint genérica ainda usada pelos workflows compartilhados de suporte é outro contrato e deve ser preservada. O conteúdo abaixo permanece apenas para rastreabilidade.
+
 ## Why
 
 As tentativas protegidas de `install` #45494495527 e #45500760778 foram interrompidas antes de transferir o artefato, iniciar SSH ou escrever no host porque a fingerprint integral mudou somente com pequenas variações de espaço livre em `/var/lib` (296 KiB e 104 KiB). No run #45500760778, o inventário atual ainda mostrou precondições `pass`, serviços saudáveis, schema `20261113_0126` e 133717640 KiB livres (35% usados), mas a diferença exata de espaço invalidou a aprovação. O gate precisa continuar bloqueando espaço insuficiente sem exigir nova aprovação humana por cada oscilação inofensiva dessa métrica.

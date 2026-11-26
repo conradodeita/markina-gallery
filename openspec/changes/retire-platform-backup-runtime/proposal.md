@@ -7,6 +7,8 @@ O proprietário encerrou a tentativa de lançar a rotina própria de backup glob
 - Retirar da interface e da API o fluxo de autorização de pasta do backup global.
 - Desativar os workflows exclusivos da tentativa e retirar o canal de credenciais exclusivo do backup.
 - Inventariar e retirar os componentes instalados, credenciais dedicadas e cópias comprovadamente pertencentes à tentativa.
+- Sinalizar como históricos os deltas OpenSpec e guias operacionais que ainda descrevam o runtime/Picker retirados, preservando as specs principais dos fluxos compartilhados.
+- Manter o resumo de status do roadmap alinhado com o merge, CI e gates ainda pendentes da retirada e da nova prova.
 
 ## Capabilities
 

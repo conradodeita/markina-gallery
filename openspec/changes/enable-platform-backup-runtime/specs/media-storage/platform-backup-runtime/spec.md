@@ -1,5 +1,7 @@
 # Spec Delta
 
+> **DELTA HISTÓRICA — NÃO IMPLEMENTAR.** O runtime global descrito abaixo foi aposentado em 25/11/2026 e seu código exclusivo foi removido pela PR #436 (`eff4d504`). A retirada remanescente está em `retire-platform-backup-runtime`; a direção substituta é `prove-open-source-backup-and-recovery`. Esta delta permanece somente para rastreabilidade e não deve reativar o fluxo Google Workspace/Picker.
+
 ## ADDED Requirements
 
 ### Requirement: Configuração e chave do backup operacional

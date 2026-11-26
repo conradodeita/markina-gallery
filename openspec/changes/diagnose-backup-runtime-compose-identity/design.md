@@ -1,5 +1,7 @@
 # Design
 
+> **Registro histórico — fluxo aposentado em 25/11/2026.** A consulta de identidade do runtime global descrita nesta change foi tornada obsoleta pela retirada do código exclusivo na PR #436 (`eff4d504`). Não reativar este fluxo. A retirada remanescente está em `retire-platform-backup-runtime`; a nova prova de backup/recuperação está em `prove-open-source-backup-and-recovery`. O conteúdo abaixo permanece apenas para rastreabilidade; nenhuma spec principal compartilhada foi removida.
+
 ## Context
 
 Ver [proposal.md](proposal.md). O diagnóstico atual usa filtros fixos de labels do Docker e informa somente contagens por estado. A consulta normal continua recusando qualquer serviço que não tenha exatamente um ID completo, e a configuração Compose de produção tem caminho e nome de projeto fixos.

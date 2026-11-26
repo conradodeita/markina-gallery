@@ -1,5 +1,7 @@
 # Tasks
 
+> **Registro histórico — fluxo aposentado em 25/11/2026.** A implementação descrita nesta change não deve ser retomada: o código exclusivo foi removido pela PR #436 (`eff4d504`). A retirada remanescente está em `retire-platform-backup-runtime`; a nova prova de backup/recuperação está em `prove-open-source-backup-and-recovery`. Mantenha os checkboxes originais como evidência histórica; não apague este registro nem remova specs principais compartilhadas.
+
 ## 1. Diagnóstico agregado
 
 - [x] 1.1 Implementar a consulta read-only para os papéis fixos `api`, `web` e `db`, retornando quantidade total e contagens `running`/`stopped`/`unknown`; cobrir ausência, registro único, duplicidade, estados `created`/`exited`/`dead` e estados desconhecidos com testes de contrato. Evidência: regressão reproduziu ausência da função antes da implementação; suíte atual de inventário passou (17 testes, 1 skip esperado de POSIX/root), incluindo limite de 512 registros por papel.

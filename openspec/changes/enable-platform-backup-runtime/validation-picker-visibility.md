@@ -1,5 +1,7 @@
 # Visibilidade do seletor no console — 20/11/2026
 
+> **EVIDÊNCIA HISTÓRICA — runtime próprio aposentado em 25/11/2026.** Este registro descreve uma correção e validação antigas. Publicação ou mount do Picker, vínculo de destino, backup e timer não são próximos passos vigentes e não ficam autorizados por este texto. O registro não atesta o estado atual do servidor.
+
 ## Causa comprovada
 
 A sessão autenticada do proprietário em `/admin/platform` mostrava autorização Drive registrada, mas não o seletor global. O endpoint `/api/admin/platform/console/sources` usa `scope=platform_owner` para indicar o escopo operacional da fonte; o frontend comparava esse valor com a URI OAuth `drive.file`. A comparação nunca era verdadeira no contrato real.
