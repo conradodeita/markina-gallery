@@ -18,11 +18,44 @@ Um provider de armazenamento alternativo SHALL usar o mesmo catálogo, executor,
 - **WHEN** não há provider durável explicitamente configurado ou a configuração é inválida/ambígua
 - **THEN** o worker não consulta nem reivindica operações e nenhum provider ou storage sintético é selecionado como fallback
 
-### Requirement: Roteamento de objetos preserva a identidade do provider
+### Requirement: Identidade explícita acompanha cada objeto novo
 
-O fluxo SHALL rotear leitura e exclusão ao provider que possui o objeto. Binding tenant→provider MUST NOT identificar sozinho objetos já catalogados. Antes de coexistência/troca, SHALL haver identidade e mapeamento aprovados para catálogo e manifestos v1, incluindo default legado. Modelo objeto/ciclo e migration/versionamento exigem decisão própria. Até essa decisão, o provider atual permanece inalterado.
+O catálogo e cada item do manifesto v2 SHALL persistir `provider_id` opaco e tenant-scoped. Todo novo objeto SHALL registrar identidade escolhida; gravações Rclone MUST NOT omiti-la. A composição seleciona o adapter por objeto antes de chamar `MediaArchiveStorage`, sem alterar as assinaturas do protocolo.
 
-#### Scenario: Transição proposta sem identidade compatível
+#### Scenario: Nova gravação Rclone persiste identidade por objeto
 
-- **WHEN** coexistência ou troca de provider é proposta enquanto catálogo e manifesto v1 identificam somente `remote_id`
-- **THEN** a alteração não seleciona provider por suposição de binding tenant→provider nem ativa a transição até que a identidade/roteamento e o comportamento legado sejam aprovados e validados
+- **WHEN** o executor grava objeto novo por um binding Rclone autorizado
+- **THEN** catálogo e item de manifesto v2 recebem o `provider_id` explícito e a leitura/exclusão futura usa o mesmo binding
+
+### Requirement: OAuth preserva binding somente para a mesma conta e raiz
+
+Uma reautorização SHALL preservar `provider_id` somente quando identidade estável e verificada da conta e raiz de mídia forem iguais. Mudança de conta ou raiz SHALL criar novo binding; objetos existentes MUST NOT ser reatribuídos. E-mail MUST NOT ser a única evidência de identidade.
+
+#### Scenario: Reautorização mantém conta e raiz
+
+- **WHEN** OAuth reconecta a mesma conta verificada e a raiz de mídia não mudou
+- **THEN** a credencial pode ser rotacionada sem mudar `provider_id` nem o roteamento dos objetos existentes
+
+#### Scenario: Conta ou raiz mudou
+
+- **WHEN** a conta verificada ou a raiz de mídia difere do binding existente
+- **THEN** novas gravações usam outro `provider_id` e objetos antigos continuam associados ao binding anterior, sem fallback
+
+### Requirement: Registros legados continuam no Drive sem fallback
+
+Catálogo legado sem `provider_id` e manifesto v1 sem provider SHALL resolver somente para o adapter Drive legado, sem migração automática. Se o binding Drive não resolver, a operação falha fechado. Identidade ausente em v2, desconhecida, de outro tenant ou divergente entre catálogo/manifesto MUST NOT acionar outro provider.
+
+#### Scenario: Objeto legado mantém o provider Drive
+
+- **WHEN** a leitura ou exclusão recebe registro sem `provider_id` legado ou item de manifesto v1 sem provider
+- **THEN** a composição resolve somente o adapter Drive legado e não migra nem tenta outro provider se esse binding estiver indisponível
+
+#### Scenario: Binding original de V1 não pode ser comprovado
+
+- **WHEN** os registros V1 não permitem provar a conta e a raiz Drive originais
+- **THEN** leitura, recuperação e exclusão falham fechado sem usar a conta/raiz conectada atualmente
+
+#### Scenario: Identidade ausente ou divergente
+
+- **WHEN** um registro v2 não tem `provider_id`, o binding não pertence ao tenant ou catálogo e manifesto divergem
+- **THEN** a operação falha fechado antes de ler, gravar, restaurar ou excluir bytes, sem fallback automático

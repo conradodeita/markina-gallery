@@ -16,14 +16,33 @@ O provider Rclone SHALL implementar o contrato existente de armazenamento de arq
 - **THEN** arquivo, readback, recuperação, retry, lease e débito/liberação de créditos seguem os mesmos contratos e registros já usados pelo arquivo frio
 - **AND** o provider não altera prazo, taxa, elegibilidade, reserva, auditoria ou política de retenção
 
-### Requirement: Binding de tenant não substitui identidade persistida do provider
+### Requirement: Provider Rclone permanece inativo até os gates
 
-O provider Rclone SHALL permanecer inativo até aprovação do roteamento de objetos existentes e novos. Como leitura/exclusão recebe somente `remote_id`, o executor usa um storage por operação e o manifesto v1 omite provider, binding tenant→provider MUST NOT rotear objetos catalogados. Granularidade objeto/ciclo, default legado e evolução de catálogo/manifesto seguem sem decisão; esta proposta não escolhe migration.
+O provider Rclone SHALL permanecer inativo até revisão técnica do `provider_id` por objeto e conclusão das tasks 1.1–1.6. O proprietário decidiu coexistência Drive/Rclone por objeto, sem migração automática; registros v1 sem provider continuam no Drive legado, sem fallback.
+
+#### Scenario: Binding ou contrato ainda não revisado
+
+- **WHEN** falta binding durável validado ou revisão técnica da identidade por objeto
+- **THEN** o worker não seleciona Rclone nem reivindica operação com esse provider
+
+### Requirement: O provider id roteia cada objeto
+
+Catálogo e cada item de manifesto v2 SHALL compartilhar `provider_id` opaco e tenant-scoped. Novas gravações Rclone MUST receber essa identidade. Binding tenant→provider sozinho MUST NOT rotear objeto existente. Identidade desconhecida, de outro tenant ou divergente MUST falhar fechado; as assinaturas `MediaArchiveStorage` permanecem inalteradas.
 
 #### Scenario: Provider alternativo encontra objeto legado sem discriminador
 
-- **WHEN** uma operação de leitura ou exclusão recebe ID opaco catalogado antes da seleção de Rclone e não há associação de provider aprovada
-- **THEN** nenhum fallback ou roteamento inferido por tenant ocorre e a operação de transição permanece bloqueada até haver mapeamento compatível revisado
+- **WHEN** uma operação de leitura ou exclusão recebe catálogo legado sem `provider_id` ou manifesto v1 sem provider
+- **THEN** a composição usa somente o adapter Drive legado e falha fechado se ele não puder resolver o objeto, sem tentar Rclone nem migrar dados
+
+#### Scenario: Novo objeto Rclone sem identidade explícita
+
+- **WHEN** uma nova gravação seleciona Rclone mas não apresenta `provider_id` tenant-scoped válido
+- **THEN** a gravação é recusada antes de iniciar subprocesso ou promover catálogo/manifesto
+
+#### Scenario: Catálogo e manifesto discordam
+
+- **WHEN** `provider_id` do item do manifesto v2 diverge do catálogo ou aponta para outro tenant
+- **THEN** leitura, recuperação e exclusão falham fechado sem fallback
 
 ### Requirement: Chaves e objetos mantêm isolamento por tenant
 
