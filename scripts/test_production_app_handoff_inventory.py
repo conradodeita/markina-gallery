@@ -120,6 +120,59 @@ class HandoffInventoryContracts(unittest.TestCase):
         with self.assertRaisesRegex(bridge.BridgeError, 'handoff_registry_runtime_mismatch'):
             self.plan(items=self.items + [witness], active_records=self.records + [record])
 
+    def test_witness_picker_mount_is_fingerprinted_and_mount_drift_blocks(self):
+        witness = copy.deepcopy(self.items[0])
+        witness['Id'] = 'e' * 64
+        witness['Name'] = '/historical-private-api'
+        witness['State'].update(Running=False, Status='exited')
+        picker_mount = {'Type': 'bind', 'Source': bridge.PICKER_CONFIG_SOURCE,
+                        'Destination': bridge.PICKER_CONFIG_TARGET, 'RW': False, 'Propagation': 'rprivate'}
+        witness['Mounts'].append(picker_mount)
+        record = bridge.handoff_witness_record(witness)
+        self.assertEqual(record['configuration'], bridge.handoff_configuration(witness))
+        original_fingerprint = record['configuration']
+        plan = self.plan(items=self.items + [witness], active_records=self.records + [record])
+        self.assertEqual(plan['sources'][-1]['configuration'], original_fingerprint)
+
+        changed = copy.deepcopy(witness)
+        changed['Mounts'][-1]['Destination'] = '/run/secrets/google-drive-oauth-client.json'
+        with self.assertRaisesRegex(bridge.BridgeError, 'handoff_registry_runtime_mismatch'):
+            self.plan(items=self.items + [changed], active_records=self.records + [record])
+
+    def test_witness_inventory_report_separates_active_runtime_from_retained_records(self):
+        retained = copy.deepcopy(self.items[0])
+        retained['Id'] = 'c' * 64
+        retained['Name'] = '/markina-gallery-retained-api-' + retained['Id']
+        retained['State'].update(Running=False, Status='exited', FinishedAt='2026-11-24T00:00:00Z', ExitCode=0)
+        retained_record = bridge.handoff_record('api', retained, bridge.PROJECT, retained=True)
+
+        witness = copy.deepcopy(self.items[1])
+        witness['Id'] = 'd' * 64
+        witness['Name'] = '/historical-private-web'
+        witness['State'].update(Running=False, Status='exited', FinishedAt='2026-11-22T00:00:00Z', ExitCode=0)
+        witness_record = bridge.handoff_witness_record(witness)
+        proof = {'domain': 'app-handoff-witnesses-v1', 'active': self.records + [retained_record],
+                 'witnesses': [witness_record]}
+
+        registered = bridge.handoff_witness_inventory_report(
+            proof, self.items + [retained, witness], registry_present=True,
+        )
+        self.assertEqual(set(registered['active_ids']), {'a' * 64, 'b' * 64})
+        self.assertEqual([record['id'] for record in registered['witnesses']], ['c' * 64, 'd' * 64])
+        self.assertTrue(all(record['registered'] for record in registered['witnesses']))
+
+        unregistered = bridge.handoff_witness_inventory_report(
+            proof, self.items + [retained, witness], registry_present=False,
+        )
+        self.assertTrue(unregistered['witnesses'][0]['registered'])
+        self.assertFalse(unregistered['witnesses'][1]['registered'])
+        self.assertNotEqual(registered['fingerprint'], unregistered['fingerprint'])
+
+        changed = copy.deepcopy(retained)
+        changed['HostConfig']['RestartPolicy']['Name'] = 'always'
+        with self.assertRaisesRegex(bridge.BridgeError, 'handoff_witness_runtime_mismatch'):
+            bridge.handoff_witness_inventory_report(proof, self.items + [changed, witness], registry_present=True)
+
     def test_witness_cannot_hide_an_interrupted_original_or_retained(self):
         witness = copy.deepcopy(self.items[0])
         witness['State'].update(Running=False, Status='exited')

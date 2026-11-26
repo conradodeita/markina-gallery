@@ -46,6 +46,8 @@ class HandoffExecutionContracts(unittest.TestCase):
                 raise bridge.BridgeError('synthetic_effect_before_receipt')
         elif args[0] == 'start':
             item['State']['Running'] = True
+            item['State']['Status'] = 'running'
+            item['State']['Health'] = {'Status': 'healthy'}
         elif args[0] == 'rename':
             self.assertFalse(item['State']['Running'])
             item['Name'] = '/' + args[2]
