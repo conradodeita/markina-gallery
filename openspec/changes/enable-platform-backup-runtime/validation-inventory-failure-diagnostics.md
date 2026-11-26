@@ -1,5 +1,7 @@
 # Validação do diagnóstico sanitizado do inventário
 
+> **EVIDÊNCIA HISTÓRICA — runtime próprio aposentado em 25/11/2026.** Esta evidência pertence ao inventariador antigo e não prova o estado atual do servidor. Os passos pendentes de instalação, vínculo, ensaio, backup e timer foram cancelados; qualquer retirada restante segue `retire-platform-backup-runtime`.
+
 ## Contexto
 
 A execução `44918158058`, no SHA `816ee36371f4a6cdfa5d05b490b6b6071d3a6459`, concluiu os gates de CI e a construção ARM64. O preflight remoto falhou, sem fingerprint, e o script mostrou apenas `platform-backup-runtime: inventory failed`. Não há evidência para atribuir a falha a uma consulta específica nem para inferir o estado atual do runtime.

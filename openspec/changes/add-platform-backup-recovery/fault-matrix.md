@@ -1,5 +1,7 @@
 # Matriz de falhas e fronteiras — ensaio local
 
+> **EVIDÊNCIA HISTÓRICA — testes do runtime próprio aposentado em 25/11/2026.** Os módulos e testes citados descrevem o pacote anterior, removido do código ativo. Preserve a matriz para auditoria; não a use como evidência de validação do plano atual nem como autorização de backup, restore ou expurgo.
+
 | Caso | Prova | Resultado/limite |
 |---|---|---|
 | Chave ausente/tamanho incorreto/chave errada | `test_platform_backup_archive.py`, `test_platform_backup_restore.py` | Recusa sem entregar plaintext; nenhuma inspeção/escrita no alvo para arquivo inválido. Chaves somente sintéticas. |

@@ -1,4 +1,6 @@
 # Validação da extensão protegida do Picker
+> **EVIDENCIA HISTORICA - runtime proprio aposentado em 25/11/2026.** Este arquivo preserva resultados de uma implementacao antiga. Os passos de instalacao, mount/aplicacao do Picker, vinculo, backup e timer descritos abaixo foram cancelados e nao autorizam execucao nem comprovam o estado atual do servidor. Qualquer retirada restante deve seguir retire-platform-backup-runtime; a prova sintetica do plano open source fica em prove-open-source-backup-and-recovery.
+
 
 ## Escopo aprovado em 19/11/2026
 

@@ -140,7 +140,9 @@ def main() -> int:
                       "systemctl start", "systemctl enable"):
         require(forbidden not in retirement_removal,
                 "backup_retirement_removal_touches_unrelated_resource:" + forbidden)
-    require("for directory in (BACKUP_CONFIG_DIR, BACKUP_STATE_DIR, BACKUP_RUNTIME_DIR)" in retirement_removal
+    require("directories = (BACKUP_CONFIG_DIR, BACKUP_STATE_DIR, BACKUP_RUNTIME_DIR)" in retirement_removal
+            and retirement_removal.count("for directory in directories") == 2
+            and "shutil.rmtree(directory)" in retirement_removal
             and "PICKER_CONFIG_PATH.unlink(missing_ok=True)" in retirement_removal,
             "backup_retirement_deletion_targets_are_not_exact")
     for diagnostic_field in (

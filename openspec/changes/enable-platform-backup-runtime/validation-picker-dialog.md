@@ -1,5 +1,7 @@
 # Correção do fechamento imediato do seletor — 20/11/2026
 
+> **EVIDÊNCIA HISTÓRICA — runtime próprio aposentado em 25/11/2026.** Este registro descreve uma correção e validação antigas. Publicação ou mount do Picker, vínculo de destino, backup e timer não são próximos passos vigentes e não ficam autorizados por este texto. O registro não atesta o estado atual do servidor.
+
 O proprietário relatou que, após preencher senha/TOTP, a janela quase abria e fechava imediatamente. O callback executava `setVisible(false)` antes de verificar `Response.ACTION`, portanto qualquer notificação intermediária ocultava o seletor. O teste envia `action=loaded` depois da abertura e antes de `picked`: falhou antes da correção com chamadas `[true, false]` em vez de `[true]`. Não foi capturado o evento do navegador real; o defeito local reproduz o sintoma informado.
 
 A correção verifica a ação primeiro: somente `PICKED` e `CANCEL` ocultam a janela; os demais eventos não autorizam pasta nem fazem nova chamada backend. Mantém os controles de senha/TOTP, OAuth `drive.file` e segunda confirmação da pasta. Contrato Google: https://developers.google.com/workspace/drive/picker/reference/picker.action e exemplo de callback https://developers.google.com/workspace/drive/picker/guides/web-picker.
