@@ -1649,7 +1649,7 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
         record = {
             "Id": container_id,
             "Image": f"sha256:{'b' * 64}",
-            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "State": {"Running": True, "Health": {"Status": "healthy"}, "Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
             "Mounts": mounts,
             "Config": {"Labels": {
                 "com.docker.compose.service": "api",
@@ -1659,10 +1659,18 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
         ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
         inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
         host = support.LocalSupportHost()
-        with patch.object(
-            support, "PICKER_CONFIG_PATH", PurePosixPath("/etc/pyp-google-drive/picker-config.json")
-        ), patch.object(host, "_run", side_effect=[ps, inspect]):
-            return host._retirement_container_state()
+        recovery = {"active_ids": [container_id], "services": {"api": {
+            "container_id": container_id, "image_id": record["Image"]}}}
+        witnesses = {"registered": False, "fingerprint": SHA_CONTAINERS,
+                     "active_ids": [container_id], "witness_count": 0, "witnesses": []}
+        with (
+            patch.object(support, "PICKER_CONFIG_PATH", PurePosixPath("/etc/pyp-google-drive/picker-config.json")),
+            patch.object(host, "_retirement_recovery_state", return_value=recovery),
+            patch.object(host, "_retirement_witness_state", return_value=witnesses),
+            patch.object(host, "_run", side_effect=[ps, inspect]),
+        ):
+            digest, status, details, _, _ = host._retirement_container_state(SHA_MAIN)
+        return digest, status, details
 
     def test_retirement_inventory_preserves_shared_oauth_mount_without_picker_false_positive(self):
         oauth_mount = {
