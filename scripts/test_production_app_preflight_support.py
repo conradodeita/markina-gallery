@@ -921,6 +921,26 @@ class SupportCoordinatorTests(unittest.TestCase):
             self.assertNotIn("Traceback", output.getvalue())
             self.assertNotIn("support_fingerprint=", output.getvalue())
 
+    def test_cli_reports_only_static_backup_retirement_layout_codes(self):
+        error_codes = (
+            *support.BACKUP_RETIREMENT_UNEXPECTED_ROOT_CODES.values(),
+            "backup_retirement_unexpected_config_entry",
+        )
+        for error_code in error_codes:
+            output = io.StringIO()
+            with self.subTest(error_code=error_code), patch.object(
+                    support.SupportCoordinator, "backup_retirement_inventory",
+                    side_effect=support.SupportError(error_code),
+            ), patch("sys.stdout", output):
+                result = support.main([
+                    "--mode", "backup-retirement-inventory", "--support-sha", SHA_MAIN,
+                    "--connection-binding", SHA_CONNECTION,
+                ])
+            self.assertEqual(result, 1)
+            self.assertEqual(output.getvalue().strip(), f"support_error={error_code}")
+            self.assertNotIn("PRIVATE_SENTINEL", output.getvalue())
+            self.assertNotIn("support_fingerprint=", output.getvalue())
+
     def test_cli_keeps_unknown_unhandled_errors_generic(self):
         class UnlistedFailure(Exception):
             pass
@@ -1240,14 +1260,85 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
             {"path": "destination.json", "kind": "directory", "mode": 0o700},
             {"path": "destination.json/extra.json", "kind": "file", "mode": 0o400},
             {"path": "keyring.json", "kind": "file", "mode": 0o600},
-            {"path": "unknown.json", "kind": "file", "mode": 0o400},
+            {"path": "PRIVATE_SENTINEL_unknown.json", "kind": "file", "mode": 0o400},
         )
-        for entry in entries:
-            with self.subTest(entry=entry):
+        for index, entry in enumerate(entries):
+            with self.subTest(index=index):
                 host = FakeBackupRetirementHost()
                 host.snapshot["config"]["entries"] = [entry]
-                with self.assertRaisesRegex(support.SupportError, "backup_retirement_unexpected_entry"):
+                with self.assertRaisesRegex(
+                    support.SupportError, "backup_retirement_unexpected_config_entry",
+                ) as raised:
                     support.SupportCoordinator._assert_backup_retirement_ready(host.snapshot)
+                self.assertNotIn("PRIVATE_SENTINEL", str(raised.exception))
+
+    def test_retirement_tree_reports_static_category_for_unexpected_root_entry(self):
+        for category, error_code in support.BACKUP_RETIREMENT_UNEXPECTED_ROOT_CODES.items():
+            with self.subTest(category=category), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary) / "tree"
+                root.mkdir()
+                (root / "PRIVATE_SENTINEL_entry").mkdir()
+                host = support.LocalSupportHost()
+
+                def fake_entry_metadata(_path, _info, *, kind, symlink_target=None):
+                    metadata = {"kind": kind}
+                    if symlink_target is not None:
+                        metadata["target"] = symlink_target
+                    return metadata
+
+                with patch.object(host, "_assert_parent_directory"), \
+                        patch.object(host, "_retirement_entry_metadata", side_effect=fake_entry_metadata), \
+                        patch.object(host, "_retirement_mountpoints", return_value=[]), \
+                        patch("os.path.ismount", return_value=False), \
+                        self.assertRaises(support.SupportError) as raised:
+                    host._retirement_tree_state(
+                        root,
+                        allowed_root_names={"known"},
+                        unexpected_root_category=category,
+                    )
+
+                self.assertEqual(raised.exception.code, error_code)
+                self.assertNotIn("PRIVATE_SENTINEL", str(raised.exception))
+
+    def test_retirement_inventory_maps_unexpected_root_to_fixed_target_category(self):
+        expected_codes = {
+            "runtime": "backup_retirement_unexpected_runtime_layout",
+            "config": "backup_retirement_unexpected_config_layout",
+            "state": "backup_retirement_unexpected_state_layout",
+        }
+        for target, error_code in expected_codes.items():
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                roots = {name: root / name for name in expected_codes}
+                for name, directory in roots.items():
+                    directory.mkdir()
+                    if name == target:
+                        (directory / "PRIVATE_SENTINEL_entry").mkdir()
+                host = support.LocalSupportHost()
+
+                def fake_entry_metadata(_path, _info, *, kind, symlink_target=None):
+                    metadata = {"kind": kind}
+                    if symlink_target is not None:
+                        metadata["target"] = symlink_target
+                    return metadata
+
+                with patch.object(host, "_assert_host_repository", return_value="remote"), \
+                        patch.object(host, "_remote_main_sha", return_value=SHA_MAIN), \
+                        patch.object(host, "_git", return_value=(0, b"")), \
+                        patch.object(host, "state_directory_status", return_value=("ready", [])), \
+                        patch.object(host, "backup_directory_status", return_value=("ready", [])), \
+                        patch.object(support, "BACKUP_RUNTIME_DIR", roots["runtime"]), \
+                        patch.object(support, "BACKUP_CONFIG_DIR", roots["config"]), \
+                        patch.object(support, "BACKUP_STATE_DIR", roots["state"]), \
+                        patch.object(host, "_assert_parent_directory"), \
+                        patch.object(host, "_retirement_entry_metadata", side_effect=fake_entry_metadata), \
+                        patch.object(host, "_retirement_mountpoints", return_value=[]), \
+                        patch("os.path.ismount", return_value=False), \
+                        self.assertRaises(support.SupportError) as raised:
+                    host.collect_backup_retirement_snapshot(SHA_MAIN, SHA_CONNECTION)
+
+                self.assertEqual(raised.exception.code, error_code)
+                self.assertNotIn("PRIVATE_SENTINEL", str(raised.exception))
 
     def test_retirement_accepts_known_backup_config_layout(self):
         host = FakeBackupRetirementHost()

@@ -37,6 +37,13 @@ A remoção no servidor SHALL ocorrer somente pelo workflow protegido `productio
 - **THEN** a pré-condição da retirada MUST bloqueá-la antes de excluir qualquer alvo
 - **AND** o layout conhecido contém somente `destination.json` e `keyring.json` como arquivos regulares diretos `root:root` no modo `0400`, podendo qualquer um deles estar ausente
 
+#### Scenario: Inventário identifica a categoria de uma entrada inesperada sem expor seu nome
+- **WHEN** o inventário encontra uma entrada de nível superior fora da allowlist de runtime, configuração ou estado legado, ou uma entrada de configuração inconsistente no snapshot
+- **THEN** ele SHALL abortar antes de gerar fingerprint ou autorizar remoção
+- **AND** retornará somente `backup_retirement_unexpected_runtime_layout`, `backup_retirement_unexpected_config_layout` ou `backup_retirement_unexpected_state_layout`, ou `backup_retirement_unexpected_config_entry` para a inconsistência no snapshot
+- **AND** o diagnóstico MUST NOT revelar nome, caminho, conteúdo, credencial, owner, mode, ID ou outro metadado da entrada
+- **AND** a allowlist e os critérios de elegibilidade permanecem inalterados
+
 #### Scenario: Bind mount presente em árvore que seria removida
 - **WHEN** o inventário Linux encontra um mountpoint no alvo ou em qualquer descendente de uma árvore protegida, inclusive bind mount no mesmo filesystem
 - **THEN** ele SHALL obter a evidência pela tabela de mounts do processo, sem depender somente de `os.path.ismount()`
