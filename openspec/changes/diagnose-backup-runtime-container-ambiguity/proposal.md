@@ -1,5 +1,7 @@
 # Proposal
 
+> **Registro histórico — fluxo aposentado em 25/11/2026.** O diagnóstico de ambiguidade do runtime global descrito nesta change foi tornado obsoleto pela retirada do código exclusivo na PR #436 (`eff4d504`). Não reativar este fluxo. A retirada remanescente está em `retire-platform-backup-runtime`; a nova prova de backup/recuperação está em `prove-open-source-backup-and-recovery`. O conteúdo abaixo permanece apenas para rastreabilidade; nenhuma spec principal compartilhada foi removida.
+
 ## Why
 
 O inventário protegido do runtime de backup encerra corretamente com `api_container_record_ambiguous`, sem fingerprint ou precondições aprovadas. O código não revela se a ambiguidade decorre de quantidade de registros ou de seus estados, e os dados brutos do Docker não podem ser expostos. Um diagnóstico agregado e restrito pode orientar a reconciliação sem enfraquecer a guarda que impede instalação, vínculo ou ensaio com identidade incerta.

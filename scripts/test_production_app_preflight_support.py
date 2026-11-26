@@ -1172,9 +1172,9 @@ class FakeBackupRetirementHost:
             "checkout_clean": True,
             "support_state_directory": "ready",
             "support_receipt_directory": "ready",
-            "runtime": {"present": True, "entries": []},
-            "config": {"present": True, "entries": []},
-            "state": {"present": True, "entries": []},
+            "runtime": {"present": True, "entries": [], "nested_mounts": []},
+            "config": {"present": True, "entries": [], "nested_mounts": []},
+            "state": {"present": True, "entries": [], "nested_mounts": []},
             "state_summary": {
                 "encrypted_artifacts": 0, "partial_artifacts": 0,
                 "catalog_files": 0, "files": 0, "bytes": 0,
@@ -1217,10 +1217,10 @@ class FakeBackupRetirementHost:
     def remove_backup_retirement_targets(self):
         self.removal_calls += 1
         if self.partial:
-            self.snapshot["config"] = {"present": False, "entries": []}
+            self.snapshot["config"] = {"present": False, "entries": [], "nested_mounts": []}
             raise support.SupportError("backup_retirement_partial")
         for name in ("runtime", "config", "state"):
-            self.snapshot[name] = {"present": False, "entries": []}
+            self.snapshot[name] = {"present": False, "entries": [], "nested_mounts": []}
         self.snapshot["picker_config"] = {"present": False}
         self.snapshot["units"] = {
             name: {"file": "absent", "load": "not-found", "active": "inactive",
@@ -1258,6 +1258,120 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
 
         support.SupportCoordinator._assert_backup_retirement_ready(host.snapshot)
 
+    def test_retirement_readiness_requires_empty_mount_inventory_for_all_trees(self):
+        for target in ("runtime", "config", "state"):
+            with self.subTest(target=target):
+                host = FakeBackupRetirementHost()
+                host.snapshot[target]["nested_mounts"] = ["nested"]
+                with self.assertRaisesRegex(support.SupportError, "backup_retirement_nested_mount"):
+                    support.SupportCoordinator._assert_backup_retirement_ready(host.snapshot)
+
+                host.snapshot[target].pop("nested_mounts")
+                with self.assertRaisesRegex(support.SupportError, "backup_retirement_mount_inventory_invalid"):
+                    support.SupportCoordinator._assert_backup_retirement_ready(host.snapshot)
+
+    def test_mountinfo_parser_detects_same_filesystem_bind_mounts_and_escaped_paths(self):
+        mountinfo = (
+            "31 20 8:1 / / rw,relatime - ext4 /dev/root rw\n"
+            "32 31 8:1 /archive /var/lib/pyp-backup/artifacts rw,relatime - ext4 /dev/root rw\n"
+            "34 31 8:1 /backup /var/lib/pyp-backup rw,relatime - ext4 /dev/root rw\n"
+            "35 31 8:1 /backup-old /var/lib/pyp-backup-old rw,relatime - ext4 /dev/root rw\n"
+            + r"33 31 8:1 /space /var/lib/pyp-backup/archive\040partition rw,relatime - ext4 /dev/root rw"
+        )
+        self.assertEqual(
+            [".", "archive partition", "artifacts"],
+            support._mountinfo_mountpoints_under("/var/lib/pyp-backup", mountinfo),
+        )
+
+    def test_mountinfo_parser_rejects_malformed_or_empty_inventory(self):
+        record = "33 31 8:1 /space /var/lib/pyp-backup/archive rw,relatime - ext4 /dev/root rw"
+        for mountinfo in ("", "not a mountinfo record", f"{record}{chr(10)}{chr(10)}{record}"):
+            with self.subTest(mountinfo=mountinfo), self.assertRaises(ValueError):
+                support._mountinfo_mountpoints_under("/var/lib/pyp-backup", mountinfo)
+
+    def test_mountinfo_parser_rejects_unknown_octal_escapes(self):
+        for escape in (r"\000", r"\400", r"\777"):
+            mountinfo = (
+                "33 31 8:1 /space /var/lib/pyp-backup/archive"
+                f"{escape}partition rw,relatime - ext4 /dev/root rw"
+            )
+            with self.subTest(escape=escape), self.assertRaisesRegex(
+                ValueError, "mountinfo_escape_invalid",
+            ):
+                support._mountinfo_mountpoints_under("/var/lib/pyp-backup", mountinfo)
+
+    def test_mountinfo_parser_decodes_linux_escapes(self):
+        escape = chr(92)
+        mountinfo = (
+            f"33 31 8:1 /space /var/lib/pyp-backup/archive{escape}040tab{escape}011line"
+            f"{escape}012back{escape}134slash rw,relatime - ext4 /dev/root rw"
+        )
+        self.assertEqual(
+            [f"archive tab{chr(9)}line{chr(10)}back{chr(92)}slash"],
+            support._mountinfo_mountpoints_under("/var/lib/pyp-backup", mountinfo),
+        )
+
+    def test_retirement_mount_inventory_fails_closed_when_proc_is_unreadable(self):
+        host = support.LocalSupportHost()
+        with patch.object(support.Path, "read_text", side_effect=PermissionError), \
+                self.assertRaisesRegex(
+                    support.SupportError, "backup_retirement_mount_inventory_unavailable",
+                ):
+            host._retirement_mountpoints(Path("/var/lib/pyp-backup"))
+
+    def test_retirement_tree_blocks_bind_mount_even_when_ismount_is_false(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "runtime"
+            root.mkdir()
+            host = support.LocalSupportHost()
+            with patch.object(host, "_assert_parent_directory"), \
+                    patch.object(host, "_retirement_mountpoints", return_value=["releases"]), \
+                    patch("os.path.ismount", return_value=False), \
+                    self.assertRaisesRegex(support.SupportError, "backup_retirement_nested_mount"):
+                host._retirement_tree_state(root)
+
+    def test_retirement_checks_all_mounts_before_mutating_units_or_trees(self):
+        host = support.LocalSupportHost()
+        with patch.object(host, "_assert_root"), \
+                patch.object(host, "_retirement_mountpoints", return_value=["artifacts"]), \
+                patch("os.path.ismount", return_value=False), \
+                patch.object(host, "_run") as run, \
+                patch("shutil.rmtree") as remove_tree, \
+                self.assertRaisesRegex(support.SupportError, "backup_retirement_nested_mount"):
+            host.remove_backup_retirement_targets()
+        run.assert_not_called()
+        remove_tree.assert_not_called()
+
+    def test_retirement_rechecks_mounts_before_each_tree_removal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, state, runtime, systemd = (
+                root / "config", root / "state", root / "runtime", root / "systemd",
+            )
+            for directory in (config, state, runtime, systemd):
+                directory.mkdir()
+            unit_files = [systemd / name for name in support.BACKUP_UNITS]
+            for path in unit_files:
+                path.write_text("inactive test unit", encoding="utf-8")
+            host = support.LocalSupportHost()
+            with patch.object(support, "BACKUP_CONFIG_DIR", config), \
+                    patch.object(support, "BACKUP_STATE_DIR", state), \
+                    patch.object(support, "BACKUP_RUNTIME_DIR", runtime), \
+                    patch.object(support, "BACKUP_SYSTEMD_DIR", systemd), \
+                    patch.object(host, "_assert_root"), \
+                    patch.object(host, "_retirement_mountpoints", side_effect=[[], [], [], ["late-bind"]]), \
+                    patch("os.path.ismount", return_value=False), \
+                    patch.object(host, "_run") as run, \
+                    patch("shutil.rmtree") as remove_tree, \
+                    self.assertRaisesRegex(support.SupportError, "backup_retirement_nested_mount"):
+                host.remove_backup_retirement_targets()
+            self.assertTrue(config.is_dir())
+            self.assertTrue(state.is_dir())
+            self.assertTrue(runtime.is_dir())
+            self.assertTrue(all(path.is_file() for path in unit_files))
+            run.assert_not_called()
+            remove_tree.assert_not_called()
+
     @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
     def test_retirement_runtime_inventory_allows_only_known_release_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1276,6 +1390,7 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
 
             with patch.object(host, "_assert_parent_directory"), \
                     patch.object(host, "_retirement_entry_metadata", side_effect=fake_entry_metadata), \
+                    patch.object(host, "_retirement_mountpoints", return_value=[]), \
                     patch("os.path.ismount", return_value=False):
                 state = host._retirement_tree_state(
                     root, allow_symlinks=True,
@@ -1289,6 +1404,7 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
             (release / "unexpected").symlink_to("venv/lib", target_is_directory=True)
             with patch.object(host, "_assert_parent_directory"), \
                     patch.object(host, "_retirement_entry_metadata", side_effect=fake_entry_metadata), \
+                    patch.object(host, "_retirement_mountpoints", return_value=[]), \
                     patch("os.path.ismount", return_value=False), \
                     self.assertRaisesRegex(support.SupportError, "backup_retirement_target_mode_or_type_invalid"):
                 host._retirement_tree_state(
@@ -1378,6 +1494,12 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
         fingerprint, before = self.inventory(host)
         self.assertEqual(host.removal_calls, 0)
         self.assertTrue(before["runtime"]["present"])
+        self.assertEqual(before["runtime"]["nested_mounts"], [])
+        changed_mount_snapshot = {
+            **before,
+            "runtime": {**before["runtime"], "nested_mounts": ["nested"]},
+        }
+        self.assertNotEqual(fingerprint, support._digest(changed_mount_snapshot))
         host.snapshot["state"]["entries"].append({"path": "receipt", "size": 17})
         changed, _ = self.inventory(host)
         self.assertNotEqual(fingerprint, changed)

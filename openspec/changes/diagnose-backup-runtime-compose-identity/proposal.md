@@ -1,5 +1,7 @@
 # Proposal
 
+> **Registro histórico — fluxo aposentado em 25/11/2026.** A consulta de identidade do runtime global descrita nesta change foi tornada obsoleta pela retirada do código exclusivo na PR #436 (`eff4d504`). Não reativar este fluxo. A retirada remanescente está em `retire-platform-backup-runtime`; a nova prova de backup/recuperação está em `prove-open-source-backup-and-recovery`. O conteúdo abaixo permanece apenas para rastreabilidade; nenhuma spec principal compartilhada foi removida.
+
 ## Why
 
 O inventário protegido continua recusando corretamente a identidade dos containers de API e web: o diagnóstico atual encontra vários registros parados por serviço, enquanto verificações separadas confirmaram os endpoints da aplicação. As contagens existentes não mostram se esses registros correspondem ao Compose atualmente implantado; uma comparação agregada pode explicar a divergência sem escolher uma identidade nem relaxar o gate.

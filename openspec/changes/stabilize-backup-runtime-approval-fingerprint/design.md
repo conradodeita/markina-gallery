@@ -1,5 +1,7 @@
 # Design
 
+> **Registro histórico — contrato de runtime aposentado em 25/11/2026.** A fingerprint de aprovação do runtime global descrita nesta change não é mais usada desde a retirada do código exclusivo na PR #436 (`eff4d504`). Não reativar este fluxo. A retirada remanescente está em `retire-platform-backup-runtime`; a nova prova de backup/recuperação está em `prove-open-source-backup-and-recovery`. A fingerprint genérica ainda usada pelos workflows compartilhados de suporte é outro contrato e deve ser preservada. O conteúdo abaixo permanece apenas para rastreabilidade.
+
 ## Context
 
 Ver `proposal.md` para a motivação. Hoje o inventário produz uma fingerprint integral que inclui os contadores de uso e espaço disponível; o instalador exige igualdade integral no começo, enquanto `runtime_fingerprint` usada nas leituras seguintes não cobre todas as testemunhas de segurança do inventário. O fluxo protegido também vincula separadamente o SHA/CI, o pacote e a conexão SSH.

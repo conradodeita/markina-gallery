@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import socket
@@ -49,6 +50,7 @@ BACKUP_CONFIG_DIR = Path("/etc/pyp-backup")
 BACKUP_STATE_DIR = Path("/var/lib/pyp-backup")
 BACKUP_SYSTEMD_DIR = Path("/etc/systemd/system")
 BACKUP_UNITS = ("pyp-platform-backup.service", "pyp-platform-backup.timer")
+MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 PICKER_CONFIG_PATH = Path("/etc/pyp-google-drive/picker-config.json")
 PUBLIC_HEALTH_URLS = {
     "root": "https://markina.pickyourpic.com.br/",
@@ -134,6 +136,47 @@ def _safe_retirement_mount_path(value: str) -> bool:
         and "//" not in value
         and all(part not in {".", ".."} for part in value.split("/"))
     )
+
+
+def _mountinfo_mountpoints_under(root: str | Path, contents: str) -> list[str]:
+    """Return mountpoints at or below a fixed tree, including same-device binds."""
+    target = posixpath.normpath(os.fspath(root))
+    if not target.startswith("/"):
+        raise ValueError("mountinfo_target_invalid")
+    lines = contents.splitlines()
+    if not lines:
+        raise ValueError("mountinfo_empty")
+    if any(not line for line in lines):
+        raise ValueError("mountinfo_record_invalid")
+    nested: set[str] = set()
+    for line in lines:
+        left, separator, right = line.partition(" - ")
+        fields = left.split()
+        post_fields = right.split()
+        if (not separator or len(fields) < 6 or len(post_fields) < 3
+                or not fields[0].isdigit() or not fields[1].isdigit()
+                or re.fullmatch(r"[0-9]+:[0-9]+", fields[2]) is None):
+            raise ValueError("mountinfo_record_invalid")
+        encoded_mountpoint = fields[4]
+        if re.search(r"\\(?!040|011|012|134)", encoded_mountpoint):
+            raise ValueError("mountinfo_escape_invalid")
+        decoded_escapes = {"040": " ", "011": chr(9), "012": chr(10), "134": chr(92)}
+        mountpoint = re.sub(
+            r"\\(040|011|012|134)",
+            lambda match, escapes=decoded_escapes: escapes[match.group(1)],
+            encoded_mountpoint,
+        )
+        if not mountpoint.startswith("/") or "\x00" in mountpoint:
+            raise ValueError("mountinfo_path_invalid")
+        mountpoint = posixpath.normpath(mountpoint)
+        try:
+            common = posixpath.commonpath((target, mountpoint))
+        except ValueError:
+            continue
+        if common == target:
+            relative = posixpath.relpath(mountpoint, target)
+            nested.add("." if relative == "." else relative)
+    return sorted(nested)
 
 
 def _static_error(result: subprocess.CompletedProcess[bytes], code: str) -> subprocess.CompletedProcess[bytes]:
@@ -400,17 +443,30 @@ class LocalSupportHost:
             **({"target": symlink_target} if symlink_target is not None else {}),
         }
 
+    def _retirement_mountpoints(self, root: Path) -> list[str]:
+        try:
+            contents = MOUNTINFO_PATH.read_text(encoding="utf-8", errors="surrogateescape")
+        except (OSError, UnicodeError):
+            raise SupportError("backup_retirement_mount_inventory_unavailable") from None
+        try:
+            return _mountinfo_mountpoints_under(root, contents)
+        except (TypeError, ValueError):
+            raise SupportError("backup_retirement_mount_inventory_invalid") from None
+
+    def _assert_no_nested_mounts(self, root: Path) -> None:
+        if self._retirement_mountpoints(root) or os.path.ismount(root):
+            raise SupportError("backup_retirement_nested_mount")
+
     def _retirement_tree_state(self, root: Path, *, allow_symlinks: bool = False,
                                allowed_root_names: set[str] | None = None) -> dict[str, Any]:
         self._assert_parent_directory(root)
         try:
             root_info = root.lstat()
         except FileNotFoundError:
-            return {"present": False, "entries": []}
+            return {"present": False, "entries": [], "nested_mounts": []}
         except OSError:
             raise SupportError("backup_retirement_target_unreadable") from None
-        if os.path.ismount(root):
-            raise SupportError("backup_retirement_nested_mount")
+        self._assert_no_nested_mounts(root)
         root_state = self._retirement_entry_metadata(root, root_info, kind="directory")
         entries: list[dict[str, Any]] = []
         pending = [(root, "")]
@@ -497,7 +553,8 @@ class LocalSupportHost:
                 != (root_after.st_dev, root_after.st_ino, root_after.st_mode, root_after.st_uid, root_after.st_gid,
                     root_after.st_size, root_after.st_mtime_ns)):
             raise SupportError("backup_retirement_target_changed")
-        return {"present": True, "root": root_state, "entries": entries}
+        self._assert_no_nested_mounts(root)
+        return {"present": True, "root": root_state, "entries": entries, "nested_mounts": []}
 
     def _retirement_file_state(self, path: Path, *, expected_mode: int) -> dict[str, Any]:
         self._assert_parent_directory(path)
@@ -767,14 +824,19 @@ class LocalSupportHost:
     def remove_backup_retirement_targets(self) -> None:
         self._assert_root()
         try:
+            directories = (BACKUP_CONFIG_DIR, BACKUP_STATE_DIR, BACKUP_RUNTIME_DIR)
+            # Check every deletion tree before the first filesystem or unit mutation.
+            for directory in directories:
+                self._assert_no_nested_mounts(directory)
             # A timer remains disabled and the service remains stopped. No
             # container or database command is issued by this removal.
+            for directory in directories:
+                if directory.exists() and not directory.is_symlink():
+                    self._assert_no_nested_mounts(directory)
+                    shutil.rmtree(directory)
             for name in BACKUP_UNITS:
                 (BACKUP_SYSTEMD_DIR / name).unlink(missing_ok=True)
             self._run(["/usr/bin/systemctl", "daemon-reload"], code="backup_retirement_systemd_reload_failed")
-            for directory in (BACKUP_CONFIG_DIR, BACKUP_STATE_DIR, BACKUP_RUNTIME_DIR):
-                if directory.exists() and not directory.is_symlink():
-                    shutil.rmtree(directory)
             PICKER_CONFIG_PATH.unlink(missing_ok=True)
         except SupportError:
             raise
@@ -1430,6 +1492,11 @@ class SupportCoordinator:
             value = snapshot.get(target)
             if not isinstance(value, dict) or type(value.get("present")) is not bool:
                 raise SupportError("backup_retirement_inventory_invalid")
+            nested_mounts = value.get("nested_mounts")
+            if not isinstance(nested_mounts, list):
+                raise SupportError("backup_retirement_mount_inventory_invalid")
+            if nested_mounts:
+                raise SupportError("backup_retirement_nested_mount")
         config = snapshot["config"]
         config_entries = config.get("entries")
         if not isinstance(config_entries, list):

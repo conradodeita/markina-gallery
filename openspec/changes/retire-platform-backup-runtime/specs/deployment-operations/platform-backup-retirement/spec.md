@@ -37,6 +37,19 @@ A remoção no servidor SHALL ocorrer somente pelo workflow protegido `productio
 - **THEN** a pré-condição da retirada MUST bloqueá-la antes de excluir qualquer alvo
 - **AND** o layout conhecido contém somente `destination.json` e `keyring.json` como arquivos regulares diretos `root:root` no modo `0400`, podendo qualquer um deles estar ausente
 
+#### Scenario: Bind mount presente em árvore que seria removida
+- **WHEN** o inventário Linux encontra um mountpoint no alvo ou em qualquer descendente de uma árvore protegida, inclusive bind mount no mesmo filesystem
+- **THEN** ele SHALL obter a evidência pela tabela de mounts do processo, sem depender somente de `os.path.ismount()`
+- **AND** a ausência de mountpoints relevantes SHALL integrar o snapshot vinculado à fingerprint
+- **AND** um mountpoint encontrado MUST bloquear a fingerprint de aprovação e qualquer mutação, sem remover unidades, arquivos ou diretórios
+- **AND** a tabela de mounts indisponível ou malformada MUST bloquear antes de qualquer exclusão
+- **AND** o parser SHALL decodificar somente escapes Linux previstos para espaço, tabulação, nova linha e barra invertida; escape desconhecido MUST invalidar o inventário
+
+#### Scenario: Mount muda entre preflight e remoção recursiva
+- **WHEN** um mountpoint aparece em qualquer alvo depois do inventário ou antes de uma chamada de remoção recursiva
+- **THEN** o helper SHALL revalidar as três árvores antes da primeira mutação e o alvo imediatamente antes de cada remoção recursiva
+- **AND** qualquer diferença MUST abortar antes de remover o alvo afetado, preservando os alvos ainda existentes
+
 #### Scenario: Falha durante ou depois da exclusão
 - **WHEN** a retirada parcial ou a verificação posterior falha
 - **THEN** a operação SHALL parar, preservar todos os alvos ainda existentes e gravar somente diagnóstico estático sanitizado quando possível
