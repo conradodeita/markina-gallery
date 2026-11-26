@@ -1300,6 +1300,32 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, error_code)
                 self.assertNotIn("PRIVATE_SENTINEL", str(raised.exception))
 
+    def test_retirement_tree_accepts_documented_source_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "config"
+            root.mkdir()
+            (root / "source.json").write_text("{}", encoding="utf-8")
+            host = support.LocalSupportHost()
+
+            def fake_entry_metadata(_path, _info, *, kind, symlink_target=None):
+                metadata = {"kind": kind}
+                if symlink_target is not None:
+                    metadata["target"] = symlink_target
+                return metadata
+
+            with patch.object(host, "_assert_parent_directory"), \
+                    patch.object(host, "_retirement_entry_metadata", side_effect=fake_entry_metadata), \
+                    patch.object(host, "_retirement_mountpoints", return_value=[]), \
+                    patch.object(support.stat, "S_IMODE", return_value=0o400), \
+                    patch("os.path.ismount", return_value=False):
+                state = host._retirement_tree_state(
+                    root,
+                    allowed_root_names={"destination.json", "keyring.json", "source.json"},
+                    unexpected_root_category="config",
+                )
+
+            self.assertEqual([entry["path"] for entry in state["entries"]], ["source.json"])
+
     def test_retirement_inventory_maps_unexpected_root_to_fixed_target_category(self):
         expected_codes = {
             "runtime": "backup_retirement_unexpected_runtime_layout",
@@ -1345,6 +1371,7 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
         host.snapshot["config"]["entries"] = [
             {"path": "destination.json", "kind": "file", "mode": 0o400},
             {"path": "keyring.json", "kind": "file", "mode": 0o400},
+            {"path": "source.json", "kind": "file", "mode": 0o400},
         ]
 
         support.SupportCoordinator._assert_backup_retirement_ready(host.snapshot)
