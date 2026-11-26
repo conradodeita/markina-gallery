@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +13,38 @@ import test_production_app_handoff_execution as execution_contracts
 
 
 class PickerFreeRecoveryRecipeTests(unittest.TestCase):
+    def test_current_reference_uses_healthy_candidate_and_rejects_drift_or_two_running(self):
+        fixtures = execution_contracts.inventory_contracts.HandoffInventoryContracts()
+        fixtures.setUp()
+        context = {"containers": dict(zip(bridge.SERVICES, fixtures.items)), "models": fixtures.models,
+                   "digests": {"/synthetic/source.json": "e" * 64}, "environment_digest": "f" * 64,
+                   "checkout_sha": "a" * 40}
+        proof = {"support_sha": "b" * 40, "interrupted_sha": "c" * 40, "handoff": "d" * 64,
+                 "schema_status": "verified", "services": {}}
+        for record in fixtures.records:
+            proof["services"][record["service"]] = {
+                "original": dict(record, image="sha256:" + "0" * 64), "original_running": False,
+                "candidate": record, "candidate_running": True}
+        with (
+            patch.object(bridge, "_handoff_proven_context", return_value=nullcontext(context)),
+            patch.object(bridge, "_handoff_context_records", return_value=fixtures.records),
+            patch.object(bridge, "_handoff_read_items", return_value=fixtures.items),
+            patch.object(bridge, "snapshot_sha256", return_value="e" * 64),
+            patch.object(bridge, "_web_identity", return_value="a" * 40 + " synthetic"),
+        ):
+            baseline, observations = bridge._handoff_current_reference(proof)
+            recipe = bridge._handoff_picker_free_recovery_recipe(baseline)
+            for service, item in context["containers"].items():
+                self.assertEqual(recipe["services"][service]["image_id"], item["Image"])
+                self.assertEqual(observations[service]["original"]["id"], item["Id"])
+            proof["services"]["api"]["original_running"] = True
+            with self.assertRaisesRegex(bridge.BridgeError, "current_reference_unproven"):
+                bridge._handoff_current_reference(proof)
+            proof["services"]["api"]["original_running"] = False
+            proof["services"]["api"]["candidate"] = dict(fixtures.records[0], image="sha256:" + "1" * 64)
+            with self.assertRaisesRegex(bridge.BridgeError, "current_reference_unproven"):
+                bridge._handoff_current_reference(proof)
+
     def document(self, volumes=None, **model_fields):
         model = {"image": "sha256:" + "a" * 64, **model_fields}
         if volumes is not None:
@@ -190,6 +223,39 @@ class HandoffRecoveryContracts(unittest.TestCase):
         self.assertIn(['start', recovered['Id']], mutations)
         self.assertNotIn(['start', original['Id']], mutations)
         self.assertEqual(bridge.handoff_journal_read(identity)[1]['phases']['api'], 'healthy')
+
+    def test_prepare_and_recreate_current_healthy_pair_keeps_old_release_parked(self):
+        e = self.execution
+        rev = bridge.handoff_execute_service(self.identity, self.revision, "api")
+        bridge.handoff_execute_service(self.identity, rev, "web")
+        proof = self.inventory("20261113_0126")
+        active = {s: next(item for item in e.items if item["Id"] == proof["services"][s]["candidate"]["id"])
+                  for s in bridge.SERVICES}
+        records = [record for observed in proof["services"].values()
+                   for record in (observed["original"], observed["candidate"])]
+        source = e.journal.plan
+        context = {"containers": active, "models": source["models"], "digests": source["source_digests"],
+                   "environment_digest": source["environment_digest"], "checkout_sha": source["checkout_sha"]}
+        with (patch.object(bridge, "_handoff_proven_context", return_value=nullcontext(context)),
+              patch.object(bridge, "_handoff_context_records", return_value=records),
+              patch.object(bridge, "_handoff_read_items", return_value=e.items),
+              patch.object(bridge, "snapshot_sha256", return_value="e" * 64),
+              patch.object(bridge, "_web_identity", return_value="b" * 40 + " synthetic")):
+            reference = bridge._handoff_current_reference(proof)
+        proof["current_reference_sha256"] = bridge.digest(reference[0])
+        changed = dict(reference[0], original_web_version="c" * 40)
+        with self.assertRaisesRegex(bridge.BridgeError, "current_reference_changed"):
+            bridge.handoff_recovery_prepare(proof, bridge.digest(proof), current_reference=(changed, reference[1]))
+        identity, revision = bridge.handoff_recovery_prepare(proof, bridge.digest(proof), current_reference=reference)
+        saved, _, _ = bridge.handoff_journal_read(identity)
+        self.assertEqual(saved["original_web_version"], "b" * 40)
+        count = len(e.calls)
+        with (self.compose_create(identity),
+              patch.object(bridge, "_validate_snapshot_source", side_effect=lambda p: saved["source_digests"][str(p)])):
+            revision = bridge.handoff_recover_service(identity, revision, "api")
+            bridge.handoff_recover_service(identity, revision, "web")
+        self.assertEqual([cmd[-1] for cmd in e.calls[count:] if cmd[0] == "stop"],
+                         [active[s]["Id"] for s in bridge.SERVICES])
 
     def test_candidate_and_original_are_parked_before_picker_free_recreation(self):
         bridge.handoff_execute_service(self.identity, self.revision, 'api')

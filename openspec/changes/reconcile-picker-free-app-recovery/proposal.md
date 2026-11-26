@@ -6,11 +6,11 @@ A retirada do Picker foi integrada ao código e a chave exclusiva já foi revoga
 
 ## What Changes
 
-- Acrescentar ao handoff protegido uma receita de recuperação de API/web vinculada à imagem, SHA, configuração e fingerprint aprovados, removendo somente o bind exato de `picker-config.json` e mantendo OAuth e demais mounts inalterados.
+- Acrescentar ao handoff protegido uma receita de recuperação de API/web vinculada às imagens e aos modelos do par API/web atual e saudável, SHA, configuração e fingerprint aprovados, removendo somente o bind exato de `picker-config.json` e mantendo OAuth e demais mounts inalterados.
 - Recuperar API/web pela receita verificada, sem iniciar o container histórico que mantém o bind do Picker; continuar exigindo inventário somente-leitura, aprovação protegida própria, lock, healthchecks e validação dos endpoints.
 - Reconhecer um container antigo como testemunha imutável somente quando sua identidade/configuração estiver registrada, seu estado for parado e a receita atual de recovery não depender dele. Seus metadados continuam na fingerprint; qualquer divergência, container ativo ou mount desconhecido bloqueia.
 - Permitir a retirada posterior do arquivo exato do Picker apenas após runtime API/web saudável e inventário atual que prove ausência de mount ativo/candidato de recovery. OAuth, banco, dados de clientes, volumes e outros projetos permanecem preservados.
-- Validar em ambiente local/CI sintético que a receita anterior inicia API/web sem o segredo do Picker e preserva OAuth e demais recursos. Não inclui execução no servidor.
+- Validar em ambiente local/CI sintético que a receita do par ativo inicia API/web sem o segredo do Picker e preserva OAuth e demais recursos. Não inclui execução no servidor.
 
 ## Capabilities
 

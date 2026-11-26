@@ -2365,13 +2365,59 @@ def _handoff_picker_free_recovery_recipe(plan: dict) -> dict:
     return {**unsigned, "sha256": digest(unsigned)}
 
 
-def handoff_recovery_prepare(inventory: dict, approval: str) -> tuple[str, str]:
+def _healthy_reference_service(observation: dict, item: dict) -> dict:
+    running = [observation[k] for k in ("original", "candidate", "recovery_candidate")
+               if observation.get(k + "_running")]
+    if (len(running) != 1 or not isinstance(running[0], dict)
+            or running[0].get("retained") is not False
+            or running[0].get("id") != item["Id"] or running[0].get("image") != item["Image"]
+            or item.get("State", {}).get("Running") is not True
+            or item["State"].get("Health", {}).get("Status") != "healthy"):
+        raise BridgeError("handoff_current_reference_unproven")
+    return {"original": running[0], "original_running": True, "original_health": "healthy",
+            "candidate": None, "candidate_running": False, "candidate_health": None,
+            "recovery_candidate": None, "recovery_candidate_running": False, "recovery_candidate_health": None}
+
+
+def _handoff_current_reference(proof: dict) -> tuple[dict, dict]:
+    if proof["schema_status"] != "verified":
+        raise BridgeError("handoff_current_reference_schema_unverified")
+    support_sha = proof["support_sha"]
+    with _handoff_proven_context(support_sha) as context:
+        records = _handoff_context_records(context, require_witnesses=True)
+        items = _handoff_read_items(records)
+        active = handoff_select(items, records)
+        observations = {}
+        models = copy.deepcopy(context["models"])
+        for service in SERVICES:
+            item = active[service]
+            if item["Id"] != context["containers"][service]["Id"]:
+                raise BridgeError("handoff_current_reference_unproven")
+            observations[service] = _healthy_reference_service(proof["services"][service], item)
+            models[service]["services"][service]["image"] = item["Image"]
+        sources = dict(context["digests"])
+        registry = BRIDGE_STATE / "handoff-witnesses.json"
+        sources[str(registry)] = snapshot_sha256(registry)
+        baseline = handoff_plan(proof["interrupted_sha"], support_sha, digest(models), items, records,
+                                models, models, sources, context["environment_digest"], context["checkout_sha"])
+        baseline["original_web_version"] = _web_identity(context, support_sha).split()[0]
+        baseline["previous_handoff"] = proof["handoff"]
+        return baseline, observations
+
+
+def handoff_recovery_prepare(inventory: dict, approval: str, *, current_reference: tuple[dict, dict] | None = None) -> tuple[str, str]:
     _assert_common_lock_held()
     if inventory.get("domain") != "app-handoff-recovery-v1" or digest(inventory) != approval:
         raise BridgeError("handoff_recovery_approval_mismatch")
     original, _, revision = handoff_journal_read(inventory["handoff"])
     if revision != inventory["revision"]:
         raise BridgeError("handoff_recovery_revision_changed")
+    if current_reference is not None:
+        original, observations = current_reference
+        if (digest(original) != inventory.get("current_reference_sha256")
+                or original["previous_handoff"] != inventory["handoff"]):
+            raise BridgeError("handoff_current_reference_changed")
+        inventory = dict(inventory, services=observations)
     picker_free_recipe = _handoff_picker_free_recovery_recipe(original)
     recovery_project = original.get("recovery_project")
     if recovery_project is None:
@@ -3290,8 +3336,16 @@ def _handoff_cli(args) -> int:
         receipt = handoff_publish_runtime(identity)
     elif operation in {"handoff-recovery-inventory", "handoff-recovery-prepare"}:
         proof = _handoff_live_recovery_inventory(args.sha)
+        active_plan, _, _ = handoff_journal_read(proof["handoff"])
+        current_reference = None
+        if "picker_free_recovery_recipe" not in active_plan:
+            current_reference = _handoff_current_reference(proof)
+            baseline, observations = current_reference
+            proof["current_reference_sha256"] = digest(baseline)
+            for service in SERVICES:
+                print(f"current_reference_{service}_image=" + observations[service]["original"]["image"])
         if operation == "handoff-recovery-prepare":
-            identity, _ = handoff_recovery_prepare(proof, args.approval_fingerprint)
+            identity, _ = handoff_recovery_prepare(proof, args.approval_fingerprint, current_reference=current_reference)
             _handoff_set_active(identity)
         print("recovery_fingerprint=" + digest(proof))
         print("schema_status=" + proof["schema_status"])

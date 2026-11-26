@@ -7,10 +7,10 @@ Esta capability permite recuperar API/web pelo handoff protegido sem montar a co
 ## ADDED Requirements
 
 ### Requirement: Receita de recuperação sem o mount do Picker
-O handoff SHALL registrar receita root-only e fingerprintada para recuperar API/web com imagens e modelos Compose comprovados, removendo somente o bind exato do Picker.
+O handoff SHALL registrar receita root-only e fingerprintada para recuperar API/web com as imagens e os modelos Compose do par API/web ativo e saudável comprovado em produção, removendo somente o bind exato do Picker.
 
 #### Scenario: Bind exato do Picker
-- **WHEN** o modelo anterior contém somente o bind exato de `picker-config.json`
+- **WHEN** o modelo ativo contém somente o bind exato de `picker-config.json`
 - **THEN** a receita exclui esse bind e preserva imagem, ambiente, redes, volumes, OAuth e demais mounts, com hashes vinculados ao registro
 
 #### Scenario: Bind ancestral ou configuração ambígua

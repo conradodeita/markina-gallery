@@ -22,10 +22,10 @@ O proprietário escolheu manter rollback de API/web sem restaurar o Picker em 26
 
 ## Decisions
 
-1. **Receita de recuperação, em vez de iniciar o container antigo.** Durante a preparação protegida, salvar sob a árvore root-only o image ID, o modelo efetivo, ambiente, redes, mounts, fase e hashes do serviço anterior. Derivar uma cópia de recuperação removendo somente o bind de arquivo cujo source seja `/etc/pyp-google-drive/picker-config.json` e cujo target seja `/run/secrets/google-drive-picker-config.json`. A imagem e todos os campos restantes permanecem pinados. `handoff-recovery-apply` cria um container novo por geração Compose isolada; não chama `docker start` no witness antigo.
+1. **Receita de recuperação, em vez de iniciar o container antigo.** Durante a preparação protegida, salvar sob a árvore root-only o image ID, o modelo efetivo, ambiente, redes, mounts, fase e hashes do serviço ativo e saudável observado no inventário. Derivar uma cópia de recuperação removendo somente o bind de arquivo cujo source seja `/etc/pyp-google-drive/picker-config.json` e cujo target seja `/run/secrets/google-drive-picker-config.json`. A imagem e todos os campos restantes permanecem pinados. `handoff-recovery-apply` cria um container novo por geração Compose isolada; não chama `docker start` no witness antigo.
 
    - Se source/target cobrir diretório ancestral, se o bind não for exato, ou se houver ambiguidade entre Picker e OAuth, não há sanitização automática: o plano bloqueia e mantém o estado atual. Isso evita remover o mount de `/etc/pyp-google-drive/oauth-client.json` junto com o Picker.
-   - O código antigo pode ainda conter a interface/rota aposentada. A recuperação não restaura credencial nem funcionalidade do Picker; o teste sintético SHALL comprovar que a aplicação anterior inicializa e mantém saúde sem esse arquivo. Se não inicializar, o cleanup permanece bloqueado e este design precisa ser revisto.
+   - O código antigo pode ainda conter a interface/rota aposentada. A recuperação não restaura credencial nem funcionalidade do Picker; o teste sintético SHALL comprovar que a aplicação ativa inicializa e mantém saúde sem esse arquivo. Se não inicializar, o cleanup permanece bloqueado e este design precisa ser revisto.
 
 2. **Testemunha preservada, não elegível para iniciar.** O container original permanece parado, sem start/stop/rename/remove e com identidade/configuração integral registrada. A receita nova é a única fonte de rollback. O inventário só deixa de tratar o bind dessa testemunha como ativo se o estado for exatamente parado, a identidade/mounts corresponderem ao registro privado, e o recibo/receita vigente provar que ela não é candidata. Todos os metadados dos mounts continuam no digest da fingerprint. Container ativo, desconhecido, alterado ou sem prova continua bloqueando. O helper local verifica que a ponte root-only instalada tem exatamente o blob da revisão aprovada; a ponte compara a observação atual com o registro privado e emite somente fingerprint e atestações de identidade/configuração/lifecycle. Qualquer divergência ou inventário incompleto falha sem fingerprint.
 
@@ -37,7 +37,7 @@ O proprietário escolheu manter rollback de API/web sem restaurar o Picker em 26
 
 ## Risks / Trade-offs
 
-- [O image anterior depende do segredo para iniciar] → Exercitar a imagem anterior com Compose e dependências sintéticas antes de concluir o gate; qualquer falha mantém a retirada bloqueada.
+- [A imagem ativa depende do segredo para iniciar] → Exercitar as imagens ativas com Compose e dependências sintéticas antes de concluir o gate; qualquer falha mantém a retirada bloqueada.
 - [O modelo sanitizado diverge do container antigo] → Preservar no journal o modelo de origem, aplicar somente a remoção exata do bind e comparar todos os demais campos, imagens e mounts antes/depois.
 - [Testemunha é confundida com container inativo descartável] → Exigir registro privado de ID/configuração, estado parado e digest exato; não aceitar somente nome, label ou status genérico.
 - [Falha parcial deixa API/web em fases diferentes] → Persistir journal antes de cada efeito, exigir inventário/fingerprint de recovery e nunca executar rollback automático.
@@ -50,4 +50,6 @@ O proprietário escolheu manter rollback de API/web sem restaurar o Picker em 26
 3. Executar inventário protegido somente-leitura atual, revisar fingerprint, ports/domínio, API/web/schema/saúde, witnesses e plano de impacto zero.
 4. Com autorização operacional própria e aprovação do ambiente protegido, publicar API/web pelo handoff e verificar saúde e o receipt da recuperação picker-free.
 5. Fazer novo inventário e obter aprovação própria da fingerprint para a retirada exata. Remover apenas o arquivo do Picker por workflow protegido; confirmar endpoints e preservação de OAuth/schema/dados.
-6. Se qualquer etapa divergir ou não comprovar que a receita antiga inicia sem Picker, manter a configuração no host e bloquear a remoção; nunca usar SSH manual como alternativa.
+6. Se qualquer etapa divergir ou não comprovar que a receita do par ativo inicia sem Picker, manter a configuração no host e bloquear a remoção; nunca usar SSH manual como alternativa.
+
+Decisão do proprietário: o ensaio e a recuperação usam a mesma referência saudável em produção. Capturar API e web na mesma observação; conferir identidade, imagens, modelos e saúde ao preparar. Se a referência mudar, repetir o diagnóstico antes da troca. O histórico permanece para auditoria.

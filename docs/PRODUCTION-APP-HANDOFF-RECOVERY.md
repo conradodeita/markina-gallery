@@ -5,8 +5,9 @@ Este procedimento é futuro e depende da change `reconcile-picker-free-app-recov
 ## Diagnóstico somente leitura
 
 1. No GitHub Actions, abra `Inventariar e recuperar transição API/web` na `main` e despache `diagnose`.
-2. Examine o SHA e a fingerprint completos apresentados no resumo, a revisão do banco, saúde de API/web, portas/domínio, mounts e witnesses. O diagnóstico não para, renomeia, cria ou remove containers e não altera arquivos ou dados.
-3. Se o resultado estiver incompleto, falhar ou mostrar uma identidade/mount inesperado, pare. Não use uma fingerprint antiga nem tente SSH manual.
+2. Para a primeira recuperação sem Picker, confira `current_reference_api_image` e `current_reference_web_image`. São os IDs de imagem do par registrado, em execução e saudável. Use ambos no ensaio isolado com PostgreSQL sintético e OAuth sentinela. Se as imagens ou a fingerprint mudarem, renove a referência e o ensaio antes da retirada.
+3. Examine o SHA e a fingerprint completos apresentados no resumo, a revisão do banco, saúde de API/web, portas/domínio, mounts e witnesses. O diagnóstico não para, renomeia, cria ou remove containers e não altera arquivos ou dados.
+4. Se o resultado estiver incompleto, falhar ou mostrar uma identidade/mount inesperado, pare. Não use uma fingerprint antiga nem tente SSH manual.
 
 ## Recovery aprovado
 
