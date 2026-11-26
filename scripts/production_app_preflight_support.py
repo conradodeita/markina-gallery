@@ -50,6 +50,11 @@ BACKUP_CONFIG_DIR = Path("/etc/pyp-backup")
 BACKUP_STATE_DIR = Path("/var/lib/pyp-backup")
 BACKUP_SYSTEMD_DIR = Path("/etc/systemd/system")
 BACKUP_UNITS = ("pyp-platform-backup.service", "pyp-platform-backup.timer")
+BACKUP_RETIREMENT_UNEXPECTED_ROOT_CODES = {
+    "runtime": "backup_retirement_unexpected_runtime_layout",
+    "config": "backup_retirement_unexpected_config_layout",
+    "state": "backup_retirement_unexpected_state_layout",
+}
 MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 PICKER_CONFIG_PATH = Path("/etc/pyp-google-drive/picker-config.json")
 PUBLIC_HEALTH_URLS = {
@@ -458,7 +463,8 @@ class LocalSupportHost:
             raise SupportError("backup_retirement_nested_mount")
 
     def _retirement_tree_state(self, root: Path, *, allow_symlinks: bool = False,
-                               allowed_root_names: set[str] | None = None) -> dict[str, Any]:
+                               allowed_root_names: set[str] | None = None,
+                               unexpected_root_category: str | None = None) -> dict[str, Any]:
         self._assert_parent_directory(root)
         try:
             root_info = root.lstat()
@@ -542,7 +548,10 @@ class LocalSupportHost:
                             after.st_size, after.st_mtime_ns, after.st_nlink)):
                     raise SupportError("backup_retirement_target_changed")
         if allowed_root_names is not None and not root_names.issubset(allowed_root_names):
-            raise SupportError("backup_retirement_unexpected_entry")
+            error_code = BACKUP_RETIREMENT_UNEXPECTED_ROOT_CODES.get(unexpected_root_category or "")
+            if error_code is None:
+                raise SupportError("backup_retirement_inventory_invalid")
+            raise SupportError(error_code)
         entries.sort(key=lambda item: item["path"])
         try:
             root_after = root.lstat()
@@ -772,12 +781,15 @@ class LocalSupportHost:
         runtime = self._retirement_tree_state(
             BACKUP_RUNTIME_DIR, allow_symlinks=True,
             allowed_root_names={"current", "releases", "rollback", "install-journal.json"},
+            unexpected_root_category="runtime",
         )
         config = self._retirement_tree_state(
             BACKUP_CONFIG_DIR, allowed_root_names={"destination.json", "keyring.json"},
+            unexpected_root_category="config",
         )
         state = self._retirement_tree_state(
             BACKUP_STATE_DIR, allowed_root_names={"artifacts", "catalog", "service.lock"},
+            unexpected_root_category="state",
         )
         state_summary = self._backup_state_summary(state)
         units = {name: self._retirement_unit_state(name) for name in BACKUP_UNITS}
@@ -1511,7 +1523,7 @@ class SupportCoordinator:
                     or entry.get("kind") != "file"
                     or entry.get("mode") != 0o400
                     or path in config_files):
-                raise SupportError("backup_retirement_unexpected_entry")
+                raise SupportError("backup_retirement_unexpected_config_entry")
             config_files.add(path)
         if config.get("present") is False and config_entries:
             raise SupportError("backup_retirement_inventory_invalid")
