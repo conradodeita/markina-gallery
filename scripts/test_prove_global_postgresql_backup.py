@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.prove_global_postgresql_backup import (
+    _inventory_delta_summary,
+    _no_owner_profile_summary,
+    _normalize_varchar_text_array_casts,
+    _restore,
+    _row_inventory_difference_summary,
+    _schema_catalog_difference_summary,
+)
+
+
+class SchemaComparisonTests(unittest.TestCase):
+    def test_row_inventory_difference_summary_reports_only_metadata(self) -> None:
+        expected = {"proof_fixture.snapshot": {"count": 2, "sha256": "a" * 64}}
+        actual = {"proof_fixture.snapshot": {"count": 1, "sha256": "b" * 64}}
+
+        summary = _row_inventory_difference_summary(expected, actual)
+
+        self.assertIn("proof_fixture.snapshot:count=2->1", summary)
+        self.assertIn("sha256_equal=False", summary)
+        self.assertNotIn("a" * 64, summary)
+        self.assertNotIn("b" * 64, summary)
+
+    def test_no_owner_profile_options_are_passed_to_pg_restore(self) -> None:
+        result = subprocess.CompletedProcess(
+            args=["docker"], returncode=0, stdout=b"", stderr=b""
+        )
+        with patch(
+            "scripts.prove_global_postgresql_backup._docker", return_value=result
+        ) as docker_call:
+            _restore(
+                "synthetic-target",
+                "synthetic-db",
+                b"synthetic-archive",
+                case="no_owner_restore",
+                restore_options=("--no-owner", "--no-privileges"),
+            )
+
+        args = docker_call.call_args.args
+        self.assertEqual(
+            args[4:9],
+            ("-U", "postgres", "--exit-on-error", "--no-owner", "--no-privileges"),
+        )
+        self.assertEqual(args[-2:], ("--dbname", "synthetic-db"))
+
+    def test_no_owner_diagnostic_exposes_counts_without_role_names(self) -> None:
+        source = [
+            (
+                "proof_fixture",
+                "tenant_record",
+                "r",
+                "p",
+                False,
+                "private_synthetic_role",
+            )
+        ]
+        restored = [
+            (
+                "proof_fixture",
+                "tenant_record",
+                "r",
+                "p",
+                False,
+                "private_synthetic_role",
+            )
+        ]
+
+        summary = _no_owner_profile_summary(source, restored)
+
+        self.assertIn("source_non_postgres=1", summary)
+        self.assertIn("restored_other=1", summary)
+        self.assertNotIn("private_synthetic_role", summary)
+
+    def test_inventory_delta_reports_only_sanitized_category_metadata(self) -> None:
+        before = {
+            "context": "desktop-linux",
+            "containers": ["private-container-name"],
+            "networks": [],
+            "volumes": [],
+        }
+        after = {
+            "context": "desktop-linux",
+            "containers": ["private-container-name", "new-container-name"],
+            "networks": [],
+            "volumes": [],
+        }
+
+        summary = _inventory_delta_summary(before, after)
+
+        self.assertIn("containers:before=1,after=2,added=1,removed=0", summary)
+        self.assertNotIn("private-container-name", summary)
+        self.assertNotIn("new-container-name", summary)
+
+    def test_equivalent_varchar_array_cast_forms_normalize(self) -> None:
+        source = (
+            "CHECK (((purpose)::text = ANY ((ARRAY["
+            "'queued'::character varying, 'owner''s, ready'::character varying"
+            "])::text[])))"
+        )
+        restored = (
+            "CHECK (((purpose)::text = ANY (ARRAY["
+            "('queued'::character varying)::text, "
+            "('owner''s, ready'::character varying)::text])))"
+        )
+
+        normalized_source, source_count = _normalize_varchar_text_array_casts(source)
+        normalized_restored, restored_count = _normalize_varchar_text_array_casts(
+            restored
+        )
+
+        self.assertEqual(source_count, 1)
+        self.assertEqual(restored_count, 1)
+        self.assertEqual(normalized_source, normalized_restored)
+
+    def test_different_literal_values_remain_different(self) -> None:
+        source, source_count = _normalize_varchar_text_array_casts(
+            "CHECK (state = ANY ((ARRAY['queued'::character varying])::text[]))"
+        )
+        restored, restored_count = _normalize_varchar_text_array_casts(
+            "CHECK (state = ANY (ARRAY[('verified'::character varying)::text]))"
+        )
+
+        self.assertEqual(source_count, 1)
+        self.assertEqual(restored_count, 1)
+        self.assertNotEqual(source, restored)
+
+    def test_different_array_target_type_is_not_normalized(self) -> None:
+        definition = "CHECK (state = ANY ((ARRAY['queued'::character varying])::character varying[]))"
+
+        normalized, count = _normalize_varchar_text_array_casts(definition)
+
+        self.assertEqual(count, 0)
+        self.assertEqual(normalized, definition)
+
+    def test_array_like_text_inside_sql_string_is_not_normalized(self) -> None:
+        definition = "SELECT 'ARRAY[''queued''::character varying]::text[]' AS label"
+
+        normalized, count = _normalize_varchar_text_array_casts(definition)
+
+        self.assertEqual(count, 0)
+        self.assertEqual(normalized, definition)
+
+    def test_array_like_text_inside_dollar_quoted_function_is_not_normalized(
+        self,
+    ) -> None:
+        definition = (
+            "CREATE FUNCTION proof_fixture.example() RETURNS text "
+            "LANGUAGE sql AS $function$ SELECT ARRAY['queued'::character varying]::text[] "
+            "$function$"
+        )
+
+        normalized, count = _normalize_varchar_text_array_casts(definition)
+
+        self.assertEqual(count, 0)
+        self.assertEqual(normalized, definition)
+
+    def test_array_like_text_inside_sql_comment_is_not_normalized(self) -> None:
+        definition = "SELECT 1 /* ARRAY['queued'::character varying]::text[] */"
+
+        normalized, count = _normalize_varchar_text_array_casts(definition)
+
+        self.assertEqual(count, 0)
+        self.assertEqual(normalized, definition)
+
+    def test_visible_column_reordering_remains_a_schema_difference(self) -> None:
+        def column(position: int, name: str) -> tuple[object, ...]:
+            return (
+                "public",
+                "demo",
+                position,
+                name,
+                "bigint",
+                "pg_catalog",
+                "int8",
+                "NO",
+                None,
+                None,
+                64,
+                0,
+                None,
+                "NO",
+                None,
+                "NEVER",
+                "",
+            )
+
+        categories = {
+            name: []
+            for name in (
+                "columns",
+                "constraints",
+                "indexes",
+                "views",
+                "routines",
+                "triggers",
+                "policies",
+                "types",
+            )
+        }
+        expected = {**categories, "columns": [column(1, "id"), column(2, "name")]}
+        actual = {**categories, "columns": [column(2, "id"), column(1, "name")]}
+
+        summary = _schema_catalog_difference_summary(expected, actual)
+
+        self.assertIn("position=1->2", summary)
+        self.assertIn("position=2->1", summary)
+
+
+if __name__ == "__main__":
+    unittest.main()
