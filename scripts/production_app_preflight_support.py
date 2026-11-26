@@ -143,6 +143,17 @@ def _safe_retirement_mount_path(value: str) -> bool:
     )
 
 
+def _retirement_mount_path_overlaps(path: str, protected_path: str) -> bool:
+    """Match a protected file or a directory bind that covers/intersects it."""
+    normalized_path = posixpath.normpath(path)
+    normalized_protected = posixpath.normpath(protected_path)
+    try:
+        common = posixpath.commonpath((normalized_path, normalized_protected))
+    except ValueError:
+        return False
+    return common in {normalized_path, normalized_protected}
+
+
 def _mountinfo_mountpoints_under(root: str | Path, contents: str) -> list[str]:
     """Return mountpoints at or below a fixed tree, including same-device binds."""
     target = posixpath.normpath(os.fspath(root))
@@ -682,7 +693,6 @@ class LocalSupportHost:
         if not isinstance(records, list) or len(records) != len(ids):
             raise SupportError("backup_retirement_container_inventory_invalid")
         config_source = str(PICKER_CONFIG_PATH)
-        config_parent = str(PICKER_CONFIG_PATH.parent)
         config_target = "/run/secrets/google-drive-picker-config.json"
         rows: list[dict[str, str]] = []
         picker_mounts: list[dict[str, str]] = []
@@ -721,10 +731,8 @@ class LocalSupportHost:
                 mount_rows.append({
                     "type": mount_type, "source": source, "target": target, "rw": read_write,
                 })
-                if (source in {config_source, config_parent}
-                        or source.startswith(config_parent + os.sep)
-                        or target == config_target
-                        or target.startswith("/run/secrets/google-drive-picker-config/")):
+                if (_retirement_mount_path_overlaps(source, config_source)
+                        or _retirement_mount_path_overlaps(target, config_target)):
                     if (not _safe_retirement_mount_path(source)
                             or not _safe_retirement_mount_path(target)):
                         raise SupportError("backup_retirement_container_inventory_invalid")

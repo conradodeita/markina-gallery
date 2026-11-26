@@ -1561,6 +1561,51 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
             "compose_files": "/opt/markina-gallery/docker/docker-compose.yml",
         }])
 
+    def retirement_inventory_with_mounts(self, mounts):
+        container_id = "a" * 64
+        record = {
+            "Id": container_id,
+            "Image": f"sha256:{'b' * 64}",
+            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "Mounts": mounts,
+            "Config": {"Labels": {
+                "com.docker.compose.service": "api",
+                "com.docker.compose.project.config_files": "/opt/markina-gallery/docker/docker-compose.yml",
+            }},
+        }
+        ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
+        inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
+        host = support.LocalSupportHost()
+        with patch.object(
+            support, "PICKER_CONFIG_PATH", PurePosixPath("/etc/pyp-google-drive/picker-config.json")
+        ), patch.object(host, "_run", side_effect=[ps, inspect]):
+            return host._retirement_container_state()
+
+    def test_retirement_inventory_preserves_shared_oauth_mount_without_picker_false_positive(self):
+        oauth_mount = {
+            "Type": "bind",
+            "Source": "/etc/pyp-google-drive/oauth-client.json",
+            "Destination": "/run/secrets/google-drive-oauth-client.json",
+            "RW": False,
+        }
+        digest_with_oauth, status, details = self.retirement_inventory_with_mounts([oauth_mount])
+        digest_without_mount, _, _ = self.retirement_inventory_with_mounts([])
+
+        self.assertEqual(status, "absent")
+        self.assertEqual(details, [])
+        self.assertNotEqual(digest_with_oauth, digest_without_mount)
+
+    def test_retirement_inventory_detects_directory_binds_that_cover_picker_paths(self):
+        covering_mounts = (
+            {"Type": "bind", "Source": "/etc/pyp-google-drive", "Destination": "/run/legacy-secrets", "RW": False},
+            {"Type": "bind", "Source": "/var/lib/legacy-secrets", "Destination": "/run/secrets", "RW": False},
+        )
+        for mount in covering_mounts:
+            with self.subTest(source=mount["Source"], target=mount["Destination"]):
+                _, status, details = self.retirement_inventory_with_mounts([mount])
+                self.assertEqual(status, "present")
+                self.assertEqual(len(details), 1)
+
     def test_retirement_inventory_rejects_unsafe_picker_mount_path_without_echoing_it(self):
         container_id = "a" * 64
         unsafe_source = "/etc/pyp-google-drive/picker-config.json\nsecret=hidden"
