@@ -34,3 +34,17 @@ A prova de mídia SHALL usar o fluxo autenticado existente e preservar prazos, c
 - **THEN** exercita a janela de elegibilidade de 30 dias, uma duração permitida de 7, 14 ou 30 dias e a taxa configurável por pasta/ciclo
 - **AND** reserva uma única vez, debita somente após readback e checksum integrais, libera em falha comprovada e conserva a reserva para reconciliação se o resultado for incerto
 - **AND** mantém a isenção do proprietário, o início do novo prazo após recuperação íntegra e a proibição de expurgo automático
+
+### Requirement: Harness distingue ausência de falha de leitura
+
+O harness Rclone SHALL retornar ausência somente quando uma listagem recursiva completa do prefixo sintético terminar com sucesso, produzir JSON válido e não contiver o caminho exato do objeto. Falha de subprocesso, código de saída diferente de zero, JSON inválido ou metadados inválidos do objeto MUST resultar em erro estático sanitizado, nunca em ausência.
+
+#### Scenario: Objeto sintético ausente
+
+- **WHEN** a listagem recursiva válida do prefixo termina com sucesso sem conter o caminho exato consultado
+- **THEN** o adapter SHALL marcar a última leitura como `not_found` e retornar ausência
+
+#### Scenario: Falha ou resposta inválida do armazenamento
+
+- **WHEN** a listagem falha, o JSON/metadado é inválido ou o objeto não informa tamanho inteiro não negativo
+- **THEN** o adapter SHALL falhar com mensagem sanitizada e MUST NOT registrar `not_found`
