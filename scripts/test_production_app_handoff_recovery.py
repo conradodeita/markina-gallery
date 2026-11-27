@@ -50,6 +50,10 @@ class PickerFreeRecoveryRecipeTests(unittest.TestCase):
             proof["services"]["api"]["candidate"] = dict(fixtures.records[0], image="sha256:" + "1" * 64)
             with self.assertRaisesRegex(bridge.BridgeError, "current_reference_unproven"):
                 bridge._handoff_current_reference(proof)
+            proof["services"]["api"]["candidate"] = fixtures.records[0]
+            context["models"]["api"]["services"]["api"]["tmpfs"] = ["/run/secrets:rw"]
+            with self.assertRaisesRegex(bridge.BridgeError, "recipe_picker_mount_ambiguous"):
+                bridge._handoff_current_reference(proof)
 
     def document(self, volumes=None, **model_fields):
         model = {"image": "sha256:" + "a" * 64, **model_fields}
@@ -100,6 +104,26 @@ class PickerFreeRecoveryRecipeTests(unittest.TestCase):
                 bridge._picker_free_recovery_model("api", self.document(mounts))
         with self.assertRaisesRegex(bridge.BridgeError, "handoff_recovery_recipe_picker_mount_ambiguous"):
             bridge._picker_free_recovery_model("api", self.document([], tmpfs=["/run/secrets:rw"]))
+
+    def test_run_tmpfs_preserves_readonly_oauth_and_removes_only_exact_picker(self):
+        oauth = {"type": "bind", "source": "/etc/pyp-google-drive/oauth-client.json",
+                 "target": "/run/secrets/google-drive-oauth-client.json", "read_only": True}
+        picker = {"type": "bind", "source": bridge.PICKER_CONFIG_SOURCE,
+                  "target": bridge.PICKER_CONFIG_TARGET, "read_only": True}
+        tmpfs = ["/run:rw,nosuid,nodev,noexec,size=16m", "/tmp:rw,nosuid,nodev,noexec,size=128m"]
+        model = self.document([oauth, picker], tmpfs=tmpfs)
+        result, removed = bridge._picker_free_recovery_model("api", model)
+        self.assertTrue(removed)
+        self.assertEqual(result["services"]["api"]["volumes"], [oauth])
+        self.assertEqual(result["services"]["api"]["tmpfs"], tmpfs)
+        self.assertEqual(model["services"]["api"]["volumes"], [oauth, picker])
+        for mounts in ([picker], [dict(oauth, read_only=False), picker],
+                       [dict(oauth, source="/etc/unknown.json"), picker], [oauth]):
+            with self.subTest(mounts=mounts), self.assertRaises(bridge.BridgeError):
+                bridge._picker_free_recovery_model("api", self.document(mounts, tmpfs=tmpfs))
+        for target in ("/run/", "/run/../run", "/run/secrets", bridge.PICKER_CONFIG_TARGET):
+            with self.subTest(target=target), self.assertRaises(bridge.BridgeError):
+                bridge._picker_free_recovery_model("api", self.document([oauth, picker], tmpfs=[target + ":rw"]))
 
     def test_recipe_binds_image_model_and_hashes_to_original_identity(self):
         api = self.document([{"type": "bind", "source": bridge.PICKER_CONFIG_SOURCE,

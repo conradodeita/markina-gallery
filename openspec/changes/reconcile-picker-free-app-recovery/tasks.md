@@ -14,6 +14,8 @@
 
 - [ ] 2.5 Obter o par ativo por exportação read-only API/web no workflow protegido e validar checksum/image ID antes do ensaio; preservar o contrato de exportação API existente.
 
+- [x] 2.6 Preservar tmpfs canônico /run com binds separados Picker/OAuth somente leitura; provar o caso real de hardening em teste e no ensaio das imagens ativas. O run #46011319633 abortou antes da troca com handoff_recovery_recipe_picker_mount_ambiguous. Os três endpoints públicos retornaram 200 após a falha. Consulta SSH read-only com a chave disponibilizada pelo proprietário identificou somente mounts e volumes do modelo ativo; nenhum valor de credencial foi lido.
+
 ## 3. Integração com a aposentadoria
 
 - [x] 3.1 Ajustar o inventário protegido para classificar como não ativos somente witnesses exatos, parados e não selecionáveis pela receita vigente; testar preservação do digest agregado e bloqueio de qualquer outro mount.
@@ -47,3 +49,8 @@
 - Diagnóstico 2.4: run #45950979791 passou na main `64c5536dfd7c3ce68072910005b5969518507901`, schema verificado e fingerprint `c33c9c8077bf7b758e93355ed4eef564110898a908fdee876f346fa8b25e3109`. Imagem API `sha256:c0aed86f943e63f51b832c063f25e418e2537bab6ee3546656f5c0b56ef6df4a`; web `sha256:d9dfa2dae3692688c93eebcb9daf9f988a48c9e4aa41ec391b276244ef88f7c6`. Ambas ausentes do Docker local. A exportação API/web está implementada em branch, com 7 testes Linux do exportador passando, incluindo identidade web divergente e recusa de serviço fora do par. A execução protegida e o ensaio continuam pendentes.
 
 - Gates locais da extensão de exportação: 7 testes Linux passaram (API legada, web, imagem/projeto/plataforma/seleção divergentes e serviço inválido); Ruff e política de workflow passaram; YAML e quatro blocos shell do workflow foram analisados, bash -n passou nos scripts com LF canônico. OpenSpec strict e diff-check passaram. A primeira checagem bash direta no checkout Windows detectou CRLF; a sintaxe dos blobs normalizados foi validada sem alterar os scripts por esse motivo. A task 2.5 permanece aberta até exportação real e conferência dos dois artifacts.
+
+
+O diagnóstico da referência passa também a validar a remoção do Picker antes de emitir fingerprint. Assim, uma receita ambígua falha na leitura, antes de solicitar aprovação de recovery.
+
+- Evidência 2.6: 43 contratos Linux passaram; regressão preserva tmpfs /run e OAuth exato somente leitura, rejeita OAuth gravável/ausente/divergente e tmpfs não canônico ou sobre /run/secrets. O ensaio das imagens exportadas passou novamente com /run:rw,nosuid,nodev,noexec,size=16m e /tmp:rw,nosuid,nodev,noexec,size=128m, API/web saudáveis, página inicial acessível e ausência do arquivo Picker após inicialização. Inventário Docker pré/pós idêntico. Ver runtime-tmpfs-validation.md. Falta CI/revisão/merge desta correção, atualização do suporte e nova recuperação protegida.
