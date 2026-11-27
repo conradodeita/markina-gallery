@@ -14,11 +14,27 @@ A consulta e as ações do backup PostgreSQL SHALL estar disponíveis somente ao
 - **THEN** o servidor agenda somente a operação fixa de cópia global e registra a ação na auditoria
 
 ### Requirement: Estado de backup sanitizado e sem consulta remota na leitura
-A página SHALL apresentar o último estado persistido como atual, desatualizado, indisponível ou desconhecido. Uma leitura comum da página MUST NOT iniciar backup nem consultar o destino remoto.
+A página SHALL apresentar somente evidência persistida e MUST NOT iniciar backup nem consultar o destino remoto numa leitura comum.
 
-#### Scenario: Destino indisponível ou estado antigo
-- **WHEN** a última coleta falhou, está vencida ou não existe
-- **THEN** a interface distingue indisponível, desatualizado ou desconhecido e não afirma que o backup está saudável
+#### Scenario: Recibo íntegro do dia UTC corrente
+- **WHEN** há recibo local verificado para a data UTC corrente
+- **THEN** a interface mostra o estado atual sem afirmar disponibilidade atual do repositório remoto
+
+#### Scenario: Último recibo íntegro é anterior
+- **WHEN** o recibo validado mais recente pertence a uma data UTC anterior
+- **THEN** a interface mostra estado desatualizado e não afirma que a cópia está atual
+
+#### Scenario: Tentativa posterior falha após uma cópia validada
+- **WHEN** há um recibo validado de dia anterior e a tentativa mais recente terminou com falha ou resultado incerto
+- **THEN** a UI mostra o último recibo validado como desatualizado e a tentativa mais recente separadamente, sem consultar o destino remoto
+
+#### Scenario: Nenhum recibo íntegro
+- **WHEN** não há recibo local validado
+- **THEN** a interface mostra estado desconhecido e não afirma sucesso
+
+#### Scenario: Tabela local indisponível
+- **WHEN** a consulta do recibo falha
+- **THEN** a interface mostra estado indisponível sem expor detalhes do erro
 
 ### Requirement: Ações de backup com escopo fechado
 A interface SHALL oferecer somente ações de cópia, validação e preparação de recuperação definidas pelo sistema. Usuários MUST NOT fornecer executável, comando, remote, caminho arbitrário ou segredo por formulário ou parâmetro da ação.

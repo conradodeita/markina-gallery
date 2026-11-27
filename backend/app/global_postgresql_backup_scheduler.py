@@ -14,6 +14,7 @@ from uuid import UUID
 
 from sqlalchemy import Engine, select, text, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.auth import (
     GlobalPostgreSQLBackupRun,
@@ -306,34 +307,59 @@ def process_scheduled_global_postgresql_backup(
         return False
 
 
-def read_global_postgresql_backup_status(*, session_factory=SessionLocal) -> dict[str, Any]:
-    """Lê o recibo local; deliberadamente não executa nem consulta Restic/Rclone."""
-    with session_factory() as db:
-        run = db.scalar(
-            select(GlobalPostgreSQLBackupRun)
-            .order_by(GlobalPostgreSQLBackupRun.scheduled_day.desc())
-            .limit(1)
+def _backup_run_summary(run: GlobalPostgreSQLBackupRun | None) -> dict[str, Any] | None:
+    if run is None:
+        return None
+    return {
+        "status": run.status,
+        "scheduled_day": run.scheduled_day.isoformat(),
+        "started_at": run.started_at.isoformat(),
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "snapshot_id": run.snapshot_id,
+        "dump_size_bytes": run.dump_size_bytes,
+        "duration_ms": run.duration_ms,
+        "verified": run.verified,
+        "error_code": run.error_code,
+    }
+
+
+def _read_global_postgresql_backup_status(db: Session) -> dict[str, Any]:
+    latest = db.scalar(
+        select(GlobalPostgreSQLBackupRun)
+        .order_by(GlobalPostgreSQLBackupRun.scheduled_day.desc())
+        .limit(1)
+    )
+    last_validated = db.scalar(
+        select(GlobalPostgreSQLBackupRun)
+        .where(
+            GlobalPostgreSQLBackupRun.status == "validated",
+            GlobalPostgreSQLBackupRun.verified.is_(True),
+            GlobalPostgreSQLBackupRun.snapshot_id.is_not(None),
+            GlobalPostgreSQLBackupRun.finished_at.is_not(None),
+            GlobalPostgreSQLBackupRun.dump_size_bytes > 0,
         )
-        if run is None:
-            return {
-                "status": "unknown",
-                "scheduled_day": None,
-                "started_at": None,
-                "finished_at": None,
-                "snapshot_id": None,
-                "dump_size_bytes": None,
-                "duration_ms": None,
-                "verified": False,
-                "error_code": None,
-            }
-        return {
-            "status": run.status,
-            "scheduled_day": run.scheduled_day.isoformat(),
-            "started_at": run.started_at.isoformat(),
-            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
-            "snapshot_id": run.snapshot_id,
-            "dump_size_bytes": run.dump_size_bytes,
-            "duration_ms": run.duration_ms,
-            "verified": run.verified,
-            "error_code": run.error_code,
-        }
+        .order_by(GlobalPostgreSQLBackupRun.scheduled_day.desc())
+        .limit(1)
+    )
+    latest_summary = _backup_run_summary(latest) or {
+        "status": "unknown",
+        "scheduled_day": None,
+        "started_at": None,
+        "finished_at": None,
+        "snapshot_id": None,
+        "dump_size_bytes": None,
+        "duration_ms": None,
+        "verified": False,
+        "error_code": None,
+    }
+    return {**latest_summary, "last_validated": _backup_run_summary(last_validated)}
+
+
+def read_global_postgresql_backup_status(
+    *, db: Session | None = None, session_factory=SessionLocal
+) -> dict[str, Any]:
+    """Lê recibos locais; deliberadamente não executa nem consulta Restic/Rclone."""
+    if db is not None:
+        return _read_global_postgresql_backup_status(db)
+    with session_factory() as session:
+        return _read_global_postgresql_backup_status(session)

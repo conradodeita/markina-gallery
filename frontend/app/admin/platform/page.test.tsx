@@ -73,6 +73,38 @@ describe("console privado da plataforma", () => {
     expect(screen.queryByText(/Drive saudável|Drive disponível/i)).toBeNull();
   });
 
+  it("apresenta evidência local de uma cópia validada sem afirmar disponibilidade do destino", async () => {
+    const backupSources = unknownSources.map((source) => source.key === "backup" ? {
+      ...source, state: "current", availability: "current",
+      source: "application_database.global_postgresql_backup_run", scope: "platform_owner",
+      observed_at: observed, latest_run_status: "validated", latest_attempt_day: "2026-11-03",
+      last_validated_day: "2026-11-03", last_validated_at: observed,
+      snapshot_id: "a".repeat(32), dump_size_bytes: 4096, duration_ms: 1500,
+    } : source);
+    mockApi(true, backupSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Cópia global validada hoje")).toBeTruthy();
+    expect(screen.getByText(/Último recibo validado: 2026-11-03/)).toBeTruthy();
+    expect(screen.getByText(/Snapshot a{12}/)).toBeTruthy();
+    expect(screen.getByText(/esta leitura não consulta a disponibilidade atual do destino remoto/i)).toBeTruthy();
+  });
+
+  it("mostra uma cópia anterior como desatualizada e mantém visível a última falha", async () => {
+    const backupSources = unknownSources.map((source) => source.key === "backup" ? {
+      ...source, state: "stale", availability: "stale",
+      source: "application_database.global_postgresql_backup_run", scope: "platform_owner",
+      observed_at: observed, latest_run_status: "failed", latest_attempt_day: "2026-11-04",
+      last_validated_day: "2026-11-03", last_validated_at: observed,
+      snapshot_id: "b".repeat(32), dump_size_bytes: 2048, duration_ms: 4000,
+    } : source);
+    mockApi(true, backupSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("A última cópia validada está desatualizada")).toBeTruthy();
+    expect(screen.getByText(/Estado da tentativa mais recente: falha · 2026-11-04/)).toBeTruthy();
+  });
+
   it("só libera hostname reservado após hash, confirmação e reautenticação", async () => {
     const reservedDetail = { ...tenant, canonical_host: "synthetic.pickyourpic.com.br", canonical_host_status: "reserved",
       gallery_count: 2, photo_count: 7, observed_at: observed };

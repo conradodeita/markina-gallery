@@ -1,6 +1,8 @@
 """Console global privado: leitura mínima, sem ampliar concessões técnicas."""
 
+import re
 from contextlib import contextmanager
+from datetime import date
 from typing import Literal
 from uuid import UUID
 
@@ -26,6 +28,7 @@ from app.auth import (
     enforce_rate_limit,
     now,
 )
+from app.global_postgresql_backup_scheduler import read_global_postgresql_backup_status
 from app.mercadopago_api import SensitiveRoute
 from app.system_monitor.access import is_owner
 from app.system_monitor.store import bounded
@@ -612,6 +615,82 @@ def reopen_tenant_account(
         return result
 
 
+def _global_backup_source(db, *, observed_at):
+    source = "application_database.global_postgresql_backup_run"
+    try:
+        status = read_global_postgresql_backup_status(db=db)
+    except SQLAlchemyError:
+        db.rollback()
+        return {
+            "key": "backup",
+            "state": "unavailable",
+            "availability": "unavailable",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": observed_at,
+            "latest_run_status": None,
+            "latest_attempt_day": None,
+            "last_validated_day": None,
+            "last_validated_at": None,
+            "snapshot_id": None,
+            "dump_size_bytes": None,
+            "duration_ms": None,
+        }
+
+    latest_status = status.get("status")
+    if not isinstance(latest_status, str) or latest_status not in {
+        "running",
+        "validated",
+        "failed",
+        "unknown",
+    }:
+        latest_status = "unknown"
+    receipt = status.get("last_validated")
+    validated_day = None
+    if (
+        isinstance(receipt, dict)
+        and receipt.get("status") == "validated"
+        and receipt.get("verified") is True
+        and isinstance(receipt.get("snapshot_id"), str)
+        and re.fullmatch(r"[0-9a-f]{8,64}", receipt["snapshot_id"])
+        and isinstance(receipt.get("dump_size_bytes"), int)
+        and not isinstance(receipt.get("dump_size_bytes"), bool)
+        and receipt["dump_size_bytes"] > 0
+        and isinstance(receipt.get("duration_ms"), int)
+        and not isinstance(receipt.get("duration_ms"), bool)
+        and receipt["duration_ms"] >= 0
+        and isinstance(receipt.get("finished_at"), str)
+        and isinstance(receipt.get("scheduled_day"), str)
+    ):
+        try:
+            validated_day = date.fromisoformat(receipt["scheduled_day"])
+        except ValueError:
+            validated_day = None
+
+    state = "unknown"
+    if validated_day is not None:
+        if validated_day == observed_at.date():
+            state = "current"
+        elif validated_day < observed_at.date():
+            state = "stale"
+
+    return {
+        "key": "backup",
+        "state": state,
+        "availability": state,
+        "source": source,
+        "scope": "platform_owner",
+        "observed_at": observed_at,
+        "latest_run_status": latest_status,
+        "latest_attempt_day": status.get("scheduled_day"),
+        "last_validated_day": validated_day.isoformat() if validated_day else None,
+        "last_validated_at": receipt.get("finished_at") if validated_day else None,
+        "snapshot_id": receipt.get("snapshot_id") if validated_day else None,
+        "dump_size_bytes": receipt.get("dump_size_bytes") if validated_day else None,
+        "duration_ms": receipt.get("duration_ms") if validated_day else None,
+    }
+
+
 @router.get("/sources")
 def sources(request: Request, response: Response):
     response.headers.update(HEADERS)
@@ -636,10 +715,11 @@ def sources(request: Request, response: Response):
             "quota_observed_at": connection.quota_observed_at if connection
             and connection.state == "connected" else None,
         }
+        backup = _global_backup_source(db, observed_at=observed_at)
         unknown = [{"key": key, "state": "unknown", "availability": "unknown", "source": None,
                     "scope": "platform", "observed_at": None, "reason": "source_not_integrated"}
-                   for key in ("backup", "archive", "restore")]
-        return {"items": [*unknown[:1], drive, *unknown[1:]]}
+                   for key in ("archive", "restore")]
+        return {"items": [backup, drive, *unknown]}
 
 
 class StatusInput(BaseModel):

@@ -127,6 +127,52 @@ def test_success_is_persisted_once_per_utc_day_and_status_is_local(store, monkey
     assert status["verified"] is True
 
 
+def test_status_retains_latest_validated_receipt_after_a_later_failed_attempt(store):
+    _, session_factory = store
+    previous_day = _NOW.date() - timedelta(days=1)
+    with session_factory() as db:
+        db.add_all(
+            [
+                GlobalPostgreSQLBackupRun(
+                    scheduled_day=previous_day,
+                    status="validated",
+                    started_at=_NOW - timedelta(days=1, seconds=2),
+                    finished_at=_NOW - timedelta(days=1),
+                    snapshot_id="e" * 32,
+                    dump_size_bytes=2048,
+                    duration_ms=2000,
+                    verified=True,
+                ),
+                GlobalPostgreSQLBackupRun(
+                    scheduled_day=_NOW.date(),
+                    status="failed",
+                    started_at=_NOW,
+                    finished_at=_NOW,
+                    verified=False,
+                    error_code="tool_unavailable",
+                ),
+            ]
+        )
+        db.commit()
+
+    status = scheduler.read_global_postgresql_backup_status(session_factory=session_factory)
+
+    assert status["status"] == "failed"
+    receipt = status["last_validated"]
+    assert receipt["status"] == "validated"
+    assert receipt["scheduled_day"] == previous_day.isoformat()
+    assert datetime.fromisoformat(receipt["started_at"]).replace(tzinfo=UTC) == (
+        _NOW - timedelta(days=1, seconds=2)
+    )
+    assert datetime.fromisoformat(receipt["finished_at"]).replace(tzinfo=UTC) == (
+        _NOW - timedelta(days=1)
+    )
+    assert receipt["snapshot_id"] == "e" * 32
+    assert receipt["dump_size_bytes"] == 2048
+    assert receipt["duration_ms"] == 2000
+    assert receipt["verified"] is True
+
+
 def test_preflight_failure_is_failed_and_error_is_sanitized(store):
     def fail_before_remote(_database, _config):
         raise GlobalPostgreSQLBackupError("tool_version_mismatch")

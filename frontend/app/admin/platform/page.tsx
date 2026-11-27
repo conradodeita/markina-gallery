@@ -28,10 +28,17 @@ type Source = {
   quota_limit?: string | null;
   quota_usage?: string | null;
   quota_observed_at?: string | null;
+  latest_run_status?: string | null;
+  latest_attempt_day?: string | null;
+  last_validated_day?: string | null;
+  last_validated_at?: string | null;
+  snapshot_id?: string | null;
+  dump_size_bytes?: number | null;
+  duration_ms?: number | null;
 };
 
-function formatBytes(value: string | null | undefined) {
-  if (!value || !/^\d+$/.test(value)) return "não informado";
+function formatBytes(value: string | number | null | undefined) {
+  if (value == null || !/^\d+$/.test(String(value))) return "não informado";
   const bytes = Number(value);
   if (!Number.isSafeInteger(bytes)) return `${value} B`;
   const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
@@ -40,6 +47,20 @@ function formatBytes(value: string | null | undefined) {
   while (unit < units.length - 1 && bytes >= divisor * 1024) { divisor *= 1024; unit++; }
   if (unit === 0) return `${value} B`;
   return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(bytes / divisor)} ${units[unit]}`;
+}
+
+function formatDuration(value: number | null | undefined) {
+  if (value == null || !Number.isSafeInteger(value) || value < 0) return "não informado";
+  return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value / 1000)} s`;
+}
+
+function backupStateLabel(source: Source) {
+  if (source.state === "current") return "Cópia global validada hoje";
+  if (source.state === "stale") return "A última cópia validada está desatualizada";
+  if (source.state === "unavailable") return "Estado do backup indisponível";
+  if (source.latest_run_status === "failed") return "A última tentativa falhou; nenhuma cópia atual foi validada";
+  if (source.latest_run_status === "running") return "Cópia em andamento; validação ainda não concluída";
+  return "Estado desconhecido; nenhuma cópia validada foi confirmada";
 }
 
 function driveStateLabel(source: Source) {
@@ -269,6 +290,17 @@ function ConsoleContent() {
             {drive.quota_observed_at ? <p>Última quota registrada: {formatBytes(drive.quota_usage)} usados de {formatBytes(drive.quota_limit)} · consulta em {new Date(drive.quota_observed_at).toLocaleString("pt-BR")}</p> : <p>Quota ainda não observada.</p>}
             <small>{drive.connection_updated_at ? `Estado salvo em ${new Date(drive.connection_updated_at).toLocaleString("pt-BR")} · ` : ""}Registro consultado em {drive.observed_at ? new Date(drive.observed_at).toLocaleString("pt-BR") : "instante desconhecido"}</small>
             {drive.availability !== "authorization_recorded" ? <GoogleDriveConnectForm /> : null}
+          </div>;
+        })()}
+        {(() => {
+          const backup = sources.find((item) => item.key === "backup");
+          if (!backup) return <p>Estado do backup global desconhecido.</p>;
+          return <div>
+            <h3>Backup global do PostgreSQL</h3>
+            <p>{backupStateLabel(backup)}</p>
+            {backup.last_validated_at ? <p>Último recibo validado: {backup.last_validated_day} · {new Date(backup.last_validated_at).toLocaleString("pt-BR")} · {formatBytes(backup.dump_size_bytes)} · {formatDuration(backup.duration_ms)}{backup.snapshot_id ? ` · Snapshot ${backup.snapshot_id.slice(0, 12)}` : ""}</p> : null}
+            {backup.latest_run_status && backup.latest_run_status !== "validated" ? <p>Estado da tentativa mais recente: {backup.latest_run_status === "failed" ? "falha" : backup.latest_run_status === "running" ? "em andamento" : "desconhecido"}{backup.latest_attempt_day ? ` · ${backup.latest_attempt_day}` : ""}</p> : null}
+            <small>Estado derivado de recibos locais no PostgreSQL; esta leitura não consulta a disponibilidade atual do destino remoto.</small>
           </div>;
         })()}
         <p>Estado do arquivo de mídia e da restauração indisponível.</p>

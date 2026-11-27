@@ -9,11 +9,14 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
+from app import global_postgresql_backup_scheduler as backup_scheduler
 from app import photographer_terms as terms
 from app import platform_console as console
 from app.auth import (
     AdminUser,
+    GlobalPostgreSQLBackupRun,
     GoogleDriveConnection,
     InstallationOperator,
     MediaArchiveCycle,
@@ -469,6 +472,121 @@ def test_drive_source_exposes_only_persisted_owner_state_and_quota_without_claim
     client_db.commit()
     drive = next(item for item in client.get("/admin/platform/console/sources").json()["items"] if item["key"] == "drive")
     assert drive["state"] == drive["availability"] == "reauthorization_required"
+
+
+def test_backup_source_shows_only_verified_local_receipt_without_remote_query(http, client_db, monkeypatch):
+    client, _session, _tenant_id, _ = http
+    observed_at = now()
+    client_db.add(
+        GlobalPostgreSQLBackupRun(
+            scheduled_day=observed_at.date(),
+            status="validated",
+            started_at=observed_at - timedelta(seconds=4),
+            finished_at=observed_at,
+            snapshot_id="a" * 32,
+            dump_size_bytes=4096,
+            duration_ms=4000,
+            verified=True,
+        )
+    )
+    client_db.commit()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("read endpoint accessed backup destination/configuration")
+
+    monkeypatch.setattr(backup_scheduler, "create_global_postgresql_backup", forbidden)
+    monkeypatch.setattr(backup_scheduler, "_config_from_environment", forbidden)
+    monkeypatch.setattr(backup_scheduler, "_postgres_advisory_lock", forbidden)
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    assert {"private", "no-store"} <= set(response.headers["cache-control"].split(", "))
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+    assert backup["state"] == backup["availability"] == "current"
+    assert backup["source"] == "application_database.global_postgresql_backup_run"
+    assert backup["scope"] == "platform_owner"
+    assert backup["latest_run_status"] == "validated"
+    assert backup["last_validated_day"] == observed_at.date().isoformat()
+    assert backup["snapshot_id"] == "a" * 32
+    assert backup["dump_size_bytes"] == 4096
+    assert "password" not in response.text.lower() and "secret" not in response.text.lower()
+
+
+def test_backup_source_keeps_previous_validated_receipt_stale_after_failed_attempt(http, client_db):
+    client, _session, _tenant_id, _ = http
+    observed_at = now()
+    client_db.add_all(
+        [
+            GlobalPostgreSQLBackupRun(
+                scheduled_day=observed_at.date() - timedelta(days=1),
+                status="validated",
+                started_at=observed_at - timedelta(days=1, seconds=4),
+                finished_at=observed_at - timedelta(days=1),
+                snapshot_id="b" * 32,
+                dump_size_bytes=2048,
+                duration_ms=4000,
+                verified=True,
+            ),
+            GlobalPostgreSQLBackupRun(
+                scheduled_day=observed_at.date(),
+                status="failed",
+                started_at=observed_at,
+                finished_at=observed_at,
+                verified=False,
+                error_code="synthetic_private_error",
+            ),
+        ]
+    )
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+    assert response.status_code == 200
+    assert backup["state"] == backup["availability"] == "stale"
+    assert backup["latest_run_status"] == "failed"
+    assert backup["latest_attempt_day"] == observed_at.date().isoformat()
+    assert backup["last_validated_day"] == (observed_at.date() - timedelta(days=1)).isoformat()
+    assert "synthetic_private_error" not in response.text
+
+
+def test_backup_source_does_not_treat_future_receipt_as_current_or_stale(http, client_db):
+    client, _session, _tenant_id, _ = http
+    observed_at = now()
+    future_day = observed_at.date() + timedelta(days=1)
+    client_db.add(
+        GlobalPostgreSQLBackupRun(
+            scheduled_day=future_day,
+            status="validated",
+            started_at=observed_at,
+            finished_at=observed_at,
+            snapshot_id="c" * 32,
+            dump_size_bytes=1024,
+            duration_ms=1000,
+            verified=True,
+        )
+    )
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+    assert response.status_code == 200
+    assert backup["state"] == backup["availability"] == "unknown"
+    assert backup["snapshot_id"] is None
+
+
+def test_backup_source_reports_unavailable_on_local_receipt_read_error(http, monkeypatch):
+    client, _session, _tenant_id, _ = http
+
+    def fail_read(**_kwargs):
+        raise SQLAlchemyError("synthetic database credential detail")
+
+    monkeypatch.setattr(console, "read_global_postgresql_backup_status", fail_read)
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+    assert backup["state"] == backup["availability"] == "unavailable"
+    assert "synthetic database credential detail" not in response.text
 
 
 def test_session_change_after_collection_is_denied(http, monkeypatch):
