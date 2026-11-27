@@ -212,7 +212,118 @@ Análise somente de leitura para transformar a decisão aprovada de um provider 
 
 ### Gates de aprovação
 
-A política de um provider por ciclo, identidade imutável por objeto, ausência de fallback e defaults V1 Drive-only já foi decidida pelo proprietário. Permanecem para revisão técnica antes de código a forma final do binding/constraints, a seleção API/UI e a validação transacional no claim. Migration e deploy exigem autorização separada; não foram executados. A task 1.3 continua aberta até essas decisões, a fonte histórica V1 e a ordem de rollout estarem revisadas.
+A política de um provider por ciclo, identidade imutável por objeto, ausência de fallback e defaults V1 Drive-only já foi decidida pelo proprietário. O pacote abaixo apresenta uma forma concreta de binding/constraints, seleção e claim para revisão técnica antes de código. Migration e deploy exigem autorização separada; não foram executados. A task 1.3 continua aberta até revisão do pacote e dos gates de identidade, seleção, credenciais e rollout.
+
+## Pacote de decisão técnica de binding e persistência — 27/11/2026
+
+Este pacote transforma as tasks 1.1 e 1.3 em uma proposta revisável de schema e composição. É desenho, não migration: nenhum modelo, endpoint, credencial, estado comercial ou runtime foi alterado. As decisões do proprietário sobre coexistência por objeto, um provider por ciclo, identidade imutável, reconexão e ausência de redirecionamento de V1 permanecem fixas.
+
+### Modelo aditivo proposto
+
+**`media_archive_provider_binding` — identidade estável do destino:**
+
+- `id UUID PRIMARY KEY` é o `provider_id`; `tenant_id UUID NOT NULL` delimita ownership. Declarar também `UNIQUE (id, tenant_id)` para as FKs compostas.
+- `provider_kind VARCHAR(32) NOT NULL` com `CHECK` de allowlist, inicialmente `google_drive` e `rclone_crypt`.
+- `provider_identity_fingerprint CHAR(64) NOT NULL` é uma impressão HMAC-SHA-256 versionada da identidade estável do principal/instância verificada. Para Google Drive, a entrada precisa ser um subject estável verificado; e-mail e token não servem. Para Rclone, a identidade canônica da instância/destino ainda depende da decisão sobre remote e custódia; alias isolado não prova identidade.
+- `fingerprint_key_version SMALLINT NOT NULL` identifica a chave de impressão mantida fora do banco. Na rotação dessa chave, o resolver consulta as versões ainda retidas sob lock do tenant antes de inserir binding, para reaproveitar o mesmo ID. Remover uma chave antiga exige plano de reimpressão/retenção próprio.
+- `destination_identity VARCHAR(512) NOT NULL` registra o identificador canônico e exato da raiz/namespace, sem token, senha, configuração Rclone ou dado de cliente. A igualdade é de destino, não de nome de conta ou alias.
+- `status VARCHAR(16) NOT NULL CHECK (status IN ('active','retired'))`, `created_at TIMESTAMPTZ NOT NULL` e `retired_at TIMESTAMPTZ NULL`. Binding aposentado deixa de aceitar ciclos novos, mas continua referenciável por objetos existentes; não apagar binding referenciado.
+- `UNIQUE (tenant_id, provider_kind, fingerprint_key_version, provider_identity_fingerprint, destination_identity)` evita duplicar o binding da mesma identidade verificada e raiz dentro da versão da impressão. O serviço de criação também procura impressões em versões anteriores antes de criar ID; nunca gera ID novo só porque OAuth ou a chave de impressão foi rotacionada.
+
+As colunas de identidade do binding são imutáveis após inserção. Uma mudança de conta ou raiz cria outro `provider_id`; somente credenciais podem ser rotacionadas sob o mesmo ID quando conta e raiz forem iguais. A implementação deve impor isso no serviço e testar; um trigger de banco pode ser escolhido na revisão da migration.
+
+Se uma conta voltar a autenticar exatamente a identidade e raiz de um binding `retired`, a unicidade e o resolver devem recuperar o binding antigo e reativar o mesmo ID após verificação; não criar outro ID. Objetos ligados a bindings diferentes não são reatribuídos.
+
+**`media_archive_provider_credential_ref` — referência rotativa de segredo, separada do binding:**
+
+- `id UUID PRIMARY KEY`, `tenant_id UUID NOT NULL`, `provider_id UUID NOT NULL`, `credential_version INTEGER NOT NULL CHECK (credential_version > 0)`, `secret_ref VARCHAR(512) NOT NULL`, `status VARCHAR(16) NOT NULL CHECK (status IN ('current','retained','revoked'))`, `created_at TIMESTAMPTZ NOT NULL` e `revoked_at TIMESTAMPTZ NULL`.
+- `UNIQUE (id, tenant_id)`, `UNIQUE (provider_id, tenant_id, credential_version)` e FK composta `(provider_id, tenant_id) → media_archive_provider_binding(id, tenant_id) ON DELETE RESTRICT`. Índice parcial único `(tenant_id, provider_id) WHERE status = 'current'`; índice de leitura `(tenant_id, provider_id, status)`.
+- `secret_ref` é somente um identificador opaco de um cofre/custódia aprovada. A tabela não guarda access/refresh token, configuração Rclone, senha/ofuscação de `crypt` ou chave. Rotacionar credencial cria nova versão e não altera `provider_id`; a proposta é não apagar referências automaticamente enquanto objetos dependerem delas, mas a política de retenção/revogação da credencial precisa de decisão própria.
+
+O modelo atual `GoogleDriveConnection` é uma credencial OAuth por tenant: o reconnect substitui seu UUID e não persiste subject estável nem raiz exata. Portanto ele não é o binding nem prova que uma nova credencial alcança objetos antigos. A forma como OAuth fornece o subject e como a referência de segredo é resolvida permanece bloqueio de segurança/integração antes do código.
+
+**`media_archive_cycle` e `media_archive_object` — seleção e roteamento:**
+
+- Adicionar `provider_id UUID NULL` a ambos. Null preserva linhas legadas sem prova e ciclos locais ainda não selecionados; toda nova operação de arquivo precisa de seleção válida.
+- No ciclo, FK `(provider_id, tenant_id) → media_archive_provider_binding(id, tenant_id) ON DELETE RESTRICT` e `UNIQUE (id, tenant_id, provider_id)`. O valor só pode mudar uma vez de NULL para ID tenant-scoped válido; depois é imutável.
+- No objeto, a mesma FK de binding e FK composta `(cycle_id, tenant_id, provider_id) → media_archive_cycle(id, tenant_id, provider_id) ON DELETE RESTRICT`. Isso impede objeto de outro tenant ou provider diferente do ciclo. `provider_id` fica imutável depois de atribuído. Cada objeto de mídia recebe o ID do ciclo antes do próprio upload; a linha `object_type='manifest'` também recebe o mesmo ID antes do upload do manifesto. As linhas de mídia são criadas durante o snapshot local, antes dos uploads (`backend/app/media_archive_manifest.py:808-863`), portanto a seleção pode ser persistida antes de cada chamada externa sem alterar `MediaArchiveStorage`.
+- As FKs compostas complementam as constraints atuais `(cycle_id, tenant_id)`; as novas colunas ficam nullable para compatibilidade, mas serviço e claim recusam arquivo novo com provider ausente. Um `CHECK` entre estado/operação e outra tabela não é possível como constraint simples: o serviço transacional deve bloquear o ciclo, validar binding/credencial, gravar a seleção e inserir a operação `queued` na mesma transação. Trigger de constraint para impedir `archive/queued` sem binding é defesa opcional a revisar na migration.
+- A seleção acontece em ciclo `local`, antes da descoberta automática publicar operação. O scheduler não cria nem publica `archive/queued` sem provider ativo do mesmo tenant. Não existe seleção implícita pelo provider atualmente configurado. A autorização do ator e a UX/API exatas continuam pendentes; recomendação técnica é seleção explícita por administrador autenticado do próprio tenant, sem default.
+- `MediaArchiveOperation` não ganha autoridade de roteamento. `details.provider_id`, se registrado para auditoria, é cópia redundante e deve coincidir com o ciclo; claim continua referenciando o ciclo existente. Resolver restore/delete usa a linha de cada objeto e confirma tenant/provider antes de injetar o adapter. Não mudar `MediaArchiveStorage.read_object/delete_object` nem codificar provider em `remote_object_id`.
+
+**Constraints e índices complementares propostos:** manter as constraints existentes de UUID/tenant, ciclo e fonte. Além das unicidades/FKs acima, criar índice de elegibilidade `(tenant_id, provider_id, state)` no ciclo e estender o índice de catálogo atual para `(tenant_id, cycle_id, provider_id)`; confirmar planos de consulta antes da migration e substituir, quando equivalente, o índice atual `(tenant_id, cycle_id)` em vez de duplicá-lo. Não adicionar `provider_id` nem índice à fila: a busca continua pelo índice de prioridade/FIFO já existente e join tenant-scoped ao ciclo. As unicidades das tabelas de binding/credencial servem também como índices de resolver. Names, tipos SQL e trigger são proposta técnica sujeita à revisão; nenhuma migration foi criada ou executada.
+
+### Fluxo de seleção, claim e objeto
+
+1. O serviço autenticado recebe ciclo e binding, verifica tenant, tipo, status e referência de credencial; bloqueia o ciclo e atribui `provider_id` somente se ainda NULL. Repetir a mesma seleção é idempotente; outra seleção após atribuição falha sem modificar catálogo.
+2. Na mesma transação, torna o ciclo elegível e publica `archive/queued`. Se não houver binding válido, o ciclo continua local e não há claim, lease ou chamada externa. A seleção gera evento auditável com ator e IDs internos, sem credencial ou identificador de conta em texto claro.
+3. Antes de reivindicar operação ou retomar lease, o claim valida binding e tenant; mantém a prioridade restore → delete remoto → archive e FIFO entre candidatos válidos. Lease global expirado cujo binding não possa ser comprovado permanece intacto e visivelmente bloqueado; não liberar lease nem procurar outro provider para prosseguir.
+4. Cada leitura, recuperação, exclusão e retry resolve pelo `provider_id` imutável da linha do objeto; verifica a igualdade com ciclo e, para v2, manifesto. Timeout ou resposta perdida mantém o mesmo ciclo/binding e o caminho vigente de reconciliação. Nunca criar retry em outro provider.
+
+### Manifesto v2 e V1 sem destino comprovado
+
+O parser V1 continua estrito, com as chaves e bytes existentes; não reescrever manifesto V1. Criar parser/serializer V2 estrito e versionado. V2 inclui `provider_id` no cabeçalho do ciclo e em cada item de mídia; cada ID de item deve coincidir com a linha de catálogo e o provider do ciclo. O cabeçalho não substitui o ID por item. A linha de catálogo do próprio manifesto também leva o provider, mas o item do manifesto não lista a si mesmo. Exemplo sintético:
+
+```json
+{
+  "schema_version": 2,
+  "tenant_id": "00000000-0000-4000-8000-000000000001",
+  "cycle_id": "00000000-0000-4000-8000-000000000002",
+  "provider_id": "00000000-0000-4000-8000-000000000003",
+  "objects": [{
+    "object_id": "00000000-0000-4000-8000-000000000004",
+    "provider_id": "00000000-0000-4000-8000-000000000003",
+    "source_ref": "photo:00000000-0000-4000-8000-000000000005:original",
+    "object_type": "source",
+    "mime_type": "image/jpeg",
+    "size_bytes": 12345,
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "remote_object_id": "syntheticOpaqueObjectId"
+  }]
+}
+```
+
+Exemplo sintético de binding e referência de segredo (valores ilustrativos, sem credencial utilizável):
+
+```json
+{
+  "provider_id": "00000000-0000-4000-8000-000000000003",
+  "tenant_id": "00000000-0000-4000-8000-000000000001",
+  "provider_kind": "rclone_crypt",
+  "provider_identity_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "fingerprint_key_version": 1,
+  "destination_identity": "synthetic-local-root:tenant-01",
+  "credential": {
+    "credential_version": 2,
+    "status": "current",
+    "secret_ref": "synthetic-secret-ref://rclone-credential-v2"
+  }
+}
+```
+
+Ciclo, objeto e manifesto repetem o mesmo UUID sintético de provider. Uma nova referência de credencial muda `credential_version`/`secret_ref` e mantém esse UUID se a identidade verificada e a raiz forem iguais; nenhum valor configura remote real.
+
+Para V1, ausência de provider significa **somente candidato ao Drive legado**. Como o código atual não persiste conta nem raiz, a ausência de prova produz resultado de disponibilidade `indisponível` e erro operacional sanitizado, com zero chamadas externas. Esse resultado não cria novo `MediaArchiveCycle.state` nem altera reserva, débito, prazo, retry ou `reconciliation_required`; pode ser exposto pela projeção de estado de mídia já prevista e auditado por evento sem PII. Se surgir prova autoritativa por ciclo/objeto e houver aprovação separada de backfill, uma migração auditável poderá atribuir o binding Drive exato às linhas do catálogo, sem mudar bytes/versão do manifesto V1. Sem essa prova, não atualizar catálogo, não usar OAuth/root atuais e não redirecionar.
+
+### Escolhas técnicas e decisões ainda necessárias
+
+**Defaults técnicos recomendados para revisão, sem reabrir decisões já tomadas:** UUID opaco tenant-scoped; FKs compostas e `ON DELETE RESTRICT`; binding e `provider_id` imutáveis; colunas novas nullable sem backfill automático; seleção NULL→ID uma vez; V2 com igualdade entre cabeçalho, item, catálogo e ciclo; operação/claim não são fonte de roteamento; índice novo só após validar plano; V1 sem prova fica indisponível; nenhuma mudança no contrato de storage ou nos ciclos comerciais.
+
+**Decisões/gates ainda humanos:**
+
+- Aprovar quem pode selecionar destino por ciclo e a superfície UX/API (recomendado: administrador autenticado do tenant).
+- Escolher remotamente permitido, raiz/namespace e processo de provisionamento/custódia para Rclone; isso não pode ser inferido do remote de backup Restic/Rclone.
+- Aprovar como credenciais de bindings antigos serão preservadas/rotacionadas/revogadas enquanto houver objetos arquivados; nunca apagar segredo referenciado por objeto sem política explícita.
+- Para tornar V1 recuperável, fornecer evidência autoritativa que associe cada ciclo/objeto à conta verificada e raiz Drive originais. Enquanto ela não existir, o comportamento previsto é resultado `indisponível`, falha fechada e zero chamadas; não se solicita inferência nem redirecionamento.
+- Revisar a fonte OAuth/scope capaz de comprovar subject estável do Google e eventual impacto de consentimento. O e-mail não será usado como identidade única.
+
+A forma de FK composta, versão estrita de manifesto, ausência de fallback, igualdade por objeto/ciclo e filtragem antes do claim são escolhas técnicas alinhadas às decisões existentes e podem ser refinadas na revisão da migration sem nova decisão comercial. Migration, backfill, credenciais, deploy e ativação exigem gates separados e continuam não executados.
+
+### Crédito, retenção e rollout
+
+Esta proposta não muda taxa por pasta/ciclo, reserva idempotente, débito somente após pull integral e íntegro, liberação somente após falha comprovada, isenção do proprietário, durações de recuperação de 7/14/30 dias, janela separada de reabertura de 30 dias, nem ausência de expurgo automático. `reconciliation_required` conserva a reserva e não ganha mecanismo novo de resolução.
+
+Ordem de implementação proposta: (1) revisar este modelo e resolver gates de seleção, identidade, custódia e V1; (2) obter aprovação explícita para migration aditiva e qualquer backfill; (3) adicionar colunas/tabelas nullable sem classificar V1 por suposição; (4) implantar código com seleção/runtime inativos e fila fechada sem binding; (5) provar constraints, tenant isolation, concorrência seleção→fila→claim, rotação de credencial, V1 indisponível/provado sintético, V2 e zero chamadas para mismatch em CI/local; (6) tratar provisionamento e ativação por autorização própria. Esta change não autoriza os passos 2, 3 ou 6.
 
 ## Caracterização de timeout de comando Rclone — 27/11/2026
 
