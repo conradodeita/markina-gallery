@@ -18,7 +18,9 @@
 
 - [x] 2.7 Validar o recibo contra o modelo efetivamente publicado pelo Compose, preservando conferência por hash e runtime; testar normalizações equivalentes e alterações reais, além de atualização do suporte por ancestralidade sem recriar serviços.
 
-- [ ] 2.8 Corrigir a seleção do modo de inventário da ponte por operação e validar o contrato de argumentos real; repetir inventário protegido após integração.
+- [x] 2.8 Corrigir a seleção do modo de inventário da ponte por operação e validar o contrato de argumentos real; repetir inventário protegido após integração.
+
+- [x] 2.9 Normalizar UnitFileState vazio somente para unidade ausente, inativa, sem fragmento nem drop-ins e LoadState=not-found. Testar a representação do systemd observada após a retirada.
 
 ## 3. Integração com a aposentadoria
 
@@ -26,10 +28,10 @@
 - [x] 3.2 Vincular o cleanup do Picker ao receipt de runtime saudável sem mount e à receita picker-free; validar OpenSpec estrito e diff-check sem alterar OAuth, banco ou caminhos compartilhados.
 - [ ] 3.3 Executar os gates de CI da categoria e revisar o diff completo, segredo/escopo, modo de falha e cobertura; registrar SHA e evidências antes de submeter PR para revisão humana.
 
-## 4. Operação futura protegida
+## 4. Operação protegida
 
-- [ ] 4.1 Após merge e CI verde na `main` exata, inventariar produção somente-leitura e apresentar fingerprint, portas/domínio, schema, estado API/web, witnesses e plano de impacto zero antes de qualquer aprovação operacional.
-- [ ] 4.2 Executar release/recovery e retirada somente com aprovação operacional própria e aprovação do ambiente protegido; validar endpoints, OAuth, schema e testemunhas preservadas antes de atualizar o recibo.
+- [x] 4.1 Após merge e CI verde na `main` exata, inventariar produção somente-leitura e apresentar fingerprint, portas/domínio, schema, estado API/web, witnesses e plano de interrupção breve autorizado pelo proprietário antes da operação.
+- [x] 4.2 Concluir a recriação da aplicação e a retirada autorizada dos alvos em produção. Resultado de 27/11/2026: retirada confirmada por verificação somente leitura dos alvos, endpoints, mount OAuth, schema e testemunhas. O GitHub preserva a execução original como incompleta por erro na checagem das unidades já removidas. A correção do verificador segue na PR #452.
 
 ### Evidência da implementação local
 
@@ -66,3 +68,8 @@ O diagnóstico da referência passa também a validar a remoção do Picker ante
 - Inventário #46039393475 abortou com backup_retirement_picker_free_inventory_failed. Consulta SSH somente leitura ao mesmo comando confirmou handoff_mode_invalid: o helper usa inventory para handoff-recovery-inventory, cujo contrato exige rollback-inventory. O diagnóstico #46039272135 já havia confirmado recibo picker-free saudável na revisão 0e92730a. Nenhum alvo foi removido.
 
 - Correção 2.8 implementada e validada localmente: 81 testes executados, 78 passaram e 3 skips Windows. O teste novo encaminha os argumentos realmente produzidos pelo helper ao parser da ponte para as duas operações somente leitura. Ruff, workflow estático, política de release, OpenSpec strict e diff-check passaram. A consulta SSH read-only com rollback-inventory no SHA 0e92730a confirmou recovery_picker_free=true, schema verificado e saúde API/web. A repetição do inventário protegido permanece pendente até CI e integração; task 2.8 continua aberta por esse gate.
+
+- Inventário protegido #46047017454 passou na main 08fc6f46 com recibo da aplicação saudável sem Picker, 27 testemunhas verificadas, unidades inativas, zero arquivos locais de backup e fingerprint de retirada. GitHub aprovou a execução #46047183268. O job removeu os alvos e marcou recibo incompleto na verificação posterior. A verificação por SSH somente leitura confirmou ausência de runtime, configuração, estado, arquivos de unidade e configuração Picker, as duas unidades como not-found/inactive, OAuth compartilhado presente e montado na API, mesmos IDs saudáveis de API/web, schema verificado e mesmo hash do recibo da aplicação e fingerprint das 27 testemunhas. Página inicial, /healthz e /api/health retornaram HTTP 200. A operação original fica registrada como incompleta no GitHub e no recibo de auditoria; não repetir a exclusão para fabricar um recibo de sucesso.
+- O systemd informou UnitFileState vazio para as duas unidades removidas. O inventário aceitava esse formato, mas a validação de prontidão seguinte o recusava. A correção representa esse caso comprovado como not-found, sem aceitar campos vazios em unidade existente.
+
+- Validação local de 2.9: 79 testes passaram e 3 foram ignorados no Windows. A regressão cobre a unidade ausente e inativa observada, unidade existente, unidade em falha e propriedade ausente. Ruff, OpenSpec strict, política de release, contrato do workflow e diff-check passaram. A correção se limita à representação das unidades removidas.

@@ -67,6 +67,10 @@ A retirada protegida do arquivo exato do Picker SHALL exigir recibo root-only v�
 - **WHEN** qualquer parte do runtime, receita, recibo, ponteiro ativo, mounts ou fingerprint muda entre inventário e retirada
 - **THEN** a operação aborta antes da primeira remoção e preserva OAuth, banco, dados de clientes e os containers existentes
 
+#### Scenario: Systemd omite o estado do arquivo de unidade removida
+- **WHEN** o arquivo da unidade está ausente e systemd informa LoadState=not-found, ActiveState=inactive, UnitFileState vazio explícito e nenhum fragmento ou drop-in
+- **THEN** o inventário normaliza UnitFileState para not-found na verificação após a retirada
+
 ### Requirement: Exportação das imagens ativas para ensaio
 O diagnóstico SHALL permitir exportar somente imagens API/web ativas e comprovadas por interface SSH restrita e artifacts privados com retenção de um dia, sem dados de containers ou volumes.
 

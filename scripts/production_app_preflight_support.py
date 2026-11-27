@@ -836,6 +836,9 @@ class LocalSupportHost:
                 or (fragment_path and fragment_path != str(BACKUP_SYSTEMD_DIR / name))
                 or drop_in_paths):
             raise SupportError("backup_retirement_unit_state_invalid")
+        if (not file_state["present"] and load_state == "not-found" and active_state == "inactive"
+                and values.get("UnitFileState") == "" and not fragment_path):
+            unit_file_state = "not-found"
         return {"file": "present" if file_state["present"] else "absent",
                 "load": load_state, "active": active_state, "enabled": unit_file_state,
                 "fragment": fragment_path}
