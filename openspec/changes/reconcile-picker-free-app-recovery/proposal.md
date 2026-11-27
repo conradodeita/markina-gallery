@@ -25,3 +25,5 @@ Nenhuma. A regra geral de rollback continua limitada a API/web e com inventário
 ## Impact
 
 Afeta a ponte Compose root-only, o preflight de aposentadoria, o workflow protegido de liberação/recuperação e seus testes de contrato. Não muda API pública, schema do banco, OAuth, armazenamento frio ou dados de clientes. A mudança prepara código e artefatos revisáveis; qualquer execução em produção exigirá gates, inventário, fingerprint e aprovação operacional próprios.
+
+A obtenção das imagens para o ensaio reutiliza o exportador da imagem ativa, incluindo web além de API. O workflow protegido de diagnóstico oferece exportação somente leitura para artifacts privados de curta retenção, vinculados ao SHA e aos IDs recém-observados.

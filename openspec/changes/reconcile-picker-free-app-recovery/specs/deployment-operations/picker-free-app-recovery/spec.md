@@ -66,3 +66,14 @@ A retirada protegida do arquivo exato do Picker SHALL exigir recibo root-only v�
 #### Scenario: Estado muda após aprovação do inventário
 - **WHEN** qualquer parte do runtime, receita, recibo, ponteiro ativo, mounts ou fingerprint muda entre inventário e retirada
 - **THEN** a operação aborta antes da primeira remoção e preserva OAuth, banco, dados de clientes e os containers existentes
+
+### Requirement: Exportação das imagens ativas para ensaio
+O diagnóstico SHALL permitir exportar somente imagens API/web ativas e comprovadas por interface SSH restrita e artifacts privados com retenção de um dia, sem dados de containers ou volumes.
+
+#### Scenario: Par ativo exportado
+- **WHEN** a operação export-images coleta os IDs atuais e os solicita ao exportador
+- **THEN** o exportador comprova serviço, projeto, image ID e plataforma, e o runner valida gzip e ID importado, publica checksum e artifacts separados por serviço
+
+#### Scenario: Imagem ou seleção diverge
+- **WHEN** o serviço, projeto, image ID ou plataforma difere do par comprovado
+- **THEN** a exportação falha e não libera recuperação nem retirada
