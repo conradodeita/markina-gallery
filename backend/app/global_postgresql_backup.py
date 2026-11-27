@@ -1,8 +1,7 @@
 """Fixed, secret-safe execution of a PostgreSQL global backup snapshot.
 
-This module is deliberately not wired to an API, scheduler, or worker yet. Its
-caller must supply private runtime configuration; no user-controlled command,
-path, repository option, or retention operation is accepted here.
+The daily scheduler supplies private runtime configuration; no user-controlled
+command, path, repository option, or retention operation is accepted here.
 """
 
 from __future__ import annotations
