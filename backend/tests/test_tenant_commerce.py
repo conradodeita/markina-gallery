@@ -127,6 +127,43 @@ def test_mesmo_telefone_compras_pix_destinatarios_e_historico_independentes(clie
     assert second["purchase"].delivery_album_url is None
     assert str(second["communication"].id) not in str(payments(client_db, first))
 
+    for actor, foreign in ((first, second), (second, first)):
+        with pytest.raises(HTTPException) as foreign_payment:
+            main.decide_payment_communication(
+                foreign["communication"].id,
+                main.PaymentDecisionInput(decision="confirmed", payment_group_id=foreign["group"].id),
+                actor["admin_request"], client_db,
+            )
+        assert foreign_payment.value.status_code == 409
+        with pytest.raises(HTTPException) as foreign_delivery:
+            main.update_order_delivery(
+                foreign["purchase"].id,
+                main.OrderDeliveryInput(album_url="https://photos.app.goo.gl/syntheticCross", version=0),
+                actor["admin_request"], client_db,
+            )
+        assert foreign_delivery.value.status_code == 404
+    assert second["purchase"].payment_status == "pending"
+    assert second["purchase"].delivery_album_url is None
+
+    main.decide_payment_communication(
+        second["communication"].id,
+        main.PaymentDecisionInput(decision="confirmed", payment_group_id=second["group"].id),
+        second["admin_request"], client_db,
+    )
+    main.update_order_delivery(
+        second["purchase"].id,
+        main.OrderDeliveryInput(album_url="https://photos.app.goo.gl/syntheticB", version=0),
+        second["admin_request"], client_db,
+    )
+
+    for row, suffix in ((first, "A"), (second, "B")):
+        history = main.client_purchase_history(row["customer_request"], client_db)
+        orders = [order for group in history["payment_groups"] for order in group["orders"]]
+        order, = orders
+        assert order["id"] == str(row["purchase"].id)
+        assert order["payment_status"] == "confirmed"
+        assert order["delivery_album_url"] == f"https://photos.app.goo.gl/synthetic{suffix}"
+
 
 def test_interacoes_selecao_e_remocao_A_preservam_B(client_db, commerce):
     for row in commerce:

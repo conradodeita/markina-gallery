@@ -462,3 +462,9 @@ O gerador foi atualizado para classificar o catalogo atual de fontes, modelos e 
 Verificacao estatica: `python openspec/changes/add-small-multi-photographer-pilot/inventory_ownership.py` e `python openspec/changes/add-small-multi-photographer-pilot/inventory_ownership.py --check` concluidos com as mesmas contagens; `git diff --check` sem achados. O snapshot gerado esta em `ownership-inventory.md`.
 
 Este inventario e estatico: nao executa testes de aplicacao, nao prova isolamento em runtime e nao atualiza o estado de producao. Os numeros 79 tabelas/205 arquivos/243 rotas/3.350 sitios da reconciliacao final de 01/10 continuam historicos e nao foram reescritos como se fossem atuais. Nenhum teste de aplicacao, servico, banco ou operacao remota foi executado neste fechamento.
+
+## Jornada comercial sintética em duas contas — 27/11/2026
+
+A regressão em `backend/tests/test_tenant_commerce.py` concluiu seleção, pedido, comunicação PIX, confirmação administrativa e registro de entrega para duas contas que reutilizam um telefone sintético. As confirmações em conta alheia retornaram 409 e as tentativas cruzadas de registrar entrega retornaram 404, nos dois sentidos. Cada histórico apresentou apenas o próprio pedido confirmado e o próprio link de entrega.
+
+A suíte comercial aprovou 16 casos em PostgreSQL 17.11 descartável. O teste chama os handlers com sessões e cookies persistidos e usa endereços sintéticos. Não houve navegação no browser, transação financeira, acesso a álbum ou publicação operacional. O container de teste, restrito ao loopback e com dados em memória, foi descartado após a prova.
