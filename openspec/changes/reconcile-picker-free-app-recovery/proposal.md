@@ -2,7 +2,9 @@
 
 ## Why
 
-A retirada do Picker foi integrada ao código e a chave exclusiva já foi revogada, mas o cleanup permanece bloqueado porque o handoff preserva containers antigos com o bind do Picker e o caminho de recovery pode reiniciar diretamente esses containers. O proprietário aprovou manter recuperação da aplicação sem restaurar o recurso Picker; o fluxo precisa preservar a recuperação de API/web sem depender da chave aposentada.
+No início desta mudança, a retirada do Picker já havia sido integrada ao código e a chave exclusiva já havia sido revogada. A limpeza no servidor estava bloqueada porque o handoff preservava containers antigos com o bind do Picker e podia reiniciá-los diretamente. O proprietário aprovou manter recuperação da aplicação sem restaurar o recurso Picker; o fluxo precisa preservar a recuperação de API/web sem depender da chave aposentada.
+
+A retirada dos alvos em produção foi verificada em 27/11/2026. O resultado e o erro de validação posterior estão registrados em `tasks.md`.
 
 ## What Changes
 

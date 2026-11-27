@@ -28,10 +28,10 @@
 - [x] 3.2 Vincular o cleanup do Picker ao receipt de runtime saudável sem mount e à receita picker-free; validar OpenSpec estrito e diff-check sem alterar OAuth, banco ou caminhos compartilhados.
 - [ ] 3.3 Executar os gates de CI da categoria e revisar o diff completo, segredo/escopo, modo de falha e cobertura; registrar SHA e evidências antes de submeter PR para revisão humana.
 
-## 4. Operação futura protegida
+## 4. Operação protegida
 
 - [x] 4.1 Após merge e CI verde na `main` exata, inventariar produção somente-leitura e apresentar fingerprint, portas/domínio, schema, estado API/web, witnesses e plano de interrupção breve autorizado pelo proprietário antes da operação.
-- [ ] 4.2 Executar release/recovery e retirada somente com aprovação operacional própria e aprovação do ambiente protegido; validar endpoints, OAuth, schema e testemunhas preservadas antes de atualizar o recibo.
+- [x] 4.2 Concluir a recriação da aplicação e a retirada autorizada dos alvos em produção. Resultado de 27/11/2026: retirada confirmada por verificação somente leitura dos alvos, endpoints, mount OAuth, schema e testemunhas. O GitHub preserva a execução original como incompleta por erro na checagem das unidades já removidas. A correção do verificador segue na PR #452.
 
 ### Evidência da implementação local
 
