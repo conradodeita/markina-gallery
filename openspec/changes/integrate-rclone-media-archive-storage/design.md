@@ -325,6 +325,33 @@ Esta proposta não muda taxa por pasta/ciclo, reserva idempotente, débito somen
 
 Ordem de implementação proposta: (1) revisar este modelo e resolver gates de seleção, identidade, custódia e V1; (2) obter aprovação explícita para migration aditiva e qualquer backfill; (3) adicionar colunas/tabelas nullable sem classificar V1 por suposição; (4) implantar código com seleção/runtime inativos e fila fechada sem binding; (5) provar constraints, tenant isolation, concorrência seleção→fila→claim, rotação de credencial, V1 indisponível/provado sintético, V2 e zero chamadas para mismatch em CI/local; (6) tratar provisionamento e ativação por autorização própria. Esta change não autoriza os passos 2, 3 ou 6.
 
+## Proposta de MIME durável por objeto — task 1.4
+
+A caracterização local observou que `crypt → local` reporta `application/octet-stream` para o objeto UUID sem extensão, mesmo quando a aplicação declarou `image/jpeg`; um sidecar JSON sintético separado pôde ser recuperado em outro processo. O resultado prova persistência local do sidecar, não suporte de metadado nativo nem atomicidade no remote futuro.
+
+**Envelope proposto:** sidecar JSON versionado com conjunto estrito de chaves: `schema_version`, `tenant_id`, `provider_id`, `object_id`, `remote_object_id`, `mime_type`, `size_bytes` e `sha256`. O MIME é valor exato já persistido no catálogo; não se infere de nome/extensão nem se aceita o Content-Type genérico do backend como substituto. `tenant_id`/`provider_id` devem coincidir com o binding do adapter e a linha do catálogo; `object_id`/`remote_object_id` devem identificar o mesmo objeto; tamanho e SHA-256 devem coincidir com o catálogo e o readback dos bytes. Sidecar ausente, truncado, JSON inválido, chave extra, ID/tenant/provider divergente ou metadado incompatível falha fechado com erro sanitizado. O catálogo continua sendo a fonte confiável; o sidecar permite que a interface `read_object(remote_id)` devolva metadados sem alteração de assinatura.
+
+**Localização sem alterar o protocolo:** `remote_object_id` continua opaco e não contém `provider_id`. A proposta é torná-lo um token determinístico reversível da chave lógica já composta somente por UUIDs (tenant, galeria, pasta, ciclo e objeto), codificado em Base64 URL-safe sem padding e com versão do formato. Essa representação permite reconstruir a chave exata do objeto e a chave irmã do sidecar a partir somente do argumento existente; deve continuar dentro do validador `[A-Za-z0-9_-]{1,256}` (`backend/app/media_archive_executor.py:70,387`). Um cálculo local PowerShell da tupla sintética de cinco UUIDs gerou token com 249 caracteres incluindo `r1_`, abaixo do limite existente; isso é evidência de comprimento para essa tupla, não validação do adapter. O resolver de provider continua exclusivamente por `MediaArchiveObject.provider_id`; o token nunca escolhe adapter, conta ou raiz. O formato e o limite devem ter teste de round-trip, rejeição de token malformado e comprimento no pior caso antes de implementação.
+
+**Ciclo de escrita/leitura/exclusão:** a implementação futura grava mídia e sidecar em chaves determinísticas exatas dentro da binding/tenant, sem nome de cliente e sem exclusão recursiva. Upload só pode retornar recibo após o sidecar correspondente estar confirmado; readback do executor ainda compara MIME/tamanho/hash com catálogo e verifica todos os bytes antes de promover sucesso/débito. `read_object(remote_id)` primeiro valida o envelope do sidecar contra tenant/provider/IDs e então transmite a mídia; ausência ou incompatibilidade não retorna sucesso. `delete_object(remote_id)` remove somente a mídia exata e seu sidecar irmão, e só conclui quando ambos estão ausentes. Falha após um dos efeitos deixa a operação sem sucesso e segue o contrato de falha/resultado incerto e reconciliação da change; não há compensação recursiva, fallback ou retry em outro provider. A atomicidade física do par não é presumida.
+
+**Exemplo sintético do envelope (não é metadado remoto observado):**
+
+```json
+{
+  "schema_version": 1,
+  "tenant_id": "00000000-0000-4000-8000-000000000001",
+  "provider_id": "00000000-0000-4000-8000-000000000003",
+  "object_id": "00000000-0000-4000-8000-000000000004",
+  "remote_object_id": "r1_MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxOjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNjowMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDc6MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAyOjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNA",
+  "mime_type": "image/jpeg",
+  "size_bytes": 12345,
+  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+**Validação ainda necessária:** fixture `crypt → local` pode confirmar somente parsing estrito, caminho determinístico, round-trip e detecção de sidecar ausente/truncado/divergente, sem nova tentativa de limpeza TEMP bloqueada. Ainda é necessário validar comportamento de readback e delete com transporte sintético do adapter quando ele existir, depois que as decisões da seção 1 forem revisadas. Nenhum ensaio remoto, valor de produção, migration ou alteração na assinatura compartilhada faz parte desta proposta.
+
 ## Caracterização de timeout de comando Rclone — 27/11/2026
 
 Revisão da tag oficial Rclone v1.76.0 e dos probes locais descartáveis registrados em `tasks.md`, seção da task 1.5. Esta análise explica o caminho do comando; não valida timeout de rede nem comportamento de um adapter ainda não implementado.
