@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import homolog_cleanup
 from app.auth import (
@@ -24,6 +24,7 @@ from app.auth import (
     DerivedGalleryMembership,
     FolderProcessingSettings,
     GlobalPixSettings,
+    GlobalPostgreSQLBackupRun,
     NotificationSetting,
     ParentGallery,
     PaymentCommunication,
@@ -52,12 +53,26 @@ from app.homolog_cleanup import (
     execute,
     inventory,
 )
+from tests.schema_fixtures import create_test_schema
 from tests.tenant_fixtures import FIXTURE_TENANT_ID, fixture_admin, fixture_session
 
 
 @pytest.fixture(autouse=True)
 def ensure_isolated_test_schema(legacy_tenant_fixture) -> None:
     Base.metadata.create_all(engine)
+
+
+@pytest.fixture
+def isolated_backup_receipt_session(tmp_path: Path):
+    database_path = tmp_path / "homolog-cleanup-backup-receipts.sqlite3"
+    isolated_engine = create_engine(f"sqlite:///{database_path.as_posix()}")
+    create_test_schema(isolated_engine)
+    isolated_session = sessionmaker(bind=isolated_engine, expire_on_commit=False)
+    try:
+        with isolated_session() as db:
+            yield db
+    finally:
+        isolated_engine.dispose()
 
 
 def test_inventory_requires_homolog_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,7 +187,9 @@ def test_execute_blocks_credit_wallet_history_before_media_or_deletes(monkeypatc
 
 
 def test_inventory_returns_only_counts_without_pii(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_backup_receipt_session: Session,
 ) -> None:
     monkeypatch.setenv("APP_ENV", "homolog")
     monkeypatch.setenv("MEDIA_SOURCE_ROOT", str(tmp_path / "source"))
@@ -182,8 +199,29 @@ def test_inventory_returns_only_counts_without_pii(
     monkeypatch.setenv("RAW_DEVELOPMENT_ROOT", str(tmp_path / "raw-staging"))
     for name in ("source", "derivatives", "history", "facial-references", "raw-staging"):
         (tmp_path / name).mkdir()
-    with SessionLocal() as db:
-        result = inventory(db)
+    db = isolated_backup_receipt_session
+    assert Path(db.get_bind().url.database).resolve().parent == tmp_path.resolve()
+    db.add(Tenant(id=FIXTURE_TENANT_ID))
+    db.flush()
+    prior_count = db.scalar(
+        select(func.count()).select_from(GlobalPostgreSQLBackupRun)
+    )
+    scheduled_day = datetime.now(UTC).date()
+    while db.scalar(
+        select(GlobalPostgreSQLBackupRun.id).where(
+            GlobalPostgreSQLBackupRun.scheduled_day == scheduled_day
+        )
+    ) is not None:
+        scheduled_day += timedelta(days=1)
+    backup_run = GlobalPostgreSQLBackupRun(
+        scheduled_day=scheduled_day,
+        status="unknown",
+        started_at=datetime.now(UTC),
+        error_code="snapshot_readback_failed",
+    )
+    db.add(backup_run)
+    db.commit()
+    result = inventory(db)
     assert result["environment"] == "homolog"
     assert set(result) == {
         "environment", "photographer_count", "destructive_cleanup",
@@ -192,6 +230,8 @@ def test_inventory_returns_only_counts_without_pii(
     assert result["destructive_cleanup"] == {"status": "single_photographer_only"}
     assert all(type(value) is int for value in result["database"].values())
     assert all(type(value) is int for value in result["preserved"].values())
+    assert result["preserved"]["global_postgresql_backup_run"] == prior_count + 1
+    assert str(backup_run.id) not in str(result)
 
 
 def test_inventory_aggregates_multiple_photographers_without_ids(

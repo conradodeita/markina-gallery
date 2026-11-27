@@ -86,6 +86,7 @@ PRESERVED_TABLES = MONITOR_PRESERVED_TABLES | SAAS_RETAINED_HISTORY_TABLES | fro
     "raw_development_settings",
     "payment_preferences", "mercadopago_account",
     "mercadopago_credit_purchase", "mercadopago_credit_purchase_event",
+    "global_postgresql_backup_run",
 })
 MIXED_TABLES = frozenset({"audit_event", "auth_session", "push_subscription"})
 OPERATIONAL_TABLES = frozenset({

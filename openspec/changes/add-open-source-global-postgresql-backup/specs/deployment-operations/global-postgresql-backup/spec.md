@@ -27,6 +27,13 @@ O sistema SHALL distinguir cópia em execução, concluída, validada, falha e e
 - **WHEN** o processo termina sem confirmação verificável do destino ou da integridade
 - **THEN** o estado permanece desconhecido ou indisponível e a cópia não é tratada como validada
 
+### Requirement: Recibos de backup preservados em inventários e reset
+O registro global de tentativas `global_postgresql_backup_run` SHALL ser classificado como preservado pelas políticas existentes de inventário de limpeza e reset do proprietário. O reset MUST preservar todas as tentativas porque elas constituem a evidência operacional do backup, sem expor linhas, IDs, snapshots ou erros no resumo do inventário. A preservação desses recibos MUST NOT consultar nem alterar o repositório Restic/Rclone.
+
+#### Scenario: Inventário e reset mantêm o histórico global
+- **WHEN** as políticas de manutenção inspecionam o banco ou executam o reset permitido
+- **THEN** o inventário conta `global_postgresql_backup_run` como preservado e o reset mantém os recibos existentes, sem disparar backup, restore, consulta remota ou remoção de snapshot
+
 ### Requirement: Recuperação global isolada
 O sistema SHALL restaurar uma cópia em alvo isolado e verificar sua integridade antes de apresentar a recuperação como validada. A recuperação MUST NOT substituir automaticamente o banco ativo.
 
