@@ -54,7 +54,10 @@ describe("console privado da plataforma", () => {
     expect(await screen.findByText("Galerias: 2 · Fotografias: 7")).toBeTruthy();
     expect(await screen.findByText(/Sem registro de conexão; quota desconhecida/)).toBeTruthy();
     expect(screen.getByText(/Registro consultado em/)).toBeTruthy();
-    expect(screen.getByText(/Estado do arquivo de mídia e da restauração indisponível/)).toBeTruthy();
+    expect(screen.getByText("Arquivo frio de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Recuperação de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getAllByText("Origem não registrada")).toHaveLength(2);
+    expect(screen.getAllByText("Idade e evidência não informadas")).toHaveLength(2);
     expect(screen.queryByText(/backup saudável/i)).toBeNull();
   });
 
@@ -130,6 +133,46 @@ describe("console privado da plataforma", () => {
     expect(await screen.findByText("Estado do backup indisponível")).toBeTruthy();
     expect(screen.queryByText(/synthetic_database_credential_detail/)).toBeNull();
     expect(screen.queryByText(/Último recibo validado/)).toBeNull();
+  });
+
+  it("apresenta origem e idade dos registros de arquivo e recuperação sem afirmar conclusão", async () => {
+    const mediaSources = unknownSources.map((source) => {
+      if (source.key === "archive") return {
+        ...source, state: "stale", availability: "stale", source: "application_database.media_archive_object",
+        observed_at: observed, last_validated_at: observed,
+      };
+      if (source.key === "restore") return {
+        ...source, state: "unavailable", availability: "unavailable",
+        source: "application_database.media_archive_recovery_request", observed_at: observed,
+      };
+      return source;
+    });
+    const fetcher = mockApi(true, mediaSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Arquivo frio de mídia: estado desatualizado")).toBeTruthy();
+    expect(screen.getByText("Origem: catálogo local do arquivo frio")).toBeTruthy();
+    expect(screen.getByText(/Última evidência em/)).toBeTruthy();
+    expect(screen.getByText("Recuperação de mídia: estado indisponível")).toBeTruthy();
+    expect(screen.getByText("Origem: registros locais de recuperação")).toBeTruthy();
+    expect(screen.getByText(/Estado observado em/)).toBeTruthy();
+    expect(screen.queryByText(/recuperação concluída/i)).toBeNull();
+    expect(screen.queryByText(/application_database\./)).toBeNull();
+    expect(fetcher.mock.calls.some(([path]) => /restic|rclone|backup-run/i.test(String(path)))).toBe(false);
+  });
+
+  it("mostra estado atual registrado do arquivo frio sem alegar disponibilidade remota", async () => {
+    const mediaSources = unknownSources.map((source) => source.key === "archive" ? {
+      ...source, state: "current", availability: "current", source: "application_database.media_archive_object",
+      observed_at: observed, last_validated_at: observed,
+    } : source);
+    mockApi(true, mediaSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Arquivo frio de mídia: estado atual registrado")).toBeTruthy();
+    expect(screen.getByText("Origem: catálogo local do arquivo frio")).toBeTruthy();
+    expect(screen.getByText(/Última evidência em/)).toBeTruthy();
+    expect(screen.queryByText(/disponibilidade remota confirmada/i)).toBeNull();
   });
 
   it("só libera hostname reservado após hash, confirmação e reautenticação", async () => {

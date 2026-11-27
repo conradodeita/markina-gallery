@@ -63,6 +63,28 @@ function backupStateLabel(source: Source) {
   return "Estado desconhecido; nenhuma cópia validada foi confirmada";
 }
 
+function sourceStateLabel(source: Source | undefined, subject: string) {
+  if (source?.state === "current") return `${subject}: estado atual registrado`;
+  if (source?.state === "stale") return `${subject}: estado desatualizado`;
+  if (source?.state === "unavailable") return `${subject}: estado indisponível`;
+  return `${subject}: estado desconhecido`;
+}
+
+function sourceOriginLabel(source: Source | undefined) {
+  if (!source?.source) return "Origem não registrada";
+  if (source.key === "archive") return "Origem: catálogo local do arquivo frio";
+  if (source.key === "restore") return "Origem: registros locais de recuperação";
+  return "Origem: registro local do serviço";
+}
+
+function sourceEvidenceDateLabel(source: Source | undefined) {
+  const timestamp = source?.last_validated_at ?? source?.observed_at;
+  if (typeof timestamp !== "string") return "Idade e evidência não informadas";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Idade e evidência não informadas";
+  return `${source?.last_validated_at ? "Última evidência" : "Estado observado"} em ${date.toLocaleString("pt-BR")}`;
+}
+
 function driveStateLabel(source: Source) {
   if (source.availability === "authorization_recorded") return "Autorização registrada";
   if (source.availability === "revoked") return "Autorização revogada";
@@ -300,10 +322,27 @@ function ConsoleContent() {
             <p>{backupStateLabel(backup)}</p>
             {backup.last_validated_at ? <p>Último recibo validado: {backup.last_validated_day} · {new Date(backup.last_validated_at).toLocaleString("pt-BR")} · {formatBytes(backup.dump_size_bytes)} · {formatDuration(backup.duration_ms)}{backup.snapshot_id ? ` · Snapshot ${backup.snapshot_id.slice(0, 12)}` : ""}</p> : null}
             {backup.latest_run_status && backup.latest_run_status !== "validated" ? <p>Estado da tentativa mais recente: {backup.latest_run_status === "failed" ? "falha" : backup.latest_run_status === "running" ? "em andamento" : "desconhecido"}{backup.latest_attempt_day ? ` · ${backup.latest_attempt_day}` : ""}</p> : null}
-            <small>Estado derivado de recibos locais no PostgreSQL; esta leitura não consulta a disponibilidade atual do destino remoto.</small>
+            <small>Origem: recibos locais no PostgreSQL · estado observado em {backup.observed_at ? new Date(backup.observed_at).toLocaleString("pt-BR") : "instante desconhecido"}. Esta leitura não consulta a disponibilidade atual do destino remoto.</small>
           </div>;
         })()}
-        <p>Estado do arquivo de mídia e da restauração indisponível.</p>
+        {(() => {
+          const archive = sources.find((item) => item.key === "archive");
+          return <div>
+            <h3>Arquivo frio de mídia</h3>
+            <p>{sourceStateLabel(archive, "Arquivo frio de mídia")}</p>
+            <p>{sourceOriginLabel(archive)}</p>
+            <small>{sourceEvidenceDateLabel(archive)}</small>
+          </div>;
+        })()}
+        {(() => {
+          const restore = sources.find((item) => item.key === "restore");
+          return <div>
+            <h3>Recuperação de mídia</h3>
+            <p>{sourceStateLabel(restore, "Recuperação de mídia")}</p>
+            <p>{sourceOriginLabel(restore)}</p>
+            <small>{sourceEvidenceDateLabel(restore)}</small>
+          </div>;
+        })()}
       </> : null}
     </SurfaceCard>
   </div>;
