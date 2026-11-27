@@ -57,6 +57,12 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Token de convite com entropia alta, armazenado como hash, uso único e expiração de 72 horas.
 - Acesso posterior por OTP; tokens podem ser revogados e reenviados pelo fotógrafo.
 
+### Pendência não urgente — recuperação por OTP para proprietário e Tenants
+
+- Em 25/11/2026, o proprietário não recebeu OTP pelo fluxo de recuperação por WhatsApp e conseguiu entrar com a senha existente após o bloqueio temporário expirar. Os registros sanitizados mostraram um desafio de recuperação sem vínculo a administrador/tenant e um reenvio `resend_simulated`; não comprovam envio de OTP. A causa exata permanece desconhecida.
+- Antes da ampliação para novos Tenants, validar a recuperação por OTP de ponta a ponta para o proprietário e fotógrafos/Tenants: destino WhatsApp corretamente vinculado, envio real distinguido de sandbox/simulação, respostas neutras sem afirmar envio não realizado, rate limit, isolamento por Tenant e testes sintéticos para conta elegível/inelegível e canal indisponível.
+- Prioridade: não urgente para o acesso atual, já restabelecido; manter no roadmap e concluir antes de depender desse fluxo em futuras contas Tenant.
+
 ### Dependências externas de segurança
 
 - Escolher provedor SMTP transacional e configurar SPF, DKIM e DMARC no domínio.
