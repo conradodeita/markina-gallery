@@ -1,5 +1,39 @@
 # Estado da execução
 
+## Checklist de entrega até Tenant Release Ready — 27/11/2026
+
+Este bloco registra o estado corrente. A ordem de produto está na [matriz R14](requirements.json) e no [roadmap arquitetural](../../ROADMAP_ARQUITETURA.md). As notas datadas abaixo preservam a evidência de cada etapa. O ambiente de teste é local ou CI com dados sintéticos. A operação remota usa produção com autorização própria.
+
+### Prioridade atual
+
+- [x] **Retirada do backup antigo em produção.** A API e a web foram recriadas sem o Picker. Após a retirada, leitura no servidor confirmou ausência dos diretórios, unidades e arquivo do Picker, e preservação do OAuth do Drive, schema, API/web e 27 testemunhas. O [run de retirada](https://github.com/conradodeita/markina-gallery/actions/runs/46047183268) ficou com recibo incompleto por erro ao interpretar o estado das unidades já removidas. A [PR #452](https://github.com/conradodeita/markina-gallery/pull/452) corrige o verificador. Não repetir a remoção.
+- [x] **Prova local de backup global e restauração.** PostgreSQL sintético foi copiado com Restic e Rclone local e restaurado em destino isolado. A comparação incluiu 138 tabelas e dois tenants. [PR #443](https://github.com/conradodeita/markina-gallery/pull/443)
+- [ ] **Backup global funcionando no servidor.** Fechar empacotamento e CI, integrar execução e estado ao worker e ao console, resolver retenção, metas de recuperação, destino, custódia e bootstrap protegido. Fechar após provar cópia cifrada, leitura e restauração isolada com destino autorizado. Executor A implementa, coordenador conduz revisão e release.
+- [x] **Proposta de destinos e prova local de mídia/sidecar.** A [PR #441](https://github.com/conradodeita/markina-gallery/pull/441) registra seleção por ciclo, identidade imutável por objeto e leitura dos metadados com Rclone crypt para armazenamento local.
+- [ ] **Arquivo frio por tenant funcionando no servidor.** Fechar o contrato de persistência e a identificação segura do Drive legado, depois implementar integração, retry e recuperação com isolamento, créditos e prazos preservados. O aceite exige canário de arquivamento e recuperação com checksum e evidência por tenant. Executor B implementa, coordenador conduz revisão e release.
+- [ ] **Correção do teste de TOTP do console.** Seis testes locais e a [CI do commit f6379a8e](https://github.com/conradodeita/markina-gallery/actions/runs/46043604869) passaram. A [PR #451](https://github.com/conradodeita/markina-gallery/pull/451) aguarda integração autorizada. A recuperação de senha por OTP é uma pendência distinta do roadmap e está registrada na [PR #437](https://github.com/conradodeita/markina-gallery/pull/437).
+
+### Fases e critérios de entrega
+
+| Fase | Estado | O que falta comprovar |
+| --- | --- | --- |
+| A. Fundação e estabilidade | Parcial. Main `08fc6f46` com [CI verde](https://github.com/conradodeita/markina-gallery/actions/runs/46043090549). Produção do proprietário está saudável na verificação da retirada. | Comparar a versão realmente ativa ao candidato final, incluindo schema, serviços, configuração e retorno seguro. |
+| B. Operação SaaS | Parcial. Existem componentes integrados de carteira, créditos, upload, galerias, pedidos, pagamentos, entrega e console. | Comprovar jornada de tenant pela interface, saldo e consumo corretos, isolamento, idempotência e console com fontes operacionais duráveis. |
+| C. Experiência e acessibilidade | Parcial. Há testes automatizados de navegação e experiência. | Revisar fluxo autenticado mobile e desktop, foco, leitura e mensagens de erro no candidato. |
+| D. Segurança e privacidade | Parcial. Fatores de login e isolamento têm implementação e provas focadas. | Validar login, sessão, OTP, recuperação, auditoria e acessos cruzados na jornada integrada. Fechar decisões de retenção aplicáveis. Busca facial de novos tenants permanece condicional e com gates próprios. |
+| E. Armazenamento e recuperação | Prioridade atual. Retirada legada verificada, backup novo e arquivo frio em desenvolvimento. | Entregar as duas frentes acima. Recuperação lógica de banco por tenant é evolução separada, distinta da recuperação de pastas frias. |
+| F. Comunicação e vendas | Parcial. Há fluxos do proprietário e testes focados, sem aceite por novos tenants. | Validar canais e vínculos por fotógrafo, notificações, pagamento e entrega com dados sintéticos ou canal de teste autorizado. Definir regras comerciais antes de ativação real. |
+| G. Publicação e operação | Parcial. Fluxos protegidos e verificações de saúde estão disponíveis. | Inventariar dependências e alertas, reconciliar domínio/DNS/TLS, saúde, capacidade, plano de publicação e retorno seguro para o candidato exato. |
+| H. Jornada e piloto | Pendente. As provas focadas não fecham o aceite ponta a ponta. | Exercitar dois tenants sintéticos pela interface. Depois, validar com o proprietário o piloto protegido com signup ainda fechado. |
+| I. Liberação do cadastro | Pendente. | Fechar os critérios de H, aprovar o candidato e decidir separadamente abertura do cadastro. Fidelidade segue adiada. |
+
+### Próxima prova independente de release
+
+- [x] Identificar provas reutilizáveis. O [piloto de dois fotógrafos](../../backend/tests/test_tenant_pilot_journeys.py) já tem conta A/B, TOTP, galeria e monitor no navegador, mas prepara as contas via fixture e fixa a revisão antiga 0071. A [prova do console](../../openspec/changes/add-platform-owner-console/validation.md#prova-de-navegador-real) cobre cadastro e carteira via interface, suspensão e auditoria em contextos distintos.
+- [ ] Atualizar o ensaio opt-in para o schema atual em PostgreSQL exclusivo, Next em loopback e dois contextos de navegador. Exercitar upload real de JPEG sintético pela interface dos dois fotógrafos e conferir reserva/consumo por conta e recusa de acesso cruzado. Preservar o ambiente e os artefatos dos ensaios anteriores. Registrar a evidência antes de fechar R14-014.
+
+O próximo trabalho independente de release é preparar a jornada sintética de dois tenants com as fixtures existentes e mapear as etapas sem prova integrada. A ativação real permanece condicionada à evidência de cada frente e às decisões comerciais e operacionais registradas em [decisions.md](decisions.md) e no [checklist pós-deploy](post-deploy-configuration-checklist.md).
+
 ## Armazenamento, backup global e arquivo frio — atualização de 26/11/2026
 
 - PR #439 foi integrada por squash em `d8f33654ae3cb32c1ef748d3b329621ca540abd6`; a CI da PR no SHA `86c071c0df2e0e73b0f5f09bb322c19e8eb22b0b` (`45792090888`) e a CI da `main` no SHA integrado (`45795716806`) passaram. A alteração detecta bind mounts em árvores protegidas e revalida antes de qualquer remoção. O workflow operacional continuou sem executar remoção.
