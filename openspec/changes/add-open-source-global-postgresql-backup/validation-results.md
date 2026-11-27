@@ -1,5 +1,15 @@
 # Resultados de validação — backup global PostgreSQL
 
+## Empacotamento local Restic/Rclone — 27/11/2026
+
+- `backend/backup-tools.lock` fixa versões, origem, licença e SHA-256 dos quatro assets oficiais: Restic 0.20.0 BSD-2-Clause e Rclone 1.76.0 MIT, ambos Linux AMD64/ARM64. Os assets e licenças são referenciados pelas releases oficiais em `design.md`; os binários não são vendorizados.
+- O build local AMD64 do target `backup-worker` passou. O smoke offline confirmou versões, `restic init`, backup, `restic check --read-data`, readback e igualdade do canário sintético; a varredura local do repositório cifrado não encontrou o canário em plaintext.
+- O build do target padrão da API passou e `command -v restic`/`command -v rclone` não encontrou ferramentas. Compose renderizado confirma `worker.target=backup-worker` e nenhum target explícito em `api`.
+- O workflow adiciona build e smoke offline na matriz AMD64/ARM64. O resultado de CI desse diff permanece pendente e não foi consultado por este executor.
+- Isolamento: contexto Docker Desktop `desktop-linux`; smoke `--network none`, raiz read-only, apenas tmpfs descartável, sem volumes/mounts e sem serviços. As imagens temporárias criadas para os dois builds foram removidas; os nomes não existem mais. Inventário Docker antes/depois: 37 containers, 8 redes, 32 volumes e 61 imagens. Nenhum recurso compartilhado foi removido ou alterado.
+- Gates locais: `python -m pytest backend/tests/test_backup_tools_packaging.py backend/tests/test_global_postgresql_backup.py -q` — 17 passed, 1 skipped (teste condicionado a permissão POSIX em Windows); `ruff check --no-cache`, `ruff format --check`, `py_compile`, `docker compose ... config --no-interpolate --format json`, `openspec validate ... --strict` e `git diff --check` passaram.
+- A task 2.1 permanece aberta: a imagem não contém ainda `pg_dump`/`pg_restore` versionados, o helper não foi executado dentro do target Linux nem integrado ao worker, e a CI multiarch deste diff não foi verificada. Nenhum destino externo, configuração real, credencial, retenção, prune, serviço ou operação de produção foi usado.
+
 ## Prova sintética local ampliada — 27/11/2026
 
 ### Fixture e isolamento
