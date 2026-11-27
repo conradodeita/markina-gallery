@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import production_app_compose_bridge as bridge
 import production_app_preflight_support as support
 
 SHA_OLD = "1" * 40
@@ -1273,6 +1274,26 @@ class FakeBackupRetirementHost:
 
 
 class BackupRuntimeRetirementTests(unittest.TestCase):
+    def test_retirement_bridge_modes_match_the_real_readonly_parser(self):
+        for operation in ("handoff-witness-inventory", "handoff-recovery-inventory"):
+            with self.subTest(operation=operation):
+                host = support.LocalSupportHost()
+                observed = []
+                def command(args, expected_operation=operation, observations=observed, **kwargs):
+                    if args[:2] == ["git", "hash-object"]:
+                        return subprocess.CompletedProcess(args, 0, (SHA_MAIN + "\n").encode(), b"")
+                    parsed = bridge._parse_args(args[1:])
+                    self.assertIn(parsed.mode, ("inventory", "rollback-inventory"))
+                    self.assertEqual(parsed.operation, expected_operation)
+                    observations.append(parsed)
+                    return subprocess.CompletedProcess(args, 0, b"synthetic-output", b"")
+                with (patch.object(host, "_assert_file"),
+                      patch.object(host, "_git", return_value=(0, SHA_MAIN.encode())),
+                      patch.object(host, "_run", side_effect=command)):
+                    output = host._retirement_bridge_inventory(SHA_MAIN, operation, "synthetic_failure")
+                self.assertEqual(output, b"synthetic-output")
+                self.assertEqual(len(observed), 1)
+
     def inventory(self, host):
         return support.SupportCoordinator(host).backup_retirement_inventory(SHA_MAIN, SHA_CONNECTION)
 

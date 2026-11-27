@@ -18,6 +18,8 @@
 
 - [x] 2.7 Validar o recibo contra o modelo efetivamente publicado pelo Compose, preservando conferência por hash e runtime; testar normalizações equivalentes e alterações reais, além de atualização do suporte por ancestralidade sem recriar serviços.
 
+- [ ] 2.8 Corrigir a seleção do modo de inventário da ponte por operação e validar o contrato de argumentos real; repetir inventário protegido após integração.
+
 ## 3. Integração com a aposentadoria
 
 - [x] 3.1 Ajustar o inventário protegido para classificar como não ativos somente witnesses exatos, parados e não selecionáveis pela receita vigente; testar preservação do digest agregado e bloqueio de qualquer outro mount.
@@ -60,3 +62,7 @@ O diagnóstico da referência passa também a validar a remoção do Picker ante
 - Operação parcial 4.2: recovery #46025818836 concluído com sucesso em f3a7f04f; endpoints públicos /, /healthz e /api/health retornaram 200 após a troca. Diagnóstico #46026260068 encontrou handoff_picker_free_runtime_model_mismatch no recibo. A retirada de arquivos não foi executada. O inventário protegido #46026213759 está aguardando aprovação e não autoriza remoção.
 
 - Evidência 2.7: comparação SSH read-only do manifesto e dos modelos ativos confirmou hash dos arquivos publicados e igualdade de conteúdo API/web após as quatro normalizações limitadas documentadas. Os 43 contratos Linux passaram; o teste de recibo usa arquivos root-only reais com a forma normalizada do Compose, rejeita mudança de APP_VERSION mesmo com hash de arquivo atualizado e valida/recusa atualização do suporte conforme ancestralidade. A receita e o journal executado permanecem intactos. Falta CI/revisão/merge, atualizar o suporte e repetir apenas o inventário do recibo, sem recriar os serviços saudáveis.
+
+- Inventário #46039393475 abortou com backup_retirement_picker_free_inventory_failed. Consulta SSH somente leitura ao mesmo comando confirmou handoff_mode_invalid: o helper usa inventory para handoff-recovery-inventory, cujo contrato exige rollback-inventory. O diagnóstico #46039272135 já havia confirmado recibo picker-free saudável na revisão 0e92730a. Nenhum alvo foi removido.
+
+- Correção 2.8 implementada e validada localmente: 81 testes executados, 78 passaram e 3 skips Windows. O teste novo encaminha os argumentos realmente produzidos pelo helper ao parser da ponte para as duas operações somente leitura. Ruff, workflow estático, política de release, OpenSpec strict e diff-check passaram. A consulta SSH read-only com rollback-inventory no SHA 0e92730a confirmou recovery_picker_free=true, schema verificado e saúde API/web. A repetição do inventário protegido permanece pendente até CI e integração; task 2.8 continua aberta por esse gate.
