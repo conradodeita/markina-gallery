@@ -86,6 +86,11 @@ Upload e download SHALL transmitir dados em blocos limitados, SHALL NOT material
 - **WHEN** o backend/provider não consegue recuperar MIME durável associado ao ID ou ele diverge do catálogo
 - **THEN** a operação falha de forma sanitizada antes de promover readback/recuperação ou debitar créditos
 
+#### Scenario: Sidecar JSON é ambíguo ou excede limite
+
+- **WHEN** o envelope do objeto tem chave JSON duplicada, chave ausente/extra, tipo ou versão inválidos, JSON truncado, ou excede o limite técnico de 1 KiB antes da validação
+- **THEN** o provider rejeita o envelope com erro sanitizado; a operação não promove sucesso, não faz fallback, não reenvia a mídia e preserva o estado incerto existente quando um efeito remoto possa ter ocorrido
+
 ### Requirement: Repetição, ausência e exclusão falham fechadas
 
 O provider SHALL reconhecer repetição da mesma chave quando o objeto existente tiver conteúdo e metadados compatíveis, e SHALL recusar conteúdo divergente sem sobrescrever. Somente uma consulta completa, válida e não ambígua pode comprovar ausência. A exclusão SHALL atingir somente o objeto exato validado; MUST NOT usar remoção recursiva nem tratar falha de consulta como ausência.
