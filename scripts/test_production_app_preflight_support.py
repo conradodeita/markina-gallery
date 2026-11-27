@@ -823,7 +823,8 @@ class SupportCoordinatorTests(unittest.TestCase):
         record = {
             "Id": container_id,
             "Image": f"sha256:{'b' * 64}",
-            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "State": {"Running": True, "Status": "running", "StartedAt": "2026-11-23T00:00:00Z",
+                      "Health": {"Status": "healthy"}},
         }
         malformed_records = (
             ("Id", lambda item: item.update({"Id": None})),
@@ -853,7 +854,8 @@ class SupportCoordinatorTests(unittest.TestCase):
         record = {
             "Id": None,
             "Image": f"sha256:{'b' * 64}",
-            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "State": {"Running": True, "Status": "running", "StartedAt": "2026-11-23T00:00:00Z",
+                      "Health": {"Status": "healthy"}},
         }
         ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
         inspect = subprocess.CompletedProcess(
@@ -884,7 +886,7 @@ class SupportCoordinatorTests(unittest.TestCase):
         record = {
             "Id": container_id,
             "Image": f"sha256:{'b' * 64}",
-            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "State": {"Running": True, "Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
         }
         ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
         inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
@@ -1212,6 +1214,25 @@ class FakeBackupRetirementHost:
             "picker_config": {"present": True},
             "picker_mount": "absent",
             "picker_mount_details": [],
+            "picker_witnesses": {
+                "registered": True, "fingerprint": SHA_CONTAINERS,
+                "inventory_count": 2, "registered_count": 2,
+                "active_count": 2, "verified_count": 2,
+            },
+            "picker_free_recovery": {
+                "fingerprint": "5" * 64, "schema_status": "verified", "interrupted_sha": SHA_OLD,
+                "picker_free": True, "recipe_sha256": "6" * 64, "receipt_sha256": "7" * 64,
+                "runtime_base": "8" * 64, "runtime_manifest_sha256": "9" * 64,
+                "runtime_pointer_sha256": "a" * 64, "active_ids": ["b" * 64, "c" * 64],
+                "services": {
+                    "api": {"phase": "healthy", "container_id": "b" * 64,
+                            "image_id": f"sha256:{'c' * 64}", "health": "healthy", "running": True,
+                            "picker_bind_removed": True},
+                    "web": {"phase": "healthy", "container_id": "c" * 64,
+                            "image_id": f"sha256:{'d' * 64}", "health": "healthy", "running": True,
+                            "picker_bind_removed": True},
+                },
+            },
             "containers_sha256": SHA_CONTAINERS,
             "health": {name: "healthy" for name in support.PUBLIC_HEALTH_URLS},
             "incomplete_install": False,
@@ -1254,6 +1275,61 @@ class FakeBackupRetirementHost:
 class BackupRuntimeRetirementTests(unittest.TestCase):
     def inventory(self, host):
         return support.SupportCoordinator(host).backup_retirement_inventory(SHA_MAIN, SHA_CONNECTION)
+
+    def test_witness_inventory_parser_requires_consistent_attestation(self):
+        identity = "a" * 64
+        image = f"sha256:{'b' * 64}"
+        output = (
+            f"witness_fingerprint={SHA_CONTAINERS}\n"
+            "witness_registered=true\n"
+            "active_count=2\n"
+            f"active_id={'c' * 64}\n"
+            f"active_id={'d' * 64}\n"
+            "witness_count=1\n"
+            f"witness={identity}|markina-gallery-api-before|{image}\n"
+            f"witness_attestation={identity}|markina-gallery-api-before|{image}|api|{'e' * 64}|{'f' * 64}|true\n"
+        ).encode()
+        parsed = support._parse_retirement_witness_inventory(output)
+        self.assertTrue(parsed["registered"])
+        self.assertEqual(parsed["witness_count"], 1)
+        self.assertEqual(parsed["witnesses"][0]["id"], identity)
+
+        invalid = output.replace(f"active_id={'c' * 64}".encode(), f"active_id={identity}".encode())
+        with self.assertRaisesRegex(support.SupportError, "backup_retirement_witness_inventory_invalid"):
+            support._parse_retirement_witness_inventory(invalid)
+
+    def test_picker_free_runtime_inventory_requires_verified_receipt_and_healthy_services(self):
+        values = {
+            "recovery_fingerprint": "1" * 64, "schema_status": "verified", "interrupted_sha": SHA_OLD,
+            "recovery_picker_free": "true", "recovery_recipe_sha256": "2" * 64,
+            "recovery_receipt_sha256": "3" * 64, "recovery_active_base_id": "4" * 64,
+            "recovery_active_base_manifest_sha256": "5" * 64,
+            "recovery_active_base_pointer_sha256": "6" * 64,
+        }
+        for index, service in enumerate(("api", "web"), start=7):
+            values.update({
+                f"recovery_phase_{service}": "healthy",
+                f"recovery_container_{service}": str(index) * 64,
+                f"recovery_image_{service}": f"sha256:{str(index + 1) * 64}",
+                f"recovery_health_{service}": "healthy",
+                f"recovery_running_{service}": "true",
+                f"recovery_picker_bind_removed_{service}": "true",
+            })
+        parsed = support._parse_picker_free_runtime_inventory(
+            "\n".join(f"{key}={value}" for key, value in values.items()).encode(),
+        )
+        self.assertTrue(parsed["picker_free"])
+        self.assertEqual(parsed["services"]["api"]["health"], "healthy")
+        invalid = values | {"recovery_picker_free": "false"}
+        with self.assertRaisesRegex(support.SupportError, "backup_retirement_picker_free_recovery_missing"):
+            support._parse_picker_free_runtime_inventory(
+                "\n".join(f"{key}={value}" for key, value in invalid.items()).encode(),
+            )
+        invalid = values | {"recovery_health_web": "unhealthy"}
+        with self.assertRaisesRegex(support.SupportError, "backup_retirement_picker_free_inventory_invalid"):
+            support._parse_picker_free_runtime_inventory(
+                "\n".join(f"{key}={value}" for key, value in invalid.items()).encode(),
+            )
 
     def test_retirement_blocks_unexpected_backup_config_layout(self):
         entries = (
@@ -1300,6 +1376,32 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, error_code)
                 self.assertNotIn("PRIVATE_SENTINEL", str(raised.exception))
 
+    def test_retirement_tree_accepts_documented_source_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "config"
+            root.mkdir()
+            (root / "source.json").write_text("{}", encoding="utf-8")
+            host = support.LocalSupportHost()
+
+            def fake_entry_metadata(_path, _info, *, kind, symlink_target=None):
+                metadata = {"kind": kind}
+                if symlink_target is not None:
+                    metadata["target"] = symlink_target
+                return metadata
+
+            with patch.object(host, "_assert_parent_directory"), \
+                    patch.object(host, "_retirement_entry_metadata", side_effect=fake_entry_metadata), \
+                    patch.object(host, "_retirement_mountpoints", return_value=[]), \
+                    patch.object(support.stat, "S_IMODE", return_value=0o400), \
+                    patch("os.path.ismount", return_value=False):
+                state = host._retirement_tree_state(
+                    root,
+                    allowed_root_names={"destination.json", "keyring.json", "source.json"},
+                    unexpected_root_category="config",
+                )
+
+            self.assertEqual([entry["path"] for entry in state["entries"]], ["source.json"])
+
     def test_retirement_inventory_maps_unexpected_root_to_fixed_target_category(self):
         expected_codes = {
             "runtime": "backup_retirement_unexpected_runtime_layout",
@@ -1345,6 +1447,7 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
         host.snapshot["config"]["entries"] = [
             {"path": "destination.json", "kind": "file", "mode": 0o400},
             {"path": "keyring.json", "kind": "file", "mode": 0o400},
+            {"path": "source.json", "kind": "file", "mode": 0o400},
         ]
 
         support.SupportCoordinator._assert_backup_retirement_ready(host.snapshot)
@@ -1510,7 +1613,8 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
         record = {
             "Id": container_id,
             "Image": f"sha256:{'b' * 64}",
-            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "State": {"Running": True, "Status": "running", "StartedAt": "2026-11-23T00:00:00Z",
+                      "Health": {"Status": "healthy"}},
             "Mounts": [{"Type": "bind", "Source": source, "Destination": target, "RW": False}],
             "Config": {"Labels": {
                 "com.docker.compose.service": "api",
@@ -1520,9 +1624,15 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
         ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
         inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
         host = support.LocalSupportHost()
-        with patch.object(support, "PICKER_CONFIG_PATH", PurePosixPath(source)), patch.object(
-                host, "_run", side_effect=[ps, inspect]):
-            digest, status, details = host._retirement_container_state()
+        recovery_state = {"active_ids": [container_id], "services": {"api": {
+            "container_id": container_id, "image_id": f"sha256:{'b' * 64}"}}}
+        witness_state = {"registered": False, "fingerprint": SHA_CONTAINERS,
+                         "active_ids": [container_id], "witness_count": 0, "witnesses": []}
+        with patch.object(support, "PICKER_CONFIG_PATH", PurePosixPath(source)), \
+                patch.object(host, "_retirement_recovery_state", return_value=recovery_state), \
+                patch.object(host, "_retirement_witness_state", return_value=witness_state), \
+                patch.object(host, "_run", side_effect=[ps, inspect]):
+            digest, status, details, _, _ = host._retirement_container_state(SHA_MAIN)
 
         self.assertRegex(digest, r"^[0-9a-f]{64}$")
         self.assertEqual(status, "present")
@@ -1534,26 +1644,202 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
             "compose_files": "/opt/markina-gallery/docker/docker-compose.yml",
         }])
 
+    def retirement_inventory_with_mounts(self, mounts):
+        container_id = "a" * 64
+        record = {
+            "Id": container_id,
+            "Image": f"sha256:{'b' * 64}",
+            "State": {"Running": True, "Health": {"Status": "healthy"}, "Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "Mounts": mounts,
+            "Config": {"Labels": {
+                "com.docker.compose.service": "api",
+                "com.docker.compose.project.config_files": "/opt/markina-gallery/docker/docker-compose.yml",
+            }},
+        }
+        ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
+        inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
+        host = support.LocalSupportHost()
+        recovery = {"active_ids": [container_id], "services": {"api": {
+            "container_id": container_id, "image_id": record["Image"]}}}
+        witnesses = {"registered": False, "fingerprint": SHA_CONTAINERS,
+                     "active_ids": [container_id], "witness_count": 0, "witnesses": []}
+        with (
+            patch.object(support, "PICKER_CONFIG_PATH", PurePosixPath("/etc/pyp-google-drive/picker-config.json")),
+            patch.object(host, "_retirement_recovery_state", return_value=recovery),
+            patch.object(host, "_retirement_witness_state", return_value=witnesses),
+            patch.object(host, "_run", side_effect=[ps, inspect]),
+        ):
+            digest, status, details, _, _ = host._retirement_container_state(SHA_MAIN)
+        return digest, status, details
+
+    def test_retirement_inventory_preserves_shared_oauth_mount_without_picker_false_positive(self):
+        oauth_mount = {
+            "Type": "bind",
+            "Source": "/etc/pyp-google-drive/oauth-client.json",
+            "Destination": "/run/secrets/google-drive-oauth-client.json",
+            "RW": False,
+        }
+        digest_with_oauth, status, details = self.retirement_inventory_with_mounts([oauth_mount])
+        digest_without_mount, _, _ = self.retirement_inventory_with_mounts([])
+
+        self.assertEqual(status, "absent")
+        self.assertEqual(details, [])
+        self.assertNotEqual(digest_with_oauth, digest_without_mount)
+
+    def test_retirement_inventory_detects_directory_binds_that_cover_picker_paths(self):
+        covering_mounts = (
+            {"Type": "bind", "Source": "/etc/pyp-google-drive", "Destination": "/run/legacy-secrets", "RW": False},
+            {"Type": "bind", "Source": "/var/lib/legacy-secrets", "Destination": "/run/secrets", "RW": False},
+        )
+        for mount in covering_mounts:
+            with self.subTest(source=mount["Source"], target=mount["Destination"]):
+                _, status, details = self.retirement_inventory_with_mounts([mount])
+                self.assertEqual(status, "present")
+                self.assertEqual(len(details), 1)
+
     def test_retirement_inventory_rejects_unsafe_picker_mount_path_without_echoing_it(self):
         container_id = "a" * 64
         unsafe_source = "/etc/pyp-google-drive/picker-config.json\nsecret=hidden"
         record = {
             "Id": container_id,
             "Image": f"sha256:{'b' * 64}",
-            "State": {"Status": "running", "StartedAt": "2026-11-23T00:00:00Z"},
+            "State": {"Running": True, "Status": "running", "StartedAt": "2026-11-23T00:00:00Z",
+                      "Health": {"Status": "healthy"}},
             "Mounts": [{"Type": "bind", "Source": unsafe_source,
                         "Destination": "/run/secrets/google-drive-picker-config.json", "RW": False}],
         }
         ps = subprocess.CompletedProcess(["docker", "ps"], 0, f"{container_id}\n".encode(), b"")
         inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps([record]).encode(), b"")
         host = support.LocalSupportHost()
+        recovery_state = {"active_ids": [container_id], "services": {"api": {
+            "container_id": container_id, "image_id": f"sha256:{'b' * 64}"}}}
+        witness_state = {"registered": False, "fingerprint": SHA_CONTAINERS,
+                         "active_ids": [container_id], "witness_count": 0, "witnesses": []}
         with patch.object(support, "PICKER_CONFIG_PATH", PurePosixPath("/etc/pyp-google-drive/picker-config.json")), \
+                patch.object(host, "_retirement_recovery_state", return_value=recovery_state), \
+                patch.object(host, "_retirement_witness_state", return_value=witness_state), \
                 patch.object(host, "_run", side_effect=[ps, inspect]), \
                 self.assertRaises(support.SupportError) as caught:
-            host._retirement_container_state()
+            host._retirement_container_state(SHA_MAIN)
 
         self.assertEqual(caught.exception.code, "backup_retirement_container_inventory_invalid")
         self.assertNotIn("secret=hidden", str(caught.exception))
+
+    def test_retirement_inventory_excludes_only_registered_stopped_exact_witness_and_keeps_digest(self):
+        source = "/etc/pyp-google-drive/picker-config.json"
+        target = "/run/secrets/google-drive-picker-config.json"
+        active_ids = ["b" * 64, "c" * 64]
+        witness_id = "a" * 64
+        witness = {
+            "Id": witness_id,
+            "Name": "/markina-gallery-api-before-picker-retirement",
+            "Image": f"sha256:{'d' * 64}",
+            "State": {"Running": False, "Status": "exited", "StartedAt": "2026-11-20T00:00:00Z",
+                      "FinishedAt": "2026-11-20T00:01:00Z", "ExitCode": 0},
+            "Config": {"Labels": {"com.docker.compose.project": "markina-gallery",
+                                     "com.docker.compose.service": "api"}},
+            "HostConfig": {},
+            "Mounts": [{"Type": "bind", "Source": source, "Destination": target, "RW": False}],
+            "NetworkSettings": {"Networks": {}},
+        }
+        witness_attestation = {
+            "id": witness_id, "name": witness["Name"].lstrip("/"), "image": witness["Image"],
+            "service": "api",
+            "configuration": support._digest({
+                "config": witness["Config"], "host": witness["HostConfig"], "mounts": witness["Mounts"],
+                "networks": {},
+            }),
+            "lifecycle": support._digest({key: witness["State"].get(key)
+                                           for key in ("Status", "StartedAt", "FinishedAt", "ExitCode")}),
+            "registered": True,
+        }
+
+        def active_record(identity: str, service: str) -> dict:
+            return {
+                "Id": identity, "Image": f"sha256:{'e' * 64}", "Name": f"/markina-gallery-{service}-1",
+                "State": {"Running": True, "Status": "running", "StartedAt": "2026-11-23T00:00:00Z",
+                          "Health": {"Status": "healthy"}},
+                "Mounts": [],
+            }
+
+        records = [witness, active_record(active_ids[0], "api"), active_record(active_ids[1], "web")]
+        ids = "\n".join(record["Id"] for record in records) + "\n"
+        ps = subprocess.CompletedProcess(["docker", "ps"], 0, ids.encode(), b"")
+        inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps(records).encode(), b"")
+        host = support.LocalSupportHost()
+        registered = {"registered": True, "fingerprint": SHA_CONTAINERS, "active_ids": active_ids,
+                      "witness_count": 1, "witnesses": [witness_attestation]}
+        unregistered = {**registered, "registered": False,
+                        "witnesses": [{**witness_attestation, "registered": False}]}
+        recovery_state = {"active_ids": active_ids, "services": {
+            "api": {"container_id": active_ids[0], "image_id": records[1]["Image"]},
+            "web": {"container_id": active_ids[1], "image_id": records[2]["Image"]},
+        }}
+        with patch.object(host, "_retirement_recovery_state", return_value=recovery_state), \
+                patch.object(host, "_retirement_witness_state", return_value=registered), \
+                patch.object(host, "_run", side_effect=[ps, inspect]):
+            approved_digest, approved_status, approved_details, summary, _ = host._retirement_container_state(SHA_MAIN)
+        ps_again = subprocess.CompletedProcess(["docker", "ps"], 0, ids.encode(), b"")
+        inspect_again = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps(records).encode(), b"")
+        with patch.object(host, "_retirement_recovery_state", return_value=recovery_state), \
+                patch.object(host, "_retirement_witness_state", return_value=unregistered), \
+                patch.object(host, "_run", side_effect=[ps_again, inspect_again]):
+            unregistered_digest, unregistered_status, unregistered_details, _, _ = host._retirement_container_state(SHA_MAIN)
+
+        self.assertEqual(approved_status, "absent")
+        self.assertEqual(approved_details, [])
+        self.assertEqual(summary["verified_count"], 1)
+        self.assertEqual(unregistered_status, "present")
+        self.assertEqual(len(unregistered_details), 1)
+        self.assertEqual(approved_digest, unregistered_digest)
+
+    def test_retirement_inventory_keeps_picker_mount_when_registered_witness_changes(self):
+        source = "/etc/pyp-google-drive/picker-config.json"
+        target = "/run/secrets/google-drive-picker-config.json"
+        active_ids = ["b" * 64, "c" * 64]
+        witness_id = "a" * 64
+        record = {
+            "Id": witness_id, "Name": "/markina-gallery-api-before-picker-retirement",
+            "Image": f"sha256:{'d' * 64}",
+            "State": {"Running": False, "Status": "exited", "StartedAt": "2026-11-20T00:00:00Z",
+                      "FinishedAt": "2026-11-20T00:01:00Z", "ExitCode": 0},
+            "Config": {"Labels": {"com.docker.compose.project": "markina-gallery",
+                                     "com.docker.compose.service": "api"}},
+            "HostConfig": {"RestartPolicy": {"Name": "always"}},
+            "Mounts": [{"Type": "bind", "Source": source, "Destination": target, "RW": False}],
+            "NetworkSettings": {"Networks": {}},
+        }
+        unchanged_attestation = {
+            "id": witness_id, "name": record["Name"].lstrip("/"), "image": record["Image"], "service": "api",
+            "configuration": "f" * 64, "lifecycle": support._digest({key: record["State"].get(key)
+                for key in ("Status", "StartedAt", "FinishedAt", "ExitCode")}),
+            "registered": True,
+        }
+        active_records = [
+            {"Id": identity, "Image": f"sha256:{'e' * 64}", "State": {"Running": True,
+             "Status": "running", "StartedAt": "2026-11-23T00:00:00Z",
+             "Health": {"Status": "healthy"}}, "Mounts": []}
+            for identity in active_ids
+        ]
+        records = [record, *active_records]
+        ids = "\n".join(item["Id"] for item in records) + "\n"
+        ps = subprocess.CompletedProcess(["docker", "ps"], 0, ids.encode(), b"")
+        inspect = subprocess.CompletedProcess(["docker", "inspect"], 0, json.dumps(records).encode(), b"")
+        host = support.LocalSupportHost()
+        state = {"registered": True, "fingerprint": SHA_CONTAINERS, "active_ids": active_ids,
+                 "witness_count": 1, "witnesses": [unchanged_attestation]}
+        recovery_state = {"active_ids": active_ids, "services": {
+            "api": {"container_id": active_ids[0], "image_id": active_records[0]["Image"]},
+            "web": {"container_id": active_ids[1], "image_id": active_records[1]["Image"]},
+        }}
+        with patch.object(host, "_retirement_recovery_state", return_value=recovery_state), \
+                patch.object(host, "_retirement_witness_state", return_value=state), \
+                patch.object(host, "_run", side_effect=[ps, inspect]):
+            _, status, details, summary, _ = host._retirement_container_state(SHA_MAIN)
+
+        self.assertEqual(status, "present")
+        self.assertEqual(len(details), 1)
+        self.assertEqual(summary["verified_count"], 0)
 
     def test_retirement_state_summary_counts_only_known_encrypted_artifact_layout(self):
         artifact_id = "a1b2c3d4-e5f6-4789-8123-456789abcdef"

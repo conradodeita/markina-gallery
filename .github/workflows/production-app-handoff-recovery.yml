@@ -7,7 +7,7 @@ on:
         description: Diagnóstico somente leitura ou recuperação explicitamente aprovada
         type: choice
         required: true
-        options: [diagnose-legacy, recover-legacy, diagnose, recover]
+        options: [diagnose-legacy, recover-legacy, diagnose, recover, export-images]
       approval_fingerprint:
         description: Fingerprint próprio da recuperação emitido pelo diagnóstico
         type: string
@@ -44,6 +44,8 @@ jobs:
     permissions:
       contents: read
     outputs:
+      api_image: ${{ steps.inventory.outputs.api_image }}
+      web_image: ${{ steps.inventory.outputs.web_image }}
       fingerprint: ${{ steps.inventory.outputs.fingerprint }}
       witness_fingerprint: ${{ steps.inventory.outputs.witness_fingerprint }}
       connection_binding: ${{ steps.inventory.outputs.connection_binding }}
@@ -66,7 +68,7 @@ jobs:
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$PORT" =~ ^[0-9]{1,5}$ ]] || exit 1
           case "$OPERATION" in
             diagnose-legacy|recover-legacy) command="MARKINA_APP_HANDOFF_LEGACY_RECOVERY_SHA=$GITHUB_SHA"; field=legacy_recovery_fingerprint ;;
-            diagnose|recover) command="MARKINA_APP_HANDOFF_RECOVERY_SHA=$GITHUB_SHA"; field=recovery_fingerprint ;;
+            diagnose|recover|export-images) command="MARKINA_APP_HANDOFF_RECOVERY_SHA=$GITHUB_SHA"; field=recovery_fingerprint ;;
             *) exit 1 ;;
           esac
           key_file="$(mktemp)"; known_file="$(mktemp)"; output="$(mktemp)"
@@ -81,6 +83,13 @@ jobs:
           fingerprint="$(sed -nE "s/^$field=([0-9a-f]{64})$/\1/p" "$output")"
           [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || { echo 'Fingerprint ausente/ambíguo' >&2; exit 1; }
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          if [[ "$OPERATION" == export-images ]]; then
+            for service in api web; do
+              image="$(sed -nE "s/^current_reference_${service}_image=(sha256:[0-9a-f]{64})$/\1/p" "$output")"
+              [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+              echo "${service}_image=$image" >> "$GITHUB_OUTPUT"
+            done
+          fi
           if [[ "$OPERATION" == *-legacy ]]; then
             readonly_ssh "MARKINA_APP_HANDOFF_WITNESSES_SHA=$GITHUB_SHA" | tee "$output" | tee -a "$GITHUB_STEP_SUMMARY"
             witnesses="$(sed -nE 's/^witness_fingerprint=([0-9a-f]{64})$/\1/p' "$output")"
@@ -89,6 +98,66 @@ jobs:
           fi
           binding="$(printf '%s\0' "$HOST" "$PORT" "$USER" | sha256sum | awk '{print $1}')"
           echo "connection_binding=$binding" >> "$GITHUB_OUTPUT"
+
+  export-reference-images:
+    if: ${{ inputs.operation == 'export-images' }}
+    needs: [code-evidence, recovery-inventory]
+    runs-on: ubuntu-24.04-arm
+    environment: production-preflight
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, web]
+    steps:
+      - name: Exportar imagem ativa pela interface SSH restrita
+        shell: bash
+        env:
+          HOST: ${{ vars.PRODUCTION_PREFLIGHT_SSH_HOST }}
+          PORT: ${{ vars.PRODUCTION_PREFLIGHT_SSH_PORT }}
+          USER: ${{ vars.PRODUCTION_PREFLIGHT_SSH_USER }}
+          KEY: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_PREFLIGHT_SSH_KNOWN_HOSTS }}
+          SERVICE: ${{ matrix.service }}
+          API_IMAGE: ${{ needs.recovery-inventory.outputs.api_image }}
+          WEB_IMAGE: ${{ needs.recovery-inventory.outputs.web_image }}
+          EXPECTED_BINDING: ${{ needs.recovery-inventory.outputs.connection_binding }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          for name in HOST PORT USER KEY KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || exit 1
+          done
+          [[ "$PORT" =~ ^[0-9]{1,5}$ && "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          binding="$(printf '%s\0' "$HOST" "$PORT" "$USER" | sha256sum | awk '{print $1}')"
+          [[ "$binding" == "$EXPECTED_BINDING" ]] || exit 1
+          case "$SERVICE" in api) image="$API_IMAGE" ;; web) image="$WEB_IMAGE" ;; *) exit 1 ;; esac
+          [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          key_file="$(mktemp)"; known_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_file"' EXIT
+          printf '%s\n' "$KEY" > "$key_file"; printf '%s\n' "$KNOWN_HOSTS" > "$known_file"
+          chmod 600 "$key_file" "$known_file"
+          mkdir -m 700 -p "$RUNNER_TEMP/picker-reference"
+          archive="$RUNNER_TEMP/picker-reference/$SERVICE.tar.gz"
+          ssh -i "$key_file" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_file" \
+            "$USER@$HOST" "MARKINA_APP_REFERENCE_IMAGE_EXPORT_SHA=${GITHUB_SHA}_SERVICE=${SERVICE}_IMAGE_ID=${image}" </dev/null > "$archive"
+          gzip -t "$archive"
+          gzip -dc "$archive" | docker image load >/dev/null
+          [[ "$(docker image inspect --format '{{.Id}}' "$image")" == "$image" ]] || exit 1
+          [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" == linux/arm64 ]] || exit 1
+          (cd "$RUNNER_TEMP/picker-reference" && sha256sum "$SERVICE.tar.gz" > "$SERVICE.sha256")
+          printf '%s %s\n' "$SERVICE" "$image" | tee "$RUNNER_TEMP/picker-reference/image-id.txt" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/picker-reference/$SERVICE.sha256" >> "$GITHUB_STEP_SUMMARY"
+      - name: Guardar imagem verificada para ensaio sintético
+        uses: actions/upload-artifact@v4
+        with:
+          name: picker-reference-${{ matrix.service }}-${{ github.sha }}
+          path: ${{ runner.temp }}/picker-reference/
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+
 
   recover:
     if: ${{ inputs.operation == 'recover' || inputs.operation == 'recover-legacy' }}

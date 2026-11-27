@@ -49,8 +49,20 @@ def main() -> int:
         "backup_picker_mount_{index}_target=",
         "backup_picker_mount_{index}_service=",
         "backup_picker_mount_{index}_compose_files=",
+        "backup_picker_witness_registered=",
+        "backup_picker_witness_fingerprint=",
+        "backup_picker_witness_{name}=",
+        "backup_picker_free_recovery=verified",
+        "backup_picker_free_recovery_receipt_sha256=",
+        "backup_picker_free_recovery_recipe_sha256=",
     ):
         require(retirement_detail in HELPER, "retirement_inventory_source_details_missing:" + retirement_detail)
+    require('self._git(["rev-parse", f"{support_sha}:scripts/production_app_compose_bridge.py"])' in HELPER
+            and 'self._run(["git", "hash-object", "--", str(BRIDGE_PATH)]' in HELPER
+            and '"handoff-witness-inventory"' in HELPER
+            and '"handoff-recovery-inventory"' in HELPER
+            and "_parse_picker_free_runtime_inventory" in HELPER,
+            "retirement_inventory_does_not_verify_pinned_runtime_and_witness_source")
     require('print(f"backup_local_{name}={value}")' in HELPER,
             "retirement_inventory_does_not_report_aggregate_local_artifacts")
     repair_case = WORKFLOW.split("            repair-support-backups-mode)", 1)[1].split(
