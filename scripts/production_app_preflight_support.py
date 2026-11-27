@@ -124,6 +124,171 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value)).hexdigest()
 
 
+def _parse_retirement_witness_inventory(output: bytes) -> dict[str, Any]:
+    try:
+        lines = output.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        raise SupportError("backup_retirement_witness_inventory_invalid") from None
+    scalars: dict[str, str] = {}
+    active_ids: list[str] = []
+    witnesses: list[dict[str, str]] = []
+    legacy_witnesses: list[tuple[str, str, str]] = []
+    for line in lines:
+        if line.startswith("witness_attestation="):
+            fields = line.partition("=")[2].split("|")
+            if len(fields) != 7:
+                raise SupportError("backup_retirement_witness_inventory_invalid")
+            identity, name, image, service, configuration, lifecycle, registered = fields
+            if (not OBJECT_ID.fullmatch(identity)
+                    or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}", name)
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", image)
+                    or service not in {"api", "web"}
+                    or not HEX64.fullmatch(configuration) or not HEX64.fullmatch(lifecycle)
+                    or registered not in {"true", "false"}):
+                raise SupportError("backup_retirement_witness_inventory_invalid")
+            witnesses.append({"id": identity, "name": name, "image": image, "service": service,
+                              "configuration": configuration, "lifecycle": lifecycle,
+                              "registered": registered == "true"})
+        elif line.startswith("witness="):
+            fields = line.partition("=")[2].split("|")
+            if (len(fields) != 3 or not OBJECT_ID.fullmatch(fields[0])
+                    or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}", fields[1])
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", fields[2])):
+                raise SupportError("backup_retirement_witness_inventory_invalid")
+            legacy_witnesses.append((fields[0], fields[1], fields[2]))
+        elif line.startswith("active_id="):
+            identity = line.partition("=")[2]
+            if not OBJECT_ID.fullmatch(identity):
+                raise SupportError("backup_retirement_witness_inventory_invalid")
+            active_ids.append(identity)
+        else:
+            key, separator, value = line.partition("=")
+            if (not separator or key not in {"witness_fingerprint", "witness_registered", "active_count", "witness_count"}
+                    or key in scalars):
+                raise SupportError("backup_retirement_witness_inventory_invalid")
+            scalars[key] = value
+    if set(scalars) != {"witness_fingerprint", "witness_registered", "active_count", "witness_count"}:
+        raise SupportError("backup_retirement_witness_inventory_invalid")
+    if not HEX64.fullmatch(scalars["witness_fingerprint"]) or scalars["witness_registered"] not in {"true", "false"}:
+        raise SupportError("backup_retirement_witness_inventory_invalid")
+    try:
+        active_count = int(scalars["active_count"])
+        witness_count = int(scalars["witness_count"])
+    except ValueError:
+        raise SupportError("backup_retirement_witness_inventory_invalid") from None
+    if (str(active_count) != scalars["active_count"] or active_count != 2
+            or len(active_ids) != active_count or len(set(active_ids)) != active_count
+            or str(witness_count) != scalars["witness_count"] or not 0 <= witness_count <= 1024
+            or len(witnesses) != witness_count or len(legacy_witnesses) != witness_count
+            or len({entry["id"] for entry in witnesses}) != witness_count
+            or set(active_ids) & {entry["id"] for entry in witnesses}
+            or sorted(legacy_witnesses) != sorted((entry["id"], entry["name"], entry["image"])
+                                                  for entry in witnesses)):
+        raise SupportError("backup_retirement_witness_inventory_invalid")
+    witnesses.sort(key=lambda item: item["id"])
+    return {"registered": scalars["witness_registered"] == "true",
+            "fingerprint": scalars["witness_fingerprint"], "active_ids": sorted(active_ids),
+            "witness_count": witness_count, "witnesses": witnesses}
+
+
+def _parse_picker_free_runtime_inventory(output: bytes) -> dict[str, Any]:
+    try:
+        lines = output.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        raise SupportError("backup_retirement_picker_free_inventory_invalid") from None
+    expected = {
+        "recovery_fingerprint", "schema_status", "interrupted_sha", "recovery_picker_free",
+        "recovery_recipe_sha256", "recovery_receipt_sha256", "recovery_active_base_id",
+        "recovery_active_base_manifest_sha256", "recovery_active_base_pointer_sha256",
+    }
+    for service in ("api", "web"):
+        expected |= {
+            f"recovery_phase_{service}", f"recovery_container_{service}", f"recovery_image_{service}",
+            f"recovery_health_{service}", f"recovery_running_{service}",
+            f"recovery_picker_bind_removed_{service}",
+        }
+    values: dict[str, str] = {}
+    for line in lines:
+        key, separator, value = line.partition("=")
+        if not separator or key not in expected or key in values:
+            raise SupportError("backup_retirement_picker_free_inventory_invalid")
+        values[key] = value
+    if set(values) != expected:
+        raise SupportError("backup_retirement_picker_free_inventory_invalid")
+    if values["recovery_picker_free"] != "true":
+        raise SupportError("backup_retirement_picker_free_recovery_missing")
+    if (not HEX64.fullmatch(values["recovery_fingerprint"])
+            or values["schema_status"] != "verified"
+            or not HEX40.fullmatch(values["interrupted_sha"])
+            or not HEX64.fullmatch(values["recovery_recipe_sha256"])
+            or not HEX64.fullmatch(values["recovery_receipt_sha256"])
+            or not HEX64.fullmatch(values["recovery_active_base_id"])
+            or not HEX64.fullmatch(values["recovery_active_base_manifest_sha256"])
+            or not HEX64.fullmatch(values["recovery_active_base_pointer_sha256"])):
+        raise SupportError("backup_retirement_picker_free_inventory_invalid")
+    services: dict[str, dict[str, Any]] = {}
+    for service in ("api", "web"):
+        container_id = values[f"recovery_container_{service}"]
+        image_id = values[f"recovery_image_{service}"]
+        if (values[f"recovery_phase_{service}"] != "healthy"
+                or not OBJECT_ID.fullmatch(container_id)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
+                or values[f"recovery_health_{service}"] != "healthy"
+                or values[f"recovery_running_{service}"] != "true"
+                or values[f"recovery_picker_bind_removed_{service}"] not in {"true", "false"}):
+            raise SupportError("backup_retirement_picker_free_inventory_invalid")
+        services[service] = {
+            "phase": "healthy", "container_id": container_id, "image_id": image_id,
+            "health": "healthy", "running": True,
+            "picker_bind_removed": values[f"recovery_picker_bind_removed_{service}"] == "true",
+        }
+    active_ids = [services[service]["container_id"] for service in ("api", "web")]
+    if len(set(active_ids)) != len(active_ids):
+        raise SupportError("backup_retirement_picker_free_inventory_invalid")
+    return {
+        "fingerprint": values["recovery_fingerprint"], "schema_status": "verified",
+        "interrupted_sha": values["interrupted_sha"], "picker_free": True,
+        "recipe_sha256": values["recovery_recipe_sha256"],
+        "receipt_sha256": values["recovery_receipt_sha256"],
+        "runtime_base": values["recovery_active_base_id"],
+        "runtime_manifest_sha256": values["recovery_active_base_manifest_sha256"],
+        "runtime_pointer_sha256": values["recovery_active_base_pointer_sha256"],
+        "active_ids": sorted(active_ids), "services": services,
+    }
+
+
+def _retirement_witness_record_matches(record: dict[str, Any], witness: dict[str, str]) -> bool:
+    try:
+        state = record["State"]
+        labels = record["Config"]["Labels"]
+        network_settings = record["NetworkSettings"]
+        networks = network_settings.get("Networks") or {}
+        name = record["Name"].lstrip("/")
+        if (not isinstance(state, dict) or state.get("Running") is not False
+                or state.get("Status") not in {"created", "exited"}
+                or not isinstance(labels, dict) or not isinstance(networks, dict)):
+            return False
+        network_projection = {}
+        for network_name, values in networks.items():
+            if not isinstance(network_name, str) or not isinstance(values, dict):
+                return False
+            network_projection[network_name] = {
+                key: values.get(key) for key in ("Aliases", "IPAMConfig", "DriverOpts", "GwPriority")
+            }
+        configuration = _digest({
+            "config": record.get("Config"), "host": record.get("HostConfig"),
+            "mounts": record.get("Mounts"), "networks": network_projection,
+        })
+        lifecycle = _digest({key: state.get(key) for key in ("Status", "StartedAt", "FinishedAt", "ExitCode")})
+        current = {"id": record.get("Id"), "image": record.get("Image"), "name": name,
+                   "service": labels.get("com.docker.compose.service"),
+                   "configuration": configuration, "lifecycle": lifecycle}
+        expected = {key: witness[key] for key in current}
+        return current == expected
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return False
+
+
 def _file_digest(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
@@ -675,7 +840,49 @@ class LocalSupportHost:
                 "load": load_state, "active": active_state, "enabled": unit_file_state,
                 "fragment": fragment_path}
 
-    def _retirement_container_state(self) -> tuple[str, str, list[dict[str, str]]]:
+    def _retirement_bridge_inventory(self, support_sha: str, operation: str, error_code: str) -> bytes:
+        if operation not in {"handoff-witness-inventory", "handoff-recovery-inventory"}:
+            raise SupportError("backup_retirement_witness_helper_invalid")
+        self._assert_file(BRIDGE_PATH, owner="root", group="root", mode=0o755, links=1)
+        _, expected_bytes = self._git(["rev-parse", f"{support_sha}:scripts/production_app_compose_bridge.py"])
+        actual_result = self._run(["git", "hash-object", "--", str(BRIDGE_PATH)],
+                                  code=error_code)
+        try:
+            expected = expected_bytes.decode("ascii").strip()
+            actual = actual_result.stdout.decode("ascii").strip()
+        except UnicodeDecodeError:
+            raise SupportError("backup_retirement_witness_helper_invalid") from None
+        if not HEX40.fullmatch(expected) or actual != expected:
+            raise SupportError("backup_retirement_witness_helper_mismatch")
+        result = self._run(
+            [str(BRIDGE_PATH), "--mode", "inventory", "--sha", support_sha, operation],
+            timeout=180, code=error_code,
+        )
+        return result.stdout
+
+    def _retirement_witness_state(self, support_sha: str) -> dict[str, Any]:
+        output = self._retirement_bridge_inventory(
+            support_sha, "handoff-witness-inventory", "backup_retirement_witness_inventory_failed",
+        )
+        return _parse_retirement_witness_inventory(output)
+
+    def _retirement_recovery_state(self, support_sha: str) -> dict[str, Any]:
+        output = self._retirement_bridge_inventory(
+            support_sha, "handoff-recovery-inventory", "backup_retirement_picker_free_inventory_failed",
+        )
+        return _parse_picker_free_runtime_inventory(output)
+
+    def _retirement_container_state(self, support_sha: str) -> tuple[
+            str, str, list[dict[str, str]], dict[str, Any], dict[str, Any]]:
+        recovery_state = self._retirement_recovery_state(support_sha)
+        witness_state = self._retirement_witness_state(support_sha)
+        active_ids = set(witness_state["active_ids"])
+        recovery_active_ids = set(recovery_state["active_ids"])
+        if active_ids != recovery_active_ids:
+            raise SupportError("backup_retirement_picker_free_runtime_changed")
+        recovery_services = {value["container_id"]: value for value in recovery_state["services"].values()}
+        registered_witnesses = {record["id"]: record for record in witness_state["witnesses"]
+                                if record["registered"]}
         result = self._run(["docker", "ps", "-aq", "--no-trunc"], code="backup_retirement_container_inventory_failed")
         try:
             ids = result.stdout.decode("ascii").splitlines()
@@ -683,8 +890,11 @@ class LocalSupportHost:
             raise SupportError("backup_retirement_container_inventory_invalid") from None
         if any(not OBJECT_ID.fullmatch(item) for item in ids) or len(ids) != len(set(ids)):
             raise SupportError("backup_retirement_container_inventory_invalid")
+        witness_ids = {record["id"] for record in witness_state["witnesses"]}
+        if not set(witness_state["active_ids"]).issubset(ids) or not witness_ids.issubset(ids):
+            raise SupportError("backup_retirement_container_inventory_changed")
         if not ids:
-            return _file_digest(_canonical_json([])), "absent", []
+            raise SupportError("backup_retirement_container_inventory_changed")
         inspected = self._run(["docker", "inspect", *sorted(ids)], code="backup_retirement_container_inventory_failed")
         try:
             records = json.loads(inspected.stdout)
@@ -696,6 +906,7 @@ class LocalSupportHost:
         config_target = "/run/secrets/google-drive-picker-config.json"
         rows: list[dict[str, str]] = []
         picker_mounts: list[dict[str, str]] = []
+        verified_witness_ids: set[str] = set()
         for record in records:
             if not isinstance(record, dict) or not isinstance(record.get("Mounts"), list):
                 raise SupportError("backup_retirement_container_inventory_invalid")
@@ -704,15 +915,27 @@ class LocalSupportHost:
                 image_id = record["Image"]
                 state = record["State"]["Status"]
                 started = record["State"]["StartedAt"]
+                state_running = record["State"]["Running"]
             except (KeyError, TypeError):
                 raise SupportError("backup_retirement_container_inventory_invalid") from None
             if (not isinstance(container_id, str) or not isinstance(image_id, str)
                     or not isinstance(state, str) or not isinstance(started, str)
+                    or type(state_running) is not bool
                     or container_id not in ids or not OBJECT_ID.fullmatch(container_id)
                     or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
                     or state not in {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
                     or not started or len(started) > 64):
                 raise SupportError("backup_retirement_container_inventory_invalid")
+            recovery_service = recovery_services.get(container_id)
+            if recovery_service and (image_id != recovery_service["image_id"] or state != "running"
+                    or state_running is not True or not isinstance(record["State"].get("Health"), dict)
+                    or record["State"]["Health"].get("Status") != "healthy"):
+                raise SupportError("backup_retirement_picker_free_runtime_changed")
+            witness = registered_witnesses.get(container_id)
+            is_verified_witness = bool(witness and container_id not in active_ids
+                                       and _retirement_witness_record_matches(record, witness))
+            if is_verified_witness:
+                verified_witness_ids.add(container_id)
             rows.append({"id": container_id, "image": image_id, "state": state, "started": started})
             mount_rows: list[dict[str, Any]] = []
             for mount in record["Mounts"]:
@@ -736,6 +959,8 @@ class LocalSupportHost:
                     if (not _safe_retirement_mount_path(source)
                             or not _safe_retirement_mount_path(target)):
                         raise SupportError("backup_retirement_container_inventory_invalid")
+                    if is_verified_witness:
+                        continue
                     config = record.get("Config")
                     labels = config.get("Labels") if isinstance(config, dict) else None
                     labels = labels if isinstance(labels, dict) else {}
@@ -761,7 +986,16 @@ class LocalSupportHost:
             raise SupportError("backup_retirement_container_inventory_invalid")
         rows.sort(key=lambda row: row["id"])
         picker_mounts.sort(key=lambda item: (item["container"], item["source"], item["target"]))
-        return _file_digest(_canonical_json(rows)), "present" if picker_mounts else "absent", picker_mounts
+        witness_summary = {
+            "registered": witness_state["registered"],
+            "fingerprint": witness_state["fingerprint"],
+            "inventory_count": witness_state["witness_count"],
+            "registered_count": len(registered_witnesses),
+            "active_count": len(active_ids),
+            "verified_count": len(verified_witness_ids),
+        }
+        return (_file_digest(_canonical_json(rows)), "present" if picker_mounts else "absent",
+                picker_mounts, witness_summary, recovery_state)
 
     @staticmethod
     def _retirement_health_state() -> dict[str, str]:
@@ -811,7 +1045,8 @@ class LocalSupportHost:
         if unit_related_names - set(BACKUP_UNITS):
             raise SupportError("backup_retirement_unexpected_unit_entry")
         picker = self._retirement_file_state(PICKER_CONFIG_PATH, expected_mode=0o400)
-        containers_sha256, picker_mount, picker_mount_details = self._retirement_container_state()
+        containers_sha256, picker_mount, picker_mount_details, picker_witnesses, picker_free_recovery = (
+            self._retirement_container_state(support_sha))
         return {
             "host": EXPECTED_HOST,
             "repository": remote,
@@ -829,6 +1064,8 @@ class LocalSupportHost:
             "picker_config": picker,
             "picker_mount": picker_mount,
             "picker_mount_details": picker_mount_details,
+            "picker_witnesses": picker_witnesses,
+            "picker_free_recovery": picker_free_recovery,
             "containers_sha256": containers_sha256,
             "health": self._retirement_health_state(),
             "incomplete_install": bool(
@@ -1485,6 +1722,52 @@ class SupportCoordinator:
             raise SupportError("backup_retirement_picker_mount_present")
         if snapshot.get("picker_mount_details") != []:
             raise SupportError("backup_retirement_picker_mount_present")
+        witnesses = snapshot.get("picker_witnesses")
+        if (not isinstance(witnesses, dict)
+                or set(witnesses) != {"registered", "fingerprint", "inventory_count", "registered_count",
+                                     "active_count", "verified_count"}
+                or type(witnesses.get("registered")) is not bool
+                or not isinstance(witnesses.get("fingerprint"), str)
+                or not HEX64.fullmatch(witnesses["fingerprint"])
+                or any(type(witnesses.get(name)) is not int or witnesses[name] < 0
+                       for name in ("inventory_count", "registered_count", "active_count", "verified_count"))
+                or witnesses["active_count"] != 2
+                or witnesses["registered_count"] > witnesses["inventory_count"]
+                or witnesses["verified_count"] > witnesses["registered_count"]):
+            raise SupportError("backup_retirement_witness_inventory_invalid")
+        recovery = snapshot.get("picker_free_recovery")
+        recovery_fields = {
+            "fingerprint", "schema_status", "interrupted_sha", "picker_free", "recipe_sha256", "receipt_sha256",
+            "runtime_base", "runtime_manifest_sha256", "runtime_pointer_sha256", "active_ids", "services",
+        }
+        if (not isinstance(recovery, dict) or set(recovery) != recovery_fields
+                or recovery.get("schema_status") != "verified" or recovery.get("picker_free") is not True
+                or any(not isinstance(recovery.get(name), str) or not HEX64.fullmatch(recovery[name])
+                       for name in ("fingerprint", "recipe_sha256", "receipt_sha256", "runtime_base",
+                                    "runtime_manifest_sha256", "runtime_pointer_sha256"))
+                or not isinstance(recovery.get("interrupted_sha"), str)
+                or not HEX40.fullmatch(recovery["interrupted_sha"])):
+            raise SupportError("backup_retirement_picker_free_recovery_missing")
+        services = recovery.get("services")
+        active_ids = recovery.get("active_ids")
+        if (not isinstance(services, dict) or set(services) != {"api", "web"}
+                or not isinstance(active_ids, list) or len(active_ids) != 2
+                or len(set(active_ids)) != 2):
+            raise SupportError("backup_retirement_picker_free_inventory_invalid")
+        observed_ids = []
+        for item in services.values():
+            if (not isinstance(item, dict)
+                    or set(item) != {"phase", "container_id", "image_id", "health", "running", "picker_bind_removed"}
+                    or item.get("phase") != "healthy" or item.get("health") != "healthy"
+                    or item.get("running") is not True or type(item.get("picker_bind_removed")) is not bool
+                    or not isinstance(item.get("container_id"), str)
+                    or not OBJECT_ID.fullmatch(item["container_id"])
+                    or not isinstance(item.get("image_id"), str)
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", item["image_id"])):
+                raise SupportError("backup_retirement_picker_free_inventory_invalid")
+            observed_ids.append(item["container_id"])
+        if sorted(observed_ids) != sorted(active_ids):
+            raise SupportError("backup_retirement_picker_free_inventory_invalid")
         state_summary = snapshot.get("state_summary")
         if (not isinstance(state_summary, dict)
                 or set(state_summary) != {"encrypted_artifacts", "partial_artifacts", "catalog_files", "files", "bytes"}
@@ -1574,6 +1857,8 @@ class SupportCoordinator:
                         or after["picker_config"].get("present") is True
                         or after["picker_mount"] != "absent"
                         or after["picker_mount_details"] != []
+                        or after["picker_witnesses"] != before["picker_witnesses"]
+                        or after["picker_free_recovery"] != before["picker_free_recovery"]
                         or after["containers_sha256"] != before["containers_sha256"]):
                     raise SupportError("backup_retirement_postcheck_failed")
                 completed = {
@@ -1939,6 +2224,24 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"backup_{unit}={state['active']},{state['enabled']}")
             print(f"backup_picker_config={'present' if snapshot['picker_config']['present'] else 'absent'}")
             print(f"backup_picker_mount={snapshot['picker_mount']}")
+            witnesses = snapshot["picker_witnesses"]
+            print(f"backup_picker_witness_registered={'yes' if witnesses['registered'] else 'no'}")
+            print(f"backup_picker_witness_fingerprint={witnesses['fingerprint']}")
+            for name in ("inventory_count", "registered_count", "verified_count"):
+                print(f"backup_picker_witness_{name}={witnesses[name]}")
+            recovery = snapshot["picker_free_recovery"]
+            print("backup_picker_free_recovery=verified")
+            print(f"backup_picker_free_recovery_fingerprint={recovery['fingerprint']}")
+            print(f"backup_picker_free_recovery_recipe_sha256={recovery['recipe_sha256']}")
+            print(f"backup_picker_free_recovery_receipt_sha256={recovery['receipt_sha256']}")
+            print(f"backup_picker_free_recovery_active_base_id={recovery['runtime_base']}")
+            print(f"backup_picker_free_recovery_active_base_manifest_sha256={recovery['runtime_manifest_sha256']}")
+            print(f"backup_picker_free_recovery_active_base_pointer_sha256={recovery['runtime_pointer_sha256']}")
+            for service, item in recovery["services"].items():
+                print(f"backup_picker_free_recovery_{service}_container={item['container_id']}")
+                print(f"backup_picker_free_recovery_{service}_image={item['image_id']}")
+                print(f"backup_picker_free_recovery_{service}_phase={item['phase']}")
+                print(f"backup_picker_free_recovery_{service}_health={item['health']}")
             for index, mount in enumerate(snapshot["picker_mount_details"], start=1):
                 print(f"backup_picker_mount_{index}_container={mount['container']}")
                 print(f"backup_picker_mount_{index}_source={mount['source']}")

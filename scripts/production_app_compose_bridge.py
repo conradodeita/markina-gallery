@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import stat
 import subprocess
@@ -33,6 +34,8 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 CONTAINER_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+PICKER_CONFIG_SOURCE = "/etc/pyp-google-drive/picker-config.json"
+PICKER_CONFIG_TARGET = "/run/secrets/google-drive-picker-config.json"
 REVISION_RE = re.compile(r"^([0-9]{8}_[0-9]{4})(?:\s+.*)?$")
 MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 MAX_COMMAND_OUTPUT_BYTES = 8 * 1024 * 1024
@@ -1748,6 +1751,44 @@ def handoff_witness_inventory(support_sha: str, items: list[dict], records: list
             "source_digests": copy.deepcopy(source_digests), "environment_digest": environment_digest}
 
 
+def handoff_witness_inventory_report(proof: dict, items: list[dict], *, registry_present: bool) -> dict:
+    """Separate current API/web from retained historical records for the retirement inventory."""
+    if (not isinstance(proof, dict) or proof.get("domain") != "app-handoff-witnesses-v1"
+            or not isinstance(proof.get("active"), list) or not isinstance(proof.get("witnesses"), list)
+            or any(not isinstance(record, dict) for record in proof["active"] + proof["witnesses"])):
+        raise BridgeError("handoff_witness_inventory_invalid")
+    by_id = {item.get("Id"): item for item in items if isinstance(item, dict)}
+    if len(by_id) != len(items):
+        raise BridgeError("handoff_witness_inventory_invalid")
+    active = [record for record in proof["active"] if not record.get("retained")]
+    retained = [record for record in proof["active"] if record.get("retained")]
+    if (len(active) != len(SERVICES) or {record.get("service") for record in active} != set(SERVICES)
+            or len({record.get("id") for record in active}) != len(SERVICES)):
+        raise BridgeError("handoff_witness_inventory_active_invalid")
+    witnesses = []
+    for record in retained:
+        item = by_id.get(record.get("id"))
+        if item is None or handoff_record(record.get("service"), item, record.get("project"), retained=True) != record:
+            raise BridgeError("handoff_witness_runtime_mismatch")
+        witnesses.append({**record, "lifecycle": digest({
+            key: item.get("State", {}).get(key)
+            for key in ("Status", "StartedAt", "FinishedAt", "ExitCode")
+        }), "registered": True})
+    for record in proof["witnesses"]:
+        witnesses.append({**record, "registered": registry_present})
+    witnesses.sort(key=lambda item: item["id"])
+    active_ids = [record["id"] for record in sorted(active, key=lambda item: item["id"])]
+    witness_ids = [record["id"] for record in witnesses]
+    if (len(witness_ids) != len(set(witness_ids)) or set(active_ids) & set(witness_ids)
+            or any(not isinstance(record.get("lifecycle"), str) or not HASH_RE.fullmatch(record["lifecycle"])
+                   for record in witnesses)):
+        raise BridgeError("handoff_witness_inventory_invalid")
+    payload = {"proof": proof, "active": active, "witnesses": witnesses,
+               "witness_registry_present": registry_present}
+    return {"fingerprint": digest(payload), "registered": registry_present,
+            "active_ids": active_ids, "witnesses": witnesses}
+
+
 def handoff_register_witnesses(proof: dict, approval: str) -> None:
     _assert_common_lock_held()
     if proof.get("domain") != "app-handoff-witnesses-v1" or digest(proof) != approval:
@@ -1775,16 +1816,21 @@ def handoff_register_witnesses(proof: dict, approval: str) -> None:
 
 
 HANDOFF_PHASES = ("prepared", "stop_intent", "stopped", "rename_intent", "retained", "create_intent", "created", "healthy")
+HANDOFF_RECOVERY_LEGACY_PHASES = ("prepared", "candidate_stop_intent", "candidate_stopped", "candidate_rename_intent",
+                                  "candidate_retained", "original_rename_intent", "original_named", "original_start_intent",
+                                  "original_started", "healthy")
 HANDOFF_RECOVERY_PHASES = ("prepared", "candidate_stop_intent", "candidate_stopped", "candidate_rename_intent",
-                           "candidate_retained", "original_rename_intent", "original_named", "original_start_intent",
-                           "original_started", "healthy")
+                           "candidate_retained", "original_stop_intent", "original_stopped",
+                           "original_rename_intent", "original_retained", "recovery_create_intent",
+                           "recovery_created", "recovery_start_intent", "recovery_started", "healthy")
 
 
 def _handoff_phases(plan: dict) -> tuple:
     if plan.get("domain") == "app-first-handoff-v1":
         return HANDOFF_PHASES
     if plan.get("domain") == "app-first-handoff-recovery-plan-v1":
-        return HANDOFF_RECOVERY_PHASES
+        return (HANDOFF_RECOVERY_PHASES if "picker_free_recovery_recipe" in plan
+                else HANDOFF_RECOVERY_LEGACY_PHASES)
     raise BridgeError("handoff_plan_domain_invalid")
 
 
@@ -2066,6 +2112,9 @@ def handoff_recovery_inventory(identity: str, items: list[dict], images: dict, s
     if not SHA_RE.fullmatch(support_sha):
         raise BridgeError("handoff_recovery_support_invalid")
     restoring = plan["domain"] == "app-first-handoff-recovery-plan-v1"
+    new_recovery = restoring and "picker_free_recovery_recipe" in plan
+    if new_recovery:
+        _handoff_validate_picker_free_recovery_plan(plan)
     if schema is not None and schema != "20261113_0126":
         raise BridgeError("handoff_recovery_schema_mismatch")
     by_id = {item["Id"]: item for item in items}
@@ -2099,7 +2148,24 @@ def handoff_recovery_inventory(identity: str, items: list[dict], images: dict, s
             raise BridgeError("handoff_recovery_phase_mismatch")
         if restoring:
             previous = plan["recovery"]["services"][service]
-            if phase in {"prepared", "candidate_stop_intent", "candidate_stopped", "candidate_rename_intent", "candidate_retained"}:
+            if new_recovery:
+                previous_parked = previous["original"]["retained"]
+                previous_running = previous["original_running"]
+                if phase in {"prepared", "candidate_stop_intent", "candidate_stopped", "candidate_rename_intent", "candidate_retained"}:
+                    if parked != previous_parked or running != previous_running:
+                        raise BridgeError("handoff_recovery_original_phase_mismatch")
+                elif phase == "original_stop_intent":
+                    if parked != previous_parked or (running and not previous_running):
+                        raise BridgeError("handoff_recovery_original_phase_mismatch")
+                elif phase == "original_stopped":
+                    if parked != previous_parked or running:
+                        raise BridgeError("handoff_recovery_original_phase_mismatch")
+                elif phase == "original_rename_intent":
+                    if running or (previous_parked and not parked):
+                        raise BridgeError("handoff_recovery_original_phase_mismatch")
+                elif not parked or running:
+                    raise BridgeError("handoff_recovery_original_phase_mismatch")
+            elif phase in {"prepared", "candidate_stop_intent", "candidate_stopped", "candidate_rename_intent", "candidate_retained"}:
                 if parked != previous["original"]["retained"] or running != previous["original_running"]:
                     raise BridgeError("handoff_recovery_original_phase_mismatch")
             elif phase == "original_rename_intent":
@@ -2145,13 +2211,60 @@ def handoff_recovery_inventory(identity: str, items: list[dict], images: dict, s
             known.add(candidate["Id"])
         else:
             candidate_record = None
-        if original["State"].get("Running") and candidate and candidate["State"].get("Running"):
+        recovery_candidate_record = None
+        recovery_candidate_running = False
+        recovery_candidate_health = None
+        if new_recovery:
+            recovery_matches = []
+            for item in items:
+                labels = item.get("Config", {}).get("Labels") or {}
+                if (labels.get("com.docker.compose.project") == plan["recovery_project"]
+                        and labels.get("com.docker.compose.service") == service):
+                    recovery_matches.append(item)
+            if len(recovery_matches) > 1:
+                raise BridgeError("handoff_recovery_candidate_ambiguous")
+            recovery_item = recovery_matches[0] if recovery_matches else None
+            previous_recovery = plan["recovery"]["services"][service].get("recovery_candidate")
+            if previous_recovery and (recovery_item is None or recovery_item["Id"] != previous_recovery["id"]):
+                raise BridgeError("handoff_recovery_candidate_identity_changed")
+            if recovery_item and not previous_recovery and phase not in {
+                    "recovery_create_intent", "recovery_created", "recovery_start_intent", "recovery_started", "healthy"}:
+                raise BridgeError("handoff_recovery_candidate_phase_mismatch")
+            if recovery_item:
+                recipe_entry = plan["picker_free_recovery_recipe"]["services"][service]
+                if recovery_item.get("Image") != recipe_entry["image_id"]:
+                    raise BridgeError("handoff_recovery_candidate_image_changed")
+                recovery_candidate_record = handoff_record(service, recovery_item, plan["recovery_project"])
+                image = images.get(recovery_item["Image"])
+                if image is None:
+                    raise BridgeError("handoff_recovery_image_missing")
+                document = plan["recovery_models"][service]
+                prove_service_model(service, document["services"][service], document, recovery_item, image)
+                if (phase in {"recovery_created", "recovery_start_intent", "recovery_started", "healthy"}
+                        and recovery_item["Id"] != state["observations"][service]["id"]):
+                    raise BridgeError("handoff_recovery_candidate_identity_changed")
+                if phase == "recovery_started" and not recovery_item.get("State", {}).get("Running"):
+                    raise BridgeError("handoff_recovery_candidate_phase_mismatch")
+                if phase == "healthy" and (not recovery_item.get("State", {}).get("Running")
+                        or recovery_item.get("State", {}).get("Health", {}).get("Status") != "healthy"):
+                    raise BridgeError("handoff_recovery_candidate_unhealthy")
+                recovery_candidate_running = bool(recovery_item.get("State", {}).get("Running"))
+                recovery_candidate_health = recovery_item.get("State", {}).get("Health", {}).get("Status", "none")
+                known.add(recovery_item["Id"])
+            elif phase in {"recovery_created", "recovery_start_intent", "recovery_started", "healthy"}:
+                raise BridgeError("handoff_recovery_candidate_missing")
+        if ((original["State"].get("Running") and candidate and candidate["State"].get("Running"))
+                or (original["State"].get("Running") and recovery_candidate_running)
+                or (candidate and candidate["State"].get("Running") and recovery_candidate_running)):
             raise BridgeError("handoff_recovery_two_running")
         services[service] = {"original": observed, "original_running": original["State"].get("Running") is True,
                              "original_health": original["State"].get("Health", {}).get("Status", "none"),
                              "candidate": candidate_record,
                              "candidate_running": bool(candidate and candidate["State"].get("Running")),
-                             "candidate_health": candidate["State"].get("Health", {}).get("Status", "none") if candidate else None}
+                             "candidate_health": candidate["State"].get("Health", {}).get("Status", "none") if candidate else None,
+                             "recovery_candidate": recovery_candidate_record,
+                             "recovery_candidate_running": recovery_candidate_running,
+                             "recovery_candidate_health": recovery_candidate_health}
     for item in items:
         if item["Id"] in known:
             continue
@@ -2167,19 +2280,300 @@ def handoff_recovery_inventory(identity: str, items: list[dict], images: dict, s
             "services": services}
 
 
-def handoff_recovery_prepare(inventory: dict, approval: str) -> tuple[str, str]:
+def _picker_mount_path_intersects(value: object, anchor: str) -> bool:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        return False
+    lowered = value.lower()
+    if "picker-config.json" in lowered or "google-drive-picker-config.json" in lowered:
+        return True
+    if not value.startswith("/"):
+        return False
+    normalized = posixpath.normpath(value)
+    if normalized == "/":
+        return True
+    anchor_prefix = anchor.rstrip("/") + "/"
+    normalized_prefix = normalized.rstrip("/") + "/"
+    return normalized == anchor or anchor.startswith(normalized_prefix) or normalized.startswith(anchor_prefix)
+
+
+def _picker_free_recovery_model(service: str, document: dict) -> tuple[dict, bool]:
+    """Remove only the canonical Picker file bind from a proven service model."""
+    if (service not in SERVICES or not isinstance(document, dict)
+            or not isinstance(document.get("services"), dict) or set(document["services"]) != {service}):
+        raise BridgeError("handoff_recovery_recipe_model_invalid")
+    model = document["services"][service]
+    if (not isinstance(model, dict) or set(model) - MODEL_FIELDS
+            or not isinstance(model.get("image"), str) or not IMAGE_ID_RE.fullmatch(model["image"])):
+        raise BridgeError("handoff_recovery_recipe_model_invalid")
+    mounts = model.get("volumes", [])
+    if not isinstance(mounts, list):
+        raise BridgeError("handoff_recovery_recipe_mount_model_invalid")
+    exact = []
+    for index, mount in enumerate(mounts):
+        if (not isinstance(mount, dict)
+                or set(mount) - {"type", "source", "target", "read_only", "bind", "volume", "consistency"}
+                or mount.get("type") not in ("bind", "volume")):
+            raise BridgeError("handoff_recovery_recipe_mount_model_invalid")
+        source, target = mount.get("source"), mount.get("target")
+        picker_source = _picker_mount_path_intersects(source, PICKER_CONFIG_SOURCE)
+        picker_target = _picker_mount_path_intersects(target, PICKER_CONFIG_TARGET)
+        if picker_source or picker_target:
+            if (mount.get("type") == "bind" and source == PICKER_CONFIG_SOURCE
+                    and target == PICKER_CONFIG_TARGET):
+                exact.append(index)
+            else:
+                raise BridgeError("handoff_recovery_recipe_picker_mount_ambiguous")
+    if len(exact) > 1:
+        raise BridgeError("handoff_recovery_recipe_picker_mount_ambiguous")
+
+    tmpfs = model.get("tmpfs", [])
+    if not isinstance(tmpfs, list):
+        raise BridgeError("handoff_recovery_recipe_mount_model_invalid")
+    for entry in tmpfs:
+        if not isinstance(entry, str):
+            raise BridgeError("handoff_recovery_recipe_mount_model_invalid")
+        target = entry.split(":", 1)[0]
+        if _picker_mount_path_intersects(target, PICKER_CONFIG_TARGET):
+            raise BridgeError("handoff_recovery_recipe_picker_mount_ambiguous")
+
+    result = copy.deepcopy(document)
+    if exact:
+        result["services"][service]["volumes"] = [mount for index, mount in enumerate(mounts) if index != exact[0]]
+    return result, bool(exact)
+
+
+def _handoff_picker_free_recovery_recipe(plan: dict) -> dict:
+    original_models = plan.get("original_models")
+    sources = plan.get("sources")
+    if (not isinstance(original_models, dict) or set(original_models) != set(SERVICES)
+            or not isinstance(sources, list) or any(not isinstance(record, dict) for record in sources)):
+        raise BridgeError("handoff_recovery_recipe_source_invalid")
+    recipe_services = {}
+    for service in SERVICES:
+        records = [record for record in sources if record.get("service") == service and not record.get("retained")]
+        if (len(records) != 1 or not isinstance(records[0].get("image"), str)
+                or not IMAGE_ID_RE.fullmatch(records[0]["image"])):
+            raise BridgeError("handoff_recovery_recipe_source_invalid")
+        recipe_model, picker_bind_removed = _picker_free_recovery_model(service, original_models[service])
+        image_id = recipe_model["services"][service]["image"]
+        if image_id != records[0]["image"]:
+            raise BridgeError("handoff_recovery_recipe_image_mismatch")
+        recipe_services[service] = {"image_id": image_id, "model": recipe_model,
+                                    "model_sha256": digest(recipe_model),
+                                    "picker_bind_removed": picker_bind_removed}
+    unsigned = {"version": 1, "domain": "app-picker-free-recovery-recipe-v1", "services": recipe_services}
+    return {**unsigned, "sha256": digest(unsigned)}
+
+
+def _healthy_reference_service(observation: dict, item: dict) -> dict:
+    running = [observation[k] for k in ("original", "candidate", "recovery_candidate")
+               if observation.get(k + "_running")]
+    if (len(running) != 1 or not isinstance(running[0], dict)
+            or running[0].get("retained") is not False
+            or running[0].get("id") != item["Id"] or running[0].get("image") != item["Image"]
+            or item.get("State", {}).get("Running") is not True
+            or item["State"].get("Health", {}).get("Status") != "healthy"):
+        raise BridgeError("handoff_current_reference_unproven")
+    return {"original": running[0], "original_running": True, "original_health": "healthy",
+            "candidate": None, "candidate_running": False, "candidate_health": None,
+            "recovery_candidate": None, "recovery_candidate_running": False, "recovery_candidate_health": None}
+
+
+def _handoff_current_reference(proof: dict) -> tuple[dict, dict]:
+    if proof["schema_status"] != "verified":
+        raise BridgeError("handoff_current_reference_schema_unverified")
+    support_sha = proof["support_sha"]
+    with _handoff_proven_context(support_sha) as context:
+        records = _handoff_context_records(context, require_witnesses=True)
+        items = _handoff_read_items(records)
+        active = handoff_select(items, records)
+        observations = {}
+        models = copy.deepcopy(context["models"])
+        for service in SERVICES:
+            item = active[service]
+            if item["Id"] != context["containers"][service]["Id"]:
+                raise BridgeError("handoff_current_reference_unproven")
+            observations[service] = _healthy_reference_service(proof["services"][service], item)
+            version = environment_map(item["Config"].get("Env") or []).get("APP_VERSION", "")
+            models[service] = replacement_document(
+                service, models[service], item, item["Image"], version)
+        sources = dict(context["digests"])
+        registry = BRIDGE_STATE / "handoff-witnesses.json"
+        sources[str(registry)] = snapshot_sha256(registry)
+        baseline = handoff_plan(proof["interrupted_sha"], support_sha, digest(models), items, records,
+                                models, models, sources, context["environment_digest"], context["checkout_sha"])
+        baseline["original_web_version"] = _web_identity(context, support_sha).split()[0]
+        baseline["previous_handoff"] = proof["handoff"]
+        return baseline, observations
+
+
+def handoff_recovery_prepare(inventory: dict, approval: str, *, current_reference: tuple[dict, dict] | None = None) -> tuple[str, str]:
     _assert_common_lock_held()
     if inventory.get("domain") != "app-handoff-recovery-v1" or digest(inventory) != approval:
         raise BridgeError("handoff_recovery_approval_mismatch")
     original, _, revision = handoff_journal_read(inventory["handoff"])
     if revision != inventory["revision"]:
         raise BridgeError("handoff_recovery_revision_changed")
+    if current_reference is not None:
+        original, observations = current_reference
+        if (digest(original) != inventory.get("current_reference_sha256")
+                or original["previous_handoff"] != inventory["handoff"]):
+            raise BridgeError("handoff_current_reference_changed")
+        inventory = dict(inventory, services=observations)
+    picker_free_recipe = _handoff_picker_free_recovery_recipe(original)
+    recovery_project = original.get("recovery_project")
+    if recovery_project is None:
+        recovery_project = handoff_generation(
+            original["target_sha"], original["bundle_sha256"], inventory["support_sha"],
+            digest({"handoff": inventory["handoff"], "recipe_sha256": picker_free_recipe["sha256"]}))
+    if not isinstance(recovery_project, str) or not re.fullmatch(re.escape(PROJECT) + r"-app-[0-9a-f]{32}", recovery_project):
+        raise BridgeError("handoff_recovery_project_invalid")
+    recovery_models = {}
+    for service in SERVICES:
+        document = copy.deepcopy(picker_free_recipe["services"][service]["model"])
+        model = document["services"][service]
+        expected_name = PROJECT + "-" + service + "-1"
+        if model.get("container_name", expected_name) != expected_name:
+            raise BridgeError("handoff_recovery_model_container_name_invalid")
+        model["container_name"] = expected_name
+        recovery_models[service] = document
     plan = copy.deepcopy(original)
     plan["domain"] = "app-first-handoff-recovery-plan-v1"
     plan["recovery"] = copy.deepcopy(inventory)
+    plan["picker_free_recovery_recipe"] = picker_free_recipe
+    plan["recovery_project"] = recovery_project
+    plan["recovery_models"] = recovery_models
+    plan["recovery_model_sha256"] = {service: digest(document) for service, document in recovery_models.items()}
     plan["approval"] = approval
     plan["support_sha"] = inventory["support_sha"]
+    _handoff_validate_picker_free_recovery_plan(plan)
     return _handoff_prepare_journal(plan)
+
+
+def _handoff_validate_picker_free_recovery_plan(plan: dict) -> dict:
+    recipe = plan.get("picker_free_recovery_recipe")
+    recovery_models = plan.get("recovery_models")
+    model_hashes = plan.get("recovery_model_sha256")
+    if (not isinstance(recipe, dict) or set(recipe) != {"version", "domain", "services", "sha256"}
+            or recipe.get("version") != 1 or recipe.get("domain") != "app-picker-free-recovery-recipe-v1"
+            or not isinstance(recipe.get("services"), dict) or set(recipe["services"]) != set(SERVICES)
+            or not isinstance(recipe.get("sha256"), str) or not HASH_RE.fullmatch(recipe["sha256"])
+            or digest({key: value for key, value in recipe.items() if key != "sha256"}) != recipe["sha256"]):
+        raise BridgeError("handoff_recovery_recipe_invalid")
+    if _handoff_picker_free_recovery_recipe(plan) != recipe:
+        raise BridgeError("handoff_recovery_recipe_changed")
+    if (not isinstance(recovery_models, dict) or set(recovery_models) != set(SERVICES)
+            or not isinstance(model_hashes, dict) or set(model_hashes) != set(SERVICES)
+            or not isinstance(plan.get("recovery_project"), str)
+            or not re.fullmatch(re.escape(PROJECT) + r"-app-[0-9a-f]{32}", plan["recovery_project"])):
+        raise BridgeError("handoff_recovery_model_invalid")
+    for service in SERVICES:
+        entry = recipe["services"][service]
+        if (not isinstance(entry, dict) or set(entry) != {"image_id", "model", "model_sha256", "picker_bind_removed"}
+                or not isinstance(entry.get("image_id"), str) or not IMAGE_ID_RE.fullmatch(entry["image_id"])
+                or not isinstance(entry.get("model"), dict) or not isinstance(entry.get("picker_bind_removed"), bool)
+                or not isinstance(entry.get("model_sha256"), str) or not HASH_RE.fullmatch(entry["model_sha256"])
+                or digest(entry["model"]) != entry["model_sha256"]):
+            raise BridgeError("handoff_recovery_recipe_invalid")
+        expected_model = copy.deepcopy(entry["model"])
+        expected_service = expected_model["services"][service]
+        expected_name = PROJECT + "-" + service + "-1"
+        if expected_service.get("container_name", expected_name) != expected_name:
+            raise BridgeError("handoff_recovery_model_container_name_invalid")
+        expected_service["container_name"] = expected_name
+        if recovery_models[service] != expected_model or model_hashes[service] != digest(expected_model):
+            raise BridgeError("handoff_recovery_model_changed")
+    return recovery_models
+
+
+def _handoff_picker_free_expected_runtime(service: str, item: dict, picker_bind_removed: bool) -> dict:
+    expected = copy.deepcopy(item)
+    actual_mounts = item.get("Mounts") or []
+    if not isinstance(actual_mounts, list):
+        raise BridgeError("handoff_recovery_runtime_mount_invalid")
+    picker_mounts = []
+    for index, mount in enumerate(actual_mounts):
+        if not isinstance(mount, dict):
+            raise BridgeError("handoff_recovery_runtime_mount_invalid")
+        source, target = mount.get("Source"), mount.get("Destination")
+        relevant = (_picker_mount_path_intersects(source, PICKER_CONFIG_SOURCE)
+                    or _picker_mount_path_intersects(target, PICKER_CONFIG_TARGET))
+        if relevant:
+            if (mount.get("Type") != "bind" or source != PICKER_CONFIG_SOURCE
+                    or target != PICKER_CONFIG_TARGET):
+                raise BridgeError("handoff_recovery_runtime_picker_mount_ambiguous")
+            picker_mounts.append(index)
+    if len(picker_mounts) != int(picker_bind_removed):
+        raise BridgeError("handoff_recovery_runtime_picker_mount_mismatch")
+    if picker_mounts:
+        expected["Mounts"] = [mount for index, mount in enumerate(actual_mounts) if index != picker_mounts[0]]
+
+    host = expected.get("HostConfig")
+    if not isinstance(host, dict):
+        raise BridgeError("handoff_recovery_runtime_mount_invalid")
+    host_binds = host.get("Binds") or []
+    if not isinstance(host_binds, list):
+        raise BridgeError("handoff_recovery_runtime_mount_invalid")
+    retained_binds, picker_bind_specs = [], 0
+    for bind in host_binds:
+        if not isinstance(bind, str):
+            raise BridgeError("handoff_recovery_runtime_mount_invalid")
+        fields = bind.split(":")
+        source, target = fields[0], fields[1] if len(fields) > 1 else None
+        relevant = (_picker_mount_path_intersects(source, PICKER_CONFIG_SOURCE)
+                    or _picker_mount_path_intersects(target, PICKER_CONFIG_TARGET))
+        if relevant:
+            if (len(fields) not in {2, 3} or source != PICKER_CONFIG_SOURCE
+                    or target != PICKER_CONFIG_TARGET):
+                raise BridgeError("handoff_recovery_runtime_picker_mount_ambiguous")
+            picker_bind_specs += 1
+            continue
+        retained_binds.append(bind)
+    if picker_bind_specs > 1 or (picker_bind_specs and not picker_bind_removed):
+        raise BridgeError("handoff_recovery_runtime_picker_mount_mismatch")
+    if host_binds != retained_binds:
+        host["Binds"] = retained_binds
+
+    host_mounts = host.get("Mounts") or []
+    if not isinstance(host_mounts, list):
+        raise BridgeError("handoff_recovery_runtime_mount_invalid")
+    retained_host_mounts, picker_mount_specs = [], 0
+    for mount in host_mounts:
+        if not isinstance(mount, dict):
+            raise BridgeError("handoff_recovery_runtime_mount_invalid")
+        source, target = mount.get("Source"), mount.get("Target")
+        relevant = (_picker_mount_path_intersects(source, PICKER_CONFIG_SOURCE)
+                    or _picker_mount_path_intersects(target, PICKER_CONFIG_TARGET))
+        if relevant:
+            if (mount.get("Type") != "bind" or source != PICKER_CONFIG_SOURCE
+                    or target != PICKER_CONFIG_TARGET):
+                raise BridgeError("handoff_recovery_runtime_picker_mount_ambiguous")
+            picker_mount_specs += 1
+            continue
+        retained_host_mounts.append(mount)
+    if picker_mount_specs > 1 or (picker_mount_specs and not picker_bind_removed):
+        raise BridgeError("handoff_recovery_runtime_picker_mount_mismatch")
+    if host_mounts != retained_host_mounts:
+        host["Mounts"] = retained_host_mounts
+    return expected
+
+
+def _handoff_validate_picker_free_service(plan: dict, service: str, original: dict) -> dict:
+    recovery_models = _handoff_validate_picker_free_recovery_plan(plan)
+    recipe_entry = plan["picker_free_recovery_recipe"]["services"][service]
+    expected = _handoff_picker_free_expected_runtime(service, original, recipe_entry["picker_bind_removed"])
+    image_output = _docker(["image", "inspect", recipe_entry["image_id"]])
+    try:
+        images = json.loads(image_output)
+    except (TypeError, ValueError):
+        raise BridgeError("handoff_recovery_image_invalid") from None
+    if not isinstance(images, list) or len(images) != 1 or images[0].get("Id") != recipe_entry["image_id"]:
+        raise BridgeError("handoff_recovery_image_invalid")
+    document = recovery_models[service]
+    if document["services"][service]["image"] != recipe_entry["image_id"]:
+        raise BridgeError("handoff_recovery_recipe_image_mismatch")
+    prove_service_model(service, document["services"][service], document, expected, images[0])
+    return document
 
 
 def _handoff_recovery_candidate(plan: dict, service: str, *, parked: bool) -> dict | None:
@@ -2193,6 +2587,34 @@ def _handoff_recovery_candidate(plan: dict, service: str, *, parked: bool) -> di
     if observed != expected:
         raise BridgeError("handoff_recovery_candidate_changed")
     return item
+
+
+def _handoff_picker_free_candidate(plan: dict, service: str, *, running: bool | None = None,
+                                   healthy: bool = False) -> dict:
+    models = _handoff_validate_picker_free_recovery_plan(plan)
+    item = _handoff_inspect(PROJECT + "-" + service + "-1")
+    handoff_record(service, item, plan["recovery_project"])
+    if item.get("Image") != plan["picker_free_recovery_recipe"]["services"][service]["image_id"]:
+        raise BridgeError("handoff_recovery_candidate_image_changed")
+    image = json.loads(_docker(["image", "inspect", item["Image"]]))[0]
+    document = models[service]
+    prove_service_model(service, document["services"][service], document, item, image)
+    if running is not None and item.get("State", {}).get("Running") is not running:
+        raise BridgeError("handoff_recovery_candidate_state_changed")
+    if healthy and (item.get("State", {}).get("Health", {}).get("Status") != "healthy"):
+        raise BridgeError("handoff_recovery_candidate_unhealthy")
+    return item
+
+
+def _handoff_wait_picker_free_candidate(plan: dict, service: str) -> dict:
+    deadline = time.monotonic() + 120
+    while True:
+        item = _handoff_picker_free_candidate(plan, service, running=True)
+        if item.get("State", {}).get("Health", {}).get("Status") == "healthy":
+            return item
+        if time.monotonic() >= deadline:
+            raise BridgeError("handoff_recovery_candidate_unhealthy")
+        time.sleep(2)
 
 
 def _handoff_wait_restored(plan: dict, service: str) -> dict:
@@ -2212,19 +2634,40 @@ def handoff_recover_service(identity: str, revision: str, service: str) -> str:
     if (plan["domain"] != "app-first-handoff-recovery-plan-v1" or current != revision
             or service not in SERVICES or state["phases"][service] != "prepared"):
         raise BridgeError("handoff_recovery_requires_prepared")
+    if "picker_free_recovery_recipe" not in plan:
+        raise BridgeError("handoff_recovery_recipe_required")
     if service == "web" and state["phases"]["api"] != "healthy":
         raise BridgeError("handoff_api_health_required")
     _handoff_validate_inputs(plan)
+    recovery_models = _handoff_validate_picker_free_recovery_plan(plan)
     entry = plan["recovery"]["services"][service]
     original_parked = entry["original"]["retained"]
     original = _handoff_original(plan, service, retained=original_parked, running=entry["original_running"])
     candidate_parked = bool(entry["candidate"] and entry["candidate"]["retained"])
     candidate = _handoff_recovery_candidate(plan, service, parked=candidate_parked)
+    recovery_candidate_record = entry.get("recovery_candidate")
+    recovery_candidate = (_handoff_picker_free_candidate(
+        plan, service, running=entry["recovery_candidate_running"])
+        if recovery_candidate_record else None)
+    if recovery_candidate and handoff_record(service, recovery_candidate, plan["recovery_project"]) != recovery_candidate_record:
+        raise BridgeError("handoff_recovery_candidate_changed")
     if (original.get("State", {}).get("Health", {}).get("Status", "none") != entry["original_health"]
             or (candidate and (candidate.get("State", {}).get("Running") is True) != entry["candidate_running"])
-            or (candidate and candidate.get("State", {}).get("Health", {}).get("Status", "none") != entry["candidate_health"])):
+            or (candidate and candidate.get("State", {}).get("Health", {}).get("Status", "none") != entry["candidate_health"])
+            or (recovery_candidate and recovery_candidate.get("State", {}).get("Health", {}).get("Status", "none")
+                != entry["recovery_candidate_health"])):
         raise BridgeError("handoff_recovery_runtime_changed")
-    observation = _handoff_observation(candidate or original)
+    recovery_model = _handoff_validate_picker_free_service(plan, service, original)
+    if recovery_model != recovery_models[service]:
+        raise BridgeError("handoff_recovery_model_changed")
+    if not recovery_candidate:
+        existing = [item for item in _handoff_read_items()
+                    if (item.get("Config", {}).get("Labels") or {}).get("com.docker.compose.project") == plan["recovery_project"]
+                    and (item.get("Config", {}).get("Labels") or {}).get("com.docker.compose.service") == service]
+        if existing:
+            raise BridgeError("handoff_recovery_candidate_unregistered")
+
+    observation = _handoff_observation(candidate or recovery_candidate or original)
     revision = handoff_journal_advance(identity, revision, service, "candidate_stop_intent", observation)
     if candidate and candidate.get("State", {}).get("Running"):
         _docker(["stop", "--time", "30", candidate["Id"]], timeout=60)
@@ -2241,20 +2684,53 @@ def handoff_recover_service(identity: str, revision: str, service: str) -> str:
         _docker(["rename", candidate["Id"], name])
     candidate = _handoff_recovery_candidate(plan, service, parked=bool(candidate))
     revision = handoff_journal_advance(identity, revision, service, "candidate_retained", _handoff_observation(candidate or original))
-    revision = handoff_journal_advance(identity, revision, service, "original_rename_intent", _handoff_observation(original))
-    if original_parked:
-        if _docker(["ps", "-a", "--filter", "name=^/" + plan["services"][service]["original_name"] + "$", "--format", "{{.ID}}"]).strip():
-            raise BridgeError("handoff_original_name_occupied")
-        _docker(["rename", original["Id"], plan["services"][service]["original_name"]])
-    named = _handoff_original(plan, service, retained=False, running=entry["original_running"])
-    revision = handoff_journal_advance(identity, revision, service, "original_named", _handoff_observation(named))
-    revision = handoff_journal_advance(identity, revision, service, "original_start_intent", _handoff_observation(named))
-    if not named["State"].get("Running"):
-        _docker(["start", named["Id"]], timeout=60)
-    restored = _handoff_wait_restored(plan, service)
-    revision = handoff_journal_advance(identity, revision, service, "original_started", _handoff_observation(restored))
-    api_source = next(record for record in plan["sources"] if record["service"] == "api" and not record["retained"])
-    _handoff_check_api(_handoff_inspect(api_source["id"]))
+    revision = handoff_journal_advance(identity, revision, service, "original_stop_intent", _handoff_observation(original))
+    if original.get("State", {}).get("Running"):
+        _docker(["stop", "--time", "30", original["Id"]], timeout=60)
+    stopped_original = _handoff_original(plan, service, retained=original_parked, running=False)
+    revision = handoff_journal_advance(identity, revision, service, "original_stopped", _handoff_observation(stopped_original))
+    revision = handoff_journal_advance(identity, revision, service, "original_rename_intent", _handoff_observation(stopped_original))
+    if not original_parked:
+        retained_name = handoff_retained_name(service, original["Id"])
+        if _docker(["ps", "-a", "--filter", "name=^/" + retained_name + "$", "--format", "{{.ID}}"]).strip():
+            raise BridgeError("handoff_retained_name_occupied")
+        _docker(["rename", original["Id"], retained_name])
+    retained_original = _handoff_original(plan, service, retained=True, running=False)
+    revision = handoff_journal_advance(identity, revision, service, "original_retained", _handoff_observation(retained_original))
+
+    destination = _handoff_journal_directory(identity) / ("recovery-apply-" + service + ".compose.json")
+    content = json.dumps(_escape_compose(recovery_model), sort_keys=True).encode()
+    if os.path.lexists(destination):
+        validate_snapshot_metadata(_root_metadata(destination), allowed_owners={0}, root_only=True)
+        _read_private_copy_source(destination, hashlib.sha256(content).hexdigest())
+    else:
+        _write_private_file(destination, content)
+    observation = _handoff_observation(recovery_candidate or retained_original)
+    revision = handoff_journal_advance(identity, revision, service, "recovery_create_intent", observation)
+    if recovery_candidate is None:
+        command = ["/usr/bin/docker", "compose", "--project-directory", str(WORKING_DIR),
+                   "-p", plan["recovery_project"], "-f", str(destination), "create",
+                   "--no-build", "--pull", "never", "--no-recreate", service]
+        _run(command, app_version=plan["checkout_sha"], timeout=300)
+        recovery_candidate = _handoff_picker_free_candidate(plan, service, running=False)
+    else:
+        recovery_candidate = _handoff_picker_free_candidate(plan, service)
+    revision = handoff_journal_advance(identity, revision, service, "recovery_created",
+                                       _handoff_observation(recovery_candidate))
+    _handoff_validate_inputs(plan)
+    revision = handoff_journal_advance(identity, revision, service, "recovery_start_intent",
+                                       _handoff_observation(recovery_candidate))
+    if not recovery_candidate.get("State", {}).get("Running"):
+        _docker(["start", recovery_candidate["Id"]], timeout=60)
+    recovery_candidate = _handoff_picker_free_candidate(plan, service, running=True)
+    revision = handoff_journal_advance(identity, revision, service, "recovery_started",
+                                       _handoff_observation(recovery_candidate))
+    restored = _handoff_wait_picker_free_candidate(plan, service)
+    if service == "api":
+        _handoff_check_api(restored)
+    else:
+        api = _handoff_picker_free_candidate(plan, "api", running=True, healthy=True)
+        _handoff_check_api(api)
     revision = handoff_journal_advance(identity, revision, service, "healthy", _handoff_observation(restored))
     return revision
 
@@ -2266,6 +2742,10 @@ def handoff_publish_runtime(identity: str, *, restoring: bool = False) -> dict:
     if plan["domain"] != expected_domain or any(phase != "healthy" for phase in state["phases"].values()):
         raise BridgeError("handoff_publish_requires_healthy")
     _handoff_validate_inputs(plan)
+    if restoring:
+        if "picker_free_recovery_recipe" not in plan:
+            raise BridgeError("handoff_recovery_recipe_required")
+        _handoff_validate_picker_free_recovery_plan(plan)
     records, selected = [], {}
     for record in plan["sources"]:
         if record["retained"]:
@@ -2273,8 +2753,10 @@ def handoff_publish_runtime(identity: str, *, restoring: bool = False) -> dict:
             continue
         service = record["service"]
         if restoring:
-            item = _handoff_original(plan, service, retained=False, running=True)
-            records.append(handoff_record(service, item, record["project"]))
+            original = _handoff_original(plan, service, retained=True, running=False)
+            records.append(handoff_record(service, original, record["project"], retained=True))
+            item = _handoff_picker_free_candidate(plan, service, running=True, healthy=True)
+            records.append(handoff_record(service, item, plan["recovery_project"]))
             selected[service] = item
             candidate = _handoff_recovery_candidate(plan, service, parked=bool(plan["recovery"]["services"][service]["candidate"]))
             if candidate is not None:
@@ -2296,7 +2778,7 @@ def handoff_publish_runtime(identity: str, *, restoring: bool = False) -> dict:
         raise BridgeError("handoff_web_version_unproven")
     projects = {record["service"]: record["project"] for record in records if not record["retained"]}
     context = _discover_context(selected=selected, expected_projects=projects)
-    models = plan["original_models"] if restoring else plan["models"]
+    models = plan["recovery_models"] if restoring else plan["models"]
     for service in SERVICES:
         path = _handoff_journal_directory(identity) / ("final-" + service + ".json")
         content = json.dumps(_escape_compose(models[service]), sort_keys=True).encode()
@@ -2462,12 +2944,132 @@ def _handoff_live_recovery_inventory(support_sha: str) -> dict:
     if eligible:
         item = eligible[0]
         permitted = {record["id"] for record in plan["sources"] if record["service"] == "api" and not record["retained"]}
+        allowed_projects = {plan["project"]}
+        if plan.get("recovery_project"):
+            allowed_projects.add(plan["recovery_project"])
         labels = item["Config"].get("Labels") or {}
-        if item["Id"] not in permitted and (labels.get("com.docker.compose.project") != plan["project"] or labels.get("com.docker.compose.service") != "api"):
+        if item["Id"] not in permitted and (labels.get("com.docker.compose.project") not in allowed_projects
+                or labels.get("com.docker.compose.service") != "api"):
             raise BridgeError("handoff_recovery_api_unproven")
         _handoff_check_api(item)
         schema = "20261113_0126"
     return handoff_recovery_inventory(identity, items, images, schema, support_sha=support_sha)
+
+
+def _handoff_picker_free_runtime_receipt(support_sha: str, recovery_proof: dict) -> dict:
+    identity = recovery_proof.get("handoff") if isinstance(recovery_proof, dict) else None
+    if not isinstance(identity, str) or not HASH_RE.fullmatch(identity):
+        raise BridgeError("handoff_picker_free_receipt_missing")
+    plan, state, revision = handoff_journal_read(identity)
+    if (plan.get("domain") != "app-first-handoff-recovery-plan-v1"
+            or plan.get("support_sha") != support_sha
+            or "picker_free_recovery_recipe" not in plan
+            or recovery_proof.get("schema_status") != "verified"
+            or recovery_proof.get("support_sha") != support_sha
+            or state.get("phases") != {service: "healthy" for service in SERVICES}
+            or _handoff_active_id() != identity):
+        raise BridgeError("handoff_picker_free_receipt_missing")
+    _handoff_validate_picker_free_recovery_plan(plan)
+
+    pointer = _read_base_pointer()
+    if pointer is None:
+        raise BridgeError("handoff_picker_free_runtime_base_missing")
+    _, manifest = _read_runtime_base(pointer)
+    transition = manifest.get("proof")
+    records = manifest.get("handoff_records")
+    if (not isinstance(transition, dict)
+            or set(transition) != {"version", "domain", "handoff", "support_sha", "target_sha", "mode",
+                                   "runtime", "models", "records", "schema"}
+            or transition.get("version") != 1 or transition.get("domain") != "app-runtime-transition-v1"
+            or transition.get("handoff") != identity or transition.get("support_sha") != support_sha
+            or transition.get("target_sha") != plan["checkout_sha"] or transition.get("mode") != "rollback"
+            or transition.get("schema") != "20261113_0126"
+            or manifest.get("approval") != plan.get("approval")
+            or not isinstance(records, list) or transition.get("records") != digest(records)
+            or transition.get("runtime") != manifest.get("runtime")
+            or not isinstance(manifest.get("models"), dict) or set(manifest["models"]) != set(SERVICES)):
+        raise BridgeError("handoff_picker_free_runtime_receipt_mismatch")
+
+    items = _handoff_read_items()
+    images = {item["Image"]: json.loads(_docker(["image", "inspect", item["Image"]]))[0] for item in items}
+    observed_proof = handoff_recovery_inventory(identity, items, images, "20261113_0126", support_sha=support_sha)
+    if digest(observed_proof) != digest(recovery_proof):
+        raise BridgeError("handoff_picker_free_runtime_changed")
+    by_id = {item["Id"]: item for item in items}
+    active_records = [record for record in records if not record.get("retained")]
+    if len(active_records) != len(SERVICES) or {record.get("service") for record in active_records} != set(SERVICES):
+        raise BridgeError("handoff_picker_free_runtime_receipt_mismatch")
+    selected, service_receipts = {}, {}
+    for service in SERVICES:
+        result = recovery_proof["services"][service]
+        candidate = result.get("recovery_candidate")
+        if (not isinstance(candidate, dict) or result.get("recovery_candidate_running") is not True
+                or result.get("recovery_candidate_health") != "healthy"):
+            raise BridgeError("handoff_picker_free_runtime_unhealthy")
+        item = by_id.get(candidate.get("id"))
+        if item is None or item.get("Image") != candidate.get("image"):
+            raise BridgeError("handoff_picker_free_runtime_changed")
+        if (item.get("State", {}).get("Running") is not True
+                or item.get("State", {}).get("Status") != "running"
+                or item.get("State", {}).get("Health", {}).get("Status") != "healthy"):
+            raise BridgeError("handoff_picker_free_runtime_unhealthy")
+        actual_record = handoff_record(service, item, plan["recovery_project"])
+        if candidate != actual_record:
+            raise BridgeError("handoff_picker_free_runtime_changed")
+        if [record for record in active_records if record.get("service") == service] != [actual_record]:
+            raise BridgeError("handoff_picker_free_runtime_receipt_mismatch")
+        mounts = item.get("Mounts")
+        if not isinstance(mounts, list):
+            raise BridgeError("handoff_picker_free_runtime_mount_invalid")
+        for mount in mounts:
+            if not isinstance(mount, dict):
+                raise BridgeError("handoff_picker_free_runtime_mount_invalid")
+            if (_picker_mount_path_intersects(mount.get("Source"), PICKER_CONFIG_SOURCE)
+                    or _picker_mount_path_intersects(mount.get("Destination"), PICKER_CONFIG_TARGET)):
+                raise BridgeError("handoff_picker_free_runtime_picker_mount_present")
+        host = item.get("HostConfig")
+        if not isinstance(host, dict):
+            raise BridgeError("handoff_picker_free_runtime_mount_invalid")
+        for key, target_key in (("Binds", None), ("Mounts", "Target")):
+            values = host.get(key) or []
+            if not isinstance(values, list):
+                raise BridgeError("handoff_picker_free_runtime_mount_invalid")
+            for value in values:
+                if key == "Binds":
+                    if not isinstance(value, str):
+                        raise BridgeError("handoff_picker_free_runtime_mount_invalid")
+                    fields = value.split(":")
+                    source, target = fields[0], fields[1] if len(fields) > 1 else None
+                else:
+                    if not isinstance(value, dict):
+                        raise BridgeError("handoff_picker_free_runtime_mount_invalid")
+                    source, target = value.get("Source"), value.get(target_key)
+                if (_picker_mount_path_intersects(source, PICKER_CONFIG_SOURCE)
+                        or _picker_mount_path_intersects(target, PICKER_CONFIG_TARGET)):
+                    raise BridgeError("handoff_picker_free_runtime_picker_mount_present")
+
+        model_content = json.dumps(_escape_compose(plan["recovery_models"][service]), sort_keys=True).encode()
+        model_sha256 = hashlib.sha256(model_content).hexdigest()
+        if manifest["models"].get(service) != model_sha256:
+            raise BridgeError("handoff_picker_free_runtime_model_mismatch")
+        selected[service] = item
+        service_receipts[service] = {
+            "container_id": item["Id"], "image_id": item["Image"], "health": "healthy",
+            "running": True, "model_sha256": plan["recovery_model_sha256"][service],
+            "picker_bind_removed": plan["picker_free_recovery_recipe"]["services"][service]["picker_bind_removed"],
+        }
+    if transition.get("runtime") != adoption_runtime_binding(selected):
+        raise BridgeError("handoff_picker_free_runtime_receipt_mismatch")
+    receipt = {
+        "version": 1, "domain": "app-picker-free-runtime-receipt-v1", "handoff": identity,
+        "revision": revision, "support_sha": support_sha,
+        "recipe_sha256": plan["picker_free_recovery_recipe"]["sha256"],
+        "runtime_base": pointer["base"], "runtime_manifest_sha256": pointer["manifest_sha256"],
+        "runtime_pointer_sha256": snapshot_sha256(BRIDGE_STATE / "active-base.json"),
+        "transition_proof_sha256": digest(transition), "recovery_inventory_sha256": digest(recovery_proof),
+        "services": service_receipts,
+    }
+    return {**receipt, "receipt_sha256": digest(receipt)}
 
 
 def _handoff_legacy_proof(support_sha: str, *, allow_marker_absent: bool = False) -> dict:
@@ -2678,15 +3280,31 @@ def _handoff_cli(args) -> int:
         print("nginx_status=reloaded")
         return 0
     if operation in {"handoff-witness-inventory", "handoff-witness-register"}:
+        registry_before = handoff_witness_registry()
         with _handoff_proven_context(args.sha) as context:
             records = _handoff_context_records(context, require_witnesses=False)
             proof = handoff_witness_inventory(args.sha, _handoff_read_items(), records, context["digests"], context["environment_digest"])
             if operation == "handoff-witness-register":
                 handoff_register_witnesses(proof, args.approval_fingerprint)
-            print("witness_fingerprint=" + digest(proof))
-            print("witness_count=" + str(len(proof["witnesses"])))
-            for record in proof["witnesses"]:
+                registry = handoff_witness_registry()
+            else:
+                registry = handoff_witness_registry()
+                if registry != registry_before:
+                    raise BridgeError("handoff_witness_registry_changed")
+            report = handoff_witness_inventory_report(proof, _handoff_read_items(),
+                                                      registry_present=registry is not None)
+            print("witness_fingerprint=" + report["fingerprint"])
+            print("witness_registered=" + ("true" if registry is not None else "false"))
+            print("active_count=" + str(len(report["active_ids"])))
+            for identity in report["active_ids"]:
+                print("active_id=" + identity)
+            print("witness_count=" + str(len(report["witnesses"])))
+            for record in report["witnesses"]:
                 print("witness=" + record["id"] + "|" + record["name"] + "|" + record["image"])
+                print("witness_attestation=" + "|".join((record["id"], record["name"], record["image"],
+                                                         record["service"], record["configuration"],
+                                                         record["lifecycle"],
+                                                         "true" if record["registered"] else "false")))
         return 0
     if operation in {"handoff-inventory", "handoff-prepare"}:
         plan = _handoff_candidate_plan(args)
@@ -2720,12 +3338,41 @@ def _handoff_cli(args) -> int:
         receipt = handoff_publish_runtime(identity)
     elif operation in {"handoff-recovery-inventory", "handoff-recovery-prepare"}:
         proof = _handoff_live_recovery_inventory(args.sha)
+        active_plan, _, _ = handoff_journal_read(proof["handoff"])
+        current_reference = None
+        if "picker_free_recovery_recipe" not in active_plan:
+            current_reference = _handoff_current_reference(proof)
+            baseline, observations = current_reference
+            proof["current_reference_sha256"] = digest(baseline)
+            for service in SERVICES:
+                print(f"current_reference_{service}_image=" + observations[service]["original"]["image"])
         if operation == "handoff-recovery-prepare":
-            identity, _ = handoff_recovery_prepare(proof, args.approval_fingerprint)
+            identity, _ = handoff_recovery_prepare(proof, args.approval_fingerprint, current_reference=current_reference)
             _handoff_set_active(identity)
         print("recovery_fingerprint=" + digest(proof))
         print("schema_status=" + proof["schema_status"])
         print("interrupted_sha=" + proof["interrupted_sha"])
+        plan, state, _ = handoff_journal_read(proof["handoff"])
+        picker_free = (plan.get("domain") == "app-first-handoff-recovery-plan-v1"
+                       and "picker_free_recovery_recipe" in plan
+                       and state.get("phases") == {service: "healthy" for service in SERVICES})
+        print("recovery_picker_free=" + ("true" if picker_free else "false"))
+        if picker_free:
+            receipt = _handoff_picker_free_runtime_receipt(args.sha, proof)
+            print("recovery_recipe_sha256=" + receipt["recipe_sha256"])
+            print("recovery_receipt_sha256=" + receipt["receipt_sha256"])
+            print("recovery_active_base_id=" + receipt["runtime_base"])
+            print("recovery_active_base_manifest_sha256=" + receipt["runtime_manifest_sha256"])
+            print("recovery_active_base_pointer_sha256=" + receipt["runtime_pointer_sha256"])
+            for service in SERVICES:
+                item = receipt["services"][service]
+                print(f"recovery_phase_{service}=healthy")
+                print(f"recovery_container_{service}=" + item["container_id"])
+                print(f"recovery_image_{service}=" + item["image_id"])
+                print(f"recovery_health_{service}=healthy")
+                print(f"recovery_running_{service}=true")
+                print(f"recovery_picker_bind_removed_{service}=" +
+                      ("true" if item["picker_bind_removed"] else "false"))
         return 0
     elif operation == "handoff-recovery-apply":
         identity = _handoff_active_id()
