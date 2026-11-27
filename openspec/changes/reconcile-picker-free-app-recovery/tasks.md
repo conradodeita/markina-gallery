@@ -9,20 +9,20 @@
 
 - [x] 2.1 Implementar o recovery explícito em geração Compose nova usando a receita sem Picker, sem iniciar/alterar a testemunha; cobrir fases API→web, fingerprint, lock, journal, aprovação e falhas injetadas em testes.
 - [x] 2.4 Comprovar o par ativo em diagnóstico protegido e vincular o plano e sua fingerprint às imagens, modelos e versões atuais. Rejeitar par incompleto, ambíguo ou alterado.
-- [ ] 2.2 Executar prova Compose local isolada com PostgreSQL sintético e OAuth sentinela, usando os dois image IDs do par ativo e saudável comprovado em produção; comprovar API/web saudáveis sem o arquivo Picker, sem migration, escrita de cliente ou acesso ao Drive.
+- [x] 2.2 Executar prova Compose local isolada com PostgreSQL sintético e OAuth sentinela, usando os dois image IDs do par ativo e saudável comprovado em produção; comprovar API/web saudáveis sem o arquivo Picker, sem migration, escrita de cliente ou acesso ao Drive.
 - [x] 2.3 Atualizar o runbook de recovery para distinguir container witness de candidato recriável e orientar inventário/fingerprint/aprovação após falha; validar comandos documentados em ambiente sintético.
 
-- [ ] 2.5 Obter o par ativo por exportação read-only API/web no workflow protegido e validar checksum/image ID antes do ensaio; preservar o contrato de exportação API existente.
+- [x] 2.5 Obter o par ativo por exportação read-only API/web no workflow protegido e validar checksum/image ID antes do ensaio; preservar o contrato de exportação API existente.
 
 ## 3. Integração com a aposentadoria
 
 - [x] 3.1 Ajustar o inventário protegido para classificar como não ativos somente witnesses exatos, parados e não selecionáveis pela receita vigente; testar preservação do digest agregado e bloqueio de qualquer outro mount.
 - [x] 3.2 Vincular o cleanup do Picker ao receipt de runtime saudável sem mount e à receita picker-free; validar OpenSpec estrito e diff-check sem alterar OAuth, banco ou caminhos compartilhados.
-- [ ] 3.3 Executar os gates de CI da categoria e revisar o diff completo, segredo/escopo, modo de falha e cobertura; registrar SHA e evidências antes de submeter PR para revisão humana.
+- [x] 3.3 Executar os gates de CI da categoria e revisar o diff completo, segredo/escopo, modo de falha e cobertura; registrar SHA e evidências antes de submeter PR para revisão humana.
 
 ## 4. Operação futura protegida
 
-- [ ] 4.1 Após merge e CI verde na `main` exata, inventariar produção somente-leitura e apresentar fingerprint, portas/domínio, schema, estado API/web, witnesses e plano de impacto zero antes de qualquer aprovação operacional.
+- [ ] 4.1 Após merge e CI verde na `main` exata, inventariar produção somente-leitura e apresentar fingerprint, portas/domínio, schema, estado API/web, witnesses e plano de interrupção breve autorizado pelo proprietário antes da operação.
 - [ ] 4.2 Executar release/recovery e retirada somente com aprovação operacional própria e aprovação do ambiente protegido; validar endpoints, OAuth, schema e testemunhas preservadas antes de atualizar o recibo.
 
 ### Evidência da implementação local
@@ -47,3 +47,5 @@
 - Diagnóstico 2.4: run #45950979791 passou na main `64c5536dfd7c3ce68072910005b5969518507901`, schema verificado e fingerprint `c33c9c8077bf7b758e93355ed4eef564110898a908fdee876f346fa8b25e3109`. Imagem API `sha256:c0aed86f943e63f51b832c063f25e418e2537bab6ee3546656f5c0b56ef6df4a`; web `sha256:d9dfa2dae3692688c93eebcb9daf9f988a48c9e4aa41ec391b276244ef88f7c6`. Ambas ausentes do Docker local. A exportação API/web está implementada em branch, com 7 testes Linux do exportador passando, incluindo identidade web divergente e recusa de serviço fora do par. A execução protegida e o ensaio continuam pendentes.
 
 - Gates locais da extensão de exportação: 7 testes Linux passaram (API legada, web, imagem/projeto/plataforma/seleção divergentes e serviço inválido); Ruff e política de workflow passaram; YAML e quatro blocos shell do workflow foram analisados, bash -n passou nos scripts com LF canônico. OpenSpec strict e diff-check passaram. A primeira checagem bash direta no checkout Windows detectou CRLF; a sintaxe dos blobs normalizados foi validada sem alterar os scripts por esse motivo. A task 2.5 permanece aberta até exportação real e conferência dos dois artifacts.
+
+- Fechamento local de 2.2/2.5 e gates 3.3: exportação #46008398565 passou na main `6b9fe6231b0885b5ccf544a8933c64afd2d917b8`, com CI de push #46002533051 verde. Ensaio real das duas imagens em Docker Desktop passou com schema sintético de 136 tabelas, OAuth sentinela somente leitura e rede interna, sem migrations. API /health, web /api/health e web / responderam. Picker ausente e inventário de containers/redes/volumes pré/pós idêntico. Docker Desktop usa digest de manifesto OCI; a identidade foi provada pelo hash do manifesto, digest do config original e camadas, conforme validation-results.md. O prazo inicial do healthcheck local era insuficiente na emulação ARM64; a repetição com prazo de 180 segundos passou. A recuperação/retirada no host permanecem pendentes.
