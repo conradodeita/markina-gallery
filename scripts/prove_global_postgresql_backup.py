@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from datetime import time as datetime_time
 from decimal import Decimal
 from pathlib import Path
@@ -1329,6 +1329,823 @@ def _seed_large_object(engine: Engine) -> None:
         )
 
 
+def _fixture_uuid(proof_id: str, tenant_id: uuid.UUID, label: str) -> uuid.UUID:
+    namespace = uuid.uuid5(uuid.NAMESPACE_URL, f"pyp-synthetic-proof:{proof_id}")
+    return uuid.uuid5(namespace, f"{tenant_id}:{label}")
+
+
+def _fixture_row_summary(
+    populated: dict[str, dict[str, int]],
+) -> dict[str, dict[str, Any]]:
+    return {
+        table_name: {
+            "tenants_with_rows": len(tenant_counts),
+            "rows_per_tenant": sorted(tenant_counts.values()),
+            "total_rows": sum(tenant_counts.values()),
+        }
+        for table_name, tenant_counts in populated.items()
+    }
+
+
+def _seed_application_fixture(
+    engine: Engine, tenant_ids: list[uuid.UUID], proof_id: str
+) -> dict[str, Any]:
+    """Popula relações de produto com dados artificiais, sem iniciar workers."""
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=1)
+    folder_expires_at = now + timedelta(days=30)
+    domains: dict[str, tuple[str, ...]] = {
+        "identity_gallery_access": (
+            "client",
+            "client_phone",
+            "parent_gallery",
+            "photo_folder",
+            "photo_asset",
+            "parent_gallery_registration",
+            "gallery_client_state",
+            "gallery_access",
+            "folder_client_grant",
+            "photo_selection",
+            "photo_favorite",
+            "photo_view",
+            "photo_comment",
+            "price_rule",
+        ),
+        "commerce_history": ("payment_group", "sale_order", "sale_order_item"),
+        "media_processing_queue": ("photo_analysis", "media_derivative", "media_job"),
+        "cold_media_catalog": (
+            "media_archive_cycle",
+            "media_archive_operation",
+            "media_archive_object",
+            "media_archive_event",
+        ),
+        "privacy_and_consent": (
+            "gallery_facial_policy",
+            "facial_search_request",
+            "facial_search_consent_proof",
+        ),
+        "notifications_and_audit": (
+            "notification_setting",
+            "notification_event",
+            "notification_delivery",
+            "audit_event",
+            "platform_admin_event",
+            "photographer_credit_entry",
+        ),
+    }
+    metadata = sa.MetaData()
+    populated: dict[str, dict[str, int]] = {
+        name: {} for tables in domains.values() for name in tables
+    }
+
+    def insert(
+        connection: sa.engine.Connection, table_name: str, values: dict[str, Any]
+    ) -> None:
+        table = sa.Table(table_name, metadata, autoload_with=connection)
+        if set(values) - set(table.c.keys()):
+            raise ProofFailure("synthetic_fixture_mapping_invalid")
+        missing_required = [
+            column.name
+            for column in table.columns
+            if not column.nullable
+            and column.name not in values
+            and column.server_default is None
+            and column.identity is None
+        ]
+        if missing_required:
+            raise ProofFailure(
+                f"synthetic_fixture_missing_required_column:{table_name}:"
+                + ",".join(missing_required)
+            )
+        try:
+            connection.execute(sa.insert(table).values(**values))
+        except sa.exc.SQLAlchemyError:
+            raise ProofFailure(
+                f"synthetic_fixture_insert_failed:{table_name}"
+            ) from None
+
+    with engine.begin() as connection:
+        owner_admin_id = uuid.UUID(
+            str(
+                connection.execute(
+                    sa.text(
+                        "SELECT admin_user_id FROM platform_owner WHERE singleton = 1"
+                    )
+                ).scalar_one()
+            )
+        )
+        insert(
+            connection,
+            "photographer_credit_package",
+            {
+                "id": _fixture_uuid(proof_id, tenant_ids[0], "credit-package"),
+                "name": "Synthetic backup proof package",
+                "description": "Inactive package used only by the local proof.",
+                "credit_quantity": 10,
+                "price_cents": None,
+                "currency_code": None,
+                "active": False,
+                "created_by_admin_id": owner_admin_id,
+                "updated_by_admin_id": owner_admin_id,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        for tenant_index, tenant_id in enumerate(tenant_ids, start=1):
+            admin_id = uuid.UUID(
+                str(
+                    connection.execute(
+                        sa.text(
+                            "SELECT admin_user_id FROM tenant_admin WHERE tenant_id = :tenant "
+                            "AND active ORDER BY created_at LIMIT 1"
+                        ),
+                        {"tenant": tenant_id},
+                    ).scalar_one()
+                )
+            )
+            ids = {
+                name: _fixture_uuid(proof_id, tenant_id, name)
+                for name in (
+                    "client",
+                    "gallery",
+                    "folder",
+                    "photo",
+                    "payment-group",
+                    "order",
+                    "archive-cycle",
+                    "archive-operation",
+                    "archive-object",
+                    "facial-policy",
+                    "facial-request",
+                    "credit-entry",
+                    "notification-event",
+                    "notification-delivery",
+                )
+            }
+            phone = f"+155555501{tenant_index:02d}"
+            photo_bytes = b"synthetic archived jpeg fixture"
+            photo_sha256 = _sha256(photo_bytes)
+            storage_key = f"synthetic-proof/{proof_id}/tenant-{tenant_index}/photo.jpg"
+
+            insert(
+                connection,
+                "client",
+                {
+                    "id": ids["client"],
+                    "tenant_id": tenant_id,
+                    "full_name": f"Synthetic Client {tenant_index}",
+                    "phone_e164": phone,
+                },
+            )
+            insert(
+                connection,
+                "client_phone",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "client-phone"),
+                    "tenant_id": tenant_id,
+                    "client_id": ids["client"],
+                    "phone_e164": phone,
+                    "active": True,
+                    "verified_at": now,
+                    "created_at": now,
+                    "retired_at": None,
+                },
+            )
+            gallery_name = f"Synthetic Gallery {tenant_index}"
+            insert(
+                connection,
+                "parent_gallery",
+                {
+                    "id": ids["gallery"],
+                    "tenant_id": tenant_id,
+                    "name": gallery_name,
+                    "event_name": "Local backup proof",
+                    "description": "Synthetic fixture.",
+                    "selection_duration_days": 1,
+                    "payment_required": True,
+                    "favorites_enabled": True,
+                    "comments_enabled": True,
+                    "pricing_mode": "fixed",
+                    "fixed_unit_price_cents": 500,
+                    "pricing_snapshot": {"currency": "BRL"},
+                    "pricing_review_required": False,
+                    "active": True,
+                    "lifecycle_status": "active",
+                    "access_mode": "standard",
+                    "created_at": now,
+                },
+            )
+            folder_name = f"Synthetic folder {tenant_index}"
+            insert(
+                connection,
+                "photo_folder",
+                {
+                    "id": ids["folder"],
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "derived_gallery_id": None,
+                    "name": folder_name,
+                    "status": "released",
+                    "purpose": "content",
+                    "audience_scope": "selected",
+                    "position": 1,
+                    "released_at": now,
+                    "access_duration_days": 30,
+                    "access_expires_at": folder_expires_at,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            filename = f"proof-{tenant_index}.jpg"
+            insert(
+                connection,
+                "photo_asset",
+                {
+                    "id": ids["photo"],
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "derived_gallery_id": None,
+                    "folder_id": ids["folder"],
+                    "filename": filename,
+                    "display_name": f"Synthetic photo {tenant_index}",
+                    "storage_key": storage_key,
+                    "available": True,
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "parent_gallery_registration",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "gallery-registration"),
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "client_id": ids["client"],
+                    "status": "active",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "gallery_client_state",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "gallery-client-state"),
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "client_id": ids["client"],
+                    "status": "active",
+                    "selection_started_at": now,
+                    "selection_expires_at": expires_at,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "gallery_access",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "gallery-access"),
+                    "tenant_id": tenant_id,
+                    "client_id": ids["client"],
+                    "gallery_id": ids["gallery"],
+                    "parent_gallery_id": ids["gallery"],
+                    "derived_gallery_id": None,
+                    "active": True,
+                },
+            )
+            insert(
+                connection,
+                "folder_client_grant",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "folder-client-grant"),
+                    "tenant_id": tenant_id,
+                    "folder_id": ids["folder"],
+                    "parent_gallery_id": ids["gallery"],
+                    "client_id": ids["client"],
+                    "created_at": now,
+                },
+            )
+            for table_name in ("photo_selection", "photo_favorite", "photo_view"):
+                values: dict[str, Any] = {
+                    "id": _fixture_uuid(proof_id, tenant_id, table_name),
+                    "tenant_id": tenant_id,
+                    "derived_gallery_id": None,
+                    "parent_gallery_id": ids["gallery"],
+                    "photo_asset_id": ids["photo"],
+                    "client_id": ids["client"],
+                }
+                values.update(
+                    {"first_viewed_at": now, "last_viewed_at": now}
+                    if table_name == "photo_view"
+                    else {"created_at": now}
+                )
+                insert(connection, table_name, values)
+            insert(
+                connection,
+                "photo_comment",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "photo-comment"),
+                    "tenant_id": tenant_id,
+                    "derived_gallery_id": None,
+                    "parent_gallery_id": ids["gallery"],
+                    "photo_asset_id": ids["photo"],
+                    "client_id": ids["client"],
+                    "body": "Synthetic comment.",
+                    "created_at": now,
+                    "removed_at": None,
+                },
+            )
+            insert(
+                connection,
+                "price_rule",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "price-rule"),
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "minimum_quantity": 1,
+                    "maximum_quantity": None,
+                    "unit_price_cents": 500,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "payment_group",
+                {
+                    "id": ids["payment-group"],
+                    "tenant_id": tenant_id,
+                    "client_id": ids["client"],
+                    "state": "reported",
+                    "revision": f"synthetic-{proof_id}-{tenant_index}",
+                    "total_cents": 500,
+                    "pix_copy_paste_snapshot": "synthetic-pix-payload-not-payable",
+                    "pix_instructions_snapshot": "Local fixture only; no payment was made.",
+                    "pix_configuration_snapshot": {"proof": "synthetic-only"},
+                    "created_at": now,
+                    "reported_at": now,
+                },
+            )
+            insert(
+                connection,
+                "sale_order",
+                {
+                    "id": ids["order"],
+                    "tenant_id": tenant_id,
+                    "derived_gallery_id": None,
+                    "parent_gallery_id": ids["gallery"],
+                    "client_id": ids["client"],
+                    "derived_gallery_id_snapshot": None,
+                    "derived_gallery_name_snapshot": "",
+                    "parent_gallery_id_snapshot": ids["gallery"],
+                    "parent_gallery_name_snapshot": gallery_name,
+                    "payment_status": "pending",
+                    "total_cents": 500,
+                    "frozen_at": now,
+                    "confirmed_at": None,
+                    "client_name_snapshot": f"Synthetic Client {tenant_index}",
+                    "client_phone_snapshot": phone,
+                    "price_rule_snapshot": {
+                        "minimum_quantity": 1,
+                        "unit_price_cents": 500,
+                    },
+                    "payment_required_snapshot": True,
+                    "sales_message_snapshot": "Synthetic order only.",
+                    "payment_message_snapshot": "No payment was made.",
+                    "delivery_album_url": None,
+                    "delivery_updated_at": None,
+                    "delivery_revision": 0,
+                    "pix_copy_paste_snapshot": "synthetic-pix-payload-not-payable",
+                    "pix_qr_code_snapshot": None,
+                    "pix_instructions_snapshot": "No payment was made.",
+                    "pix_configuration_snapshot": {"proof": "synthetic-only"},
+                    "pii_minimized_at": None,
+                    "checkout_key": None,
+                    "assets_removed_at": None,
+                    "payment_group_id": ids["payment-group"],
+                    "provider_payment_id": None,
+                    "mercadopago_payment_id": None,
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "sale_order_item",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "sale-order-item"),
+                    "tenant_id": tenant_id,
+                    "sale_order_id": ids["order"],
+                    "photo_asset_id": ids["photo"],
+                    "photo_asset_id_snapshot": ids["photo"],
+                    "filename_snapshot": filename,
+                    "folder_id_snapshot": ids["folder"],
+                    "folder_name_snapshot": folder_name,
+                    "checksum_sha256_snapshot": photo_sha256,
+                    "unit_price_cents": 500,
+                },
+            )
+            insert(
+                connection,
+                "photo_analysis",
+                {
+                    "photo_asset_id": ids["photo"],
+                    "tenant_id": tenant_id,
+                    "source_fingerprint": photo_sha256,
+                    "source_bytes": len(photo_bytes),
+                    "width": 1200,
+                    "height": 800,
+                    "pipeline_version": "synthetic-proof-v1",
+                    "state": "pending",
+                    "expires_at": expires_at,
+                    "deleted_at": None,
+                    "metrics": {"fixture": "synthetic"},
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "media_derivative",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "media-derivative"),
+                    "tenant_id": tenant_id,
+                    "photo_asset_id": ids["photo"],
+                    "variant": "thumbnail",
+                    "relative_path": None,
+                    "status": "queued",
+                    "width": None,
+                    "height": None,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "media_job",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "media-job"),
+                    "tenant_id": tenant_id,
+                    "photo_asset_id": ids["photo"],
+                    "kind": "generate_derivatives",
+                    "status": "queued",
+                    "attempts": 0,
+                    "last_error": None,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+            cycle_id, operation_id, object_id = (
+                ids["archive-cycle"],
+                ids["archive-operation"],
+                ids["archive-object"],
+            )
+            remote_id = f"synthetic-{proof_id}-{tenant_index}"
+            source_ref = f"photo:{ids['photo']}:original"
+            manifest = {
+                "schema_version": 1,
+                "tenant_id": str(tenant_id),
+                "parent_gallery_id": str(ids["gallery"]),
+                "folder_id": str(ids["folder"]),
+                "cycle_id": str(cycle_id),
+                "operation_id": str(operation_id),
+                "created_at": now.isoformat(timespec="microseconds").replace(
+                    "+00:00", "Z"
+                ),
+                "object_count": 1,
+                "total_bytes": len(photo_bytes),
+                "objects": [
+                    {
+                        "object_id": str(object_id),
+                        "source_ref": source_ref,
+                        "object_type": "source",
+                        "mime_type": "image/jpeg",
+                        "size_bytes": len(photo_bytes),
+                        "sha256": photo_sha256,
+                        "remote_object_id": remote_id,
+                    }
+                ],
+            }
+            manifest_bytes = json.dumps(
+                manifest,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            insert(
+                connection,
+                "media_archive_cycle",
+                {
+                    "id": cycle_id,
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "folder_id": ids["folder"],
+                    "cycle_number": 1,
+                    "state": "archived",
+                    "manifest_version": 1,
+                    "manifest": manifest,
+                    "manifest_sha256": _sha256(manifest_bytes),
+                    "object_count": 1,
+                    "total_bytes": len(photo_bytes),
+                    "archived_at": now,
+                    "next_archive_check_at": None,
+                    "last_window_notice_for_expiry": None,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "media_archive_operation",
+                {
+                    "id": operation_id,
+                    "tenant_id": tenant_id,
+                    "cycle_id": cycle_id,
+                    "operation_type": "archive",
+                    "status": "completed",
+                    "stage": "completed",
+                    "idempotency_key": f"synthetic-archive-{proof_id}-{tenant_index}",
+                    "actor_type": "system",
+                    "actor_admin_id": None,
+                    "details": {"fixture": "synthetic-only"},
+                    "last_error_code": None,
+                    "last_error": None,
+                    "attempts": 1,
+                    "lease_token": None,
+                    "lease_expires_at": None,
+                    "started_at": now,
+                    "completed_at": now,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "media_archive_object",
+                {
+                    "id": object_id,
+                    "tenant_id": tenant_id,
+                    "cycle_id": cycle_id,
+                    "source_ref": source_ref,
+                    "object_type": "source",
+                    "mime_type": "image/jpeg",
+                    "size_bytes": len(photo_bytes),
+                    "sha256": photo_sha256,
+                    "remote_object_id": remote_id,
+                    "remote_deleted_at": None,
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "media_archive_event",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "media-archive-event"),
+                    "tenant_id": tenant_id,
+                    "cycle_id": cycle_id,
+                    "operation_id": operation_id,
+                    "actor_type": "system",
+                    "actor_admin_id": None,
+                    "event_type": "archive_completed",
+                    "cycle_state_before": "archiving",
+                    "cycle_state_after": "archived",
+                    "operation_status_before": "processing",
+                    "operation_status_after": "completed",
+                    "details": {"fixture": "synthetic-only"},
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "gallery_facial_policy",
+                {
+                    "id": ids["facial-policy"],
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "status": "disabled",
+                    "legal_notice_version": "synthetic-notice-v1",
+                    "legal_basis_reference": "synthetic-proof-only",
+                    "retention_policy_version": "synthetic-retention-v1",
+                    "minor_policy_version": "synthetic-minor-policy-v1",
+                    "model_version": "synthetic-model-v1",
+                    "quality_version": "synthetic-quality-v1",
+                    "calibration_version": None,
+                    "similarity_threshold_milli": 750,
+                    "index_generation": 0,
+                    "actor_admin_id": admin_id,
+                    "activated_at": None,
+                    "suspended_at": None,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "facial_search_request",
+                {
+                    "id": ids["facial-request"],
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "client_id": ids["client"],
+                    "policy_id": ids["facial-policy"],
+                    "status": "cancelled",
+                    "reference_region_id": None,
+                    "reference_source": "upload",
+                    "authorization_method": "explicit_consent",
+                    "consent_version": "synthetic-consent-v1",
+                    "legal_notice_version": "synthetic-notice-v1",
+                    "subject_declaration": "adult",
+                    "representation_reference": None,
+                    "model_version": "synthetic-model-v1",
+                    "search_engine": "opencv-yunet-sface",
+                    "quality_version": "synthetic-quality-v1",
+                    "index_generation": 0,
+                    "snapshot_total": 0,
+                    "snapshot_ready": 0,
+                    "compare_total": 0,
+                    "compare_done": 0,
+                    "reference_locator_ciphertext": None,
+                    "reference_locator_nonce": None,
+                    "reference_key_id": None,
+                    "reference_deleted_at": None,
+                    "completed_at": now,
+                    "expires_at": expires_at,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "facial_search_consent_proof",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "facial-consent-proof"),
+                    "tenant_id": tenant_id,
+                    "source_search_request_id": ids["facial-request"],
+                    "parent_gallery_id": ids["gallery"],
+                    "client_id": ids["client"],
+                    "authorization_method": "explicit_consent",
+                    "consent_version": "synthetic-consent-v1",
+                    "legal_notice_version": "synthetic-notice-v1",
+                    "subject_declaration": "adult",
+                    "recorded_at": now,
+                    "created_at": now,
+                },
+            )
+            settings = sa.Table(
+                "notification_setting", metadata, autoload_with=connection
+            )
+            setting_exists = connection.execute(
+                sa.select(settings.c.event_type).where(
+                    settings.c.tenant_id == tenant_id,
+                    settings.c.event_type == "payment_reported",
+                )
+            ).first()
+            if setting_exists is None:
+                insert(
+                    connection,
+                    "notification_setting",
+                    {
+                        "tenant_id": tenant_id,
+                        "event_type": "payment_reported",
+                        "whatsapp_enabled": False,
+                        "push_enabled": False,
+                        "whatsapp_disabled_at": now,
+                        "push_disabled_at": now,
+                        "whatsapp_body": "Synthetic fixture; delivery disabled.",
+                        "push_title": "Synthetic proof",
+                        "push_body": "No notification is sent.",
+                        "version": 1,
+                        "updated_at": now,
+                    },
+                )
+            insert(
+                connection,
+                "notification_event",
+                {
+                    "id": ids["notification-event"],
+                    "tenant_id": tenant_id,
+                    "event_key": f"synthetic-proof:{proof_id}:{tenant_index}",
+                    "event_type": "payment_reported",
+                    "parent_gallery_id": ids["gallery"],
+                    "derived_gallery_id": None,
+                    "client_id": ids["client"],
+                    "sale_order_id": ids["order"],
+                    "template_version": 1,
+                    "push_title": "Synthetic proof",
+                    "push_body": "No notification is sent.",
+                    "whatsapp_body": "Synthetic fixture only.",
+                    "target_path": "/synthetic-proof",
+                    "created_at": now,
+                    "expires_at": expires_at,
+                },
+            )
+            insert(
+                connection,
+                "notification_delivery",
+                {
+                    "id": ids["notification-delivery"],
+                    "tenant_id": tenant_id,
+                    "event_id": ids["notification-event"],
+                    "channel": "push",
+                    "recipient_role": "client",
+                    "recipient_id": ids["client"],
+                    "client_recipient_id": ids["client"],
+                    "admin_recipient_id": None,
+                    "device_key": "push",
+                    "subscription_id": None,
+                    "subscription_generation": None,
+                    "status": "cancelled",
+                    "attempts": 0,
+                    "next_attempt_at": now,
+                    "lease_until": None,
+                    "lease_token": None,
+                    "last_error": None,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            credit_entry_id = ids["credit-entry"]
+            insert(
+                connection,
+                "photographer_credit_entry",
+                {
+                    "id": credit_entry_id,
+                    "tenant_id": tenant_id,
+                    "entry_type": "owner_grant",
+                    "delta": 7,
+                    "idempotency_key": f"synthetic-owner-grant-{proof_id}-{tenant_index}",
+                    "operation_id": None,
+                    "archive_operation_id": None,
+                    "source_entry_id": None,
+                    "package_id": None,
+                    "actor_admin_id": None,
+                    "global_owner_admin_id": owner_admin_id,
+                    "source_reference": "synthetic-global-backup-proof",
+                    "description": "Synthetic fixture grant; no purchase or billing.",
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "audit_event",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "audit-event"),
+                    "tenant_id": tenant_id,
+                    "event": "synthetic_backup_fixture_seeded",
+                    "subject": f"synthetic-gallery:{ids['gallery']}",
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "platform_admin_event",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "platform-admin-event"),
+                    "request_id": None,
+                    "actor_admin_id": owner_admin_id,
+                    "object_id": credit_entry_id,
+                    "tenant_id": tenant_id,
+                    "action": "credit.granted",
+                    "reason_code": None,
+                    "target_version": None,
+                    "evidence_sha256": None,
+                    "previous_status": None,
+                    "next_status": None,
+                    "result": "success",
+                    "origin": "web_console",
+                    "created_at": now,
+                },
+            )
+
+            for table_name in (
+                table for tables in domains.values() for table in tables
+            ):
+                table = sa.Table(table_name, metadata, autoload_with=connection)
+                count = int(
+                    connection.execute(
+                        sa.select(sa.func.count())
+                        .select_from(table)
+                        .where(table.c.tenant_id == tenant_id)
+                    ).scalar_one()
+                )
+                if count < 1 or (table_name != "notification_setting" and count != 1):
+                    raise ProofFailure("synthetic_fixture_tenant_rows_unexpected")
+                populated[table_name][str(tenant_id)] = count
+
+    return {
+        "tenant_rows_per_table": _fixture_row_summary(populated),
+        "tenant_count": len(tenant_ids),
+        "domains": {name: list(tables) for name, tables in domains.items()},
+        "representative_tables_with_rows": len(populated),
+        "inactive_global_credit_package": 1,
+        "remote_services_or_workers_used": False,
+        "biometric_payloads_seeded": False,
+    }
+
+
 def _restore(
     container: str,
     database: str,
@@ -1474,6 +2291,9 @@ def run_proof() -> dict[str, Any]:
             _create_roles(source_engine, roles)
             extension_version = _seed_source(source_engine, tenant_ids, roles)
             _seed_large_object(source_engine)
+            application_fixture = _seed_application_fixture(
+                source_engine, tenant_ids, proof_id
+            )
             with source_engine.connect() as connection:
                 tenant_count = int(
                     connection.execute(
@@ -1728,6 +2548,7 @@ def run_proof() -> dict[str, Any]:
             "materialized_views": len(source_materialized_views),
             "large_objects": len(source_large_objects),
             "tenant_count": 2,
+            "application_fixture": application_fixture,
             "synthetic_roles": len(source_roles["roles"]),
             "role_memberships": len(source_roles["memberships"]),
             "role_grants": len(source_roles["grants"]),

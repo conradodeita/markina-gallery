@@ -3,12 +3,15 @@ from __future__ import annotations
 import subprocess
 import sys
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.prove_global_postgresql_backup import (
+    _fixture_row_summary,
+    _fixture_uuid,
     _inventory_delta_summary,
     _no_owner_profile_summary,
     _normalize_varchar_text_array_casts,
@@ -16,6 +19,33 @@ from scripts.prove_global_postgresql_backup import (
     _row_inventory_difference_summary,
     _schema_catalog_difference_summary,
 )
+
+
+class SyntheticFixtureIdTests(unittest.TestCase):
+    def test_fixture_ids_are_deterministic_and_tenant_scoped(self) -> None:
+        first_tenant = uuid.UUID("00000000-0000-0000-0000-000000000001")
+        second_tenant = uuid.UUID("00000000-0000-0000-0000-000000000002")
+
+        first = _fixture_uuid("a1b2c3d4e5f6", first_tenant, "photo")
+
+        self.assertEqual(first, _fixture_uuid("a1b2c3d4e5f6", first_tenant, "photo"))
+        self.assertNotEqual(
+            first, _fixture_uuid("a1b2c3d4e5f6", first_tenant, "client")
+        )
+        self.assertNotEqual(
+            first, _fixture_uuid("a1b2c3d4e5f6", second_tenant, "photo")
+        )
+
+    def test_fixture_summary_hides_tenant_ids_and_keeps_counts(self) -> None:
+        tenant_id = "00000000-0000-0000-0000-000000000001"
+
+        summary = _fixture_row_summary({"client": {tenant_id: 1, "tenant-two": 2}})
+
+        self.assertEqual(
+            summary["client"],
+            {"tenants_with_rows": 2, "rows_per_tenant": [1, 2], "total_rows": 3},
+        )
+        self.assertNotIn(tenant_id, repr(summary))
 
 
 class SchemaComparisonTests(unittest.TestCase):
