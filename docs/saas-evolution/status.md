@@ -1,5 +1,41 @@
 # Estado da execução
 
+## Checklist de entrega até Tenant Release Ready — 27/11/2026
+
+Este bloco registra o estado corrente. A ordem de produto está na [matriz R14](requirements.json) e no [roadmap arquitetural](../../ROADMAP_ARQUITETURA.md). As notas datadas abaixo preservam a evidência de cada etapa. O ambiente de teste é local ou CI com dados sintéticos. A operação remota usa produção com autorização própria.
+
+### Prioridade atual
+
+- [x] **Retirada do backup antigo em produção.** A API e a web foram recriadas sem o Picker. Após a retirada, leitura no servidor confirmou ausência dos diretórios, unidades e arquivo do Picker, e preservação do OAuth do Drive, schema, API/web e 27 testemunhas. O [run de retirada](https://github.com/conradodeita/markina-gallery/actions/runs/46047183268) ficou com recibo incompleto por erro ao interpretar o estado das unidades já removidas. A [PR #452](https://github.com/conradodeita/markina-gallery/pull/452) corrige o verificador. Não repetir a remoção.
+- [x] **Prova local de backup global e restauração.** PostgreSQL sintético foi copiado com Restic e Rclone local e restaurado em destino isolado. A comparação incluiu 138 tabelas e dois tenants. [PR #443](https://github.com/conradodeita/markina-gallery/pull/443)
+- [ ] **Backup global funcionando no servidor.** Fechar empacotamento e CI, integrar execução e estado ao worker e ao console, resolver retenção, metas de recuperação, destino, custódia e bootstrap protegido. Fechar após provar cópia cifrada, leitura e restauração isolada com destino autorizado. Executor A implementa, coordenador conduz revisão e release.
+- [x] **Proposta de destinos e prova local de mídia/sidecar.** A [PR #441](https://github.com/conradodeita/markina-gallery/pull/441) registra seleção por ciclo, identidade imutável por objeto e leitura dos metadados com Rclone crypt para armazenamento local.
+- [ ] **Arquivo frio por tenant funcionando no servidor.** Fechar o contrato de persistência e a identificação segura do Drive legado, depois implementar integração, retry e recuperação com isolamento, créditos e prazos preservados. O aceite exige canário de arquivamento e recuperação com checksum e evidência por tenant. Executor B implementa, coordenador conduz revisão e release.
+- [x] **Correção do teste de TOTP do console integrada.** Seis testes locais e a [CI do commit f6379a8e](https://github.com/conradodeita/markina-gallery/actions/runs/46043604869) passaram. A [PR #451](https://github.com/conradodeita/markina-gallery/pull/451) foi integrada em `8eaa4c23`. A [CI da main](https://github.com/conradodeita/markina-gallery/actions/runs/46050241677) está registrada separadamente. A recuperação de senha por OTP é uma pendência distinta do roadmap e está registrada na [PR #437](https://github.com/conradodeita/markina-gallery/pull/437).
+- [x] **Correção de segurança do Next.js integrada.** A [PR #367](https://github.com/conradodeita/markina-gallery/pull/367) atualizou a `main` para Next.js 16.4.5 no commit `6bbdc1a5`. Build local e 733 testes do frontend passaram. A implantação em produção é uma etapa separada. [CI da main](https://github.com/conradodeita/markina-gallery/actions/runs/46056724609)
+
+### Fases e critérios de entrega
+
+| Fase | Estado | O que falta comprovar |
+| --- | --- | --- |
+| A. Fundação e estabilidade | Parcial. Candidato na `main` em `6bbdc1a5`. Produção do proprietário estava saudável na verificação da retirada. | Comparar a versão realmente ativa ao candidato final, incluindo schema, serviços, configuração e retorno seguro. |
+| B. Operação SaaS | Parcial. Dois fotógrafos fizeram upload e consumiram créditos de carteiras separadas no ensaio local da PR #454. | Estender a prova integrada a pedidos, pagamentos e entrega. Validar idempotência e console com fontes operacionais duráveis. |
+| C. Experiência e acessibilidade | Parcial. Há testes automatizados de navegação e experiência. | Revisar fluxo autenticado mobile e desktop, foco, leitura e mensagens de erro no candidato. |
+| D. Segurança e privacidade | Parcial. Fatores de login e isolamento têm implementação e provas focadas. | Validar login, sessão, OTP, recuperação, auditoria e acessos cruzados na jornada integrada. Fechar decisões de retenção aplicáveis. Busca facial de novos tenants permanece condicional e com gates próprios. |
+| E. Armazenamento e recuperação | Prioridade atual. Retirada legada verificada, backup novo e arquivo frio em desenvolvimento. | Entregar as duas frentes acima. Recuperação lógica de banco por tenant é evolução separada, distinta da recuperação de pastas frias. |
+| F. Comunicação e vendas | Parcial. Há fluxos do proprietário e testes focados, sem aceite por novos tenants. | Validar canais e vínculos por fotógrafo, notificações, pagamento e entrega com dados sintéticos ou canal de teste autorizado. Definir regras comerciais antes de ativação real. |
+| G. Publicação e operação | Parcial. Fluxos protegidos e verificações de saúde estão disponíveis. | Inventariar dependências e alertas, reconciliar domínio/DNS/TLS, saúde, capacidade, plano de publicação e retorno seguro para o candidato exato. |
+| H. Jornada e piloto | Parcial. Login com TOTP, upload e débito isolado passaram localmente com dois tenants sintéticos. | Completar a jornada sintética e depois validar com o proprietário o piloto protegido com signup ainda fechado. |
+| I. Liberação do cadastro | Pendente. | Fechar os critérios de H, aprovar o candidato e decidir separadamente abertura do cadastro. Fidelidade segue adiada. |
+
+### Jornada local de dois fotógrafos
+
+- [x] Identificar provas reutilizáveis. O ensaio existente de galeria e monitor forneceu as contas e os contextos de navegador. A [prova do console](../../openspec/changes/add-platform-owner-console/validation.md#prova-de-navegador-real) cobre cadastro, carteira, suspensão e auditoria em contextos distintos.
+- [x] Validar upload de JPEG e débito isolado em PostgreSQL no schema `20261113_0126`. Os saldos caíram de 2 para 1 e de 4 para 3. As duas tentativas de escrita cruzada retornaram HTTP 404. A prova local corresponde à tarefa 8.2c. [PR #454](https://github.com/conradodeita/markina-gallery/pull/454)
+- [ ] Completar a prova sintética de pedido, pagamento e entrega pelo tenant, usando os ensaios de galeria e as regras da matriz R14. O aceite de R14-014 inclui a validação do piloto no servidor.
+
+A ativação real permanece condicionada à evidência de cada frente e às decisões comerciais e operacionais registradas em [decisions.md](decisions.md) e no [checklist pós-deploy](post-deploy-configuration-checklist.md).
+
 ## Armazenamento, backup global e arquivo frio — atualização de 26/11/2026
 
 - PR #439 foi integrada por squash em `d8f33654ae3cb32c1ef748d3b329621ca540abd6`; a CI da PR no SHA `86c071c0df2e0e73b0f5f09bb322c19e8eb22b0b` (`45792090888`) e a CI da `main` no SHA integrado (`45795716806`) passaram. A alteração detecta bind mounts em árvores protegidas e revalida antes de qualquer remoção. O workflow operacional continuou sem executar remoção.
