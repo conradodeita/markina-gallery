@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.prove_global_postgresql_backup import (
     ProofFailure,
+    _copy_synthetic_repository,
     _fixture_row_summary,
     _fixture_uuid,
     _inventory_delta_summary,
@@ -98,6 +99,70 @@ class RunnerToolProvenanceTests(unittest.TestCase):
                     executable_path,
                     expected_archive_sha256="0" * 64,
                 )
+
+
+class SyntheticRepositoryPortabilityTests(unittest.TestCase):
+    def test_copy_preserves_repository_bytes_at_a_distinct_temp_root_path(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="pyp-restic-relocation-test-"
+        ) as directory:
+            root = Path(directory)
+            source = root / "repository-source"
+            source.mkdir()
+            (source / "config").write_bytes(b"synthetic encrypted repo config")
+            pack = source / "data" / "pack"
+            pack.mkdir(parents=True)
+            (pack / "synthetic-pack").write_bytes(b"synthetic encrypted pack bytes")
+            destination = root / "repository-relocated"
+
+            copied_count = _copy_synthetic_repository(
+                source, destination, temp_root=root
+            )
+
+            self.assertEqual(copied_count, 2)
+            self.assertEqual(
+                (source / "config").read_bytes(),
+                (destination / "config").read_bytes(),
+            )
+            self.assertEqual(
+                (pack / "synthetic-pack").read_bytes(),
+                (destination / "data" / "pack" / "synthetic-pack").read_bytes(),
+            )
+
+    def test_copy_rejects_destination_outside_temp_root(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="pyp-restic-relocation-test-"
+        ) as directory:
+            root = Path(directory)
+            source = root / "repository-source"
+            source.mkdir()
+            (source / "config").write_bytes(b"synthetic")
+
+            with self.assertRaisesRegex(ProofFailure, "runner_repository_path_invalid"):
+                _copy_synthetic_repository(
+                    source,
+                    root.parent / "repository-outside",
+                    temp_root=root,
+                )
+
+    def test_copy_rejects_existing_destination_without_overwriting(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="pyp-restic-relocation-test-"
+        ) as directory:
+            root = Path(directory)
+            source = root / "repository-source"
+            destination = root / "repository-existing"
+            source.mkdir()
+            destination.mkdir()
+            (source / "config").write_bytes(b"synthetic source")
+            (destination / "keep").write_bytes(b"preserve destination")
+
+            with self.assertRaisesRegex(ProofFailure, "runner_repository_path_invalid"):
+                _copy_synthetic_repository(source, destination, temp_root=root)
+
+            self.assertEqual(
+                (destination / "keep").read_bytes(), b"preserve destination"
+            )
 
 
 class SchemaComparisonTests(unittest.TestCase):

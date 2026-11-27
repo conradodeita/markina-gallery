@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -212,6 +213,71 @@ def _file_sha256(path: Path) -> str:
     except OSError as exc:
         raise ProofFailure("runner_binary_read_failed") from exc
     return digest.hexdigest()
+
+
+def _repository_file_hashes(repository: Path, *, temp_root: Path) -> dict[str, str]:
+    try:
+        resolved_root = temp_root.resolve(strict=True)
+        resolved_repository = repository.resolve(strict=True)
+        if (
+            resolved_repository.parent != resolved_root
+            or not resolved_repository.is_dir()
+        ):
+            raise ProofFailure("runner_repository_path_invalid")
+        entries = tuple(resolved_repository.rglob("*"))
+        if any(
+            entry.is_symlink() or not (entry.is_dir() or entry.is_file())
+            for entry in entries
+        ):
+            raise ProofFailure("runner_repository_entry_invalid")
+        files = tuple(entry for entry in entries if entry.is_file())
+        if not files:
+            raise ProofFailure("runner_repository_empty")
+        return {
+            entry.relative_to(resolved_repository).as_posix(): _file_sha256(entry)
+            for entry in files
+        }
+    except ProofFailure:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise ProofFailure("runner_repository_path_invalid") from None
+
+
+def _copy_synthetic_repository(
+    source: Path, destination: Path, *, temp_root: Path
+) -> int:
+    try:
+        resolved_root = temp_root.resolve(strict=True)
+        resolved_source = source.resolve(strict=True)
+        resolved_destination = destination.resolve(strict=False)
+        if (
+            resolved_source.parent != resolved_root
+            or resolved_destination.parent != resolved_root
+            or resolved_source == resolved_destination
+            or resolved_destination.exists()
+        ):
+            raise ProofFailure("runner_repository_path_invalid")
+        source_hashes = _repository_file_hashes(
+            resolved_source, temp_root=resolved_root
+        )
+    except ProofFailure:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise ProofFailure("runner_repository_path_invalid") from None
+
+    try:
+        shutil.copytree(
+            resolved_source, resolved_destination, copy_function=shutil.copy2
+        )
+    except (OSError, shutil.Error):
+        raise ProofFailure("runner_repository_copy_failed") from None
+
+    destination_hashes = _repository_file_hashes(
+        resolved_destination, temp_root=resolved_root
+    )
+    if source_hashes != destination_hashes:
+        raise ProofFailure("runner_repository_copy_mismatch")
+    return len(destination_hashes)
 
 
 def _verify_release_archive_member(
@@ -1475,6 +1541,11 @@ def _seed_application_fixture(
             "media_archive_object",
             "media_archive_event",
         ),
+        "cold_media_recovery_and_credits": (
+            "media_archive_recovery_request",
+            "media_archive_recovery_credit_reservation",
+            "media_archive_recovery_credit_allocation_event",
+        ),
         "privacy_and_consent": (
             "gallery_facial_policy",
             "facial_search_request",
@@ -1571,6 +1642,9 @@ def _seed_application_fixture(
                     "order",
                     "archive-cycle",
                     "archive-operation",
+                    "archive-recovery-operation",
+                    "archive-recovery-request",
+                    "archive-recovery-credit-reservation",
                     "archive-object",
                     "facial-policy",
                     "facial-request",
@@ -1940,7 +2014,7 @@ def _seed_application_fixture(
                     "parent_gallery_id": ids["gallery"],
                     "folder_id": ids["folder"],
                     "cycle_number": 1,
-                    "state": "archived",
+                    "state": "reconciliation_required",
                     "manifest_version": 1,
                     "manifest": manifest,
                     "manifest_sha256": _sha256(manifest_bytes),
@@ -2184,6 +2258,87 @@ def _seed_application_fixture(
                     "created_at": now,
                 },
             )
+            recovery_operation_id = ids["archive-recovery-operation"]
+            insert(
+                connection,
+                "media_archive_operation",
+                {
+                    "id": recovery_operation_id,
+                    "tenant_id": tenant_id,
+                    "cycle_id": cycle_id,
+                    "operation_type": "restore",
+                    "status": "reconciliation_required",
+                    "stage": "readback",
+                    "idempotency_key": (
+                        f"synthetic-recovery-{proof_id}-{tenant_index}"
+                    ),
+                    "actor_type": "tenant",
+                    "actor_admin_id": admin_id,
+                    "details": {"fixture": "synthetic-uncertain-recovery"},
+                    "last_error_code": "provider_uncertain",
+                    "last_error": "Resultado externo incerto; reconciliação necessária.",
+                    "attempts": 1,
+                    "lease_token": None,
+                    "lease_expires_at": None,
+                    "started_at": now,
+                    "completed_at": None,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "media_archive_recovery_request",
+                {
+                    "id": ids["archive-recovery-request"],
+                    "tenant_id": tenant_id,
+                    "operation_id": recovery_operation_id,
+                    "cycle_id": cycle_id,
+                    "requester_type": "tenant",
+                    "requested_by_admin_id": admin_id,
+                    "requested_by_tenant_admin_id": admin_id,
+                    "requested_by_owner_admin_id": None,
+                    "retry_of_operation_id": None,
+                    "duration_days": 7 if tenant_index == 1 else 30,
+                    "fee_credits_snapshot": 2,
+                    "owner_exempt": False,
+                    "technical_cover_exempt": False,
+                    "closure_batch_id": None,
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "media_archive_recovery_credit_reservation",
+                {
+                    "id": ids["archive-recovery-credit-reservation"],
+                    "tenant_id": tenant_id,
+                    "operation_id": recovery_operation_id,
+                    "reserved_credits": 2,
+                    "status": "reconciliation_required",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "media_archive_recovery_credit_allocation_event",
+                {
+                    "id": _fixture_uuid(
+                        proof_id, tenant_id, "archive-recovery-credit-reserved"
+                    ),
+                    "tenant_id": tenant_id,
+                    "operation_id": recovery_operation_id,
+                    "source_entry_id": credit_entry_id,
+                    "credit_entry_id": None,
+                    "event_type": "reserved",
+                    "quantity": 2,
+                    "idempotency_key": (
+                        f"synthetic-recovery-reserved-{proof_id}-{tenant_index}"
+                    ),
+                    "occurred_at": now,
+                },
+            )
             insert(
                 connection,
                 "audit_event",
@@ -2227,7 +2382,10 @@ def _seed_application_fixture(
                         .where(table.c.tenant_id == tenant_id)
                     ).scalar_one()
                 )
-                if count < 1 or (table_name != "notification_setting" and count != 1):
+                expected_count = 2 if table_name == "media_archive_operation" else 1
+                if count < 1 or (
+                    table_name != "notification_setting" and count != expected_count
+                ):
                     raise ProofFailure("synthetic_fixture_tenant_rows_unexpected")
                 populated[table_name][str(tenant_id)] = count
 
@@ -2388,6 +2546,8 @@ def _run_global_backup_runner_proof(
     pg_restore_marker = "__pyp_synthetic_docker_pg_restore__"
     repository = "rclone:local:runner-repository"
     repository_path = runner_work / "runner-repository"
+    relocated_repository = "rclone:local:runner-repository-relocated"
+    relocated_repository_path = runner_work / "runner-repository-relocated"
     config = global_backup.GlobalPostgreSQLBackupConfig(
         repository=repository,
         restic_password_file=restic_password_file,
@@ -2529,12 +2689,18 @@ def _run_global_backup_runner_proof(
                 if not receipt.verified:
                     raise ProofFailure("runner_snapshot_not_verified")
 
+                relocated_repository_file_count = _copy_synthetic_repository(
+                    repository_path,
+                    relocated_repository_path,
+                    temp_root=runner_work,
+                )
+
                 try:
                     restored_dump = subprocess.run(
                         [
                             str(restic_path),
                             "-r",
-                            repository,
+                            relocated_repository,
                             "dump",
                             receipt.snapshot_id,
                             global_backup.ARCHIVE_FILENAME,
@@ -2624,7 +2790,11 @@ def _run_global_backup_runner_proof(
                 marker_bytes = canary.encode("utf-8")
                 if not any(
                     marker_bytes in path.read_bytes()
-                    for path in repository_path.rglob("*")
+                    for repository_root in (
+                        repository_path,
+                        relocated_repository_path,
+                    )
+                    for path in repository_root.rglob("*")
                     if path.is_file()
                 ):
                     plaintext_canary_absent = True
@@ -2673,7 +2843,11 @@ def _run_global_backup_runner_proof(
 
                 if any(
                     marker_bytes in path.read_bytes()
-                    for path in repository_path.rglob("*")
+                    for repository_root in (
+                        repository_path,
+                        relocated_repository_path,
+                    )
+                    for path in repository_root.rglob("*")
                     if path.is_file()
                 ):
                     raise ProofFailure("runner_plaintext_detected_after_negative_cases")
@@ -2682,6 +2856,7 @@ def _run_global_backup_runner_proof(
             "status": "verified",
             "snapshot_id": receipt.snapshot_id,
             "archive_bytes": receipt.dump_size_bytes,
+            "relocated_repository_file_count": relocated_repository_file_count,
             "tenant_count": len(tenant_ids),
             "table_count": len(source_data),
             "relation_count": len(_relation_inventory(source_engine)),
