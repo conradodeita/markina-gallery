@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "tenant_id": "00000000-0000-4000-8000-000000000001",
+  "provider_id": "00000000-0000-4000-8000-000000000003",
+  "object_id": "00000000-0000-4000-8000-000000000004",
+  "remote_object_id": "r1_MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxOjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNjowMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDc6MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAyOjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNA",
+  "mime_type": "image/jpeg",
+  "size_bytes": 12345,
+  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

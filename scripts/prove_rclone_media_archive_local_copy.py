@@ -23,12 +23,16 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from typing import BinaryIO
 
 PINNED_VERSION = "rclone v1.76.0"
 PINNED_BINARY_SHA256 = "acd80683e23151e93bbe0d6ffa74d26e542ec510332f630beecb9944f8d1a623"
 MAX_DURATION = "1500ms"
 COPY_TIMEOUT_SECONDS = 20
 READ_TIMEOUT_SECONDS = 10
+WATCHDOG_TIMEOUT_SECONDS = 3
+WATCHDOG_BW_LIMIT = "64k"
+WATCHDOG_FIXTURE_BYTES = 8 * 1024 * 1024
 FIXTURE_COUNT = 64
 FIXTURE_BYTES = 256 * 1024
 
@@ -69,13 +73,14 @@ def _run_child(
     args: Sequence[str],
     *,
     timeout_seconds: int,
+    stdin_stream: BinaryIO | None = None,
 ) -> tuple[ProcessResult, bytes, bytes]:
     command = [str(executable), "--config", str(config_path), *args]
     started = time.monotonic()
     try:
         child = subprocess.Popen(
             command,
-            stdin=subprocess.DEVNULL,
+            stdin=stdin_stream if stdin_stream is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=_clean_environment(),
@@ -241,6 +246,191 @@ def _verify_readback(
     return readback_result, verified
 
 
+def _stat_remote_object(
+    executable: pathlib.Path,
+    config_path: pathlib.Path,
+    remote_object: str,
+) -> tuple[ProcessResult, int | None]:
+    result, stdout, _stderr = _run_child(
+        executable,
+        config_path,
+        ["lsjson", "--stat", remote_object],
+        timeout_seconds=READ_TIMEOUT_SECONDS,
+    )
+    if result.returncode != 0 or result.timed_out:
+        return result, None
+    try:
+        item = json.loads(stdout.decode("utf-8", errors="strict"))
+    except (UnicodeError, json.JSONDecodeError):
+        return result, None
+    if not isinstance(item, dict):
+        return result, None
+    size_bytes = item.get("Size")
+    if type(size_bytes) is not int or size_bytes < 0:
+        return result, None
+    return result, size_bytes
+
+
+def _backing_snapshot(backing_root: pathlib.Path) -> dict[str, int]:
+    resolved_root = backing_root.resolve(strict=True)
+    file_count = 0
+    total_bytes = 0
+    largest_file_bytes = 0
+    for path in resolved_root.rglob("*"):
+        if not path.is_file():
+            continue
+        resolved_path = path.resolve(strict=True)
+        if not resolved_path.is_relative_to(resolved_root):
+            raise RuntimeError("backing_path_escaped_temp")
+        size_bytes = path.stat().st_size
+        file_count += 1
+        total_bytes += size_bytes
+        largest_file_bytes = max(largest_file_bytes, size_bytes)
+    return {
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+        "largest_file_bytes": largest_file_bytes,
+    }
+
+
+def _run_external_watchdog_scenario(
+    executable: pathlib.Path,
+    config_path: pathlib.Path,
+    root: pathlib.Path,
+    root_id: str,
+) -> int:
+    payload = random.Random(20261127).randbytes(WATCHDOG_FIXTURE_BYTES)
+    source_path = root / "watchdog-source.bin"
+    source_path.write_bytes(payload)
+    remote_object = f"media:watchdog-{root_id}/objects/partial.bin"
+    write_args = [
+        "--bwlimit",
+        WATCHDOG_BW_LIMIT,
+        "--retries",
+        "1",
+        "--low-level-retries",
+        "1",
+        "rcat",
+        "--size",
+        str(len(payload)),
+        remote_object,
+    ]
+    with source_path.open("rb") as source_stream:
+        write_result, _write_stdout, _write_stderr = _run_child(
+            executable,
+            config_path,
+            write_args,
+            timeout_seconds=WATCHDOG_TIMEOUT_SECONDS,
+            stdin_stream=source_stream,
+        )
+    stat_result, logical_size_bytes = _stat_remote_object(
+        executable,
+        config_path,
+        remote_object,
+    )
+
+    read_result: ProcessResult | None = None
+    readback_bytes: bytes | None = None
+    readback_prefix_matches = False
+    if logical_size_bytes is not None and 0 < logical_size_bytes <= len(payload):
+        read_result, readback_bytes, _read_stderr = _run_child(
+            executable,
+            config_path,
+            ["cat", remote_object],
+            timeout_seconds=READ_TIMEOUT_SECONDS,
+        )
+        if read_result.returncode != 0 or read_result.timed_out:
+            readback_bytes = None
+        elif readback_bytes is not None:
+            readback_prefix_matches = (
+                0 < len(readback_bytes) < len(payload)
+                and readback_bytes == payload[: len(readback_bytes)]
+            )
+
+    backing = _backing_snapshot(root / "backing")
+    backing_partial = 0 < backing["total_bytes"] < len(payload)
+    logical_partial = (
+        logical_size_bytes is not None
+        and 0 < logical_size_bytes < len(payload)
+    )
+    partial_effect = logical_partial or backing_partial
+    replay_invocations = 0
+    outcome = (
+        "external_watchdog_partial_effect_uncertain"
+        if write_result.timed_out and partial_effect
+        else "external_watchdog_without_observed_partial"
+        if write_result.timed_out
+        else "watchdog_not_triggered"
+    )
+    evidence: dict[str, object] = {
+        "schema_version": 1,
+        "scenario": "single_rcat_external_watchdog_no_replay",
+        "rclone_version": PINNED_VERSION,
+        "rclone_binary_sha256": PINNED_BINARY_SHA256,
+        "config_model": "local_base_plus_crypt_remote_only",
+        "rclone_environment_overrides_removed": True,
+        "write_command": "rclone rcat <bounded-synthetic-stream> media:watchdog-<opaque>/objects/partial.bin",
+        "write_flags": {
+            "bandwidth_limit": WATCHDOG_BW_LIMIT,
+            "external_timeout_seconds": WATCHDOG_TIMEOUT_SECONDS,
+            "expected_size_bytes": len(payload),
+            "fixture_sha256": hashlib.sha256(payload).hexdigest(),
+        },
+        "write_process": asdict(write_result),
+        "write_invocations": 1,
+        "replay_invocations": replay_invocations,
+        "post_timeout_actions": "read_only_stat_cat_and_backing_inventory",
+        "stat_process": asdict(stat_result),
+        "read_process": asdict(read_result) if read_result is not None else None,
+        "destination": {
+            "logical_size_bytes": logical_size_bytes,
+            "logical_partial": logical_partial,
+            "readback_bytes": len(readback_bytes) if readback_bytes is not None else None,
+            "readback_sha256": hashlib.sha256(readback_bytes).hexdigest()
+            if readback_bytes is not None
+            else None,
+            "readback_is_fixture_prefix": readback_prefix_matches,
+            "backing_file_count": backing["file_count"],
+            "backing_bytes_total": backing["total_bytes"],
+            "backing_largest_file_bytes": backing["largest_file_bytes"],
+            "backing_partial": backing_partial,
+            "partial_effect_observed": partial_effect,
+        },
+        "operation_state": "reconciliation_required" if write_result.timed_out else "not_uncertain",
+        "outcome": outcome,
+        "sanitized_error_code": "rclone_watchdog_timeout" if write_result.timed_out else "none",
+        "raw_stdout_stderr_saved": False,
+        "config_and_crypt_key_saved_in_evidence": False,
+        "network_drive_database_production_access": False,
+        "temp_root_retained_for_review": str(root),
+    }
+    evidence_path = _write_evidence(root, evidence)
+    print(f"status=observed; scenario=external_watchdog; outcome={outcome}")
+    print(
+        f"write_pid={write_result.pid}; exit={write_result.returncode}; "
+        f"timeout={write_result.timed_out}; terminated={write_result.terminated}; "
+        f"killed={write_result.killed}; reaped={write_result.reaped}"
+    )
+    print(
+        f"write_invocations=1; replay_invocations={replay_invocations}; "
+        f"logical_size={logical_size_bytes}; readback_bytes="
+        f"{len(readback_bytes) if readback_bytes is not None else 'unavailable'}; "
+        f"prefix_verified={readback_prefix_matches}; "
+        f"backing_files={backing['file_count']}; "
+        f"backing_bytes={backing['total_bytes']}; partial_effect={partial_effect}"
+    )
+    print(
+        f"operation_state={'reconciliation_required' if write_result.timed_out else 'not_uncertain'}; "
+        f"sanitized_code={'rclone_watchdog_timeout' if write_result.timed_out else 'none'}; "
+        f"raw_output_discarded=true; evidence={evidence_path}"
+    )
+    if not write_result.reaped or stat_result.timed_out:
+        return 3
+    if not write_result.timed_out or not partial_effect or replay_invocations != 0:
+        return 4
+    return 0
+
+
 def _write_evidence(root: pathlib.Path, evidence: dict[str, object]) -> pathlib.Path:
     path = root / "evidence.json"
     path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -250,6 +440,12 @@ def _write_evidence(root: pathlib.Path, evidence: dict[str, object]) -> pathlib.
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rclone", required=True, help="caminho absoluto do executável Rclone v1.76.0 Windows amd64 já verificado")
+    parser.add_argument(
+        "--scenario",
+        choices=("directory-copy", "external-watchdog-rcat"),
+        default="directory-copy",
+        help="cenário fixo de caracterização local",
+    )
     args = parser.parse_args()
 
     executable = pathlib.Path(args.rclone)
@@ -289,10 +485,14 @@ def main() -> int:
     try:
         _write_config(executable, root, config_path)
         _require_local_only_config(config_path, root)
-        expected = _write_fixture(source_dir)
+        if args.scenario == "directory-copy":
+            expected = _write_fixture(source_dir)
     except (OSError, RuntimeError, subprocess.SubprocessError, UnicodeError):
         print("status=blocked; code=synthetic_setup_failed")
         return 2
+
+    if args.scenario == "external-watchdog-rcat":
+        return _run_external_watchdog_scenario(executable, config_path, root, root_id)
 
     remote_root = f"media:proof-{root_id}"
     copy_args = [
