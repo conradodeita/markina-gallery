@@ -29,19 +29,37 @@ O ensaio comprova inicialização e saúde das duas imagens sem Picker e preserv
 ```json
 {
   "project": "pyp-picker-proof-709294b2d5d3",
-  "images": {
-    "api": "sha256:c0aed86f943e63f51b832c063f25e418e2537bab6ee3546656f5c0b56ef6df4a",
-    "web": "sha256:d9dfa2dae3692688c93eebcb9daf9f988a48c9e4aa41ec391b276244ef88f7c6"
-  },
+  "images": [
+    {
+      "service": "api",
+      "config_digest": "sha256:c0aed86f943e63f51b832c063f25e418e2537bab6ee3546656f5c0b56ef6df4a"
+    },
+    {
+      "service": "web",
+      "config_digest": "sha256:d9dfa2dae3692688c93eebcb9daf9f988a48c9e4aa41ec391b276244ef88f7c6"
+    }
+  ],
   "source_run": 46008398565,
-  "archives": {
-    "api": "e0ced4a423bdb9edcb69b0247ec3b37da9ffd057e137722d2d5dd933d004f09e",
-    "web": "0aba5e56bb43fa6d8afaa0da120c0a59bd89a337a4fbde240d0867af7a141e7c"
-  },
-  "local_manifest_ids": {
-    "api": "sha256:edb58dfcbe1526d669b7c7aa4de475c2546f0b71def9137699e28a8a77751967",
-    "web": "sha256:2363017698b6a3075a1f97ab698ae878b1daa419e871b91f50331beb81506e0f"
-  },
+  "archives": [
+    {
+      "service": "api",
+      "archive_sha256": "e0ced4a423bdb9edcb69b0247ec3b37da9ffd057e137722d2d5dd933d004f09e"
+    },
+    {
+      "service": "web",
+      "archive_sha256": "0aba5e56bb43fa6d8afaa0da120c0a59bd89a337a4fbde240d0867af7a141e7c"
+    }
+  ],
+  "local_manifest_ids": [
+    {
+      "service": "api",
+      "manifest_digest": "sha256:edb58dfcbe1526d669b7c7aa4de475c2546f0b71def9137699e28a8a77751967"
+    },
+    {
+      "service": "web",
+      "manifest_digest": "sha256:2363017698b6a3075a1f97ab698ae878b1daa419e871b91f50331beb81506e0f"
+    }
+  ],
   "synthetic_tables": "136",
   "api_health": "{\"status\":\"ok\",\"service\":\"api\"}",
   "web_health": "{\"status\":\"ok\",\"service\":\"web\"}",
@@ -54,3 +72,5 @@ O ensaio comprova inicialização e saúde das duas imagens sem Picker e preserv
   "inventory_unchanged": true
 }
 ```
+
+A CI inicial da evidência classificou o SHA-256 do archive API como generic-api-key. O valor foi confrontado com o arquivo exportado e seu checksum; é o digest e0ced4a4…004f09e, sem material de autenticação. O recibo foi reestruturado para evitar associação semântica com chave API, e o histórico recebeu exceção limitada à fingerprint exata dessa ocorrência.
