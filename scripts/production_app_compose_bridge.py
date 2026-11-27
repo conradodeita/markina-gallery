@@ -2394,7 +2394,9 @@ def _handoff_current_reference(proof: dict) -> tuple[dict, dict]:
             if item["Id"] != context["containers"][service]["Id"]:
                 raise BridgeError("handoff_current_reference_unproven")
             observations[service] = _healthy_reference_service(proof["services"][service], item)
-            models[service]["services"][service]["image"] = item["Image"]
+            version = environment_map(item["Config"].get("Env") or []).get("APP_VERSION", "")
+            models[service] = replacement_document(
+                service, models[service], item, item["Image"], version)
         sources = dict(context["digests"])
         registry = BRIDGE_STATE / "handoff-witnesses.json"
         sources[str(registry)] = snapshot_sha256(registry)

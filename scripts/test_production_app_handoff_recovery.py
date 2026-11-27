@@ -19,6 +19,10 @@ class PickerFreeRecoveryRecipeTests(unittest.TestCase):
         context = {"containers": dict(zip(bridge.SERVICES, fixtures.items)), "models": fixtures.models,
                    "digests": {"/synthetic/source.json": "e" * 64}, "environment_digest": "f" * 64,
                    "checkout_sha": "a" * 40}
+        for service in bridge.SERVICES:
+            context["models"][service]["services"][service].update(
+                build={"context": "."}, depends_on={"db": {"condition": "service_healthy"}},
+                labels={"com.docker.compose.project": "synthetic"})
         proof = {"support_sha": "b" * 40, "interrupted_sha": "c" * 40, "handoff": "d" * 64,
                  "schema_status": "verified", "services": {}}
         for record in fixtures.records:
@@ -36,6 +40,8 @@ class PickerFreeRecoveryRecipeTests(unittest.TestCase):
             recipe = bridge._handoff_picker_free_recovery_recipe(baseline)
             for service, item in context["containers"].items():
                 self.assertEqual(recipe["services"][service]["image_id"], item["Image"])
+                self.assertNotIn("build", recipe["services"][service]["model"]["services"][service])
+                self.assertNotIn("depends_on", recipe["services"][service]["model"]["services"][service])
                 self.assertEqual(observations[service]["original"]["id"], item["Id"])
             proof["services"]["api"]["original_running"] = True
             with self.assertRaisesRegex(bridge.BridgeError, "current_reference_unproven"):
