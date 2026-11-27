@@ -2334,7 +2334,14 @@ def _picker_free_recovery_model(service: str, document: dict) -> tuple[dict, boo
             raise BridgeError("handoff_recovery_recipe_mount_model_invalid")
         target = entry.split(":", 1)[0]
         if _picker_mount_path_intersects(target, PICKER_CONFIG_TARGET):
-            raise BridgeError("handoff_recovery_recipe_picker_mount_ambiguous")
+            oauth = [mount for mount in mounts
+                     if mount.get("type") == "bind"
+                     and mount.get("source") == "/etc/pyp-google-drive/oauth-client.json"
+                     and mount.get("target") == "/run/secrets/google-drive-oauth-client.json"
+                     and mount.get("read_only") is True]
+            if target != "/run" or len(exact) != 1 or len(oauth) != 1:
+                raise BridgeError("handoff_recovery_recipe_picker_mount_ambiguous")
+            tmpfs_options(entry.partition(":")[2])
 
     result = copy.deepcopy(document)
     if exact:
@@ -2404,6 +2411,7 @@ def _handoff_current_reference(proof: dict) -> tuple[dict, dict]:
                                 models, models, sources, context["environment_digest"], context["checkout_sha"])
         baseline["original_web_version"] = _web_identity(context, support_sha).split()[0]
         baseline["previous_handoff"] = proof["handoff"]
+        _handoff_picker_free_recovery_recipe(baseline)
         return baseline, observations
 
 

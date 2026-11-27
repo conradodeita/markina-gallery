@@ -77,3 +77,14 @@ O diagnóstico SHALL permitir exportar somente imagens API/web ativas e comprova
 #### Scenario: Imagem ou seleção diverge
 - **WHEN** o serviço, projeto, image ID ou plataforma difere do par comprovado
 - **THEN** a exportação falha e não libera recuperação nem retirada
+
+### Requirement: Preservar tmpfs de runtime com arquivos separados
+A receita SHALL preservar o tmpfs canônico de /run quando OAuth e Picker são binds de arquivo exatos e separados, com OAuth somente leitura. A remoção SHALL atingir somente o bind de arquivo do Picker.
+
+#### Scenario: Arquivos separados sob tmpfs de runtime
+- **WHEN** o modelo provado contém tmpfs canônico /run, o bind exato do Picker e o bind exato somente leitura do OAuth compartilhado
+- **THEN** a receita mantém tmpfs e suas opções e o bind OAuth, remove somente o bind Picker e verifica ausência do arquivo após recriação
+
+#### Scenario: Sobreposição não provada
+- **WHEN** o tmpfs cobre o caminho do Picker fora desse caso exato, ou o bind OAuth é ausente, divergente ou gravável
+- **THEN** a receita mantém o bloqueio por ambiguidade
