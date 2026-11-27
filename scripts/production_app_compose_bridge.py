@@ -2964,13 +2964,26 @@ def _handoff_live_recovery_inventory(support_sha: str) -> dict:
     return handoff_recovery_inventory(identity, items, images, schema, support_sha=support_sha)
 
 
+def _picker_free_publication_model(document: dict) -> dict:
+    result = copy.deepcopy(document)
+    if result.get("volumes") == {}:
+        result.pop("volumes")
+    for definition in result.get("networks", {}).values():
+        if isinstance(definition, dict) and definition.get("ipam") == {}:
+            definition.pop("ipam")
+    for definition in result.get("services", {}).values():
+        if isinstance(definition, dict) and definition.get("user") == "":
+            definition.pop("user")
+    return result
+
+
 def _handoff_picker_free_runtime_receipt(support_sha: str, recovery_proof: dict) -> dict:
     identity = recovery_proof.get("handoff") if isinstance(recovery_proof, dict) else None
     if not isinstance(identity, str) or not HASH_RE.fullmatch(identity):
         raise BridgeError("handoff_picker_free_receipt_missing")
     plan, state, revision = handoff_journal_read(identity)
     if (plan.get("domain") != "app-first-handoff-recovery-plan-v1"
-            or plan.get("support_sha") != support_sha
+            or not SHA_RE.fullmatch(plan.get("support_sha", ""))
             or "picker_free_recovery_recipe" not in plan
             or recovery_proof.get("schema_status") != "verified"
             or recovery_proof.get("support_sha") != support_sha
@@ -2978,23 +2991,26 @@ def _handoff_picker_free_runtime_receipt(support_sha: str, recovery_proof: dict)
             or _handoff_active_id() != identity):
         raise BridgeError("handoff_picker_free_receipt_missing")
     _handoff_validate_picker_free_recovery_plan(plan)
+    if plan["support_sha"] != support_sha:
+        _git("merge-base", "--is-ancestor", plan["support_sha"], support_sha)
 
     pointer = _read_base_pointer()
     if pointer is None:
         raise BridgeError("handoff_picker_free_runtime_base_missing")
-    _, manifest = _read_runtime_base(pointer)
+    runtime_directory, manifest = _read_runtime_base(pointer)
     transition = manifest.get("proof")
     records = manifest.get("handoff_records")
     if (not isinstance(transition, dict)
             or set(transition) != {"version", "domain", "handoff", "support_sha", "target_sha", "mode",
                                    "runtime", "models", "records", "schema"}
             or transition.get("version") != 1 or transition.get("domain") != "app-runtime-transition-v1"
-            or transition.get("handoff") != identity or transition.get("support_sha") != support_sha
+            or transition.get("handoff") != identity or transition.get("support_sha") != plan["support_sha"]
             or transition.get("target_sha") != plan["checkout_sha"] or transition.get("mode") != "rollback"
             or transition.get("schema") != "20261113_0126"
             or manifest.get("approval") != plan.get("approval")
             or not isinstance(records, list) or transition.get("records") != digest(records)
             or transition.get("runtime") != manifest.get("runtime")
+            or not isinstance(transition.get("models"), dict) or set(transition["models"]) != set(SERVICES)
             or not isinstance(manifest.get("models"), dict) or set(manifest["models"]) != set(SERVICES)):
         raise BridgeError("handoff_picker_free_runtime_receipt_mismatch")
 
@@ -3056,9 +3072,13 @@ def _handoff_picker_free_runtime_receipt(support_sha: str, recovery_proof: dict)
                         or _picker_mount_path_intersects(target, PICKER_CONFIG_TARGET)):
                     raise BridgeError("handoff_picker_free_runtime_picker_mount_present")
 
-        model_content = json.dumps(_escape_compose(plan["recovery_models"][service]), sort_keys=True).encode()
-        model_sha256 = hashlib.sha256(model_content).hexdigest()
-        if manifest["models"].get(service) != model_sha256:
+        model_content = _read_private_copy_source(
+            runtime_directory / f"{service}.compose.json", manifest["models"][service])
+        published_model = json.loads(model_content)
+        expected_model = _escape_compose(plan["recovery_models"][service])
+        expected_model["name"] = plan["recovery_project"]
+        if (digest(_decode_compose_literals(published_model)) != transition["models"][service]
+                or _picker_free_publication_model(published_model) != _picker_free_publication_model(expected_model)):
             raise BridgeError("handoff_picker_free_runtime_model_mismatch")
         selected[service] = item
         service_receipts[service] = {
@@ -3070,7 +3090,7 @@ def _handoff_picker_free_runtime_receipt(support_sha: str, recovery_proof: dict)
         raise BridgeError("handoff_picker_free_runtime_receipt_mismatch")
     receipt = {
         "version": 1, "domain": "app-picker-free-runtime-receipt-v1", "handoff": identity,
-        "revision": revision, "support_sha": support_sha,
+        "revision": revision, "support_sha": support_sha, "execution_support_sha": plan["support_sha"],
         "recipe_sha256": plan["picker_free_recovery_recipe"]["sha256"],
         "runtime_base": pointer["base"], "runtime_manifest_sha256": pointer["manifest_sha256"],
         "runtime_pointer_sha256": snapshot_sha256(BRIDGE_STATE / "active-base.json"),
