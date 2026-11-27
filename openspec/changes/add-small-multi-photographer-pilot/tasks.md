@@ -46,6 +46,8 @@
 
 ## 8. Produção e fechamento
 
+- [x] 8.2d Validar localmente o ciclo comercial de dois tenants sintéticos. Confirmar o pagamento comunicado e registrar a entrega em cada conta. Conferir as recusas administrativas cruzadas e o isolamento do pedido e do link no histórico da cliente. Evidência em `validation.md`; 16 testes aprovados no PostgreSQL descartável.
+
 - [x] 8.1 Preparar pacote com SHA/schema, inventário do destino, backup verificável, janela, portas/subdomínio, escritores próprios e reversão compatível; obter autorização operacional explícita antes de qualquer merge/push que acione deploy e registrar o aceite do pacote.
 - [ ] 8.2 Executar somente a publicação autorizada no servidor de produção existente e validar healthchecks/legado/serviços vizinhos; preservar o atendimento atual, manter o cadastro público fechado e registrar SHA/schema/UTC e autorização explícita antes de qualquer provisionamento remoto.
 - [x] 8.2a Corrigir a distribuição das colunas do monitor identificada na inspeção visual pós-publicação; validar componente compilado em 390/768/1280 px, campos/cópia e ausência de overflow; preparar PR revisável antes de nova publicação. Sem alteração de contrato ou permissão. Piloto compilado e 24 testes frontend/lint/typecheck/build aprovados; patch/descrição revisáveis preparados na branch feature/fix-capacity-monitor-layout. CI e publicação específicas permanecem em 8.2.
