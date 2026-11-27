@@ -54,3 +54,9 @@
 
 - Sincronizar os deltas às specs principais e arquivar somente após implementação, validação e revisão humana.
 - Configurar destino real, instalar/ativar rotina, restaurar ou promover banco em produção somente pelo fluxo protegido e com autorização operacional específica, inventário e rollback aprovados.
+
+### Implementação parcial de execução — 27/11/2026
+
+- **2.1 permanece aberta.** `backend/app/global_postgresql_backup.py` implementa uma primeira interface fixa: valida configuração privada externa ao Git e formato do remote, confere as versões declaradas, transmite `pg_dump -Fc` ao Restic por stdin com transporte Rclone, não grava dump plaintext em arquivo nem executa `init`/`prune`, e só retorna sucesso depois do readback descriptografado ter hash/tamanho idênticos e `pg_restore --list` aceitar o archive. Os testes unitários cobrem escopo do remote, caminhos/permissões, URL sem senha em argv, versões, erros sanitizados, streaming e divergência de readback.
+- Validação local: `backend/tests/test_global_postgresql_backup.py` — 14 passaram e 1 foi pulado no Windows por depender de permissão POSIX; os testes cobrem agora curingas host/porta, rejeição de quebra de linha no `pgpass` e erro sanitizado para JSON do Restic com formato inesperado. `scripts/test_prove_global_postgresql_backup.py` — 13 passaram; Ruff, formatação, `py_compile`, OpenSpec strict e `git diff --check` passaram. O helper também executou uma prova Restic/Rclone real, em remote local temporário com binários oficiais verificados; ver limites em `validation-results.md`.
+- `restic` e `rclone` não estão instalados no PATH local e o `backend/Dockerfile` declara Python 3.13 slim e instala apenas `curl`/`procps`, sem `pg_dump`, Restic ou Rclone. Falta decidir e validar o empacotamento/runtime, exercitar o helper com `pg_dump`/`pg_restore` reais, e definir a configuração/custódia de 1.3. Nenhuma execução remota, integração com worker, estado persistido ou retenção foi feita.
