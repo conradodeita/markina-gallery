@@ -158,6 +158,9 @@ def _parse_contract_fixture(
     remote_id = value["remote_object_id"]
     if not isinstance(remote_id, str) or not REMOTE_ID.fullmatch(remote_id):
         raise SidecarContractError("invalid_remote_id")
+    logical_key = _decode_remote_object_id(remote_id)
+    if logical_key[0] != value["tenant_id"] or logical_key[4] != value["object_id"]:
+        raise SidecarContractError("remote_id_identity_mismatch")
     mime_type = value["mime_type"]
     if not isinstance(mime_type, str) or not 1 <= len(mime_type) <= 127:
         raise SidecarContractError("invalid_mime_type")
@@ -203,6 +206,22 @@ def test_remote_object_id_five_uuid_tuple_stays_within_catalog_limit() -> None:
     assert len(remote_id) == 249
     assert len(remote_id) <= 256
     assert REMOTE_ID.fullmatch(remote_id)
+
+
+@pytest.mark.parametrize(
+    "logical_key",
+    (
+        ("00000000-0000-4000-8000-000000000009", *LOGICAL_KEY_UUIDS[1:]),
+        (*LOGICAL_KEY_UUIDS[:4], "00000000-0000-4000-8000-000000000009"),
+    ),
+)
+def test_sidecar_identity_must_match_tenant_and_object_in_remote_id(
+    logical_key: tuple[str, ...],
+) -> None:
+    raw = _payload_with_changes(remote_object_id=_encode_remote_object_id(logical_key))
+
+    with pytest.raises(SidecarContractError, match="^remote_id_identity_mismatch$"):
+        _parse_contract_fixture(raw, expected=EXPECTED_CATALOG_ROW)
 
 
 @pytest.mark.parametrize(
