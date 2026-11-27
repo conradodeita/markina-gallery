@@ -95,6 +95,10 @@ class FakeHost:
     def health(self):
         return [200, 200, 200]
 
+    def public_ready(self):
+        if self.health() != [200, 200, 200]:
+            raise ValueError('public health failed')
+
 
 def receipt(host):
     return {'format': 1, 'source_sha': 'c' * 40, 'inventory': host.inventory(),
@@ -228,6 +232,21 @@ class ReleaseTests(unittest.TestCase):
             command.return_value.stdout = '  original config\n\n'
             self.assertEqual(host.run('synthetic', raw=True), '  original config\n\n')
             self.assertEqual(host.run('synthetic'), 'original config')
+
+    def test_nginx_reload_settles_before_public_health_is_declared(self):
+        host = release.Host()
+        with (patch.object(host, 'health', side_effect=[[200, 200, 503], [200, 200, 200]]) as health,
+              patch.object(release.time, 'sleep') as sleep):
+            host.public_ready()
+        self.assertEqual(health.call_count, 2)
+        sleep.assert_called_once_with(0.5)
+
+    def test_persistent_public_failure_is_not_success(self):
+        host = release.Host()
+        with (patch.object(host, 'health', return_value=[200, 200, 503]),
+              patch.object(release.time, 'monotonic', side_effect=[0, 16]),
+              self.assertRaisesRegex(ValueError, 'public health failed')):
+            host.public_ready()
 
     def test_configuration_ignores_only_volatile_identity_and_candidate_label(self):
         old = container('face-index-worker')

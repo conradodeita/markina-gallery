@@ -127,6 +127,12 @@ class Host:
                 '--max-time', '10', '--output', '/dev/null', '--write-out', '%{http_code}',
                 'https://markina.pickyourpic.com.br' + path)) for path in ('/healthz', '/api/health', '/')]
 
+    def public_ready(self):
+        end = time.monotonic() + 15
+        while self.health() != [200, 200, 200]:
+            require(time.monotonic() < end, 'public health failed')
+            time.sleep(0.5)
+
     def inventory(self):
         require(socket.gethostname() == 'clearbudget-vnic', 'wrong host')
         identifiers = self.run('docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=markina-gallery').split()
@@ -388,7 +394,7 @@ def apply(host, receipt, path, approval, *, recovery=False):
         restart_original_writers(host, receipt)
         verify_services(host, receipt, previous=recovery)
         host.guard(work, False)
-        require(host.health() == [200, 200, 200], 'public health failed')
+        host.public_ready()
         result_receipt(work / ('recovered.json' if recovery else 'published.json'),
              {'fingerprint': approval, 'source_sha': receipt['source_sha'], 'services': overlay(receipt, recovery),
               'financial_preserved': True, 'financial': record['financial'],

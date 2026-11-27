@@ -47,3 +47,33 @@ Render Compose conferido em memória: env projetado/restart dos seis coincide co
 ## Gates pendentes
 
 Diff final/CI de PR e main/revisão humana do PR258. Ainda não há recibo selado/fingerprint operacional aprovado nem published.json. Runbook descreve aplicação/recuperação sem DDL. Depois da correção efetiva, renovar inventário/overlay/fingerprint Orders; não reutilizar o recibo antigo nem declarar Mercado Pago publicado. Nenhuma spec principal sincronizada/change arquivada sem revisão humana.
+
+## Aprovação humana e acompanhamento da revisão final
+
+O proprietário aprovou explicitamente no chat o PR258 e a publicação somente de Pillow13 nos seis processos, condicionados ao CI verde; manutenção já aceita. Head aprovado48fabf1705bfc909663a4b865661bf9163674c47, run40203301396. Não pedir novamente autorização para esse mesmo escopo após os gates; alteração material exige nova avaliação.
+
+Gemma offline, frontend, gitleaks, OpenSpec e imagens AMD64/ARM64 aprovaram esta revisão. Backend integral ainda em execução. Runs anteriores40202193146/40202624262, substituídos pelos ajustes de durabilidade/restauração de bytes, foram cancelados para evitar duplicação; não constituem aprovação do head final.
+
+Ensaio adicional do Compose real: seis imagens por ID sha256, em projeto temporário/rede none/sem mounts de produção, recriação somente depois de SIGINT130 e políticas suspensas, novos IDs/Pillow13/políticas restauradas, limpeza SIGTERM0. Health dos engines não foi exercido nesse stub; é prova do contrato Compose, não substitui imports/matriz/CI. Prova privada compose-identity-proof.json;15 serviços reais permaneceram idênticos. Nenhum serviço ativo ou migration alterado.
+
+## Merge autorizado e inventário antes da janela
+
+PR258 integrado por merge3d2ac6e7fb2e621e6ad468f9fd1233ffc909c7a3 após CI integral verde do head48fabf17/run40203301396:1597 aprovados/20 skips/620 avisos no pytest completo (1487,68s); concorrência PostgreSQL4 e exclusão1 adicionais aprovados. Gemma offline e demais jobs/gate agregado verdes. Nenhum job de deploy rodou. Autorização humana explícita condicionada a CI atendida para o PR; CI push de main40206489337 ainda pendente e obrigatório para seal/apply.
+
+Inventário remoto atualizado após merge:15 saudáveis, mesmos seis IDs anteriores, schema0087, somente nginx127.0.0.1:8080;13 filas sem queued/pending/processing;68 notification_delivery unknown preservadas. Snapshot financeiro pré-janela salvo somente em arquivo privado0600, sem dados impressos. Ainda nenhum serviço ativo substituído/pausado. O baseline da aplicação permanece1f4483bd; main3d2ac6e7 identifica o coordenador revisado, não uma atualização API/web.
+
+## Fonte de segurança após merge
+
+Consulta autenticada/read-only ao GitHub após merge retornou9 alertas abertos:6vite,2@vitest/mocker e1undici; severidades2high/6medium/1low. Nenhum Pillow aberto (41 anteriores encerrados pelo manifest corrigido). Isso não prova runtime publicado: seis processos ainda aguardam a troca após CI main. Não atualizar essas outras dependências dentro da correção Pillow nem declarar ausência global de vulnerabilidades.
+
+Conferência adicional: quatro scripts privados de preparação/operação correspondem byte a byte ao SHA main3d2ac6e7. A cópia inicial de prepare_emergency_api_image.py diferia somente em CRLF/LF do Windows; original preservado fora do checkout e cópia canônica corrigida na pasta privada. Nenhum código/configuração de serviço ativo foi alterado. O seal continua exigindo mainCI verde e igualdade dos helpers.
+
+## Publicação efetiva e desvio operacional tratado
+
+CI main40206489337/SHA3d2ac6e7 integralmente verde:1597 aprovados/20 skips/620 avisos,1134,04s; demais jobs/gate agregado aprovados. Classificação dependencies; todos os jobs de deploy automático ignorados. Recibo selado privado sealed-main.json, fingerprint cf1c0d5227f9218519acd741ffe596032dc38c932b90ddb79ec4469fa70ab3a9; inventário port/schema/imagens apresentado antes da operação autorizada.
+
+Troca pontual dos seis concluída em25/10/2026 (containers novos iniciados15:45:48UTC/12:45:48São Paulo). Todos carregam Python3.13.16/Pillow13.0.0, imagens candidatas da tabela, restart unless-stopped/saudáveis. API/worker geral pausados e retomados nos mesmos IDs/imagens; nove serviços preservaram imagens/IDs/configuração e os sete não pausados preservaram StartedAt. Schema0087, digest financeiro idêntico antes/depois,15 saudáveis, HTTPS200/200/200, nenhum marker pendente. Nenhum DDL, restore de banco, credencial, modelo, dado financeiro ou foto real alterado.Todos os41 alertas Pillow foram encerrados no manifest;9 alertas nãoPillow permanecem fora do escopo.
+
+A conferência pública imediatamente após nginx reload recebeu503 transitório e o executor rearmou corretamente a barreira, deixando journal e todas as imagens novas saudáveis. Não foi interpretado como sucesso. Sob o mesmo lock/recibo aprovado, reconferimos versões/config/schema/digest, repetimos somente a restauração já autorizada do arquivo nginx original e aguardamos propagação limitada15s. Observações reais [200,200,503]→[200,200,200], sem alterar binários/configuração original. published.json, public-health-reload-settling.json, post-release-inventory.json e post-release-runtime.json persistidos0600; journal removido somente após sucesso. Não foi necessário rollback ou SIGKILL. O helper versionado recebe regressão de polling limitado para futuras execuções; a cópia usada em produção permanece exatamente main3d2ac6e7, com o desvio manual explicitamente registrado.
+
+Continuidade: Pillow publicado/validado, autorização atendida. Overlay persistente em pillow-prepare-20261025-01/active.compose.json consta dos labels Compose dos seis ativos; preservar junto com published.json e imagens anteriores. Retomar Orders com inventário novo, incluindo overlay e pin13; não reutilizar fingerprint antigo. Sync/archive da spec permanece para revisão humana final, sem alegar publicação do Mercado Pago nesta correção.

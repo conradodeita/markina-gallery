@@ -27,3 +27,7 @@ O fechamento SHALL conferir Pillow13.0.0 nos seis processos ativos e preservar s
 #### Scenario: Manifest corrigido e container antigo
 - **WHEN** o arquivo declara13.0.0 mas algum processo ainda carrega12.3.0
 - **THEN** a publicação permanece incompleta e o relatório identifica o serviço pendente
+
+#### Scenario: Propagação da recarga nginx
+- **WHEN** o ingresso original é restaurado e os workers nginx ainda propagam a recarga
+- **THEN** a validação SHALL aguardar saúde pública200 por intervalo limitado antes de concluir, sem interpretar um503 transitório como sucesso nem remover o journal enquanto a saúde não for confirmada
