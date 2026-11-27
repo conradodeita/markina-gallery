@@ -57,7 +57,7 @@ export function OwnerMediaArchiveRecoveries({
 }) {
   const failedItems = items.filter((item) => item.status === "failed");
   const [operationId, setOperationId] = useState("");
-  const [durationDays, setDurationDays] = useState(14);
+  const selected = failedItems.find((item) => item.operation_id === operationId);
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
   const [saving, setSaving] = useState(false);
@@ -67,8 +67,8 @@ export function OwnerMediaArchiveRecoveries({
 
   async function retry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!operationId || saving) return;
-    const keyName = `${operationId}:${durationDays}`;
+    if (!selected || saving) return;
+    const keyName = selected.operation_id;
     let idempotencyKey = idempotencyKeys.current.get(keyName);
     if (!idempotencyKey) {
       idempotencyKey = `archive-retry-${crypto.randomUUID()}`;
@@ -86,7 +86,7 @@ export function OwnerMediaArchiveRecoveries({
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            duration_days: durationDays,
+            duration_days: selected.duration_days,
             idempotency_key: idempotencyKey,
             current_password: password,
             totp_code: totp,
@@ -130,7 +130,7 @@ export function OwnerMediaArchiveRecoveries({
       ))}
     </ol> : <SystemState title="Nenhuma recuperação registrada" detail="Pedidos, falhas e débitos desse tenant aparecerão aqui." />}
 
-    {failedItems.length && operationId ? (
+    {selected ? (
       <form className={styles.retryForm} onSubmit={(event) => void retry(event)}>
         <h4>Retry manual após falha comprovada</h4>
         <p>A mesma taxa do pedido que falhou será reservada novamente. Ela só será debitada após uma recuperação íntegra.</p>
@@ -139,11 +139,7 @@ export function OwnerMediaArchiveRecoveries({
             {failedItems.map((item) => <option key={item.operation_id} value={item.operation_id}>{item.folder_name} · {item.operation_id.slice(0, 8)}</option>)}
           </select>
         </label>
-        <label>Novo prazo de acesso
-          <select value={durationDays} onChange={(event) => setDurationDays(Number(event.target.value))}>
-            {[7, 14, 30].map((days) => <option key={days} value={days}>{days} dias</option>)}
-          </select>
-        </label>
+        <p>Prazo do pedido original: {selected.duration_days} dias.</p>
         <label>Senha atual do proprietário
           <input type="password" autoComplete="current-password" maxLength={128} required value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>

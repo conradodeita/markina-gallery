@@ -718,7 +718,7 @@ class PhotographerCreditPackageInput(BaseModel):
 class MediaArchiveRecoveryInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    duration_days: Literal[7, 14, 30]
+    duration_days: Literal[7, 14, 30] = media_archive_billing.SELF_SERVICE_RECOVERY_DAYS
     idempotency_key: str = Field(min_length=1, max_length=200)
 
 

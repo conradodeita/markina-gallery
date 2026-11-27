@@ -671,37 +671,27 @@ Enquanto uma pasta estiver arquivada, o cliente SHALL NOT visualizar nem selecio
 
 ### Requirement: Recuperação automática por créditos após pedido do tenant
 
-O sistema SHALL permitir a recuperação automática de pastas arquivadas por solicitação do tenant, aplicando a taxa global e um dos prazos permitidos.
+O sistema SHALL permitir a recuperação automática de pastas arquivadas por solicitação do tenant, aplicando a taxa global e o prazo fixo definido em `fix-cold-recovery-access-window`.
 
 #### Scenario: Tenant solicita recuperação com saldo e espaço suficientes
 
 - **WHEN** o tenant confirma a recuperação, possui saldo suficiente para a taxa global vigente e o pré-flight de espaço passa
-- **THEN** o tenant vê a taxa, o prazo escolhido e o aviso de possível nova taxa em outro ciclo; o sistema reserva temporariamente os créditos e inicia automaticamente o pull do Drive para o servidor sem aprovação manual do proprietário
+- **THEN** o tenant vê a taxa, o prazo de 30 dias após conclusão e o aviso de possível nova taxa em outro ciclo; o sistema reserva os créditos e inicia automaticamente o pull do destino registrado
 
 #### Scenario: Tenant solicita recuperação sem saldo suficiente
 
 - **WHEN** o saldo de créditos disponível não cobre a taxa configurada
 - **THEN** o sistema não inicia o pull e informa que é necessário adquirir créditos para recuperar a pasta
 
-#### Scenario: Tenant escolhe prazo de recuperação
+#### Scenario: Tenant confirma um novo pedido
 
-- **WHEN** o tenant confirma uma das opções de 7, 14 ou 30 dias
-- **THEN** o sistema registra a opção e aplica a mesma taxa fixa por pasta/ciclo para todas as opções; o prazo começa somente após a recuperação íntegra
-
-#### Scenario: Prazo de recuperação fora das opções
-
-- **WHEN** uma chamada envia duração diferente de 7, 14 ou 30 dias
-- **THEN** o sistema rejeita a solicitação antes de reservar créditos ou iniciar o pull
+- **WHEN** o tenant confirma a nova recuperação
+- **THEN** o sistema registra 30 dias de acesso, com contagem somente após a recuperação íntegra
 
 #### Scenario: Proprietário configura a taxa global
 
 - **WHEN** o proprietário altera a taxa de recuperação na página Créditos
 - **THEN** o novo valor fixo em créditos por pasta e ciclo vale para novos pedidos de todos os tenants
-
-#### Scenario: Taxa configurada vale para todos os prazos
-
-- **WHEN** tenants escolhem prazos de recuperação diferentes
-- **THEN** cada pedido aplica a mesma taxa global fixa por pasta e ciclo
 
 #### Scenario: Proprietário segue o fluxo de recuperação
 
@@ -739,7 +729,7 @@ O sistema SHALL usar o ledger de créditos para registrar o consumo de recupera�
 #### Scenario: Pull completo e íntegro
 
 - **WHEN** todos os arquivos esperados são puxados e passam na verificação de integridade
-- **THEN** o sistema promove os objetos locais ainda invisíveis e, na transação final, confirma uma única vez o débito reservado, registra o histórico e ativa a pasta e o prazo escolhido
+- **THEN** o sistema promove os objetos locais ainda invisíveis e, na transação final, confirma uma única vez o débito reservado, registra o histórico e ativa a pasta pelo prazo registrado no pedido
 
 #### Scenario: Pull falha ou fica incompleto
 
@@ -790,16 +780,16 @@ O sistema SHALL avisar uma vez por ciclo quando pedido em aberto bloquear o arqu
 
 ### Requirement: Recuperação renova prazo e permite novo ciclo
 
-Após a recuperação, a pasta SHALL ficar disponível pelo prazo escolhido pelo tenant. Ao fim desse prazo começa uma nova janela de 30 dias corridos completos; se os pedidos não estiverem em aberto, a pasta torna-se elegível para novo ciclo de arquivo e uma recuperação posterior exige nova taxa por ciclo. O proprietário segue a mesma regra de prazo sem pagar.
+Após a recuperação, a pasta SHALL ficar disponível pelo prazo registrado no pedido. Ao fim desse prazo começa uma nova janela de 30 dias corridos completos. Sem pedidos em aberto, a pasta fica elegível para novo ciclo de arquivo e uma recuperação posterior aplica nova taxa por ciclo. O proprietário segue o mesmo prazo com isenção.
 
 #### Scenario: Novo prazo termina
 
-- **WHEN** o prazo escolhido termina e passam 30 dias corridos completos sem pedido em aberto
+- **WHEN** o prazo registrado termina e passam 30 dias corridos completos sem pedido em aberto
 - **THEN** a pasta torna-se elegível a ser arquivada novamente, sem bloqueio por carrinhos/seleções, e uma nova recuperação segue a taxa vigente daquele ciclo
 
 ### Requirement: Operação de recuperação fica visível no card e no histórico do tenant
 
-O sistema SHALL registrar por pasta cada solicitação, estado, prazo escolhido, taxa, reserva, débito/liberação e resultado no card do tenant e no histórico de créditos. O proprietário SHALL poder consultar o estado e iniciar retry manual somente após falha, com auditoria. Detalhes técnicos SHALL ser sanitizados e MUST NOT revelar segredos, URLs assinadas, imagens ou PII desnecessária.
+O sistema SHALL registrar por pasta cada solicitação, estado, prazo, taxa, reserva, débito/liberação e resultado no card do tenant e no histórico de créditos. O proprietário SHALL poder consultar o estado e iniciar retentativa manual somente após falha, com auditoria. Detalhes técnicos SHALL ser sanitizados e MUST NOT revelar segredos, URLs assinadas, imagens ou PII desnecessária.
 
 #### Scenario: Tenant acompanha a recuperação
 

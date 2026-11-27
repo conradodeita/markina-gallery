@@ -443,7 +443,7 @@ def _restore_fixture(tmp_path: Path, monkeypatch, *, photo_count: int = 2):
             tenant_id=tenant.id,
             actor_admin_id=photographer.id,
             cycle_id=cycle_id,
-            duration_days=14,
+            duration_days=30,
             idempotency_key=f"restore-fixture-request-{uuid4()}",
         )
         restore_operation_id = UUID(request["operation_id"])
@@ -983,6 +983,8 @@ def test_readback_rejects_metadata_for_a_different_remote_object(monkeypatch):
 def test_restore_pulls_verifies_promotes_and_charges_once_without_recreating_records(
     tmp_path, monkeypatch,
 ):
+    from app import media_archive_executor
+    from app.media_archive_billing import list_tenant_recoveries
     from app.media_archive_staging import VolumeCapacity
 
     (
@@ -993,6 +995,35 @@ def test_restore_pulls_verifies_promotes_and_charges_once_without_recreating_rec
 
     def ample_capacity(_path):
         return VolumeCapacity("a" * 64, 100 * 1024**3, 90 * 1024**3)
+
+    original_download = storage.download_object
+    original_promote = media_archive_executor._promote_verified_object
+    observed_counts = []
+    observed_finalization = []
+
+    def progress_before_debit():
+        with Session(engine) as read_db:
+            (item,) = list_tenant_recoveries(read_db, tenant_id)
+            assert read_db.scalar(sa.select(PhotographerCreditEntry.id).where(
+                PhotographerCreditEntry.archive_operation_id == restore_operation_id,
+            )) is None
+            return item["progress"]
+
+    def inspect_download(**kwargs):
+        progress = progress_before_debit()
+        if progress["stage"] == "downloading":
+            observed_counts.append(progress["verified_objects"])
+        return original_download(**kwargs)
+
+    def inspect_promotion(**kwargs):
+        progress = progress_before_debit()
+        assert progress["stage"] == "finishing"
+        assert progress["verified_objects"] == progress["total_objects"]
+        observed_finalization.append(progress["verified_objects"])
+        return original_promote(**kwargs)
+
+    monkeypatch.setattr(storage, "download_object", inspect_download)
+    monkeypatch.setattr(media_archive_executor, "_promote_verified_object", inspect_promotion)
 
     try:
         with Session(engine, expire_on_commit=False) as db:
@@ -1012,7 +1043,10 @@ def test_restore_pulls_verifies_promotes_and_charges_once_without_recreating_rec
             operation = db.get(MediaArchiveOperation, restore_operation_id)
             assert cycle.state == "local"
             assert operation.status == "completed"
-            assert folder.access_duration_days == 14
+            assert observed_counts == list(range(cycle.object_count))
+            assert observed_finalization == [cycle.object_count] * cycle.object_count
+            assert "progress" not in list_tenant_recoveries(db, tenant_id)[0]
+            assert folder.access_duration_days == 30
             expires_at = folder.access_expires_at
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)  # noqa: UP017 -- Keep Python 3.10 runtime compatibility.
@@ -1041,7 +1075,7 @@ def test_restore_pulls_verifies_promotes_and_charges_once_without_recreating_rec
             )))
             assert any(event.event_type == "recovery_started" for event in events)
             completed = next(event for event in events if event.event_type == "recovery_completed")
-            assert completed.details["duration_days"] == 14
+            assert completed.details["duration_days"] == 30
 
         with Session(engine) as db:
             photos = list(db.scalars(sa.select(PhotoAsset).where(

@@ -17,7 +17,7 @@ Restic e Rclone são candidatos comuns; Backrest é opcional para acompanhamento
 O fluxo de recuperação por fotógrafo permanece no produto e não foi retirado junto com o backup global. Ele usa os contratos e dados do domínio media archive:
 
 - elegibilidade depois do prazo configurado da pasta mais 30 dias;
-- solicitação por 7, 14 ou 30 dias e cobrança configurável por pasta/ciclo;
+- novos pedidos do fotógrafo com 30 dias após a conclusão e cobrança configurável por pasta/ciclo;
 - reserva idempotente de créditos e débito somente após recuperação integral conferida por tamanho e SHA-256;
 - falha comprovada libera a reserva; resultado incerto exige reconciliação e preserva a reserva;
 - proprietário isento; sem expurgo automático.

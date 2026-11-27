@@ -43,9 +43,9 @@ class ApiBaseImageExportTests(unittest.TestCase):
         self.install_command("git", self.git_shim())
         self.install_command("docker", self.docker_shim())
         self.install_command("sudo", r'''
-if [[ "$*" == *" compose -- ps -q api" ]]; then
+if [[ "$*" == *" compose -- ps -q ${TEST_REQUESTED_SERVICE:-api}" ]]; then
   printf '%s\n' "$TEST_CONTAINER_IDS"
-elif [[ "$*" == *" service-project -- api" ]]; then
+elif [[ "$*" == *" service-project -- ${TEST_REQUESTED_SERVICE:-api}" ]]; then
   printf '%s\n' "${TEST_EXPECTED_PROJECT:-markina-gallery}"
 else
   exit 96
@@ -110,7 +110,7 @@ fi
         env.update(overrides)
         return subprocess.run(
             [BASH, str(self.script), "--mode", "export", "--sha", TARGET_SHA,
-             "--expected-image-id", IMAGE_ID],
+             "--expected-image-id", IMAGE_ID, "--service", env.get("TEST_REQUESTED_SERVICE", "api")],
             cwd=self.project, env=env, capture_output=True, check=False, timeout=20,
         )
 
@@ -122,6 +122,20 @@ fi
         self.assertEqual(len(calls), 5)
         self.assertIn("image save " + IMAGE_ID, calls[-1])
         self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_exports_web_only_when_the_registered_service_and_image_match(self):
+        result = self.run_export(TEST_REQUESTED_SERVICE="web", TEST_SERVICE="web")
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        self.assertEqual(gzip.decompress(result.stdout), b"synthetic-docker-image-archive\0\n")
+        self.docker_log.unlink()
+        result = self.run_export(TEST_REQUESTED_SERVICE="web", TEST_SERVICE="api")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("image save", self.docker_log.read_text(encoding="utf8"))
+
+    def test_rejects_non_application_service_before_docker(self):
+        result = self.run_export(TEST_REQUESTED_SERVICE="db")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.docker_log.exists())
 
     def test_rejects_inventory_drift_before_export(self):
         result = self.run_export(TEST_IMAGE_ID="sha256:" + "2" * 64)

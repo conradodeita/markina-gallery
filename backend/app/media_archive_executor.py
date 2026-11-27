@@ -1290,12 +1290,13 @@ def execute_restore_operation(
         else:
             _verify_restore_manifest(storage, cycle=cycle, rows=rows, renew=renew)
             checkpoint("downloading")
-            for row in media_rows:
+            for verified_count, row in enumerate(media_rows):
                 destination = staging_object_path(
                     claim.tenant_id, claim.operation_id, row.id, root=staging_root,
                 )
                 renew_operation_lease(
                     db, operation_id=claim.operation_id, lease_token=claim.lease_token,
+                    verified_restore_objects=verified_count if current_stage == "downloading" else None,
                 )
                 _download_verified_object(
                     storage, row=row, destination=destination, renew=renew,

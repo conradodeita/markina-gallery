@@ -9,12 +9,12 @@ readonly PROJECT_ROOT="/opt/markina-gallery"
 readonly EXPECTED_REPOSITORY="conradodeita/markina-gallery"
 readonly PUBLIC_URL="https://markina.pickyourpic.com.br"
 readonly FACIAL_SCRIPT_BLOB_SHA="515c3c82c30bf76be0ec8f01013225fb71276df3"
-readonly APP_SCRIPT_BLOB_SHA="3de1adb7e1a2f233e17f487fb472f3f76e71a57a"
+readonly APP_SCRIPT_BLOB_SHA="90e0b622d6bd5dd797348622facee016d38f2173"
 readonly RETIREMENT_SCRIPT_BLOB_SHA="d8fb13a50b5254e458f19d2c5d4ed8c43fadea1b"
 readonly ORDERS_SCRIPT_BLOB_SHA="f45b16ca2d748172ca617c78e31de6cff2fa4289"
 readonly PREVIEW_MIGRATION_INVENTORY_BLOB_SHA="1296ccb0e0f6295bc07b30837fc5043e7dac4db6"
 readonly APP_ENV_INVENTORY_BLOB_SHA="8a460514b25ee26355e5252815096940b5736083"
-readonly APP_BASE_IMAGE_EXPORT_BLOB_SHA="988ca208646836ecb965b80ec91c2ada9a38dc37"
+readonly APP_BASE_IMAGE_EXPORT_BLOB_SHA="86a8a858682dd7ce5869df973f2099558c5d9926"
 
 fail() { echo "production-preflight: $*" >&2; exit 1; }
 
@@ -55,6 +55,14 @@ elif [[ "$original_command" =~ ^MARKINA_APP_HANDOFF_(WITNESSES|LEGACY_RECOVERY|R
     LEGACY_RECOVERY) inventory_mode="handoff-legacy-recovery-inventory" ;;
     RECOVERY) inventory_mode="handoff-recovery-inventory" ;;
   esac
+elif [[ "$original_command" =~ ^MARKINA_APP_REFERENCE_IMAGE_EXPORT_SHA=([0-9a-f]{40})_SERVICE=(api|web)_IMAGE_ID=(sha256:[0-9a-f]{64})$ ]]; then
+  target_sha="${BASH_REMATCH[1]}"
+  export_service="${BASH_REMATCH[2]}"
+  expected_image_id="${BASH_REMATCH[3]}"
+  script_name="export_prod_app_api_base_image.sh"
+  script_blob_sha="$APP_BASE_IMAGE_EXPORT_BLOB_SHA"
+  inventory_mode="base-image-export"
+  inventory_runtime="api-base-export"
 elif [[ "$original_command" =~ ^MARKINA_APP_BASE_IMAGE_EXPORT_SHA=([0-9a-f]{40})_IMAGE_ID=(sha256:[0-9a-f]{64})$ ]]; then
   target_sha="${BASH_REMATCH[1]}"
   expected_image_id="${BASH_REMATCH[2]}"
@@ -115,7 +123,7 @@ elif [[ "$inventory_runtime" == "preview-migration-python" ]]; then
     PYTHONPATH="$PROJECT_ROOT/scripts" python3 -B -
 elif [[ "$inventory_runtime" == "api-base-export" ]]; then
   printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
-    bash -s -- --mode export --sha "$target_sha" --expected-image-id "$expected_image_id"
+    bash -s -- --mode export --sha "$target_sha" --expected-image-id "$expected_image_id" --service "${export_service:-api}"
 elif [[ "$inventory_runtime" == "app-adoption" ]]; then
   printf '%s\n' "$script_body" | MARKINA_EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
     MARKINA_PUBLIC_BASE_URL="$PUBLIC_URL" bash -s -- --mode adoption-inventory --sha "$target_sha"

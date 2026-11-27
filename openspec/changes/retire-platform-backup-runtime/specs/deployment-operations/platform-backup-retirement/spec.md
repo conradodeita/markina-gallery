@@ -35,7 +35,14 @@ A remoção no servidor SHALL ocorrer somente pelo workflow protegido `productio
 #### Scenario: Layout da configuração antiga é inesperado
 - **WHEN** `/etc/pyp-backup` contém caminhos aninhados, outros nomes, diretórios no lugar de arquivos ou modos diferentes do layout conhecido
 - **THEN** a pré-condição da retirada MUST bloqueá-la antes de excluir qualquer alvo
-- **AND** o layout conhecido contém somente `destination.json` e `keyring.json` como arquivos regulares diretos `root:root` no modo `0400`, podendo qualquer um deles estar ausente
+- **AND** o layout conhecido contém somente `destination.json`, `keyring.json` e `source.json` como arquivos regulares diretos `root:root` no modo `0400`, podendo qualquer um deles estar ausente; `source.json` é configuração exclusiva do runtime aposentado, e sua inclusão não afirma que ele seja a entrada observada no host
+
+#### Scenario: Inventário identifica a categoria de uma entrada inesperada sem expor seu nome
+- **WHEN** o inventário encontra uma entrada de nível superior fora da allowlist de runtime, configuração ou estado legado, ou uma entrada de configuração inconsistente no snapshot
+- **THEN** ele SHALL abortar antes de gerar fingerprint ou autorizar remoção
+- **AND** retornará somente `backup_retirement_unexpected_runtime_layout`, `backup_retirement_unexpected_config_layout` ou `backup_retirement_unexpected_state_layout`, ou `backup_retirement_unexpected_config_entry` para a inconsistência no snapshot
+- **AND** o diagnóstico MUST NOT revelar nome, caminho, conteúdo, credencial, owner, mode, ID ou outro metadado da entrada
+- **AND** a allowlist desta change e os critérios de elegibilidade permanecem explícitos e fixos; o inventário não os amplia dinamicamente
 
 #### Scenario: Bind mount presente em árvore que seria removida
 - **WHEN** o inventário Linux encontra um mountpoint no alvo ou em qualquer descendente de uma árvore protegida, inclusive bind mount no mesmo filesystem
@@ -60,9 +67,20 @@ A remoção no servidor SHALL ocorrer somente pelo workflow protegido `productio
 O inventário protegido SHALL incluir os metadados dos mounts na fingerprint e MUST NOT ler ou imprimir o conteúdo dos arquivos montados.
 
 #### Scenario: Mount do Picker encontrado
-- **WHEN** um container monta o caminho de configuração do Picker ou seu destino conhecido
+- **WHEN** um container monta o arquivo de configuração do Picker, seu destino conhecido ou um diretório ancestral que cubra qualquer um desses caminhos
 - **THEN** o inventário SHALL informar o prefixo do ID do container, os caminhos de origem e destino, o serviço Compose e a label de arquivos Compose quando disponíveis
 - **AND** mount presente, origem desconhecida ou origem não reconciliada com a revisão protegida MUST bloquear a retirada
+
+#### Scenario: OAuth compartilhado sem configuração do Picker
+- **WHEN** um container monta somente `/etc/pyp-google-drive/oauth-client.json` em `/run/secrets/google-drive-oauth-client.json`
+- **THEN** o inventário SHALL classificar `picker_mount` como ausente e MUST NOT apresentar esse bind como configuração do Picker
+- **AND** o digest agregado dos containers SHALL continuar incluindo todos os mounts, inclusive o OAuth compartilhado
+- **AND** a retirada MUST NOT alterar ou remover o cliente OAuth, sua configuração ou seus dados
+
+#### Scenario: Bind de diretório que cobre o Picker
+- **WHEN** a origem ou o destino de um bind é um diretório ancestral que cobre o caminho configurado do Picker
+- **THEN** o inventário SHALL classificar o Picker como montado e bloquear a retirada
+- **AND** caminho relativo, não canônico ou inválido MUST falhar fechado sem divulgar valores
 
 ### Requirement: Inventário restringe dados locais à estrutura antiga
 

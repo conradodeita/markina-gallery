@@ -31,6 +31,6 @@ A prova de mídia SHALL usar o fluxo autenticado existente e preservar prazos, c
 #### Scenario: Prazo e créditos continuam ligados à recuperação verificada
 
 - **WHEN** a prova executa a solicitação autenticada de recuperação fria de uma pasta
-- **THEN** exercita a janela de elegibilidade de 30 dias, uma duração permitida de 7, 14 ou 30 dias e a taxa configurável por pasta/ciclo
+- **THEN** exercita a janela de elegibilidade de 30 dias, os 30 dias fixos de acesso após a nova recuperação e a taxa configurável por pasta/ciclo
 - **AND** reserva uma única vez, debita somente após readback e checksum integrais, libera em falha comprovada e conserva a reserva para reconciliação se o resultado for incerto
 - **AND** mantém a isenção do proprietário, o início do novo prazo após recuperação íntegra e a proibição de expurgo automático
