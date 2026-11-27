@@ -100,97 +100,28 @@ class AppReleaseScopeTests(unittest.TestCase):
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest), (False, 'arquivo_fora_do_escopo'))
 
-    def test_picker_support_is_allowed_without_accepting_unreviewed_files(self):
-        for name in ('.github/workflows/production-google-picker-config.yml',
-                     'scripts/test_production_app_picker.py'):
-            path = self.root / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('reviewed Picker support\n', encoding='utf-8')
-        self.commit()
-        self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest),
-                         (True, 'somente_api_web'))
-        for name in ('.github/workflows/production-google-picker-unreviewed.yml',
-                     'scripts/test_production_app_picker_unreviewed.py',
-                     'backend/app/platform_backup/unreviewed_picker_worker.py'):
-            with self.subTest(name=name):
-                path = self.root / name
-                path.write_text('unreviewed support\n', encoding='utf-8')
-                self.commit()
-                self.assertEqual(policy.evaluate(self.root, self.base, 'HEAD', self.manifest),
-                                 (False, 'arquivo_fora_do_escopo'))
-                self.run_git('rm', name)
-                self.commit()
-
-    def test_platform_backup_runtime_operations_are_exactly_allowlisted(self):
-        names = (
-            ".github/workflows/production-platform-backup-runtime.yml",
-            ".github/workflows/production-platform-backup-wrapper-install.yml",
-            "scripts/build_platform_backup_runtime.sh",
-            "scripts/install-prod-platform-backup-wrapper.sh",
-            "scripts/install_platform_backup_runtime.py",
-            "scripts/platform_backup_runtime_artifact.py",
-            "scripts/platform_backup_runtime_inventory.py",
-            "scripts/test_install_platform_backup_runtime.py",
-            "scripts/test_platform_backup_runtime_artifact.py",
-            "scripts/test_platform_backup_runtime_inventory.py",
-            "scripts/test_platform_backup_runtime_workflow.py",
-        )
-        for name in names:
-            path = self.root / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("reviewed platform backup operation\n", encoding="utf-8")
-        self.commit()
-        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                         (True, "somente_api_web"))
-        for name in (
-            ".github/workflows/production-platform-backup-arbitrary.yml",
-            "scripts/install-prod-unreviewed-backup.sh",
-            "scripts/test_platform_backup_runtime_unreviewed.py",
-        ):
-            with self.subTest(name=name):
-                path = self.root / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("unreviewed operation\n", encoding="utf-8")
-                self.commit()
-                self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                                 (False, "arquivo_fora_do_escopo"))
-                self.run_git("rm", name)
-                self.commit()
-
-    def test_platform_backup_runtime_requires_exact_reviewed_blob_and_worker_scope(self):
-        name = "backend/app/platform_backup/runtime_worker.py"
+    def _assert_retired_backup_path_can_only_be_deleted(self, name):
         path = self.root / name
-        path.write_text("reviewed but changed backup runtime\n", encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("legacy backup runtime\n", encoding="utf-8")
+        self.commit()
+        path.unlink()
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                         (False, "runtime_diverge_do_blob_aprovado"))
-        self.manifest["runtime_blobs"][name] = self.run_git("rev-parse", f"HEAD:{name}")
-        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (True, "somente_api_web"))
-        unreviewed = self.root / "backend/app/platform_backup/unreviewed_worker.py"
-        unreviewed.write_text("unreviewed worker\n", encoding="utf-8")
+        path.write_text("reintroduced legacy backup runtime\n", encoding="utf-8")
         self.commit()
         self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
                          (False, "arquivo_fora_do_escopo"))
 
-    def test_backup_support_files_require_exact_set_and_pins(self):
-        for name in policy.BACKUP_SUPPORT_FILES:
-            path = self.root / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("reviewed backup support\n", encoding="utf-8")
-        self.commit()
-        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                         (False, "manifesto_suporte_backup_incompleto"))
-        self.manifest["support_blobs"] = {
-            name: self.run_git("rev-parse", f"HEAD:{name}") for name in policy.BACKUP_SUPPORT_FILES
-        }
-        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                         (True, "somente_api_web"))
-        changed = next(iter(policy.BACKUP_SUPPORT_FILES))
-        (self.root / changed).write_text("different support content\n", encoding="utf-8")
-        self.commit()
-        self.assertEqual(policy.evaluate(self.root, self.base, "HEAD", self.manifest),
-                         (False, "suporte_backup_diverge_do_blob_aprovado"))
+    def test_retired_picker_module_can_only_be_deleted_not_reintroduced(self):
+        self._assert_retired_backup_path_can_only_be_deleted("backend/app/google_drive_picker.py")
+
+    def test_retired_backup_package_path_can_only_be_deleted_not_reintroduced(self):
+        self._assert_retired_backup_path_can_only_be_deleted("backend/app/platform_backup/runtime_worker.py")
+
+    def test_retired_backup_unit_path_can_only_be_deleted_not_reintroduced(self):
+        self._assert_retired_backup_path_can_only_be_deleted("scripts/backup_runtime/pyp-platform-backup.timer")
 
     def test_release_classifier_and_its_test_are_allowed_policy_files(self):
         for name in ("scripts/classify_prod_release.py", "scripts/test_classify_prod_release.py"):
@@ -208,7 +139,10 @@ class AppReleaseScopeTests(unittest.TestCase):
             "scripts/verify_main_ci_evidence.py",
             "scripts/test_verify_main_ci_evidence.py",
             "scripts/production_app_compose_bridge.py",
+            "scripts/production_app_preflight_support.py",
             "scripts/test_production_app_compose_bridge.py",
+            "scripts/test_production_app_preflight_support.py",
+            "scripts/test_production_app_preflight_support_workflow.py",
             "scripts/install-prod-app-compose-bridge.sh",
             "scripts/deploy-prod-lock.sh",
             "scripts/deploy-prod-state.sh",

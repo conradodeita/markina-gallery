@@ -1,5 +1,7 @@
 # Tasks
 
+> **SUPERCEDIDA — NÃO EXECUTAR tarefas pendentes nem despachar workflows.** As caixas vazias deste change são registro histórico da tentativa encerrada em 25/11/2026; a avaliação atual está em [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/tasks.md).
+
 - [x] 1.1 Reconciliar os contratos do backup global, OAuth Drive e upload retomável; manter a identidade/configuração do provider injetável, `drive.file`, pasta dedicada e ausência de chamadas externas nos testes. Evidência de dependências e limites em `design.md`; referências oficiais e limites confirmados em 06/11.
 - [x] 1.2 Implementar adapter Workspace de upload/readback retomável e idempotente usando artefato já cifrado, UUID opaco e metadados estritos; falhar fechado em autorização, quota, conflito ou conteúdo divergente. Evidência: `backend/app/platform_backup/workspace_store.py`; transporte obrigatoriamente injetado, retry após perda de confirmação, quota, Shared Drive delimitado e busca incompleta cobertos por testes sintéticos.
 - [x] 2.1 Integrar o adapter ao coordenador de cópia global sem promover `LocalBackupWorker` a runtime de produção; registrar receipt sanitizado e estado remoto no catálogo autenticado. Evidência: `copy_workspace_backup` em `backend/app/platform_backup/remote_copy.py`; transporte sintético registra apenas `copy_started`, `uploaded` e `verified` para ciphertext íntegro.

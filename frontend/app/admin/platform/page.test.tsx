@@ -1,7 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import PlatformConsole from "./page";
-import { PUSH_LOGOUT_EVENT } from "../../push-device";
 
 vi.mock("./photographer-terms-editor", () => ({ PhotographerTermsEditor: () => null }));
 
@@ -18,75 +17,7 @@ const unknownSources: Array<{ key: string; state: string; availability: string; 
 
 afterEach(() => {
   cleanup(); vi.unstubAllGlobals();
-  Reflect.deleteProperty(window, "gapi");
-  Reflect.deleteProperty(window, "google");
-  document.getElementById("google-drive-picker-api")?.remove();
 });
-
-async function openPickerInConsole() {
-  vi.resetModules();
-  const Console = (await import("./page")).default;
-  let callback: (data: Record<string, unknown>) => void = () => undefined;
-  let resolveAccess: (response: Response) => void = () => undefined;
-  const dialog = { setVisible: vi.fn() };
-  const view = {
-    setMimeTypes() { return this; }, setIncludeFolders() { return this; },
-    setSelectFolderEnabled() { return this; }, setParent() { return this; },
-    setMode() { return this; },
-  };
-  const builder = {
-    addView() { return this; }, setOAuthToken() { return this; },
-    setDeveloperKey() { return this; }, setAppId() { return this; },
-    setTitle() { return this; }, setLocale() { return this; },
-    setMaxItems() { return this; }, setOrigin() { return this; },
-    setCallback(value: typeof callback) { callback = value; return this; },
-    build() { return dialog; },
-  };
-  Object.defineProperty(window, "gapi", { configurable: true,
-    value: { load: (_name: string, ready: () => void) => ready() } });
-  Object.defineProperty(window, "google", { configurable: true, value: { picker: {
-    Action: { PICKED: "picked", CANCEL: "cancel", ERROR: "error" },
-    Response: { ACTION: "action", DOCUMENTS: "docs" },
-    Document: { ID: "id", NAME: "name", MIME_TYPE: "mimeType" },
-    ViewId: { DOCS: "docs" }, DocsViewMode: { LIST: "list" },
-    DocsView: function () { return view; }, PickerBuilder: function () { return builder; },
-  } } });
-  const connected = unknownSources.map((source) => source.key === "drive"
-    ? { ...source, availability: "authorization_recorded" } : source);
-  const fetcher = mockApi(true, connected);
-  let capabilityCalls = 0;
-  fetcher.mockImplementation((input) => {
-    const path = String(input);
-    if (path.endsWith("/capabilities")) {
-      if (++capabilityCalls === 1) return json({ read_console: true });
-      return new Promise<Response>((resolve) => { resolveAccess = resolve; });
-    }
-    if (path.endsWith("/sources")) return json({ items: connected });
-    if (path.endsWith("/picker/session")) return json({
-      access_token: "synthetic-short-token", scope: "https://www.googleapis.com/auth/drive.file",
-      expires_in: 900, developer_key: `AIza${"x".repeat(35)}`, project_number: "123456789012",
-      expected_parent_folder_id: "synthetic-parent",
-    });
-    return json({}, 403);
-  });
-  render(<Console />);
-  fireEvent.change(await screen.findByLabelText("Senha atual do proprietário"), { target: { value: "synthetic-password" } });
-  fireEvent.change(screen.getByLabelText("Código atual do autenticador"), { target: { value: "123456" } });
-  fireEvent.click(screen.getByRole("button", { name: "Selecionar pasta global" }));
-  await waitFor(() => expect(document.getElementById("google-drive-picker-api")).toBeTruthy());
-  fireEvent.load(document.getElementById("google-drive-picker-api")!);
-  await waitFor(() => expect(dialog.setVisible).toHaveBeenCalledWith(true));
-  return {
-    dialog, fetcher,
-    fail: () => act(() => callback({ action: "error", error: "synthetic-private-provider-detail" })),
-    select: () => act(() => callback({ action: "picked", docs: [{
-      id: "synthetic-folder-id", name: "Pick-your-Pic Global", mimeType: "application/vnd.google-apps.folder",
-    }] })),
-    resolveAccess: async (allowed: boolean, status = 200) => {
-      await act(async () => { resolveAccess(new Response(JSON.stringify({ read_console: allowed }), { status })); });
-    },
-  };
-}
 
 function mockApi(readConsole = true, sources = unknownSources) {
   const fetcher = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input) => {
@@ -101,55 +32,6 @@ function mockApi(readConsole = true, sources = unknownSources) {
 }
 
 describe("console privado da plataforma", () => {
-  it.each(["antes", "durante"])("preserva a pasta recebida %s da revalidação de foco positiva", async (timing) => {
-    const picker = await openPickerInConsole();
-    if (timing === "antes") picker.select();
-    fireEvent(window, new Event("focus"));
-    expect(screen.getByText("Verificando acesso")).toBeTruthy();
-    const gate = screen.getByRole("region", { name: "Destino global de backup", hidden: true }).closest("[hidden]");
-    expect(gate?.hasAttribute("inert")).toBe(true);
-    if (timing === "durante") picker.select();
-    expect(screen.queryByRole("button", { name: "Autorizar esta pasta" })).toBeNull();
-    await picker.resolveAccess(true);
-    expect(await screen.findByText(/Pasta selecionada:/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Autorizar esta pasta" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByLabelText("Senha atual do proprietário") as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Novo código do autenticador") as HTMLInputElement).value).toBe("");
-    expect(picker.fetcher.mock.calls.filter(([path]) => String(path).endsWith("/capabilities"))).toHaveLength(2);
-    expect(picker.fetcher.mock.calls.filter(([path]) => String(path).endsWith("/sources"))).toHaveLength(1);
-    expect(picker.fetcher.mock.calls.some(([path]) => String(path).endsWith("/picker/authorize"))).toBe(false);
-    expect(document.body.textContent).not.toContain("synthetic-short-token");
-  });
-
-  it("preserva o erro sanitizado do Picker durante a revalidação positiva", async () => {
-    const picker = await openPickerInConsole();
-    fireEvent(window, new Event("focus"));
-    picker.fail();
-    expect(screen.queryByRole("alert")).toBeNull();
-    await picker.resolveAccess(true);
-    expect((await screen.findByRole("alert")).textContent).toContain("O Google Drive não conseguiu concluir a seleção.");
-    expect(document.body.textContent).not.toContain("synthetic-private-provider-detail");
-    expect(screen.queryByText(/Pasta selecionada:/)).toBeNull();
-    expect(picker.fetcher.mock.calls.some(([path]) => String(path).endsWith("/picker/authorize"))).toBe(false);
-  });
-
-  it.each(["recusa", "falha", "logout"])("descarta o Picker em %s e ignora callback e resposta tardios", async (result) => {
-    const picker = await openPickerInConsole();
-    fireEvent(window, new Event("focus"));
-    if (result === "logout") {
-      fireEvent(window, new Event(PUSH_LOGOUT_EVENT));
-    } else {
-      await picker.resolveAccess(false, result === "falha" ? 503 : 200);
-    }
-    expect(await screen.findByText("Console indisponível")).toBeTruthy();
-    expect(picker.dialog.setVisible).toHaveBeenLastCalledWith(false);
-    picker.select();
-    if (result === "logout") await picker.resolveAccess(true);
-    expect(screen.queryByRole("region", { name: "Destino global de backup" })).toBeNull();
-    expect(screen.queryByText(/Pasta selecionada:/)).toBeNull();
-    expect(picker.fetcher.mock.calls.some(([path]) => String(path).endsWith("/picker/authorize"))).toBe(false);
-  });
-
   it("nega a área sem consultar diretório ou fontes quando não há propriedade", async () => {
     const fetcher = mockApi(false);
     render(<PlatformConsole />);
@@ -172,7 +54,7 @@ describe("console privado da plataforma", () => {
     expect(await screen.findByText("Galerias: 2 · Fotografias: 7")).toBeTruthy();
     expect(await screen.findByText(/Sem registro de conexão; quota desconhecida/)).toBeTruthy();
     expect(screen.getByText(/Registro consultado em/)).toBeTruthy();
-    expect(screen.getByText(/Backup, arquivo e restauração: sem fonte integrada; estado desconhecido/)).toBeTruthy();
+    expect(screen.getByText(/Estado do arquivo de mídia e da restauração indisponível/)).toBeTruthy();
     expect(screen.queryByText(/backup saudável/i)).toBeNull();
   });
 
@@ -184,9 +66,7 @@ describe("console privado da plataforma", () => {
     const fetcher = mockApi(true, connectedSources);
     render(<PlatformConsole />);
     expect(await screen.findByText("Autorização registrada")).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Destino global de backup" })).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Selecionar pasta global" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByLabelText("Senha atual do proprietário")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Selecionar pasta global" })).toBeNull();
     expect(fetcher.mock.calls.some(([path]) => String(path).includes("/picker/"))).toBe(false);
     expect(screen.getByText(/A disponibilidade atual do Drive não foi verificada/)).toBeTruthy();
     expect(screen.getByText(/50 TiB usados de 100 TiB/)).toBeTruthy();

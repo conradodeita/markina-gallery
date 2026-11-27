@@ -569,54 +569,6 @@
       "items": 12,
       "seconds": 0.117
     },
-    "tests/test_platform_backup_archive.py": {
-      "items": 84,
-      "seconds": 0.179
-    },
-    "tests/test_platform_backup_payload.py": {
-      "items": 30,
-      "seconds": 0.036
-    },
-    "tests/test_platform_backup_postgres.py": {
-      "items": 6,
-      "seconds": 0.0
-    },
-    "tests/test_platform_backup_production_cli.py": {
-      "items": 9,
-      "seconds": 0.008
-    },
-    "tests/test_platform_backup_restore.py": {
-      "items": 39,
-      "seconds": 0.058
-    },
-    "tests/test_platform_backup_retention.py": {
-      "items": 51,
-      "seconds": 0.558
-    },
-    "tests/test_platform_backup_runtime_config.py": {
-      "items": 39,
-      "seconds": 0.033
-    },
-    "tests/test_platform_backup_runtime_worker.py": {
-      "items": 9,
-      "seconds": 0.058
-    },
-    "tests/test_platform_backup_storage.py": {
-      "items": 48,
-      "seconds": 0.116
-    },
-    "tests/test_platform_backup_worker.py": {
-      "items": 30,
-      "seconds": 0.379
-    },
-    "tests/test_platform_backup_workspace_credentials.py": {
-      "items": 30,
-      "seconds": 87.29
-    },
-    "tests/test_platform_backup_workspace_store.py": {
-      "items": 45,
-      "seconds": 8.262
-    },
     "tests/test_platform_console.py": {
       "items": 81,
       "seconds": 226.042
@@ -1005,6 +957,24 @@
       "items": 6,
       "seconds": 0.007
     }
+  },
+  "profile_adjustments": {
+    "excluded_items_across_samples": 420,
+    "excluded_modules": [
+      "tests/test_platform_backup_archive.py",
+      "tests/test_platform_backup_payload.py",
+      "tests/test_platform_backup_postgres.py",
+      "tests/test_platform_backup_production_cli.py",
+      "tests/test_platform_backup_restore.py",
+      "tests/test_platform_backup_retention.py",
+      "tests/test_platform_backup_runtime_config.py",
+      "tests/test_platform_backup_runtime_worker.py",
+      "tests/test_platform_backup_storage.py",
+      "tests/test_platform_backup_worker.py",
+      "tests/test_platform_backup_workspace_credentials.py",
+      "tests/test_platform_backup_workspace_store.py"
+    ],
+    "reason": "Pruned historical duration entries for the retired global backup runtime; source measurements remain unchanged."
   },
   "schema_version": 1,
   "source": {

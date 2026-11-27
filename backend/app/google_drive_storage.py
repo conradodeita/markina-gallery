@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import BinaryIO
 from urllib.parse import urlsplit
@@ -16,7 +17,7 @@ from pydantic import SecretStr
 from app.google_drive_client import DriveTransport, HttpxDriveTransport
 
 UPLOAD_ENDPOINT = "https://www.googleapis.com/upload/drive/v3/files"
-UPLOAD_FIELDS = "id,name,mimeType,size,md5Checksum,parents"
+UPLOAD_FIELDS = "id,name,mimeType,size,md5Checksum,parents,appProperties"
 CHUNK_ALIGNMENT = 256 * 1024
 DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
 MAX_CHUNK_SIZE = 64 * 1024 * 1024
@@ -109,7 +110,8 @@ def _read_exact(stream: BinaryIO, count: int) -> bytes:
 
 
 def _metadata(response: object, *, name: str, mime_type: str, parent_id: str,
-              size_bytes: int, md5_hex: str) -> tuple[str, int]:
+              size_bytes: int, md5_hex: str,
+              app_properties: Mapping[str, str] | None = None) -> tuple[str, int]:
     try:
         resource = response.json()  # type: ignore[attr-defined]
     except (AttributeError, TypeError, ValueError):
@@ -137,12 +139,20 @@ def _metadata(response: object, *, name: str, mime_type: str, parent_id: str,
         or remote_md5.lower() != md5_hex
     ):
         raise DriveUploadError("A confirmação do Google Drive não corresponde ao arquivo enviado.")
+    if app_properties is not None:
+        returned_properties = resource.get("appProperties")
+        if (
+            not isinstance(returned_properties, dict)
+            or any(returned_properties.get(key) != value for key, value in app_properties.items())
+        ):
+            raise DriveUploadError("A confirmação do Google Drive não corresponde ao arquivo enviado.")
     return file_id, size_bytes
 
 
 def upload_drive_file(*, access_token: SecretStr, parent_folder_id: str, name: str,
                       mime_type: str, size_bytes: int, stream: BinaryIO,
                       transport: DriveTransport | None = None,
+                      app_properties: Mapping[str, str] | None = None,
                       chunk_size: int = DEFAULT_CHUNK_SIZE) -> DriveUploadReceipt:
     """Envia um arquivo em sessão retomável; o chamador valida tenant e objeto."""
     if os.getenv("APP_ENV", "development") != "production":
@@ -171,6 +181,21 @@ def upload_drive_file(*, access_token: SecretStr, parent_folder_id: str, name: s
         or chunk_size % CHUNK_ALIGNMENT != 0
     ):
         raise DriveUploadError("Os dados do upload são inválidos ou incompletos.")
+    if app_properties is not None and (
+        not isinstance(app_properties, Mapping)
+        or not app_properties
+        or len(app_properties) > 30
+        or any(
+            not isinstance(key, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", key)
+            or not isinstance(value, str)
+            or not value
+            or any(ord(char) < 0x20 or ord(char) == 0x7F for char in value)
+            or len((key + value).encode("utf-8")) > 124
+            for key, value in app_properties.items()
+        )
+    ):
+        raise DriveUploadError("As propriedades privadas do arquivo são inválidas.")
     try:
         if not stream.seekable():
             raise DriveUploadError("O stream do arquivo precisa permitir leitura desde o início.")
@@ -189,11 +214,14 @@ def upload_drive_file(*, access_token: SecretStr, parent_folder_id: str, name: s
         "X-Upload-Content-Length": str(size_bytes),
     }
     try:
+        metadata = {"name": name, "mimeType": mime_type, "parents": [parent_folder_id]}
+        if app_properties is not None:
+            metadata["appProperties"] = dict(app_properties)
         started = adapter.post(
             UPLOAD_ENDPOINT,
             params={"uploadType": "resumable", "supportsAllDrives": "true", "fields": UPLOAD_FIELDS},
             headers=headers,
-            json={"name": name, "mimeType": mime_type, "parents": [parent_folder_id]},
+            json=metadata,
         )
     except httpx.HTTPError:
         raise DriveUploadError("Não foi possível iniciar o upload no Google Drive.") from None
@@ -242,6 +270,7 @@ def upload_drive_file(*, access_token: SecretStr, parent_folder_id: str, name: s
                 parent_id=parent_folder_id,
                 size_bytes=size_bytes,
                 md5_hex=md5_digest.hexdigest(),
+                app_properties=app_properties,
             )
             return DriveUploadReceipt(
                 file_id=file_id,

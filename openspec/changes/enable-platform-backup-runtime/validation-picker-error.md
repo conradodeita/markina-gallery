@@ -1,5 +1,7 @@
 # Validação — erro no retorno do Google Picker
 
+> **EVIDÊNCIA HISTÓRICA — NÃO RETOMAR.** O fluxo Google Picker foi aposentado em 25/11/2026; este registro não é instrução de correção ou provisionamento.
+
 Data: 20/11/2026
 
 ## Sintoma e limite da evidência

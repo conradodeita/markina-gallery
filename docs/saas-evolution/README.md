@@ -1,6 +1,6 @@
 # Execução SaaS Pick-your-Pic
 
-Continuidade operacional de 20/11/2026: [reuso do backup global na etapa de arquivo/recuperação de mídia](backup-global-reuso-arquivo-midia.md). O guia identifica código existente, evidências concluídas e gates da ligação real; snapshots históricos abaixo conservam sua data.
+Continuidade operacional atualizada em 25/11/2026: [higienização da tentativa de backup próprio e plano open source](backup-global-reuso-arquivo-midia.md). O código anterior foi aposentado; snapshots históricos abaixo conservam suas datas e não representam estado atual.
 
 A matriz [requirements.json](requirements.json) rastreia as 694 unidades do mandato EXECUÇÃO INTEGRAL recebido em 31/10. O [status vigente](status.md) distingue implementação local, evidência histórica e produção. Leia o checkpoint de 03/11 antes dos snapshots anteriores. [Decisões](decisions.md), [riscos](risks.md) e OpenSpec devem acompanhar código/testes.
 

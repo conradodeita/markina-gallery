@@ -1,5 +1,7 @@
 # Validação da granularidade sanitizada do inventário de containers
 
+> **EVIDÊNCIA HISTÓRICA — runtime próprio aposentado em 25/11/2026.** Esta evidência pertence ao inventariador antigo e não prova o estado atual do servidor. Os passos pendentes de instalação, vínculo, ensaio, backup e timer foram cancelados; qualquer retirada restante segue `retire-platform-backup-runtime`.
+
 ## Evidência que motivou a subtask
 
 Após o merge da PR #402, a ponte e o wrapper foram atualizados pelo canal protegido no run `44935123431`, com `containers_unchanged=true`. O inventory read-only `44935370437` falhou com `container_inventory_invalid`; não emitiu fingerprint e `operate` foi ignorado. A categoria atual localiza a validação de um registro fixo API/web/db, mas não distingue papel ou campo. O teste de caracterização reproduziu essa saída genérica antes da alteração.

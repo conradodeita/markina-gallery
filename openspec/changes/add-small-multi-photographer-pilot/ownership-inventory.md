@@ -1,5 +1,7 @@
 # Inventário de código — complemento da matriz
 
+> **INVENTÁRIO HISTÓRICO — snapshot estático de 30/09/2026.** Este arquivo lista fontes existentes naquele commit, inclusive caminhos `platform_backup/` removidos desde então. Ele não representa a árvore atual nem a titularidade atual; gere novo inventário antes de reutilizá-lo como mapa do código.
+
 Gerado por `inventory_ownership.py`; consultar `ownership-matrix.md` para decisões, critérios A–X, testes e limites. Este inventário estático associa fontes a critérios; não executa testes nem decide prontidão. O estado e as evidências de implementação/validação estão na matriz e em `validation.md`.
 
 SHA256 das fontes inventariadas: `2f0423b411775486b8c06801bdf291866187d2c602a7efd51078a1771e5e0b07`.

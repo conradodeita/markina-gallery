@@ -1,5 +1,7 @@
 # media-storage/platform-backup-recovery Specification
 
+> **DELTA HISTÓRICO — IMPLEMENTAÇÃO APOSENTADA EM 25/11/2026.** Não usar esta change para reintroduzir `platform_backup`; o comportamento futuro depende da prova open source vigente.
+
 ## ADDED Requirements
 
 ### Requirement: Backup independente do arquivo de mídia

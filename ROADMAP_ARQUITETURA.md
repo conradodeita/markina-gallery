@@ -35,7 +35,7 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 - Manter desenvolvimento local, CI efêmera e produção isolados; não criar ambiente operacional intermediário.
 - Implantar via Docker Compose: proxy HTTPS, frontend, API, PostgreSQL, Redis e workers.
 - Guardar chaves e segredos somente em variáveis seguras do servidor; nunca no Git, frontend ou tabelas comuns.
-- Criar backups diários cifrados do PostgreSQL no Google Drive e testar restauração periodicamente.
+- Avaliar uma solução open source comum para backup global do PostgreSQL e arquivo/recuperação de pastas frias por fotógrafo. A prova SHALL incluir dados sintéticos, isolamento por tenant e recuperação verificada; raízes, chaves, namespaces e retenção permanecem separados. Candidatos atuais: Restic e Rclone, com Backrest opcional para operação. Preservar o contrato de prazo/créditos do arquivo frio descrito na change `add-gallery-media-archive` e no OpenSpec `prove-open-source-backup-and-recovery`.
 
 ## Fase 1 — Segurança e autenticação
 
@@ -96,11 +96,11 @@ Documento vivo das decisões tomadas durante a arquitetura. Ainda não é a espe
 ## Fase 5 — Imagens, armazenamento e proteção visual
 
 - Oracle: servir JPEGs de prévia e miniaturas de galerias ativas; manter banco, filas e processamento.
-- Google Drive: cópia verificada dos JPEGs, arquivo frio de eventos e backups cifrados do banco.
+- Armazenamento: cópia verificada dos JPEGs e arquivo frio por pasta; a nova solução open source cobrirá também o backup global cifrado do banco sem misturar os domínios de acesso.
 - Google Photos: entrega manual final; não automatizar compartilhamento pela API.
 - Limite operacional de 75% do disco local, com alerta e bloqueio preventivo de nova importação.
 - Painel de armazenamento: uso atual, uso por evento, média por foto, estimativa de capacidade e candidatos a arquivamento.
-- Arquivamento restaura fotos do Google Drive somente quando o fotógrafo reativar o evento.
+- A pasta torna-se elegível ao arquivo frio após o prazo individual e 30 dias completos. O fotógrafo solicita a recuperação e escolhe 7, 14 ou 30 dias; a taxa configurável por pasta/ciclo é reservada e só debitada após restauração integral verificada. Falha libera a reserva; estado incerto exige reconciliação. O proprietário é isento e não há expurgo automático na primeira versão.
 - Importação retomável e idempotente: hash por arquivo, fila, progresso, relatório de duplicados/falhas e retentativas.
 - Proteção de prévias: limite de resolução, remoção de EXIF/GPS, marca d’água configurável, grade diagonal, linhas configuráveis, marca individual dinâmica e aviso de direitos autorais.
 - Exceção de capa aprovada: capa vigente sem marca-d’água/grade, mantendo título, autenticação, autorização, prévia limitada e remoção de metadados; fotos de conteúdo permanecem protegidas. Novas capas devem ser horizontais após EXIF, sem recorte automático; capas antigas são preservadas até substituição.

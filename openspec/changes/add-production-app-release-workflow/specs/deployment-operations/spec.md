@@ -24,15 +24,15 @@ O workflow SHALL oferecer um release protegido e independente para alterações 
 - **WHEN** a mudança inclui caminhos faciais não autorizados, iniciação ou alteração de serviço de worker, migration, Docker/Compose, Monitor do sistema ou outro caminho fora do manifesto
 - **THEN** o preflight compara o diff desde o checkout ativo de produção e falha fechado antes de qualquer mutação, mesmo quando a mudança facial já está em `main`, exigindo plano OpenSpec/release compatível
 
-### Requirement: Publicação do runtime de backup permanece inerte
-O release API/web MAY incluir módulos da rotina de backup global somente quando cada blob estiver fixado no manifesto do candidato e o diff não incluir migrations, alteração de Docker/Compose ou configuração de instalação do serviço. O release SHALL NOT instalar, habilitar ou iniciar o serviço/timer de backup nem iniciar cópia real.
+### Requirement: Release não reintroduz o runtime de backup aposentado
+O release API/web MUST NOT incluir o Google Picker ou o pacote legado `platform_backup`. Caminhos históricos explicitamente aposentados SHALL ser aceitos somente como exclusões; qualquer adição ou modificação MUST falhar no gate antes de build ou mutação. A retirada de arquivos instalados no host permanece no workflow protegido próprio.
 
-#### Scenario: Código de backup incluído sem ativação
-- **WHEN** o candidato contém módulos de backup exatos e aprovados no manifesto, sem mudança de schema ou infraestrutura
-- **THEN** o fluxo pode publicar somente `api` e `web`; o serviço e o timer de backup permanecem ausentes ou inativos, sem cópia real
+#### Scenario: Exclusão dos caminhos aposentados
+- **WHEN** o diff contém somente exclusões dos caminhos de runtime ou suporte aposentados e os demais blobs ativos correspondem ao manifesto
+- **THEN** o gate pode seguir aos demais controles de release, sem remover recursos do host
 
-#### Scenario: Arquivo ou blob de backup não revisado
-- **WHEN** o candidato inclui módulo, worker, unidade, timer ou lock de dependências fora dos pins e caminhos exatos aprovados
+#### Scenario: Reintrodução de runtime aposentado
+- **WHEN** um caminho do Google Picker, `platform_backup` ou seu runtime de suporte é adicionado ou modificado
 - **THEN** o preflight MUST falhar antes de build, recriação ou outra mutação
 
 ### Requirement: Inventário e aprovação do release API/web são vinculados ao SHA

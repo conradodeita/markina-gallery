@@ -1,5 +1,7 @@
 """Suspensão explícita e auditoria preservam autenticação e obrigações existentes."""
 
+from datetime import UTC, datetime, timedelta
+from functools import partial
 from hashlib import sha256
 from types import SimpleNamespace
 from uuid import uuid4
@@ -11,7 +13,7 @@ from sqlalchemy import func, select
 
 from app import platform_console as console
 from app.acervo_context import require_active_owner
-from app.auth import ParentGallery, PlatformAdminEvent, Tenant, now, password_hasher
+from app.auth import ParentGallery, PlatformAdminEvent, Tenant, password_hasher
 from app.payment_availability import lock_payment_account
 from app.tenancy import TenantContextError, enable_domain_guard
 from app.tenant_hosts import public_gallery_url_for_tenant, tenant_for_host
@@ -56,12 +58,17 @@ def reserve_host(db, tenant_id, hostname="synthetic.pickyourpic.com.br"):
     return tenant
 
 
-def test_status_reauthentication_idempotency_and_history_preserve_business(client_db):
+def test_status_reauthentication_idempotency_and_history_preserve_business(client_db, monkeypatch):
+    at = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
+    totp = pyotp.TOTP(SECRET)
+    initial_code = totp.at(at)
+    monkeypatch.setattr(console, "matching_unused_totp_step",
+                        partial(console.matching_unused_totp_step, at=at))
     session, target, _ = context(client_db)
     gallery = ParentGallery(tenant_id=target, name="Preserved synthetic gallery")
     client_db.add(gallery)
     client_db.commit()
-    intention = payload()
+    intention = payload(totp_code=initial_code)
     assert console.change_tenant_status(client_db, session, target, intention)["replayed"] is False
     client_db.commit()
     assert client_db.get(Tenant, target, populate_existing=True).status == "suspended"
@@ -76,10 +83,11 @@ def test_status_reauthentication_idempotency_and_history_preserve_business(clien
     assert mismatch.value.status_code == 409
     # Novo comando não pode reutilizar o passo TOTP já consumido.
     with pytest.raises(HTTPException) as replay:
-        console.change_tenant_status(client_db, session, target, payload(expected_status="suspended", status="active"))
+        console.change_tenant_status(client_db, session, target,
+            payload(expected_status="suspended", status="active", totp_code=initial_code))
     assert replay.value.status_code == 403
     assert client_db.get(Tenant, target).status == "suspended"
-    future = pyotp.TOTP(SECRET).at((int(now().timestamp()) // 30 + 1) * 30)
+    future = totp.at(at + timedelta(seconds=totp.interval))
     result = console.change_tenant_status(client_db, session, target,
         payload(expected_status="suspended", status="active", totp_code=future))
     client_db.commit()

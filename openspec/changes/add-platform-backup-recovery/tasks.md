@@ -1,5 +1,7 @@
 # Tasks: Backups e recuperação da plataforma
 
+> **CHANGE HISTÓRICA — NÃO RETOMAR.** Os itens concluídos documentam a implementação local aposentada em 25/11/2026. O pacote e testes foram removidos; resultados sintéticos não provam runtime atual. A prova vigente é `prove-open-source-backup-and-recovery`.
+
 Em 17/11/2026, o [ensaio externo de backup e recuperação](drive-restore-proof.md) comprovou o backup sintético e o restore por meio do Drive. O proprietário também escolheu a conta Workspace já conectada para a rotina. O app criou a pasta privada `Pick-your-Pic Tenants` na raiz do Meu Drive, com acesso e capacidade de gravar [confirmados](../add-google-drive-storage-foundation/production-drive-proof.md#destino-da-rotina-verificado). A chave operacional e o caller de produção seguem no checklist pós-deploy.
 
 - [x] 1.1a Inventariar fontes versionadas locais, schemas/migrations, volumes declarados e runtime local; distinguir dumps de release de backup SaaS recorrente. Evidência em `inventory.md` e `validation.md` (06/11/2026).

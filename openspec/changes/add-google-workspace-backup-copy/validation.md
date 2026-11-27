@@ -1,5 +1,7 @@
 # Validação — cópia de backup no Google Workspace
 
+> **CHANGE APOSENTADA — EVIDÊNCIA HISTÓRICA.** Não repetir upload, autorização de pasta ou operação de backup com este fluxo. O estado atual do Drive deve ser consultado por change vigente, não inferido destes ensaios.
+
 ## Checkpoint local — 07/11/2026
 
 - `python -m pytest backend/tests/test_platform_backup_archive.py backend/tests/test_platform_backup_retention.py backend/tests/test_platform_backup_restore.py backend/tests/test_platform_backup_worker.py backend/tests/test_platform_backup_postgres.py backend/tests/test_platform_backup_storage.py backend/tests/test_platform_backup_payload.py backend/tests/test_platform_backup_workspace_store.py backend/tests/test_google_drive_storage.py backend/tests/test_google_drive_oauth.py -q --tb=short`: **118 passed, 37 skipped**, 6 warnings preexistentes de `FastAPI.on_event`.

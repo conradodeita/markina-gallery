@@ -1,5 +1,7 @@
 # Tasks
 
+> **Registro histórico — fluxo aposentado em 25/11/2026.** A implementação descrita nesta change não deve ser retomada: o código exclusivo foi removido pela PR #436 (`eff4d504`). A retirada remanescente está em `retire-platform-backup-runtime`; a nova prova de backup/recuperação está em `prove-open-source-backup-and-recovery`. Mantenha os checkboxes originais como evidência histórica; não apague este registro nem remova specs principais compartilhadas.
+
 ## 1. Diagnóstico agregado
 
 - [x] 1.1 Obter revisão e aceite do proprietário para os artefatos desta change antes de alterar código, conforme `INSTRUCOES_EXECUTOR_CLAUDE_CODE.md`; evidência: após receber a proposta e os quatro artefatos, o proprietário respondeu “prossiga” em 22/11/2026.

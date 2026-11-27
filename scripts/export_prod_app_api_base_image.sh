@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only export of the exact API image observed by production preflight.
+# Read-only export of the exact active API/web image proved by production preflight.
 set -Eeuo pipefail
 umask 077
 
@@ -10,6 +10,7 @@ EXPECTED_REPOSITORY="${MARKINA_EXPECTED_REPOSITORY:-}"
 MODE=""
 TARGET_SHA=""
 EXPECTED_IMAGE_ID=""
+SERVICE="api"
 
 fail() { echo "production-app-base-image: $*" >&2; exit 1; }
 
@@ -18,10 +19,12 @@ parse_arguments() {
     case "$1" in
       --mode) MODE="${2:-}"; shift 2 ;;
       --sha) TARGET_SHA="${2:-}"; shift 2 ;;
+      --service) SERVICE="${2:-}"; shift 2 ;;
       --expected-image-id) EXPECTED_IMAGE_ID="${2:-}"; shift 2 ;;
       *) fail "argumento não permitido: $1" ;;
     esac
   done
+  [[ "$SERVICE" == api || "$SERVICE" == web ]] || fail "serviço inválido"
   [[ "$MODE" == "export" ]] || fail "modo deve ser export"
   [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "SHA alvo inválido"
   [[ "$EXPECTED_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "ID-base inválido"
@@ -49,7 +52,7 @@ export_api_base_image() {
   [[ "$(git rev-parse origin/main)" == "$TARGET_SHA" \
     && "$(git hash-object -- "$APP_COMPOSE_BRIDGE")" == "$(git rev-parse "$TARGET_SHA:scripts/production_app_compose_bridge.py")" ]] \
     || fail "ponte root-only diverge da main revisada"
-  container_ids="$(sudo -n "$APP_COMPOSE_BRIDGE" --mode inventory --sha "$TARGET_SHA" compose -- ps -q api)" \
+  container_ids="$(sudo -n "$APP_COMPOSE_BRIDGE" --mode inventory --sha "$TARGET_SHA" compose -- ps -q "$SERVICE")" \
     || fail "seleção comprovada de API indisponível"
   [[ -n "$container_ids" && "$(wc -l <<< "$container_ids" | tr -d ' ')" == 1 ]] \
     || fail "container API ausente ou duplicado"
@@ -60,9 +63,9 @@ export_api_base_image() {
     || fail "serviço API indisponível"
   image_id="$(docker inspect --format '{{.Image}}' "$container_id")" || fail "imagem API indisponível"
   local expected_project
-  expected_project="$(sudo -n "$APP_COMPOSE_BRIDGE" --mode inventory --sha "$TARGET_SHA" service-project -- api)" \
+  expected_project="$(sudo -n "$APP_COMPOSE_BRIDGE" --mode inventory --sha "$TARGET_SHA" service-project -- "$SERVICE")" \
     || fail "projeto API comprovado indisponível"
-  [[ -n "$expected_project" && "$project" == "$expected_project" && "$service" == api && "$image_id" == "$EXPECTED_IMAGE_ID" ]] \
+  [[ -n "$expected_project" && "$project" == "$expected_project" && "$service" == "$SERVICE" && "$image_id" == "$EXPECTED_IMAGE_ID" ]] \
     || fail "imagem API mudou desde o inventário"
   platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image_id")" \
     || fail "arquitetura da imagem API indisponível"

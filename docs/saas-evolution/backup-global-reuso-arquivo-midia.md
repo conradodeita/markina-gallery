@@ -1,77 +1,35 @@
-# Reaproveitamento do backup global no arquivo de fotos
+# Backup global e recuperação de pastas frias
 
-Registro de continuidade de 20/11/2026, solicitado pelo proprietário para evitar repetição de investigação, configuração e desenvolvimento na próxima etapa. Inventário de código na main `77cf2788` (PR #397). Este documento descreve evidência existente e pontos de integração; não autoriza novas operações remotas.
+> Documento atualizado em 25/11/2026. A tentativa própria de backup global via Google Workspace foi encerrada. Os registros e recibos antigos são apenas evidência histórica; não reutilizar nem reinstalar seus módulos, credenciais, chaves ou workflows.
 
-## Estado e fontes de verdade
+## Direção vigente
 
-- O transporte Drive e a recuperação global sintética possuem provas externas concluídas. A primeira cópia real no destino novo, a restauração de aceitação e a ativação do agendamento diário ainda dependem dos gates 3.2–3.3 de [enable-platform-backup-runtime](../../openspec/changes/enable-platform-backup-runtime/tasks.md).
-- O núcleo de arquivo/recuperação de mídia já existe. Sua ligação ao transporte real e o ensaio operacional permanecem na task 1.4 de [add-gallery-media-archive](../../openspec/changes/add-gallery-media-archive/tasks.md), com contratos no [design](../../openspec/changes/add-gallery-media-archive/design.md).
-- O [checklist pós-deploy](post-deploy-configuration-checklist.md) estabelece a sequência: backup comprovado, arquivo/recuperação sintéticos na conta do proprietário e depois liberação de outros fotógrafos.
-- O proprietário confirmou em 20/11 manter a retenção global de 7 diários / 4 semanais / 3 mensais. Ela não define o lifecycle da mídia nem autoriza expurgo de fotos.
+A change [prove-open-source-backup-and-recovery](../../openspec/changes/prove-open-source-backup-and-recovery/proposal.md) exige uma prova local/sintética conjunta para:
 
-## O que já funcionou e pode fundamentar a próxima etapa
+- backup global cifrado do PostgreSQL e restauração isolada;
+- extração seletiva de um fotógrafo a partir de uma cópia global restaurada;
+- arquivo e recuperação de pasta fria pelo fluxo existente do fotógrafo.
 
-| Prova | Resultado comprovado | Evidência e limite |
-|---|---|---|
-| Transporte real Drive, 17/11 | Upload retomável de texto sintético, conferência de metadados, download integral, SHA-256 e limpeza apenas dos objetos do ensaio | [Recibo de transporte](../../openspec/changes/add-google-drive-storage-foundation/production-drive-proof.md). Conta do proprietário e pasta temporária; não comprova acesso da futura identidade de mídia nem desempenho em lotes grandes. |
-| Recuperação global pelo Drive, 17/11 | Pacote PostgreSQL sintético cifrado, readback idêntico, recusa de adulteração, autenticação GCM e restore em PostgreSQL descartável; dados e ownership conferidos | [Recibo de recuperação](../../openspec/changes/add-platform-backup-recovery/drive-restore-proof.md). Não usou o banco produtivo como origem/destino e não mede seu RTO. |
-| Custódia e configuração operacional, 17/11 | Configuração root-only, cópia offline da chave e desafio autenticado entre os materiais de recuperação | [Tasks 1.1–1.2](../../openspec/changes/enable-platform-backup-runtime/tasks.md). Reutilizar o procedimento de custódia; a chave do pacote global não é automaticamente chave de mídia. |
-| Publicação protegida e mount Picker, 20/11 | Suporte protegido instalado, configuração do Picker read-only somente na API e release API/web saudável de #395 | [Inventário e recibos](../../openspec/changes/enable-platform-backup-runtime/release-preflight.md). Não equivale à seleção/autorização da nova pasta nem ao timer ativo. |
-| Integração Picker/console, 20/11 | Regressão reproduzida na revalidação de foco; seleção preservada com acesso positivo e descarte em recusa/logout; 38 testes UI, CI e release #397 aprovados, API/web saudáveis e HTTPS 200 | [Validação de foco e recibo de publicação](../../openspec/changes/enable-platform-backup-runtime/validation-picker-focus.md). Reteste real da seleção ainda pendente; não repetir a hipótese de `ERROR` como causa confirmada. |
+Restic e Rclone são candidatos comuns; Backrest é opcional para acompanhamento. A change ainda não prova implantação, configuração real de produção ou acesso ao Drive. Não fazer deploy, usar credenciais reais, criar outra fila nem iniciar uma rotina produtiva como parte da prova.
 
-## Código comum a reutilizar
+## Contrato existente da pasta fria
 
-| Componente | Reuso concreto | Limite da reutilização |
-|---|---|---|
-| [google_drive_client.py](../../backend/app/google_drive_client.py) | `DriveTransport`, transporte HTTP e contratos OAuth/Drive existentes | Configurar a identidade e autorização próprias de mídia; não ampliar escopo ou copiar credenciais do backup por inferência. |
-| [google_drive_storage.py](../../backend/app/google_drive_storage.py) | `upload_drive_file`, envio retomável, medição dos bytes, validação da resposta, receipts e `provider_failure_code` | Mapear os receipts ao objeto/ciclo de mídia; conservar idempotência e recusa de conteúdo divergente. |
-| [platform_backup/workspace_store.py](../../backend/app/platform_backup/workspace_store.py) | Referência comprovada para streaming, leitura de retorno, tamanho/checksum e tratamento de erros do Drive | O store é especializado em artefatos globais cifrados e `BackupContext`. Reutilizar primitivas compatíveis; não substituir o contrato de mídia por um pacote de banco. Extração de helper comum exige consumidores e compatibilidade comprovados. |
-| [platform_backup/workspace_credentials.py](../../backend/app/platform_backup/workspace_credentials.py) e [integration_secrets.py](../../backend/app/integration_secrets.py) | Padrões de acesso efêmero, credenciais cifradas, configuração externa e erros sanitizados | A factory do backup valida contexto owner-only específico. A mídia precisa de seu próprio vínculo autorizado; não chamar essa factory como atalho para outro contexto. |
-| [Validações operacionais](../../openspec/changes/enable-platform-backup-runtime/release-preflight.md) | Método de inventário, fingerprint, revisão de escopo, CI do SHA exato, preservação de rollback e saúde pós-release | O release API/web não instala automaticamente outro worker, mount, identidade, segredo ou timer. Cada operação usa o gate já aprovado para seu escopo. |
+O fluxo de recuperação por fotógrafo permanece no produto e não foi retirado junto com o backup global. Ele usa os contratos e dados do domínio media archive:
 
-## Núcleo de mídia já existente — começar por estes consumidores
+- elegibilidade depois do prazo configurado da pasta mais 30 dias;
+- solicitação por 7, 14 ou 30 dias e cobrança configurável por pasta/ciclo;
+- reserva idempotente de créditos e débito somente após recuperação integral conferida por tamanho e SHA-256;
+- falha comprovada libera a reserva; resultado incerto exige reconciliação e preserva a reserva;
+- proprietário isento; sem expurgo automático.
 
-| Código | Responsabilidade pronta que deve ser preservada |
-|---|---|
-| [media_archive_storage.py](../../backend/app/media_archive_storage.py) | Interface `MediaArchiveStorage`: `upload_object`, `read_object`, `download_object` e `delete_object`; fronteira para o adaptador real. |
-| [media_archive_executor.py](../../backend/app/media_archive_executor.py) | `execute_archive_operation`, readback integral em `_verify_remote_object`, download conferido, promoção de staging e `execute_restore_operation`. |
-| [media_archive_manifest.py](../../backend/app/media_archive_manifest.py) | Manifesto canônico com UUIDs, tamanhos, SHA-256, IDs remotos e validação da origem/destino pelos registros existentes. |
-| [media_archive_worker.py](../../backend/app/media_archive_worker.py) e [media_archive_scheduler.py](../../backend/app/media_archive_scheduler.py) | Fila durável, claims, leases, checkpoints, transições e agendamento pelo lifecycle da mídia. |
-| [media_archive_staging.py](../../backend/app/media_archive_staging.py) | Staging privado, orçamento de espaço por volume, reservas e publicação dos arquivos conferidos. |
-| [media_archive_billing.py](../../backend/app/media_archive_billing.py) e [media_archive_notices.py](../../backend/app/media_archive_notices.py) | Reserva/débito idempotente após recuperação comprovada, isenção do proprietário e avisos do fluxo existente. |
+O futuro motor pode compartilhar ferramentas, mas as identidades, raízes, chaves, namespaces, retenção e autorização permanecem separados. Não misturar restore global, extração de fotógrafo e recuperação de objeto frio.
 
-## Sequência de implementação da ligação real
+## Implementação que deve ser preservada
 
-1. Ler a task 1.4, design/specs e evidências da change de arquivo. Conferir o runtime publicado e os consumidores acima antes de adicionar outra abstração.
-2. Inventariar o adaptador disponível e completar a implementação de `MediaArchiveStorage` para Drive usando os helpers comuns. Reaproveitar contratos/fixtures; não reconstruir a fila, catálogo, manifesto ou recuperação.
-3. Vincular identidade e raiz próprias de mídia; organizar subpastas por UUID de tenant/galeria/pasta/ciclo conforme o design. O vínculo no banco e a autorização no servidor são obrigatórios em cada operação; diretórios não são barreira de autorização.
-4. Conectar o adaptador ao caller/agendamento existente, com limites de tamanho, tempo, quota e retentativas revisados. Preservar fila global, leases, estados incertos e reconciliação.
-5. Executar o ensaio autorizado com galeria e JPEGs sintéticos do proprietário: upload, readback integral, manifesto/checksums e só então liberação dos bytes locais prevista pelo contrato. Recuperar os mesmos registros e conferir IDs, seleções, pedidos, prévias e histórico.
-6. Provar retry/interrupção, recusa de tenant divergente, quota e espaço insuficientes, fonte/objeto ausente e resultado incerto. Não promover operação parcial a sucesso nem cobrar recuperação incompleta.
-7. Registrar SHA, configuração não secreta, resultado, recibos e limites. Reconciliar o console com fontes duráveis comprovadas; concluir a task operacional somente após a evidência e o aceite previstos.
+A UI, API, fila, catálogo, manifesto, staging e ledger atuais da pasta fria são consumidores ativos. Os módulos backend media_archive, a composição do adaptador Drive e suas migrations não são parte da tentativa global aposentada e não devem ser removidos nessa limpeza.
 
-## Validação existente a aproveitar
+As provas antigas de upload/readback no Drive e restore PostgreSQL sintético comprovam somente aqueles ensaios históricos. Elas não provam runtime ativo, cópia recorrente, credencial instalada ou recuperação operacional atual.
 
-- Drive: [test_google_drive_storage.py](../../backend/tests/test_google_drive_storage.py).
-- Backup/Workspace: [test_platform_backup_workspace_store.py](../../backend/tests/test_platform_backup_workspace_store.py), [test_platform_backup_workspace_credentials.py](../../backend/tests/test_platform_backup_workspace_credentials.py) e [test_platform_backup_restore.py](../../backend/tests/test_platform_backup_restore.py).
-- Mídia: [test_media_archive_executor.py](../../backend/tests/test_media_archive_executor.py), [test_media_archive_manifest.py](../../backend/tests/test_media_archive_manifest.py), [test_media_archive_worker.py](../../backend/tests/test_media_archive_worker.py), [test_media_archive_staging.py](../../backend/tests/test_media_archive_staging.py) e [test_media_archive_billing.py](../../backend/tests/test_media_archive_billing.py).
+## Próxima tarefa
 
-Reutilizar resultados quando código, dependências, configuração e ambiente relevantes permanecerem iguais. Mudança de identidade/pasta, transporte, formatos, limites, volumes ou runtime exige repetir as validações afetadas. A prova de texto/backup sintético fundamenta o transporte; a prova com mídia verifica o contrato adicional de múltiplos objetos e catálogo.
-
-## Lições operacionais para evitar repetição
-
-1. Uma pasta acessível pelo conector Drive pode não estar autorizada pelo OAuth do aplicativo. Conferir a autorização do app e o escopo mínimo antes de investigar o transporte ou criar outra integração Google.
-2. No Picker, eventos intermediários de carregamento preservam a janela; os terminais são tratados explicitamente. Testar o retorno de foco com a página e sua revalidação de sessão, além do componente isolado. Preservar a segunda reautenticação e o descarte em perda de acesso.
-3. Conferir os pins exatos do runtime e a lista nominal do gate antes do push. No caso #397, o hash Git de um helper causou um falso positivo de chave; a conferência do blob permitiu uma exceção por commit/path/regra/linha. Preservar os commits revisados quando o fingerprint depender deles; não generalizar a exceção.
-4. O preflight remoto é somente leitura e não atualiza `origin/main`. Após um novo merge, a ref local desatualizada pode exigir a preparação pelo canal protegido, com CI de código e backups dos helpers. Confirmar invariância dos containers antes de repetir o preflight.
-5. Uma falha operacional isolada não exige repetir testes verdes do mesmo SHA quando as premissas forem preservadas. Usar a repetição dos jobs falhos/dependentes pelo fluxo documentado; conferir novamente fingerprint, artefato e estado vivo antes da publicação.
-6. Registrar a prova externa concluída e seu limite no recibo. Nova pasta, outra identidade ou operação com múltiplos objetos requerem sua própria validação; reaproveitar o código/procedimento comprovado e testar a diferença relevante.
-
-## O que permanece separado
-
-- Backup global: pacote do banco/configuração, chave própria, restauração global, retenção 7/4/3 e serviço diário.
-- Mídia: múltiplos objetos por tenant, manifesto/catálogo de galeria, staging, preservação dos registros e fluxo próprio de créditos/lifecycle.
-- A recuperação lógica do banco de um único tenant continua em fase própria. A restauração global inclui o catálogo de mídia, mas não traz automaticamente seus bytes do Drive.
-- A v1 de arquivo não habilita expurgo remoto de fotos por idade. A autorização de backup global não autoriza remover mídia ou operar outras contas/serviços.
-
-Próxima ação após comprovar o backup global: retomar a task 1.4 do arquivo a partir deste mapa, começando pela fronteira `MediaArchiveStorage` e pelo transporte real já existente.
+Começar pela task 1.1 da change prove-open-source-backup-and-recovery e registrar resultados e limites em tasks.md. Não reabrir as changes enable-platform-backup-runtime, prepare-platform-backup-source ou add-google-workspace-backup-copy.

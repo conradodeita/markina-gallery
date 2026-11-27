@@ -30,9 +30,25 @@ Se o registro trouxer uma pasta, mas não trouxer um escopo reconhecido (`all` o
 **Non-Goals nesta etapa:**
 
 - definir prazo legal de retenção ou política de exclusão de dados além das decisões aprovadas;
-- chamar a Google Drive API, alterar produção, criar diretórios remotos ou remover arquivos;
+- fazer chamadas reais à Google Drive API, configurar credenciais/identidade/raiz de mídia, alterar produção, criar objetos remotos ou remover arquivos; o adaptador pode ser implementado e exercitado somente com transporte HTTP sintético;
 - reutilizar a exclusão de galeria ou a outbox de limpeza física como fluxo de arquivo/restauração;
 - cobrar via Pix/cartão ou exigir aprovação manual do proprietário para cada recuperação automática.
+
+### Adaptador Drive validado sem acesso externo — 22/11/2026 BRT
+
+O contrato `MediaArchiveStorage` define upload idempotente por chave opaca, leitura de metadados, download com checksum e exclusão idempotente. A classe Google Drive recebe `SecretStr`, raiz de mídia dedicada, UUID do tenant e transporte por injeção; não descobre credenciais, lê ambiente para escolher identidade ou pasta, nem é selecionada pelo runtime. O runtime e todos os testes continuam usando exclusivamente storage/transporte sintéticos.
+
+Cada chave de objeto contém os UUIDs canônicos de tenant, galeria, pasta, ciclo e objeto. A topologia remota aprovada é raiz exclusiva de mídia → tenant → galeria → pasta → ciclo; cada pasta filha usa somente seu UUID como nome, preserva vínculo com o pai e `appProperties` privadas que identificam namespace, tenant, nível e UUIDs ancestrais. Arquivos ficam dentro da pasta do ciclo. As `appProperties` do arquivo também incluem o hash da chave e o SHA-256 do conteúdo. Nenhum nome de marca, cliente, telefone, e-mail, filename ou ID não opaco é gravado. A topologia organiza o acervo, mas não autoriza acesso: o backend valida tenant/ownership antes de resolver ou operar sobre qualquer objeto. A identidade e a raiz de mídia permanecem distintas do backup global; configuração e prova reais continuam bloqueadas pela task operacional 1.4.
+
+Cada `files.list` solicita `incompleteSearch` junto dos metadados mínimos. Uma busca só autoriza decisão quando esse campo é explicitamente `false`, `files` tem formato válido, não há `nextPageToken` inesperado e a página não ultrapassa o limite solicitado. Campo ausente/inválido, busca incompleta, paginação ou duplicidade gera conflito sanitizado: nunca comprova ausência, não autoriza upload nem permite atestar ownership ou concluir exclusão. Metadados de pasta/objeto, pai, UUIDs e `appProperties` retornados são conferidos antes de usar um ID. Mais de um resultado ou conteúdo divergente exige reconciliação e nunca autoriza sobrescrever um objeto existente.
+
+O adaptador valida o snapshot em blocos limitados antes de buscar um retry. Quando não existe objeto, o helper compartilhado `upload_drive_file` reinicia o leitor no byte zero; esse rewind reinicia a medição do executor, de modo que tamanho/hash finais descrevem uma única leitura do upload. Quando o objeto já existe, a medição continua descrevendo a leitura prévia verificada. Em ambos os casos cada leitura aciona a renovação de lease, sem armazenar o arquivo inteiro em memória. `upload_drive_file` mantém sua assinatura, semântica, erros e recibo compartilhados com `WorkspaceDriveBackupStore`.
+
+Um retry localiza o objeto sob a pasta de ciclo e valida UUIDs, pai, nome/hash da chave, MIME, tamanho, namespace e propriedades privadas antes de devolver o ID. O executor então faz readback integral em streaming e compara tamanho/SHA-256 com o snapshot antes de promover sucesso ou remover bytes locais. Download valida ownership remoto e grava somente no destino privado; exclusão só atinge objeto validado nessa hierarquia. Ausência é sucesso idempotente somente quando todas as buscas necessárias são completas. Nenhuma operação recebe caminho local do chamador nem devolve URL pública/de preview.
+
+Cada operação pública do adapter provider-specific (upload, leitura de metadados, download e exclusão) verifica `APP_ENV=production` antes de consumir a fonte, resolver pastas ou invocar o transporte. Fora desse ambiente, falha com erro sanitizado sem qualquer chamada HTTP; o gate apenas restringe o ambiente e não autoriza uma operação real. O helper compartilhado `upload_drive_file` mantém seu próprio gate.
+
+Os testes locais podem definir `APP_ENV=production` somente para atravessar os gates de ambiente, mas devem injetar um transporte falso que não execute rede e usar valores/arquivos sintéticos. Regressões em desenvolvimento verificam que todas as operações do adapter falham antes de qualquer chamada e sem consumir/alterar os streams. A composição normal do worker continua no adapter sintético. A classe provider-specific não será ligada ao runtime, configurada com token real, ou chamada contra Google até a etapa protegida da task 1.4.
 
 ### Interface do prazo por pasta
 

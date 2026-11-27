@@ -1,5 +1,7 @@
 # Recuperação de backup sintético pelo Drive — 17/11/2026
 
+> **EVIDÊNCIA HISTÓRICA — fluxo de runtime próprio aposentado em 25/11/2026.** Este ensaio comprovou o fluxo antigo com PostgreSQL sintético e Drive; não comprova integração do plano atual Restic/Rclone, destino atual ou estado do servidor. A pasta e a configuração citadas não devem ser reutilizadas sem novo inventário e gates vigentes. Nenhum backup real ou timer é autorizado por este registro.
+
 O proprietário autorizou o ensaio completo após a prova de transporte. A origem e o destino eram PostgreSQL 17.11 descartáveis no Docker Desktop local, com rede `none`, dados em tmpfs e nenhuma porta publicada. O Oracle participou somente do transporte do arquivo já cifrado, pela API `bfe511f` e pela conexão do proprietário com escopo `drive.file`. O banco de produção não foi fonte nem destino do backup.
 
 ## Evidência da execução

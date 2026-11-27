@@ -1,5 +1,7 @@
 # Minuta de política para decisão do proprietário
 
+> **REGISTRO HISTÓRICO — desenho de runtime próprio aposentado em 25/11/2026.** Este arquivo preserva a aprovação e as discussões da proposta anterior, mas suas decisões de destino e implementação — inclusive Google Workspace — não são configuração operacional atual. Valores de cadência, RPO/RTO e retenção também devem ser confirmados nas especificações vigentes antes de orientar o novo desenho. Nada aqui autoriza operação em produção.
+
 ## Status
 
 **Política inicial aprovada pelo proprietário em 06/11/2026.** O proprietário aprovou o escopo inicial e, após esclarecer que os valores se aplicam ao backup global de todos os tenants, respondeu “Aprovo para o backup global”. O pacote abaixo passa a orientar desenho e implementação local; não autoriza publicação, alteração do job existente, backup real novo, expurgo ou restore em produção. O nome histórico deste arquivo foi preservado como localizador da decisão.

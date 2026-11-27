@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import re
+from contextlib import contextmanager
 from datetime import timedelta, timezone
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 import sqlalchemy as sa
+from pydantic import SecretStr
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
@@ -39,6 +44,14 @@ from app.auth import (
     now,
 )
 from app.folder_access import folder_media_is_local, gallery_media_writes_allowed
+from app.google_drive_media_archive_storage import (
+    DRIVE_FILES_URL,
+    DRIVE_FOLDER_MIME,
+    MEDIA_NAMESPACE,
+    GoogleDriveMediaArchiveError,
+    GoogleDriveMediaArchiveStorage,
+)
+from app.google_drive_storage import UPLOAD_ENDPOINT
 from app.media_archive_executor import (
     MediaArchiveExecutionResult,
     execute_archive_operation,
@@ -103,8 +116,128 @@ class InMemoryArchiveStorage:
         self.objects.pop(remote_id, None)
 
 
+class SyntheticDriveTransport:
+    """Implementa localmente os endpoints usados pelo adapter de mídia."""
+
+    def __init__(self):
+        self.files: dict[str, dict] = {}
+        self.contents: dict[str, bytes] = {}
+        self.sessions: dict[str, dict] = {}
+        self.calls: list[tuple[str, str, dict]] = []
+        self._next_id = 1
+        self.lose_next_upload_confirmation = False
+
+    def _new_id(self) -> str:
+        file_id = f"synthetic-drive-{self._next_id}"
+        self._next_id += 1
+        return file_id
+
+    def _response(self, status_code: int, payload=None, *, headers=None):
+        return httpx.Response(status_code, json=payload, headers=headers)
+
+    def get(self, url: str, **kwargs):
+        self.calls.append(("GET", url, kwargs))
+        if url == DRIVE_FILES_URL:
+            query = kwargs["params"]["q"]
+            parent_match = re.search(r"'([^']+)' in parents", query)
+            assert parent_match is not None
+            parent_id = parent_match.group(1)
+            resources = [
+                resource.copy() for resource in self.files.values()
+                if parent_id in resource.get("parents", [])
+            ]
+            name_match = re.search(r"name = '([^']+)'", query)
+            object_hash_match = re.search(
+                r"key='pyp_media_object' and value='([^']+)'", query,
+            )
+            if "or appProperties has" in query and name_match and object_hash_match:
+                resources = [
+                    item for item in resources
+                    if item.get("name") == name_match.group(1)
+                    or item.get("appProperties", {}).get("pyp_media_object")
+                    == object_hash_match.group(1)
+                ]
+            elif name_match:
+                resources = [item for item in resources if item.get("name") == name_match.group(1)]
+            mime_match = re.search(r"mimeType = '([^']+)'", query)
+            if mime_match:
+                resources = [item for item in resources if item.get("mimeType") == mime_match.group(1)]
+            return self._response(200, {"incompleteSearch": False, "files": resources})
+
+        file_id = url.rsplit("/", 1)[-1]
+        resource = self.files.get(file_id)
+        return self._response(200, resource.copy()) if resource else self._response(404, {})
+
+    def post(self, url: str, **kwargs):
+        self.calls.append(("POST", url, kwargs))
+        payload = kwargs["json"]
+        if url == DRIVE_FILES_URL:
+            resource = {
+                "id": self._new_id(),
+                "name": payload["name"],
+                "mimeType": payload["mimeType"],
+                "parents": list(payload["parents"]),
+                "appProperties": dict(payload["appProperties"]),
+                "trashed": False,
+            }
+            self.files[resource["id"]] = resource
+            return self._response(200, resource)
+
+        assert url == UPLOAD_ENDPOINT
+        session_uri = f"https://www.googleapis.com/upload/drive/v3/files?upload_id={self._next_id}"
+        self.sessions[session_uri] = dict(payload)
+        return self._response(200, {}, headers={"Location": session_uri})
+
+    def put(self, url: str, **kwargs):
+        self.calls.append(("PUT", url, kwargs))
+        payload = self.sessions[url]
+        content = kwargs["content"]
+        file_id = self._new_id()
+        resource = {
+            "id": file_id,
+            "name": payload["name"],
+            "mimeType": payload["mimeType"],
+            "size": str(len(content)),
+            "md5Checksum": hashlib.md5(content, usedforsecurity=False).hexdigest(),
+            "parents": list(payload["parents"]),
+            "appProperties": dict(payload["appProperties"]),
+            "trashed": False,
+        }
+        self.files[file_id] = resource
+        self.contents[file_id] = content
+        if self.lose_next_upload_confirmation:
+            self.lose_next_upload_confirmation = False
+            raise httpx.ReadError("synthetic response lost")
+        return self._response(200, resource)
+
+    def delete(self, url: str, **kwargs):
+        self.calls.append(("DELETE", url, kwargs))
+        file_id = url.rsplit("/", 1)[-1]
+        self.files.pop(file_id, None)
+        self.contents.pop(file_id, None)
+        return httpx.Response(204)
+
+    @contextmanager
+    def stream_get(self, url: str, **kwargs):
+        self.calls.append(("STREAM_GET", url, kwargs))
+        file_id = url.rsplit("/", 1)[-1]
+        if file_id not in self.contents:
+            yield httpx.Response(404, content=b"")
+            return
+        yield httpx.Response(200, content=self.contents[file_id])
+
+
 class SimulatedWorkerTermination(BaseException):
     """Representa o processo encerrado sem executar o tratamento de erro."""
+
+
+def _google_drive_media_storage(transport, tenant_id):
+    return GoogleDriveMediaArchiveStorage(
+        access_token=SecretStr("synthetic-access-token"),
+        media_root_id="synthetic-media-root",
+        tenant_id=tenant_id,
+        transport=transport,
+    )
 
 
 def _archive_fixture(tmp_path: Path, monkeypatch, *, photo_count: int = 1):
@@ -370,6 +503,120 @@ def test_executor_archives_only_after_full_readback_and_then_hides_before_cleanu
     assert all(not path.exists() for path in source_paths)
     assert len(storage.objects) == 2
     engine.dispose()
+
+
+def test_executor_composes_with_google_drive_media_adapter_using_synthetic_transport(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("APP_ENV", "production")
+    engine, tenant_id, gallery_id, folder_id, cycle_id, operation_id, source_paths = (
+        _archive_fixture(tmp_path, monkeypatch)
+    )
+    transport = SyntheticDriveTransport()
+    storage = _google_drive_media_storage(transport, tenant_id)
+
+    with Session(engine, expire_on_commit=False) as db:
+        result = execute_archive_operation(db, _claim(db), storage=storage)
+        operation = db.get(MediaArchiveOperation, operation_id)
+        cycle = db.get(MediaArchiveCycle, cycle_id)
+        assert result == MediaArchiveExecutionResult(operation_id, "completed")
+        assert operation.status == "completed"
+        assert cycle.state == "archived"
+        assert operation.details["readback_verified"] is True
+        assert operation.details["manifest_readback_verified"] is True
+
+    folders = {
+        resource["appProperties"]["pyp_media_kind"]: resource
+        for resource in transport.files.values()
+        if resource.get("mimeType") == DRIVE_FOLDER_MIME
+    }
+    assert set(folders) == {"tenant", "gallery", "folder", "cycle"}
+    assert folders["tenant"]["parents"] == ["synthetic-media-root"]
+    assert folders["gallery"]["parents"] == [folders["tenant"]["id"]]
+    assert folders["folder"]["parents"] == [folders["gallery"]["id"]]
+    assert folders["cycle"]["parents"] == [folders["folder"]["id"]]
+    assert folders["gallery"]["appProperties"]["pyp_media_gallery"] == str(gallery_id)
+    assert folders["folder"]["appProperties"]["pyp_media_folder"] == str(folder_id)
+    assert folders["cycle"]["appProperties"]["pyp_media_cycle"] == str(cycle_id)
+
+    archived_objects = [
+        resource for resource in transport.files.values()
+        if resource.get("appProperties", {}).get("pyp_media_kind") == "object"
+    ]
+    assert len(archived_objects) == 2
+    assert all(resource["parents"] == [folders["cycle"]["id"]] for resource in archived_objects)
+    assert all(
+        resource["appProperties"]["pyp_media_namespace"] == MEDIA_NAMESPACE
+        and resource["appProperties"]["pyp_media_tenant"] == str(tenant_id)
+        and resource["appProperties"]["pyp_media_gallery"] == str(gallery_id)
+        and resource["appProperties"]["pyp_media_folder"] == str(folder_id)
+        and resource["appProperties"]["pyp_media_cycle"] == str(cycle_id)
+        for resource in archived_objects
+    )
+    assert all(
+        "incompleteSearch" in kwargs["params"]["fields"]
+        for method, url, kwargs in transport.calls
+        if method == "GET" and url == DRIVE_FILES_URL
+    )
+    assert all(not path.exists() for path in source_paths)
+    engine.dispose()
+
+
+def test_lost_upload_confirmation_retry_reuses_verified_remote_object(monkeypatch):
+    from app.media_archive_executor import _DigestingReader
+
+    monkeypatch.setenv("APP_ENV", "production")
+    transport = SyntheticDriveTransport()
+    tenant_id = UUID("11111111-1111-4111-8111-111111111111")
+    gallery_id = UUID("22222222-2222-4222-8222-222222222222")
+    folder_id = UUID("33333333-3333-4333-8333-333333333333")
+    cycle_id = UUID("44444444-4444-4444-8444-444444444444")
+    object_id = UUID("55555555-5555-4555-8555-555555555555")
+    storage = _google_drive_media_storage(transport, tenant_id)
+    object_key = f"{tenant_id}/{gallery_id}/{folder_id}/{cycle_id}/{object_id}"
+    payload = b"retry-after-lost-confirmation"
+    expected_sha256 = hashlib.sha256(payload).hexdigest()
+    renewals = []
+
+    first_reader = _DigestingReader(BytesIO(payload), renew=lambda: renewals.append("renew"))
+    transport.lose_next_upload_confirmation = True
+    with pytest.raises(GoogleDriveMediaArchiveError) as error:
+        storage.upload_object(
+            object_key=object_key,
+            mime_type="image/jpeg",
+            size_bytes=len(payload),
+            sha256=expected_sha256,
+            stream=first_reader,
+        )
+    assert "synthetic response lost" not in str(error.value)
+    assert first_reader.size_bytes == len(payload)
+    assert first_reader.sha256 == expected_sha256
+
+    stored_before_retry = [
+        resource for resource in transport.files.values()
+        if resource.get("appProperties", {}).get("pyp_media_kind") == "object"
+    ]
+    assert len(stored_before_retry) == 1
+    previous_id = stored_before_retry[0]["id"]
+
+    retry_reader = _DigestingReader(BytesIO(payload), renew=lambda: renewals.append("renew"))
+    receipt = storage.upload_object(
+        object_key=object_key,
+        mime_type="image/jpeg",
+        size_bytes=len(payload),
+        sha256=expected_sha256,
+        stream=retry_reader,
+    )
+    assert receipt.remote_id == previous_id
+    assert retry_reader.size_bytes == len(payload)
+    assert retry_reader.sha256 == expected_sha256
+    assert len(renewals) >= 6
+    assert sum(method == "PUT" for method, _url, _kwargs in transport.calls) == 1
+    assert sum(url == UPLOAD_ENDPOINT for _method, url, _kwargs in transport.calls) == 1
+    assert sum(
+        resource.get("appProperties", {}).get("pyp_media_kind") == "object"
+        for resource in transport.files.values()
+    ) == 1
 
 
 def test_archive_is_blocked_by_an_open_frozen_order_and_preserves_local_media(

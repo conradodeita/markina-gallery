@@ -1,5 +1,7 @@
 # Proposal: Backups e recuperação da plataforma
 
+> **IMPLEMENTAÇÃO APOSENTADA — HISTÓRICO SOMENTE.** O código `platform_backup` desta change foi removido em 25/11/2026. Não retomar seus módulos, fixtures, pins ou destino Google Workspace. Os testes e decisões abaixo registram a tentativa anterior; a direção atual está em [retire-platform-backup-runtime](../retire-platform-backup-runtime/proposal.md) e [prove-open-source-backup-and-recovery](../prove-open-source-backup-and-recovery/proposal.md).
+
 ## Contexto
 
 O roadmap exige backups diários cifrados do PostgreSQL no Google Drive e testes periódicos de restauração. Ao iniciar esta change, o repositório continha dumps de release/migration, sem coordenador SaaS. O serviço externo dos dois projetos terminou com status 1 em 06/11; o journal apontou reconciliação interrompida. A consulta de metadata posterior encontrou Pick-your-Pic coerente e uma entrada extra preservada no ClearBudget, sem provar causa histórica exclusiva ou recuperabilidade. O diagnóstico equivocado de credencial systemd ausente foi retirado. A política global abaixo foi aprovada antes do novo código local; o coordenador implementado nesta change permanece sem caller de produção ou integração real Drive.

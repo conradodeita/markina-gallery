@@ -1,5 +1,7 @@
 # Correção do gate de escopo do Picker — 20/11/2026
 
+> **EVIDÊNCIA HISTÓRICA — runtime próprio aposentado em 25/11/2026.** Esta validação se refere a um gate antigo do Picker e ao baseline daquele ciclo. Não autoriza publicar ou montar o Picker, vincular destino, fazer backup ou ativar timer, e não representa a configuração atual do servidor.
+
 ## Sintoma e causa
 
 A PR #390 foi integrada em `3c6cf8f3a235282af3ae37db50d3d80836765783`. A CI de push `44717212955` recusou o preflight no passo local `Validar escopo e blobs revisados`, com `criterio=arquivo_fora_do_escopo`, antes do inventário remoto. A lista nominal do gate não incluía `.github/workflows/production-google-picker-config.yml` e `scripts/test_production_app_picker.py`, ambos pertencentes à extensão já aprovada. A correção acrescenta somente esses dois caminhos.

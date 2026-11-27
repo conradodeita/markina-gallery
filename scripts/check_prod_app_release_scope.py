@@ -17,19 +17,6 @@ RUNTIME_FILES = {
     "backend/app/auth.py",
     "backend/app/main.py",
     "backend/app/google_drive_client.py",
-    "backend/app/google_drive_picker.py",
-    "backend/app/platform_backup/archive.py",
-    "backend/app/platform_backup/catalog.py",
-    "backend/app/platform_backup/filesystem.py",
-    "backend/app/platform_backup/offline_recovery.py",
-    "backend/app/platform_backup/payload.py",
-    "backend/app/platform_backup/production_cli.py",
-    "backend/app/platform_backup/remote_copy.py",
-    "backend/app/platform_backup/restore.py",
-    "backend/app/platform_backup/runtime_config.py",
-    "backend/app/platform_backup/runtime_source.py",
-    "backend/app/platform_backup/runtime_worker.py",
-    "backend/app/platform_backup/workspace_store.py",
     "backend/app/payment_availability.py",
     "backend/app/order_visibility.py",
     "backend/app/payment_export.py",
@@ -45,7 +32,6 @@ RUNTIME_FILES = {
     "frontend/app/admin/galleries/private-folder-client-overview.tsx",
     "frontend/app/admin/galleries/sources/[sourceId]/edit/gallery-editor.tsx",
     "frontend/app/admin/galleries/[galleryId]/orders/page.tsx",
-    "frontend/app/admin/platform/google-drive-folder-picker.tsx",
     "frontend/app/admin/platform/page.tsx",
     "frontend/app/admin/platform/use-console-access.ts",
     "frontend/app/admin/platform/console-link.tsx",
@@ -53,10 +39,16 @@ RUNTIME_FILES = {
     "frontend/app/library/purchase-card.tsx",
     "frontend/app/library/purchases/page.tsx",
 }
-BACKUP_SUPPORT_FILES = {
-    "scripts/backup_runtime/pyp-platform-backup.service",
-    "scripts/backup_runtime/pyp-platform-backup.timer",
-    "scripts/backup_runtime/requirements-py310-arm64.lock",
+RETIRED_BACKUP_FILES = {
+    "backend/app/google_drive_picker.py",
+    "frontend/app/admin/platform/google-drive-folder-picker.tsx",
+    ".github/workflows/production-google-picker-config.yml",
+    "scripts/build_platform_backup_runtime.sh",
+    "scripts/install-prod-platform-backup-wrapper.sh",
+    "scripts/install_platform_backup_runtime.py",
+    "scripts/platform_backup_runtime_artifact.py",
+    "scripts/platform_backup_runtime_inventory.py",
+    "scripts/platform_backup_wrapper_restore.py",
 }
 RETIRED_STATISTICS_FILES = {
     "frontend/app/admin/statistics/page.tsx",
@@ -109,7 +101,6 @@ ALLOWED_OPERATIONS = {
     ".github/workflows/production-app-compose-bridge-install.yml",
     ".github/workflows/production-app-runtime-adoption.yml",
     ".github/workflows/production-app-handoff-recovery.yml",
-    ".github/workflows/production-google-picker-config.yml",
     ".github/workflows/production-platform-backup-runtime.yml",
     ".github/workflows/production-platform-backup-wrapper-install.yml",
     "scripts/check_prod_app_release_scope.py",
@@ -120,11 +111,13 @@ ALLOWED_OPERATIONS = {
     "scripts/production-app-artifact-ssh-wrapper.sh",
     "scripts/production_app_artifact.py",
     "scripts/production_app_compose_bridge.py",
+    "scripts/production_app_preflight_support.py",
     "scripts/test_prod_app_api_base_image_export.py",
     "scripts/test_production_app_artifact.py",
     "scripts/test_production_app_artifact_ssh_wrapper.py",
     "scripts/test_production_app_compose_bridge.py",
-    "scripts/test_production_app_picker.py",
+    "scripts/test_production_app_preflight_support.py",
+    "scripts/test_production_app_preflight_support_workflow.py",
     "scripts/test_production_app_runtime_adoption.py",
     "scripts/test_production_app_first_handoff.py",
     "scripts/test_production_app_handoff_inventory.py",
@@ -141,15 +134,6 @@ ALLOWED_OPERATIONS = {
     "scripts/test_deploy_prod_infinitepay_retirement.sh",
     "scripts/test_retirement_legacy_worker.py",
     "scripts/production-preflight-ssh-wrapper.sh",
-    "scripts/build_platform_backup_runtime.sh",
-    "scripts/install-prod-platform-backup-wrapper.sh",
-    "scripts/install_platform_backup_runtime.py",
-    "scripts/platform_backup_runtime_artifact.py",
-    "scripts/platform_backup_runtime_inventory.py",
-    "scripts/test_install_platform_backup_runtime.py",
-    "scripts/test_platform_backup_runtime_artifact.py",
-    "scripts/test_platform_backup_runtime_inventory.py",
-    "scripts/test_platform_backup_runtime_workflow.py",
     "scripts/test_prod_app_release_scope.py",
     "scripts/test_classify_prod_release.py",
     "scripts/test_deploy_prod_app_services.sh",
@@ -182,7 +166,6 @@ ALLOWED_OPERATIONS = {
     "frontend/app/library/cart/checkout-navigation.test.ts",
     "frontend/app/library/library.test.tsx",
     "frontend/app/admin/retirement.test.ts",
-    "frontend/app/admin/platform/google-drive-folder-picker.test.tsx",
     "frontend/app/admin/platform/page.test.tsx",
     "frontend/scripts/payments-visual-qa.cjs",
     "RELATORIO_IMPLEMENTACAO_VENDAS_PAGAMENTOS.md",
@@ -214,14 +197,6 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
             status, path = line.split("\t", 1)
             statuses[path] = status
         changed = set(statuses)
-        backup_support_blobs = manifest.get("support_blobs", {})
-        if changed & BACKUP_SUPPORT_FILES:
-            if set(backup_support_blobs) != BACKUP_SUPPORT_FILES:
-                return False, "manifesto_suporte_backup_incompleto"
-            for path, expected in backup_support_blobs.items():
-                actual = git(root, "rev-parse", f"{target}:{path}")
-                if actual != expected:
-                    return False, "suporte_backup_diverge_do_blob_aprovado"
         emergency = manifest.get("emergency_api")
         extra_blobs = {}
         if emergency is not None:
@@ -236,16 +211,22 @@ def evaluate(root: Path, base: str, target: str, manifest: dict) -> tuple[bool, 
                     return False, "api_fora_do_escopo"
             changed |= api_changes
         for path in changed:
+            if path in RETIRED_BACKUP_FILES or path.startswith(("backend/app/platform_backup/", "backend/tests/test_platform_backup_",
+                                                                 "scripts/backup_runtime/", "scripts/test_platform_backup_")):
+                if statuses.get(path) == "D":
+                    continue
+                return False, "arquivo_fora_do_escopo"
             if path in RETIRED_INFINITEPAY_FILES or path in RETIRED_HOMOLOG_WORKFLOWS:
                 if statuses[path] != "D":
                     return False, "arquivo_fora_do_escopo"
                 continue
-            if (path in RUNTIME_FILES or path in extra_blobs or path in BACKUP_SUPPORT_FILES
+            if (path in RUNTIME_FILES or path in extra_blobs
                     or path in ALLOWED_OPERATIONS or path.startswith(ALLOWED_PREFIXES)):
                 continue
             return False, "arquivo_fora_do_escopo"
         for path, expected in {**manifest["runtime_blobs"], **extra_blobs}.items():
-            actual = git(root, "rev-parse", f"{target}:{path}")
+            ref = base if statuses.get(path) == "D" else target
+            actual = git(root, "rev-parse", f"{ref}:{path}")
             if actual != expected:
                 return False, "runtime_diverge_do_blob_aprovado"
         return True, "somente_api_web"

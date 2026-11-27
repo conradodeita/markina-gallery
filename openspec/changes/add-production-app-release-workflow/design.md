@@ -32,7 +32,7 @@ O release facial em `.github/workflows/ci.yml` valida blobs próprios e publica 
 - O job de preflight calcula um digest não sensível de host/porta/usuário usados na conexão SSH. Antes do upload, o job `production` recalcula o digest com suas próprias variáveis e compara o resultado; qualquer divergência encerra o release antes de transferir o bundle ou conectar para deploy.
 - O checkout de produção pode avançar após a publicação. A política facial verificará que o baseline autorizado é ancestral do checkout ativo e continuará fixando os blobs faciais permitidos; ela não aceitará alteração facial por causa deste release.
 - Uma falha não dispara rollback automático. O procedimento de rollback faz novo inventário, exige aprovação própria e restaura somente as imagens e SHA de `api`/`web`.
-- Para publicar o código do backup global, o manifesto fixa os blobs exatos dos módulos da API/UI e os arquivos de suporte da rotina. A exceção de classificação limita-se ao módulo `backend/app/platform_backup/runtime_worker.py`; isso não autoriza criar ou iniciar um processo de worker. O deploy API/web não instala unidades, timer, chave/configuração do backup, nem faz cópia real. O schema e a imagem ativa precisam corresponder ao inventário ao vivo antes de atualizar os pins.
+- O manifesto não admite mais o Google Picker nem o pacote legado `platform_backup`; os respectivos pins e arquivos de suporte foram retirados em `retire-platform-backup-runtime`. O gate aceita somente a exclusão dos caminhos históricos delimitados e bloqueia qualquer reintrodução. A remoção de arquivos instalados no host permanece no workflow protegido específico, fora do release API/web.
 
 ## Risks / Trade-offs
 

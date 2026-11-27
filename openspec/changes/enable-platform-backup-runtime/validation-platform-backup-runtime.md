@@ -1,5 +1,7 @@
 # Validação local do runtime protegido de backup
 
+> **EVIDÊNCIA HISTÓRICA — runtime próprio aposentado em 25/11/2026.** Os resultados abaixo pertencem ao código antigo. Os gates de instalar runtime, vincular destino, ensaiar com o Picker, fazer backup ou ativar timer não estão vigentes e não autorizam operação. O texto não comprova estado atual do servidor; a retirada de restos segue `retire-platform-backup-runtime` e a prova sintética vigente está em `prove-open-source-backup-and-recovery`.
+
 **Data:** 20/11/2026
 **Ambiente:** Windows, worktree `codex/record-picker-focus-release`
 **Escopo:** artefato ARM64, inventário/fingerprint, instalador inerte, vínculo e ensaio sintético, canal protegido e allowlist do release API/web.
