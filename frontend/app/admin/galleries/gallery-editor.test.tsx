@@ -1541,11 +1541,12 @@ it("recupera exclusão falha ao reabrir e só retoma após confirmar o inventár
     fireEvent.change(input, { target: { files: [new File(["jpeg"], "retrato.jpg", { type: "image/jpeg" })] } });
     expect(await screen.findByText("1 crédito reservado enquanto o arquivo é recebido.")).toBeTruthy();
     const wallet = screen.getByLabelText("Saldo de créditos durante o envio");
-    expect(within(wallet).getByText("Disponíveis").parentElement?.textContent).toContain("2");
+    expect(within(wallet).getByText("Créditos disponíveis").parentElement?.textContent).toContain("2");
     expect(within(wallet).getByText("Reservados").parentElement?.textContent).toContain("1");
 
     await act(async () => { transferFinished = true; finishUpload?.(); });
     expect(await screen.findByText("1 crédito consumido, confirmado pelo servidor.")).toBeTruthy();
+    expect(within(wallet).getByText("Reservados").parentElement?.textContent).toContain("0");
     expect(await screen.findByText("Upload concluído · 1 de 1 fotos")).toBeTruthy();
   });
 

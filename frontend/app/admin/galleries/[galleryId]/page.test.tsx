@@ -124,7 +124,7 @@ describe("carteira durante upload em galeria privada", () => {
     uploadGate.release?.();
 
     expect(await screen.findByText("1 crédito consumido, confirmado pelo servidor.")).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("Disponíveis").parentElement?.textContent).toContain("3"));
+    await waitFor(() => expect(screen.getByText("Créditos disponíveis").parentElement?.textContent).toContain("3"));
   });
 });
 

@@ -819,17 +819,17 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .folder-preview-comparison img { width:100%; height:240px; object-fit:contain; }
 .folder-preview-comparison button { width:100%; }
   .folder-upload-progress { display:grid; gap:8px; }
-  .folder-upload-wallet { display:grid; gap:8px; padding:14px; border:1px solid var(--mk-border); border-radius:12px; background:var(--mk-surface-subtle); }
+  .folder-upload-wallet { display:grid; gap:8px; padding:8px 12px; border-radius:10px; background:var(--mk-surface-subtle); }
   .folder-upload-wallet > span { color:var(--mk-ink-muted); line-height:1.45; }
-  .folder-upload-wallet dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:0; }
-  .folder-upload-wallet dl > div { display:grid; gap:3px; padding:9px 11px; border:1px solid var(--mk-border); border-radius:9px; background:var(--mk-surface); }
-  .folder-upload-wallet dt { color:var(--mk-ink-muted); font-size:.78rem; }
-  .folder-upload-wallet dd { margin:0; font-size:1.2rem; font-weight:750; }
+  .folder-upload-wallet dl { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 16px; margin:0; }
+  .folder-upload-wallet dl > div { display:flex; align-items:baseline; gap:5px; }
+  .folder-upload-wallet dt { color:var(--mk-ink-muted); font-size:.82rem; }
+  .folder-upload-wallet dd { margin:0; font-variant-numeric:tabular-nums; font-weight:650; }
+  .folder-upload-wallet-balance dd { font-size:1.05rem; }
   .upload-credit-statuses { display:grid; gap:7px; margin:4px 0 0; padding:0; list-style:none; }
   .upload-credit-statuses li { display:grid; gap:3px; min-width:0; padding:9px 10px; border:1px solid var(--mk-border); border-radius:8px; background:var(--mk-surface-subtle); }
   .upload-credit-statuses li span { overflow:hidden; color:var(--mk-ink); font-size:.86rem; text-overflow:ellipsis; white-space:nowrap; }
   .upload-credit-statuses li small { color:var(--mk-ink-muted); line-height:1.4; }
-  @media (max-width:620px) { .folder-upload-wallet dl { grid-template-columns:1fr; } }
 @media (max-width:700px) { .folder-preview-controls { grid-template-columns:minmax(0,1fr); } .folder-preview-comparison img { height:180px; } }
 .gallery-folder-grid article.is-published { border-color:var(--mk-border); }
 .gallery-folder-grid article.is-ready { border-color:var(--mk-border); }
