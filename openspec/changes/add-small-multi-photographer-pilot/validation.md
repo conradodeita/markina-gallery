@@ -462,3 +462,13 @@ O gerador foi atualizado para classificar o catalogo atual de fontes, modelos e 
 Verificacao estatica: `python openspec/changes/add-small-multi-photographer-pilot/inventory_ownership.py` e `python openspec/changes/add-small-multi-photographer-pilot/inventory_ownership.py --check` concluidos com as mesmas contagens; `git diff --check` sem achados. O snapshot gerado esta em `ownership-inventory.md`.
 
 Este inventario e estatico: nao executa testes de aplicacao, nao prova isolamento em runtime e nao atualiza o estado de producao. Os numeros 79 tabelas/205 arquivos/243 rotas/3.350 sitios da reconciliacao final de 01/10 continuam historicos e nao foram reescritos como se fossem atuais. Nenhum teste de aplicacao, servico, banco ou operacao remota foi executado neste fechamento.
+
+## Upload de JPEG e créditos com dois fotógrafos — 27/11/2026
+
+O teste opt-in `test_piloto_local_upload_creditos` passou com Next.js, FastAPI, Edge e PostgreSQL 17.11 locais no schema Alembic `20261113_0126`. Uma conta de proprietário sintética concedeu dois créditos ao primeiro fotógrafo e quatro ao segundo. Cada fotógrafo autenticou-se com senha e TOTP em uma sessão de navegador separada e enviou um JPEG pela ação **Carregar fotos** da própria galeria.
+
+O backend respondeu HTTP 202 nos dois envios. A leitura local confirmou os bytes originais e o vínculo entre tenant, galeria e pasta. Cada envio gerou uma única entrada de débito de um crédito depois de persistir o JPEG. Os saldos passaram de 2/4 para 1/4 e, depois, 1/3, com zero reservas restantes. As duas tentativas cruzadas de enviar bytes para a foto do outro fotógrafo retornaram HTTP 404. O navegador não fez solicitações externas.
+
+A execução final passou em 85,62 s. A suíte de créditos registrou 51 testes aprovados com PostgreSQL. Os dois cenários de navegador ficaram desabilitados na execução dessa suíte, e o cenário de upload foi executado separadamente com a opção abaixo. Ruff e a validação estrita OpenSpec passaram.
+
+Para reproduzir, use PostgreSQL sintético no loopback na porta 15470, o build Next com API no loopback na porta 8000, Edge e Playwright. Aponte `PHOTOGRAPHER_TEST_DATABASE_URL` para o banco de teste e `PILOT_EVIDENCE_DIR` para um diretório novo sob `C:/codex-data/test-runs`. Defina `PYP_RUN_LOCAL_UPLOAD_CREDITS=1` e execute `python -m pytest tests/test_tenant_pilot_journeys.py -k upload_creditos` a partir de `backend`. O teste provisiona contas sintéticas e valida o fluxo de upload e débito. O cadastro público e o piloto no servidor seguem pendentes nas tarefas 8.2 e 8.3.

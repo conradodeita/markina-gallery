@@ -11795,13 +11795,13 @@
       ],
       "statement": "A entrega prioritária é um **ambiente funcional em que dois ou mais tenants possam operar de maneira isolada**, utilizando créditos e fazendo uploads pela interface.",
       "phase": "roadmap",
-      "status": "precisa mudança",
+      "status": "parcial",
       "change_id": "add-small-multi-photographer-pilot",
       "evidence": [
-        "Documento fonte, linha 1033; piloto sintético previsto em testes, mas tenants operando isolados com créditos/upload não estão disponíveis pela interface."
+        "Documento fonte, linha 1033. Prova local 8.2c aprovada com dois fotógrafos, autenticação no navegador, upload JPEG, débito isolado por carteira e recusa de escrita cruzada. Evidência em openspec/changes/add-small-multi-photographer-pilot/validation.md."
       ],
       "decision_needed": false,
-      "notes": "Entrega prioritária ainda não existe como jornada integrada."
+      "notes": "Jornada integrada comprovada com contas provisionadas e dados sintéticos locais. Publicação e piloto no servidor permanecem nas tarefas 8.2 e 8.3."
     },
     {
       "id": "R14-015",
