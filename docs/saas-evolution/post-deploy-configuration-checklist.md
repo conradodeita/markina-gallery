@@ -46,7 +46,7 @@ A direção atual é a prova sintética integrada da change [prove-open-source-b
 
 Não retomar as changes enable-platform-backup-runtime, prepare-platform-backup-source ou add-google-workspace-backup-copy. A retirada de arquivos do servidor segue [retire-platform-backup-runtime](../../openspec/changes/retire-platform-backup-runtime/tasks.md) pelo workflow protegido, sem SQL, migration, Compose ou restart.
 
-O contrato atual de pasta fria, incluindo prazo de 30 dias, opções de 7/14/30 dias, taxa por pasta/ciclo, reserva e débito após checksum integral, reconciliação de resultado incerto, isenção do proprietário e ausência de expurgo automático, permanece vigente. O código, o catálogo e as migrations media_archive são preservados.
+O contrato de pasta fria preserva a janela de 30 dias antes do arquivo. Novas recuperações do fotógrafo concedem 30 dias a partir da disponibilização íntegra, com andamento na tela e débito somente após a conclusão. Veja [a decisão de prazo fixo](../../openspec/changes/fix-cold-recovery-access-window/proposal.md). A taxa por pasta e ciclo, a reconciliação, a isenção do proprietário e a ausência de expurgo automático seguem o contrato existente.
 ## 4. Arquivo de fotos e recuperação por tenant no Drive
 
 Antes de implementar a ligação real, consultar o [mapa de reuso do backup global e do núcleo de mídia existente](backup-global-reuso-arquivo-midia.md), com código, provas concluídas e pontos de integração para evitar repetição de trabalho.
