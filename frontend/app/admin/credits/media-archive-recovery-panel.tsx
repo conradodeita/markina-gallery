@@ -10,7 +10,6 @@ type Pricing = {
   configured: boolean;
   owner_exempt: boolean;
   available_credits: number | null;
-  duration_days: number[];
   can_manage: boolean;
 };
 
@@ -33,7 +32,14 @@ type Recovery = {
   owner_exempt: boolean;
   created_at: string;
   completed_at: string | null;
+  progress?: {
+    stage: "queued" | "preparing" | "downloading" | "finishing";
+    verified_objects: number;
+    total_objects: number;
+  };
 };
+
+const RECOVERY_DAYS = 30;
 
 type JsonPayload = { detail?: unknown };
 
@@ -67,6 +73,24 @@ function statusTone(status: string): "success" | "warning" | "neutral" {
   return "neutral";
 }
 
+function RecoveryProgress({ item }: { item: Recovery }) {
+  const progress = item.progress;
+  if (!progress || !["queued", "processing"].includes(item.status)) return null;
+  const { stage, verified_objects: verified, total_objects: total } = progress;
+  const downloading = stage === "downloading" && total > 0 && verified < total;
+  const description = ({
+    queued: "Aguardando na fila",
+    preparing: "Preparando a recuperação",
+    downloading: `${verified} de ${total} arquivos verificados`,
+    finishing: "Finalizando a liberação da pasta",
+  })[stage];
+  return <div className={styles.recoveryProgress}>
+    <progress max={downloading ? total : 1} value={downloading ? verified : undefined}
+      aria-label={`Recuperação de ${item.folder_name}. ${description}`} />
+    <small>{description}</small>
+  </div>;
+}
+
 function RecoveryHistory({ items }: { items: Recovery[] }) {
   if (!items.length) {
     return <SystemState title="Nenhuma recuperação solicitada" detail="Os pedidos e os débitos concluídos aparecerão aqui." />;
@@ -79,6 +103,7 @@ function RecoveryHistory({ items }: { items: Recovery[] }) {
           <strong>{item.folder_name}</strong>
           <span>{item.duration_days} dias de acesso · {dateLabel(item.created_at)}</span>
           <small>{item.owner_exempt ? "Conta do proprietário · sem débito" : `Taxa: ${item.fee_credits ?? "indisponível"} créditos`}</small>
+          <RecoveryProgress item={item} />
           {item.status === "completed" ? <small>Recuperação concluída em {dateLabel(item.completed_at)}.</small> : null}
           {item.status === "failed" ? <small>A pasta continua indisponível. O proprietário pode consultar o erro e tentar novamente.</small> : null}
           {item.status === "reconciliation_required" ? <small>O resultado está sendo conferido. Os créditos permanecem reservados enquanto isso.</small> : null}
@@ -96,7 +121,6 @@ export function MediaArchiveRecoveryPanel({ onWalletChange }: { onWalletChange?:
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [message, setMessage] = useState("");
-  const [durationByCycle, setDurationByCycle] = useState<Record<string, number>>({});
   const [requestingCycle, setRequestingCycle] = useState<string | null>(null);
   const [feeDraft, setFeeDraft] = useState("");
   const [password, setPassword] = useState("");
@@ -154,16 +178,22 @@ export function MediaArchiveRecoveryPanel({ onWalletChange }: { onWalletChange?:
 
   const recoveryInProgress = recoveries.some((item) => ["queued", "processing"].includes(item.status));
   useEffect(() => {
-    if (!recoveryInProgress || loadError) return;
+    if (!recoveryInProgress) return;
     const controller = new AbortController();
-    const timer = window.setTimeout(() => { void load(controller.signal); }, 2000);
+    let timer: number;
+    function schedulePoll() {
+      timer = window.setTimeout(async () => {
+        await load(controller.signal);
+        if (!controller.signal.aborted) schedulePoll();
+      }, 2000);
+    }
+    schedulePoll();
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [recoveryInProgress, recoveries, loadError, load]);
+  }, [recoveryInProgress, load]);
 
   async function requestRecovery(candidate: Candidate) {
     if (!pricing || requestingCycle) return;
-    const durationDays = durationByCycle[candidate.cycle_id] ?? 14;
-    const intentKey = JSON.stringify([candidate.cycle_id, durationDays]);
+    const intentKey = candidate.cycle_id;
     let key = requestKeys.current.get(intentKey);
     if (!key) {
       key = crypto.randomUUID();
@@ -173,17 +203,20 @@ export function MediaArchiveRecoveryPanel({ onWalletChange }: { onWalletChange?:
     setMessage("");
     setLoadError("");
     try {
-      await readJson<Recovery>(await fetch(
+      const recovery = await readJson<Recovery>(await fetch(
         `/api/admin/media-archive/cycles/${encodeURIComponent(candidate.cycle_id)}/recovery`,
         {
           method: "POST",
           credentials: "same-origin",
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ duration_days: durationDays, idempotency_key: key }),
+          body: JSON.stringify({ duration_days: RECOVERY_DAYS, idempotency_key: key }),
         },
       ));
       requestKeys.current.delete(intentKey);
+      setRecoveries((previous) => [
+        recovery, ...previous.filter((item) => item.operation_id !== recovery.operation_id),
+      ]);
       setMessage("Recuperação solicitada. Acompanhe o andamento abaixo.");
       await load();
     } catch (error) {
@@ -247,7 +280,7 @@ export function MediaArchiveRecoveryPanel({ onWalletChange }: { onWalletChange?:
       <div>
         <p className="eyebrow">Acesso às pastas arquivadas</p>
         <h2>Recuperação de arquivos frios</h2>
-        <p>Solicite uma pasta arquivada e escolha por quanto tempo ela ficará disponível após a recuperação.</p>
+        <p>A pasta fica disponível por {RECOVERY_DAYS} dias a partir da conclusão da recuperação.</p>
       </div>
       {pricing?.owner_exempt ? <StatusBadge tone="success">Conta do proprietário</StatusBadge> : null}
     </div>
@@ -261,7 +294,7 @@ export function MediaArchiveRecoveryPanel({ onWalletChange }: { onWalletChange?:
         <div>
           <p className="eyebrow">Configuração do proprietário</p>
           <h3>Taxa por pasta e ciclo</h3>
-          <p>O valor vale para todos os tenants e para os prazos de 7, 14 ou 30 dias. A taxa só é debitada após a recuperação completa e verificada.</p>
+          <p>A taxa por pasta e ciclo só é debitada após a recuperação completa e verificada.</p>
           <p>Valor atual: <strong>{pricing.configured ? `${pricing.recovery_fee_credits} créditos` : "não configurado"}</strong></p>
         </div>
         <form className={styles.pricingForm} onSubmit={(event) => void savePricing(event)}>
@@ -299,7 +332,6 @@ export function MediaArchiveRecoveryPanel({ onWalletChange }: { onWalletChange?:
     {candidates.length ? (
       <ul className={styles.candidates}>
         {candidates.map((candidate) => {
-          const duration = durationByCycle[candidate.cycle_id] ?? 14;
           const feeReady = Boolean(pricing?.owner_exempt || pricing?.configured);
           const recoveryFee = pricing?.recovery_fee_credits;
           const availableCredits = pricing?.available_credits;
@@ -316,14 +348,6 @@ export function MediaArchiveRecoveryPanel({ onWalletChange }: { onWalletChange?:
               <small>Ciclo {candidate.cycle_number}</small>
             </div>
             <div className={styles.requestControls}>
-              <label>Prazo de acesso
-                <select disabled={active || requestingCycle === candidate.cycle_id} value={duration} onChange={(event) => setDurationByCycle((current) => ({
-                  ...current,
-                  [candidate.cycle_id]: Number(event.target.value),
-                }))}>
-                  {[7, 14, 30].map((days) => <option key={days} value={days}>{days} dias</option>)}
-                </select>
-              </label>
               <MarkinaButton type="button" variant="secondary"
                 disabled={!feeReady || !hasBalance || active || requestingCycle !== null}
                 onClick={() => void requestRecovery(candidate)}>

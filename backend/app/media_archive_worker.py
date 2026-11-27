@@ -642,6 +642,7 @@ def renew_operation_lease(
     operation_id: UUID,
     lease_token: str,
     lease_seconds: int = 120,
+    verified_restore_objects: int | None = None,
     at: datetime | None = None,
 ) -> datetime:
     """Estende ambos os registros do lease em uma única transação curta."""
@@ -649,9 +650,22 @@ def renew_operation_lease(
         raise ValueError("Duração de lease inválida.")
     instant = _utc(at or now())
     assert instant is not None
-    coordinator, operation, _cycle = _locked_claim(
+    coordinator, operation, cycle = _locked_claim(
         db, operation_id=operation_id, lease_token=lease_token, at=instant,
     )
+    if verified_restore_objects is not None:
+        if (
+            operation.operation_type != "restore"
+            or operation.stage != "downloading"
+            or not 0 <= verified_restore_objects <= cycle.object_count
+        ):
+            db.rollback()
+            raise MediaArchiveTransitionError("Andamento de recuperação inválido.")
+        details = dict(operation.details or {})
+        previous_count = details.get("restored_object_count", 0)
+        if type(previous_count) is not int or verified_restore_objects > previous_count:
+            details["restored_object_count"] = verified_restore_objects
+            operation.details = details
     expiry = instant + timedelta(seconds=lease_seconds)
     operation.lease_expires_at = expiry
     operation.updated_at = instant

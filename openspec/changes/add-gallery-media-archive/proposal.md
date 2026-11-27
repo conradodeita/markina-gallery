@@ -15,7 +15,7 @@ Pastas expiradas continuam ocupando o disco local, enquanto remover a mídia pod
 - Explicar no momento da configuração que a pasta entra em arquivo 30 dias após expirar e que recuperar exige a taxa vigente em créditos, definida pelo proprietário.
 - Incluir a regra de expiração e recuperação nos Termos operacionais que o tenant aceita, preservando o texto/versão/hash no protocolo de aceite existente.
 - Manter as referências da seleção, permitir prévias protegidas somente das fotos selecionadas antes do vencimento durante a janela de 30 dias e ocultar toda a mídia quando arquivada. Navegação da pasta e novas seleções continuam bloqueadas após o vencimento; pedidos comerciais em aberto continuam bloqueando o arquivo.
-- Automatizar a recuperação por solicitação do tenant, prazo escolhido e taxa global fixa em créditos por pasta/ciclo; reservar créditos, debitar só após pull completo/verificado e liberar a reserva em falha.
+- Automatizar a recuperação por solicitação do tenant. Novos pedidos recebem 30 dias após a liberação conforme `fix-cold-recovery-access-window`; a taxa global em créditos vale por pasta e ciclo. Reservar no pedido, debitar após disponibilização íntegra e liberar a reserva em falha comprovada.
 - Isentar o proprietário no seu próprio fluxo; permitir retry manual pelo proprietário após falha para um tenant, aplicando a taxa somente no sucesso.
 - Mostrar operação e ledger no card/histórico do tenant e permitir ao proprietário consultar logs técnicos sanitizados.
 - Preservar cópia primária até verificar que a cópia fria pode ser recuperada; manter a exclusão explícita como fluxo separado.

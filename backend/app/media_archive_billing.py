@@ -32,6 +32,7 @@ from app.photographer_credits import _lock_wallet, _source_available, wallet_sna
 from app.system_monitor.access import is_owner
 
 ALLOWED_RECOVERY_DURATIONS = (7, 14, 30)
+SELF_SERVICE_RECOVERY_DAYS = 30
 _HELD_RESERVATION_STATES = ("reserved", "reconciliation_required")
 
 
@@ -71,7 +72,7 @@ def recovery_pricing_payload(db: Session, tenant_id: UUID, admin_id: UUID) -> di
         "configured": bool(setting and setting.recovery_fee_credits is not None),
         "owner_exempt": owner_exempt,
         "available_credits": wallet_snapshot(db, tenant_id)["available_credits"],
-        "duration_days": list(ALLOWED_RECOVERY_DURATIONS),
+        "duration_days": [SELF_SERVICE_RECOVERY_DAYS],
         "can_manage": is_owner(db, admin_id),
     }
 
@@ -236,6 +237,22 @@ def _request_payload(
         "updated_at": operation.updated_at,
         "completed_at": operation.completed_at,
     }
+    if operation.status in {"queued", "processing"}:
+        progress = (
+            "queued" if operation.status == "queued"
+            else {
+                "downloading": "downloading",
+                "verifying": "finishing",
+                "promoting": "finishing",
+                "verified_promoted": "finishing",
+            }.get(operation.stage, "preparing")
+        )
+        verified = (operation.details or {}).get("restored_object_count", 0)
+        payload["progress"] = {
+            "stage": progress,
+            "verified_objects": verified if type(verified) is int and 0 <= verified <= cycle.object_count else 0,
+            "total_objects": cycle.object_count,
+        }
     if owner_view:
         payload.update({
             "stage": operation.stage,
@@ -311,7 +328,7 @@ def request_recovery(
 ) -> dict[str, object]:
     """Cria pedido idempotente e reserva FIFO; não inicia download."""
     if type(duration_days) is not int or duration_days not in ALLOWED_RECOVERY_DURATIONS:
-        raise HTTPException(422, "Escolha um prazo de 7, 14 ou 30 dias.")
+        raise HTTPException(422, "Prazo de recuperação inválido.")
     key = idempotency_key.strip()
     if not 1 <= len(key) <= 200:
         raise HTTPException(422, "Chave de idempotência inválida.")
@@ -349,6 +366,8 @@ def request_recovery(
     actor_is_owner = is_owner(db, actor_admin_id)
     previous_request = None
     requester_type = "owner" if retry_of_operation_id is not None or closure_batch_id is not None else "tenant"
+    if requester_type == "tenant" and duration_days != SELF_SERVICE_RECOVERY_DAYS:
+        raise HTTPException(422, "Novas recuperações concedem 30 dias de acesso.")
     if requester_type == "owner" and not actor_is_owner:
         raise HTTPException(403, "Acesso não autorizado.")
     if retry_of_operation_id is not None:
@@ -363,6 +382,8 @@ def request_recovery(
         previous_request = _request_for_operation(db, failed)
         if previous_request.tenant_id != tenant_id:
             raise HTTPException(409, "A falha selecionada não corresponde à conta.")
+        if duration_days != previous_request.duration_days:
+            raise HTTPException(422, "A nova tentativa deve manter o prazo do pedido original.")
         if previous_request.closure_batch_id is not None:
             closure_batch_id = previous_request.closure_batch_id
             from app.tenant_closure_recovery import bind_account_recovery

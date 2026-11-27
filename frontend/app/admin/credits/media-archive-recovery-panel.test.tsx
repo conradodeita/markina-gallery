@@ -24,6 +24,7 @@ const recovery = {
   owner_exempt: false,
   created_at: "2026-11-09T12:00:00Z",
   completed_at: null,
+  progress: { stage: "queued", verified_objects: 0, total_objects: 4 },
 };
 
 function json(body: unknown, status = 200) {
@@ -33,7 +34,7 @@ function json(body: unknown, status = 200) {
 function fixtureFetch({
   pricing = {
     recovery_fee_credits: 2, configured: true, owner_exempt: false,
-    available_credits: 4, duration_days: [7, 14, 30], can_manage: false,
+    available_credits: 4, duration_days: [30], can_manage: false,
   },
   candidates = [candidate],
   initialRecoveries = [] as typeof recovery[],
@@ -81,7 +82,7 @@ describe("painel de recuperação de arquivos frios", () => {
     expect(onWalletChange).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });
-  it("mostra a taxa atual e envia prazo e chave idempotente ao pedir uma pasta", async () => {
+  it("mostra 30 dias fixos e envia uma chave idempotente ao pedir uma pasta", async () => {
     const fetcher = fixtureFetch();
     vi.stubGlobal("fetch", fetcher);
     vi.stubGlobal("crypto", { randomUUID: () => "synthetic-request-key" });
@@ -89,7 +90,8 @@ describe("painel de recuperação de arquivos frios", () => {
 
     expect(await screen.findByText("Ensaio arquivado")).toBeTruthy();
     expect(screen.getByText(/2 créditos por pasta e ciclo/)).toBeTruthy();
-    fireEvent.change(screen.getByRole("combobox", { name: "Prazo de acesso" }), { target: { value: "30" } });
+    expect(screen.getByText(/30 dias a partir da conclusão/)).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: "Prazo de acesso" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Solicitar recuperação" }));
 
     expect(await screen.findByRole("status")).toBeTruthy();
@@ -137,7 +139,7 @@ describe("painel de recuperação de arquivos frios", () => {
     await waitFor(() => expect(screen.queryByDisplayValue("synthetic-password")).toBeNull());
   });
 
-  it("mantém o prazo fixo enquanto envia e usa outra chave quando o prazo muda após falha", async () => {
+  it("envia uma vez por clique e reutiliza o mesmo pedido após erro de comunicação", async () => {
     const requestBodies: Array<{ duration_days: number; idempotency_key: string }> = [];
     let recoveries: typeof recovery[] = [];
     let finishFirstRequest: ((response: Response) => void) | null = null;
@@ -157,12 +159,6 @@ describe("painel de recuperação de arquivos frios", () => {
         if (requestBodies.length === 1) {
           return new Promise<Response>((resolve) => { finishFirstRequest = resolve; });
         }
-        if (requestBodies.length === 2) {
-          return Promise.resolve(json({ detail: "Resposta ainda indisponível." }, 503));
-        }
-        if (body.idempotency_key === requestBodies[0].idempotency_key) {
-          return Promise.resolve(json({ detail: "Chave reutilizada para outro prazo." }, 409));
-        }
         recoveries = [{ ...recovery, duration_days: body.duration_days }];
         return Promise.resolve(json(recoveries[0], 202));
       }
@@ -171,26 +167,39 @@ describe("painel de recuperação de arquivos frios", () => {
     vi.stubGlobal("fetch", fetcher);
     render(<MediaArchiveRecoveryPanel />);
 
-    const duration = await screen.findByRole("combobox", { name: "Prazo de acesso" });
-    fireEvent.click(await screen.findByRole("button", { name: "Solicitar recuperação" }));
-    await waitFor(() => expect(duration).toHaveProperty("disabled", true));
+    const button = await screen.findByRole("button", { name: "Solicitar recuperação" });
+    fireEvent.click(button);
+    expect(button).toHaveProperty("disabled", true);
+    fireEvent.click(button);
+    expect(requestBodies).toHaveLength(1);
     await act(async () => {
       if (!finishFirstRequest) throw new Error("A solicitação não iniciou o POST pendente.");
       finishFirstRequest(json({ detail: "Resposta temporariamente indisponível." }, 503));
     });
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("temporariamente"));
-    expect(duration).toHaveProperty("disabled", false);
-
-    fireEvent.click(screen.getByRole("button", { name: "Solicitar recuperação" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveProperty("textContent", expect.stringContaining("ainda indisponível")));
-    fireEvent.change(duration, { target: { value: "30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Solicitar recuperação" }));
+    expect(button).toHaveProperty("disabled", false);
+    fireEvent.click(button);
     expect(await screen.findByText("Na fila")).toBeTruthy();
-    expect(requestBodies).toHaveLength(3);
-    expect(requestBodies[0].duration_days).toBe(14);
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies[0].duration_days).toBe(30);
     expect(requestBodies[1]).toEqual(requestBodies[0]);
-    expect(requestBodies[2].duration_days).toBe(30);
-    expect(requestBodies[2].idempotency_key).not.toBe(requestBodies[0].idempotency_key);
+  });
+
+  it("exibe a contagem verificada e mantém finalização sem declarar sucesso", async () => {
+    const fetcher = fixtureFetch({ initialRecoveries: [
+      { ...recovery, status: "processing", progress: { stage: "downloading", verified_objects: 2, total_objects: 4 } },
+      { ...recovery, operation_id: "another-recovery", status: "processing",
+        progress: { stage: "finishing", verified_objects: 4, total_objects: 4 } },
+    ] });
+    vi.stubGlobal("fetch", fetcher);
+    render(<MediaArchiveRecoveryPanel />);
+
+    const download = await screen.findByRole("progressbar", { name: /2 de 4 arquivos verificados/ });
+    expect(download.getAttribute("value")).toBe("2");
+    expect(download.getAttribute("max")).toBe("4");
+    const finish = screen.getByRole("progressbar", { name: /Finalizando a liberação/ });
+    expect(finish.hasAttribute("value")).toBe(false);
+    expect(screen.queryByText("Concluída")).toBeNull();
   });
 
   it("bloqueia taxa, senha e TOTP enquanto a atualização aguarda resposta", async () => {

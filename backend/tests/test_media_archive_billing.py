@@ -91,11 +91,35 @@ def _pricing(db, owner_id, fee):
     ))
 
 
-def _request(db, tenant, admin, cycle, *, key="tenant-request-001", days=14):
+def _request(db, tenant, admin, cycle, *, key="tenant-request-001", days=30):
     return billing.request_recovery(
         db, tenant_id=tenant.id, actor_admin_id=admin.id,
         cycle_id=cycle.id, duration_days=days, idempotency_key=key,
     )
+
+
+@pytest.mark.parametrize("days", [7, 14])
+def test_short_duration_is_rejected_for_new_requests_and_preserved_for_legacy_replay(client_db, monkeypatch, days):
+    _owner_tenant, tenant, owner, photographer = create_accounts(client_db)
+    cycle, _folder = _archived_cycle(client_db, tenant.id)
+    _pricing(client_db, owner.id, 2)
+    credits.grant_credits(client_db, owner.id, tenant.id, 2, "grant-legacy", "synthetic")
+    client_db.commit()
+
+    with pytest.raises(HTTPException) as rejected:
+        _request(client_db, tenant, photographer, cycle, days=days)
+    assert rejected.value.status_code == 422
+    assert credits.wallet_snapshot(client_db, tenant.id)["available_credits"] == 2
+
+    with monkeypatch.context() as legacy_policy:
+        legacy_policy.setattr(billing, "SELF_SERVICE_RECOVERY_DAYS", days)
+        created = _request(client_db, tenant, photographer, cycle, days=days)
+    client_db.commit()
+
+    replayed = _request(client_db, tenant, photographer, cycle, days=days)
+    assert replayed["operation_id"] == created["operation_id"]
+    assert replayed["duration_days"] == days
+    assert credits.wallet_snapshot(client_db, tenant.id)["available_credits"] == 0
 
 
 def test_unconfigured_or_insufficient_price_fails_before_operation_or_reservation(client_db):
@@ -181,7 +205,7 @@ def test_concurrent_recovery_requests_cannot_overreserve_the_same_wallet(postgre
                     tenant_id=tenant_id,
                     actor_admin_id=photographer_id,
                     cycle_id=cycle_id,
-                    duration_days=14,
+                    duration_days=30,
                     idempotency_key=f"concurrent-recovery-{cycle_id}",
                 )
                 db.commit()
@@ -252,9 +276,9 @@ def test_recovery_reserves_fifo_and_debits_once_after_verified_restore(client_db
     assert reservation.status == "consumed"
     assert ledger.delta == -2
     assert credits.wallet_snapshot(client_db, tenant.id)["available_credits"] == 1
-    assert folder.access_duration_days == 14
+    assert folder.access_duration_days == 30
     assert folder.released_at.replace(tzinfo=UTC) == at
-    assert folder.access_expires_at.replace(tzinfo=UTC) == at + timedelta(days=14)
+    assert folder.access_expires_at.replace(tzinfo=UTC) == at + timedelta(days=30)
     assert billing.list_tenant_recoveries(client_db, tenant.id)[0]["fee_credits"] == 2
     assert billing.list_tenant_recoveries(client_db, tenant.id)[0]["status"] == "completed"
     recovery_entry = next(
@@ -310,7 +334,7 @@ def test_owner_recovery_is_exempt_from_price_and_credit_ledger(client_db):
         tenant_id=owner_tenant.id,
         actor_admin_id=owner.id,
         cycle_id=cycle.id,
-        duration_days=7,
+        duration_days=30,
         idempotency_key="owner-unmetered-recovery",
     )
     client_db.commit()
@@ -344,7 +368,7 @@ def test_unmetered_wallet_on_non_owner_tenant_fails_closed(client_db):
             tenant_id=tenant.id,
             actor_admin_id=photographer.id,
             cycle_id=cycle.id,
-            duration_days=7,
+            duration_days=30,
             idempotency_key="misassigned-unmetered-wallet",
         )
     assert failure.value.status_code == 503
@@ -451,7 +475,7 @@ def test_owner_retry_is_attributed_to_owner_and_links_the_failed_attempt(client_
         tenant_id=tenant.id,
         actor_admin_id=owner.id,
         cycle_id=cycle.id,
-        duration_days=7,
+        duration_days=30,
         idempotency_key="owner-retry-001",
         retry_of_operation_id=failed_id,
     )

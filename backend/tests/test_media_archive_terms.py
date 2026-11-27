@@ -10,10 +10,10 @@ def test_editable_default_terms_describe_folder_archive_and_credit_recovery():
         "cada pasta de conteúdo",
         "30 dias corridos completos",
         "carrinhos sem pedido enviado não impedem o arquivamento",
-        "7, 14 ou 30 dias",
+        "por 30 dias de acesso, contados da conclusão da recuperação",
         "taxa vigente, configurada pelo provedor para cada pasta e ciclo",
-        "só será debitada depois que todos os arquivos forem recuperados e verificados",
-        "será preservada a taxa da solicitação original",
+        "só é debitada depois que todos os arquivos são recuperados, verificados e disponibilizados",
+        "preserva a taxa e o prazo do pedido original",
         "não há expurgo automático da mídia arquivada nesta versão",
     ):
         assert clause in normalized
