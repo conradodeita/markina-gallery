@@ -391,11 +391,20 @@ class HandoffRecoveryContracts(unittest.TestCase):
 
         def prepare_context(context, *args):
             context['models'] = copy.deepcopy(plan['recovery_models'])
+            for document in context['models'].values():
+                document['name'] = plan['recovery_project']
+                if document.get('volumes') == {}:
+                    document.pop('volumes')
+                for network in document.get('networks', {}).values():
+                    network['ipam'] = {}
+                for service_model in document['services'].values():
+                    if service_model.get('user') == '':
+                        service_model.pop('user')
             context['semantic_hashes'] = {'web': 'a' * 64}
             return context
 
         def publish_runtime(context, models, proof, approval, handoff_records=None):
-            published.update(proof=proof, approval=approval, records=copy.deepcopy(handoff_records))
+            published.update(proof=proof, approval=approval, records=copy.deepcopy(handoff_records), models=copy.deepcopy(models))
 
         with (patch.object(bridge, '_handoff_read_items', return_value=self.execution.items),
               patch.object(bridge, 'handoff_journal_read', side_effect=read_with_original_version),
@@ -406,11 +415,13 @@ class HandoffRecoveryContracts(unittest.TestCase):
             bridge.handoff_publish_runtime(identity, restoring=True)
 
         pointer = {'base': 'b' * 64, 'manifest_sha256': 'c' * 64}
-        manifest_models = {
-            service: hashlib.sha256(json.dumps(bridge._escape_compose(plan['recovery_models'][service]),
-                                               sort_keys=True).encode()).hexdigest()
-            for service in bridge.SERVICES
-        }
+        runtime_directory = bridge.BRIDGE_STATE / 'published-base'
+        runtime_directory.mkdir(mode=0o700)
+        manifest_models = {}
+        for service, model in published['models'].items():
+            content = json.dumps(bridge._escape_compose(model), sort_keys=True).encode()
+            bridge._write_private_file(runtime_directory / (service + '.compose.json'), content)
+            manifest_models[service] = hashlib.sha256(content).hexdigest()
         manifest = {
             'approval': published['approval'], 'proof': published['proof'],
             'handoff_records': published['records'], 'runtime': published['proof']['runtime'],
@@ -424,9 +435,28 @@ class HandoffRecoveryContracts(unittest.TestCase):
         )
         with (patch.object(bridge, '_handoff_active_id', return_value=identity),
               patch.object(bridge, '_read_base_pointer', return_value=pointer),
-              patch.object(bridge, '_read_runtime_base', return_value=(Path('/tmp'), manifest)),
+              patch.object(bridge, '_read_runtime_base', return_value=(runtime_directory, manifest)),
               patch.object(bridge, '_handoff_read_items', return_value=self.execution.items)):
             receipt = bridge._handoff_picker_free_runtime_receipt(plan['support_sha'], proof)
+            newer_proof = dict(proof, support_sha='e' * 40)
+            with patch.object(bridge, '_git', return_value='') as git:
+                checked = bridge._handoff_picker_free_runtime_receipt('e' * 40, newer_proof)
+                git.assert_called_once_with('merge-base', '--is-ancestor', plan['support_sha'], 'e' * 40)
+                self.assertEqual(checked['execution_support_sha'], plan['support_sha'])
+                self.assertEqual(checked['support_sha'], 'e' * 40)
+            with (patch.object(bridge, '_git', side_effect=bridge.BridgeError('unrelated_support')),
+                  self.assertRaisesRegex(bridge.BridgeError, 'unrelated_support')):
+                bridge._handoff_picker_free_runtime_receipt('e' * 40, newer_proof)
+            model_path = runtime_directory / 'api.compose.json'
+            original_content = model_path.read_bytes()
+            altered = json.loads(original_content)
+            altered['services']['api']['environment']['APP_VERSION'] = 'f' * 40
+            model_path.write_bytes(json.dumps(altered, sort_keys=True).encode())
+            manifest['models']['api'] = bridge.snapshot_sha256(model_path)
+            with self.assertRaisesRegex(bridge.BridgeError, 'runtime_model_mismatch'):
+                bridge._handoff_picker_free_runtime_receipt(plan['support_sha'], proof)
+            model_path.write_bytes(original_content)
+            manifest['models']['api'] = hashlib.sha256(original_content).hexdigest()
 
         self.assertEqual(receipt['recipe_sha256'], plan['picker_free_recovery_recipe']['sha256'])
         self.assertEqual(receipt['runtime_base'], pointer['base'])

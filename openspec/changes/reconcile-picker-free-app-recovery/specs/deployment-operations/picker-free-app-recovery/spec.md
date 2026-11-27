@@ -88,3 +88,18 @@ A receita SHALL preservar o tmpfs canônico de /run quando OAuth e Picker são b
 #### Scenario: Sobreposição não provada
 - **WHEN** o tmpfs cobre o caminho do Picker fora desse caso exato, ou o bind OAuth é ausente, divergente ou gravável
 - **THEN** a receita mantém o bloqueio por ambiguidade
+
+### Requirement: Recibo confere o modelo publicado pelo Compose
+O recibo SHALL validar os bytes publicados contra o manifesto root-only e comparar seu conteúdo com a receita aprovada, aceitando somente a normalização equivalente de nome do projeto para a geração aprovada, user vazio omitido, ipam vazio e seção volumes vazia omitida.
+
+#### Scenario: Modelo publicado normalizado
+- **WHEN** o Compose preserva o modelo aprovado com essas únicas diferenças de representação
+- **THEN** o recibo confere o hash do arquivo publicado, mantém os hashes da receita e comprova identidade, saúde e configuração real dos serviços antes de liberar inventário
+
+#### Scenario: Suporte de verificação atualizado após recuperação saudável
+- **WHEN** o suporte atual descende do SHA registrado na recuperação e a receita, manifesto, runtime e fingerprint continuam comprovados
+- **THEN** o recibo registra o SHA executado e o SHA de verificação, valida a ancestralidade e permite verificação somente leitura sem repetir a recriação dos serviços
+
+#### Scenario: Alteração real ou proveniência incompatível
+- **WHEN** ambiente, imagem, comando, usuário não vazio, configuração de rede, volume ou projeto diverge da receita, ou o SHA executado não é ancestral do suporte atual
+- **THEN** a validação falha e a retirada continua bloqueada

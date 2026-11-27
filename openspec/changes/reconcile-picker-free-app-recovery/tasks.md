@@ -16,6 +16,8 @@
 
 - [x] 2.6 Preservar tmpfs canônico /run com binds separados Picker/OAuth somente leitura; provar o caso real de hardening em teste e no ensaio das imagens ativas. O run #46011319633 abortou antes da troca com handoff_recovery_recipe_picker_mount_ambiguous. Os três endpoints públicos retornaram 200 após a falha. Consulta SSH read-only com a chave disponibilizada pelo proprietário identificou somente mounts e volumes do modelo ativo; nenhum valor de credencial foi lido.
 
+- [x] 2.7 Validar o recibo contra o modelo efetivamente publicado pelo Compose, preservando conferência por hash e runtime; testar normalizações equivalentes e alterações reais, além de atualização do suporte por ancestralidade sem recriar serviços.
+
 ## 3. Integração com a aposentadoria
 
 - [x] 3.1 Ajustar o inventário protegido para classificar como não ativos somente witnesses exatos, parados e não selecionáveis pela receita vigente; testar preservação do digest agregado e bloqueio de qualquer outro mount.
@@ -54,3 +56,7 @@
 O diagnóstico da referência passa também a validar a remoção do Picker antes de emitir fingerprint. Assim, uma receita ambígua falha na leitura, antes de solicitar aprovação de recovery.
 
 - Evidência 2.6: 43 contratos Linux passaram; regressão preserva tmpfs /run e OAuth exato somente leitura, rejeita OAuth gravável/ausente/divergente e tmpfs não canônico ou sobre /run/secrets. O ensaio das imagens exportadas passou novamente com /run:rw,nosuid,nodev,noexec,size=16m e /tmp:rw,nosuid,nodev,noexec,size=128m, API/web saudáveis, página inicial acessível e ausência do arquivo Picker após inicialização. Inventário Docker pré/pós idêntico. Ver runtime-tmpfs-validation.md. Falta CI/revisão/merge desta correção, atualização do suporte e nova recuperação protegida.
+
+- Operação parcial 4.2: recovery #46025818836 concluído com sucesso em f3a7f04f; endpoints públicos /, /healthz e /api/health retornaram 200 após a troca. Diagnóstico #46026260068 encontrou handoff_picker_free_runtime_model_mismatch no recibo. A retirada de arquivos não foi executada. O inventário protegido #46026213759 está aguardando aprovação e não autoriza remoção.
+
+- Evidência 2.7: comparação SSH read-only do manifesto e dos modelos ativos confirmou hash dos arquivos publicados e igualdade de conteúdo API/web após as quatro normalizações limitadas documentadas. Os 43 contratos Linux passaram; o teste de recibo usa arquivos root-only reais com a forma normalizada do Compose, rejeita mudança de APP_VERSION mesmo com hash de arquivo atualizado e valida/recusa atualização do suporte conforme ancestralidade. A receita e o journal executado permanecem intactos. Falta CI/revisão/merge, atualizar o suporte e repetir apenas o inventário do recibo, sem recriar os serviços saudáveis.
