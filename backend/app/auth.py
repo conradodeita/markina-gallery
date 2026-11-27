@@ -10,7 +10,7 @@ import hmac
 import os
 import re
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from uuid import UUID, uuid4
 
@@ -23,6 +23,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -5436,3 +5437,45 @@ def revoke_subject_sessions(db: Session, role: str, subject_id: UUID) -> None:
     ):
         session.revoked_at = now()
     audit(db, "session.revoke_all", str(subject_id))
+
+
+class GlobalPostgreSQLBackupRun(Base):
+    """Recibo sanitizado de uma tentativa diária de backup PostgreSQL global."""
+
+    __tablename__ = "global_postgresql_backup_run"
+    __table_args__ = (
+        UniqueConstraint("scheduled_day", name="uq_global_postgresql_backup_run_day"),
+        CheckConstraint(
+            "status IN ('running', 'validated', 'failed', 'unknown')",
+            name="ck_global_postgresql_backup_run_status",
+        ),
+        CheckConstraint(
+            "dump_size_bytes IS NULL OR dump_size_bytes >= 0",
+            name="ck_global_postgresql_backup_run_dump_size",
+        ),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_global_postgresql_backup_run_duration",
+        ),
+        CheckConstraint(
+            "status != 'validated' OR "
+            "(verified = true AND snapshot_id IS NOT NULL AND finished_at IS NOT NULL)",
+            name="ck_global_postgresql_backup_run_verified",
+        ),
+        CheckConstraint(
+            "verified = false OR status = 'validated'",
+            name="ck_global_postgresql_backup_run_no_unverified_success",
+        ),
+        Index("ix_global_postgresql_backup_run_status_day", "status", "scheduled_day"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    scheduled_day: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    snapshot_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    dump_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)

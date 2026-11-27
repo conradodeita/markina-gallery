@@ -61,3 +61,22 @@ A restauração global MUST NOT reproduzir automaticamente mensagens ou efeitos 
 #### Scenario: Fila não incluída na cópia
 - **WHEN** o PostgreSQL é restaurado sem o estado Redis correspondente
 - **THEN** a aplicação não reexecuta operações de mídia ou cobrança e exige reconciliação antes de liberar workers
+
+### Requirement: Agendamento diário protegido e desligado por padrão
+O worker existente SHALL tentar uma cópia global no máximo uma vez por data UTC, somente depois das tarefas/filas de maior prioridade. O agendamento MUST permanecer desabilitado salvo configuração explícita `GLOBAL_POSTGRESQL_BACKUP_ENABLED=true`. A reivindicação SHALL ser protegida por chave única por data e advisory lock de sessão PostgreSQL; uma execução interrompida ou com resultado remoto incerto MUST ser registrada como `unknown` e não repetida na mesma data.
+
+#### Scenario: Configuração ausente ou desligada
+- **WHEN** `GLOBAL_POSTGRESQL_BACKUP_ENABLED` estiver ausente ou não for `true`
+- **THEN** o worker não reivindica uma execução, não chama Restic/Rclone e não grava um recibo
+
+#### Scenario: Workers concorrentes no mesmo dia
+- **WHEN** mais de um worker chega à etapa diária ao mesmo tempo
+- **THEN** somente um adquire o advisory lock e reivindica a data; os demais não iniciam uma segunda cópia
+
+#### Scenario: Execução interrompida ou incerta
+- **WHEN** uma linha diária permanecer `running` após a retomada do lock, ou uma cópia iniciada não produzir recibo validado
+- **THEN** o estado passa a `unknown`, erros permanecem sanitizados e não há nova tentativa automática nesse dia
+
+#### Scenario: Worker tem trabalho prioritário
+- **WHEN** uma fila/tarefa existente do worker indica trabalho
+- **THEN** a tentativa diária permanece como última operação de menor prioridade no ciclo

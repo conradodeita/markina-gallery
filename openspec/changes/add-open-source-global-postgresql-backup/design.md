@@ -81,7 +81,7 @@ O serviço SHALL usar ferramentas oficiais pinadas e invocadas por uma interface
 
 O ensaio opt-in integrado de 27/11 executou este helper contra a fixture global: `pg_dump` e `pg_restore` reais rodaram dentro de containers PostgreSQL sintéticos por um adapter local do harness; o helper executou Restic 0.20.0 e Rclone 1.76.0 reais sobre um remote `local` criado em TEMP. O snapshot foi relido, o helper confirmou hash/tamanho e `pg_restore --list`, e o archive foi restaurado em um terceiro PostgreSQL isolado. Relações/schema, conteúdo por tenant, extensões, sequências, materialized view, large object e roles/ACLs sintéticos coincidiram; o canário de conteúdo não apareceu nos arquivos do repositório cifrado. Senha Restic incorreta e archive inválido falharam com códigos sanitizados. A prova cobre o executor local; não demonstra o runtime Linux do SaaS.
 
-A task 2.1 do executor e do empacotamento do target do worker foi concluída localmente: Restic, Rclone e clientes PostgreSQL estão pinados e isolados do target da API. O helper ainda não tem consumidor de API, scheduler ou worker; essa integração permanece na task 2.2. Destino externo, autenticação Rclone e custódia/recuperação da chave Restic continuam decisões da task 1.3; não se assume credencial real, retenção ou execução remota.
+No checkpoint inicial, a imagem do worker continha apenas Restic/Rclone e a task 2.1 ainda aguardava o pin/empacotamento dos clientes PostgreSQL; a atualização final local abaixo fechou essa lacuna. A implementação local em andamento da task 2.2 agora chama o helper pelo ciclo existente do worker e persiste recibos em tabela aditiva, ainda desligada por padrão e sem configuração Compose/produção. O comportamento não foi exercitado no runtime do worker ou em PostgreSQL de produção. Destino externo, autenticação Rclone e custódia/recuperação da chave Restic continuam decisões da task 1.3; não se assume credencial real, retenção ou execução remota.
 
 ### Empacotamento fixo no worker — decisão técnica para task 2.1, 27/11/2026
 
@@ -132,6 +132,16 @@ O Redis/fila não faz parte desta cópia. Após restauração do PostgreSQL, wor
 ### Agenda diária e retenção sem remoção automática enquanto pendente
 
 A cadência diária continua como direção do roadmap. A regra exata de retenção não está fechada para a implementação nova: o histórico registra 7 diários/4 semanais/3 mensais, e há orientação posterior de descartar a cópia anterior somente depois que a mais recente for validada. Até o proprietário reconciliar essas regras para Restic, o sistema mantém ao menos a cópia validada mais recente e não executa prune/expiração automática. A tarefa de retenção não pode ser marcada como concluída por apenas configurar valores no engine.
+
+### Agendamento diário e recibo persistido — decisão técnica para task 2.2, 27/11/2026
+
+O mesmo loop de `backend/app/worker.py` verificará o backup global depois das filas e tarefas já existentes, para não antecipar o backup a trabalho operacional já disponível. Se houver atividade contínua, o ensaio diário pode atrasar; RPO/RTO continuam desconhecidos e não há SLA. O ciclo é elegível uma vez por dia UTC, na primeira passagem ociosa do worker; não será adicionado outro scheduler, fila ou serviço.
+
+A feature requer `GLOBAL_POSTGRESQL_BACKUP_ENABLED=true` e database PostgreSQL. Ausência/valor diferente mantém a rotina fechada. O destino e os arquivos privados chegam somente por configuração de runtime: `GLOBAL_POSTGRESQL_BACKUP_REPOSITORY`, `GLOBAL_POSTGRESQL_BACKUP_RESTIC_PASSWORD_FILE`, `GLOBAL_POSTGRESQL_BACKUP_RCLONE_CONFIG_FILE` e `GLOBAL_POSTGRESQL_BACKUP_CODE_ROOT`. O helper existente valida esses caminhos; não são escritos no banco nem lidos numa consulta de status. Nenhuma configuração será adicionada ao Compose/produção nesta task.
+
+Cada tentativa automática tem uma linha durável por data UTC (`scheduled_day` única), adquirida atomicamente e protegida por advisory lock PostgreSQL de sessão durante o ciclo. A chave é fixa no código. O lock evita duas execuções em workers concorrentes; um estado `running` deixado por processo encerrado é convertido em `unknown` após o próximo worker obter o lock. Uma linha `unknown`/`failed` não é reexecutada na mesma data; a tentativa seguinte só pode ocorrer na próxima data UTC. Códigos de erro são enums sanitizados, nunca stderr, comando, configuração ou credencial.
+
+Somente erros determinísticos de pré-flight anteriores ao processo de cópia podem terminar como `failed`. Erro após iniciar dump/Restic, recibo inválido, falha ao confirmar estado no banco ou interrupção após `running` resultam em `unknown`, porque o destino pode ter recebido um snapshot. Apenas recibo `verified=true` com snapshot e tamanho válidos vira `validated`. A leitura de status consulta exclusivamente essa tabela local e nunca chama Restic/Rclone. SQLAlchemy sem PostgreSQL não tenta execução automática; permite testes de estado com lock injetado.
 
 ## Risks / Trade-offs
 
