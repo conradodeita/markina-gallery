@@ -16,10 +16,11 @@ from uuid import UUID
 import pyotp
 import pytest
 import uvicorn
+from PIL import Image
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from app import auth, main, media, notification_delivery, worker
+from app import auth, main, media, notification_delivery, photographer_credits, worker
 from app.capacity_observability import collector
 from app.global_pix import normalize_configuration
 from tests.pilot_fixture import (
@@ -30,7 +31,7 @@ from tests.pilot_fixture import (
     verify_preparation,
 )
 from tests.test_tenant_photographer_migration import baseline_template as _baseline_template
-from tests.test_tenant_photographer_migration import migrate
+from tests.test_tenant_photographer_migration import migrate, seed_persistent_owner
 from tests.test_tenant_photographer_migration import migration_db as _migration_db
 
 baseline_template, migration_db = _baseline_template, _migration_db
@@ -64,9 +65,25 @@ def wait_ready(predicate, *, timeout=45):
 @pytest.mark.skipif(os.getenv("PYP_RUN_LOCAL_PILOT") != "1",
                     reason="Ensaio opt-in exige PostgreSQL próprio, build Next e Edge/Playwright.")
 def test_piloto_local_2_por_3_com_monitor_real(migration_db, monkeypatch, tmp_path):
+    run_local_pilot(migration_db, monkeypatch, tmp_path, verify_upload=False)
+
+
+@pytest.mark.skipif(os.getenv("PYP_RUN_LOCAL_UPLOAD_CREDITS") != "1",
+                    reason="Ensaio opt-in exige PostgreSQL próprio, build Next e Edge/Playwright.")
+def test_piloto_local_upload_creditos(migration_db, monkeypatch, tmp_path):
+    run_local_pilot(migration_db, monkeypatch, tmp_path, verify_upload=True)
+
+
+def run_local_pilot(migration_db, monkeypatch, tmp_path, *, verify_upload):
     pytest.importorskip("playwright.async_api")
-    url, _migration_engine = migration_db
-    migrate(url, "20261001_0071")
+    url, migration_engine = migration_db
+    if verify_upload:
+        migrate(url, "20261031_0093")
+        with migration_engine.begin() as connection:
+            _, owner_id, _ = seed_persistent_owner(connection)
+        migrate(url, "head")
+    else:
+        migrate(url, "20261001_0071")
     engine = create_engine(url, pool_size=5, max_overflow=10)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     output = Path(os.environ["PILOT_EVIDENCE_DIR"]).resolve()
@@ -91,10 +108,18 @@ def test_piloto_local_2_por_3_com_monitor_real(migration_db, monkeypatch, tmp_pa
     with Session(engine) as db:
         initial = db.scalar(select(auth.Tenant.id))
         assert db.scalar(select(func.count()).select_from(auth.Tenant)) == 1
-        assert db.scalar(select(func.count()).select_from(auth.AdminUser)) == 0
-        accounts = prepare_pilot(db, tmp_path, initial_tenant_id=initial)
-        assert prepare_pilot(db, tmp_path, initial_tenant_id=initial) == accounts
-        verify_preparation(db, tmp_path, accounts)
+        assert db.scalar(select(func.count()).select_from(auth.AdminUser)) == int(verify_upload)
+        initial_tenant_id = None if verify_upload else initial
+        accounts = prepare_pilot(db, tmp_path, initial_tenant_id=initial_tenant_id)
+        assert prepare_pilot(db, tmp_path, initial_tenant_id=initial_tenant_id) == accounts
+        initial_credits = (2, 4)
+        if verify_upload:
+            for account, quantity in zip(accounts, initial_credits, strict=True):
+                photographer_credits.grant_credits(
+                    db, owner_id, account.tenant_id, quantity, "pilot-upload", "synthetic-pilot",
+                )
+        else:
+            verify_preparation(db, tmp_path, accounts)
         for label, account in zip(("A", "B"), accounts, strict=True):
             pix = db.scalar(select(auth.GlobalPixSettings).where(
                 auth.GlobalPixSettings.tenant_id == account.tenant_id))
@@ -184,9 +209,18 @@ def test_piloto_local_2_por_3_com_monitor_real(migration_db, monkeypatch, tmp_pa
                             await page.get_by_label("E-mail", exact=True).fill(f"synthetic-pilot-{'ab'[index]}@example.test")
                             await page.get_by_label("Senha", exact=True).fill(SYNTHETIC_PASSWORD)
                             await page.get_by_role("button", name="Continuar", exact=True).click()
-                            await page.get_by_label("Código do autenticador", exact=True).fill(pyotp.TOTP(SYNTHETIC_TOTP).now())
+                            code_input = page.get_by_label("Código do autenticador ou de recuperação", exact=True)
+                            await code_input.wait_for()
+                            totp = pyotp.TOTP(SYNTHETIC_TOTP)
+                            seconds_left = totp.interval - time.time() % totp.interval
+                            if seconds_left < 3:
+                                await asyncio.sleep(seconds_left + 0.1)
+                            await code_input.fill(totp.now())
                             await page.get_by_role("button", name="Entrar", exact=True).click()
                             await page.wait_for_url(ORIGIN + "/admin")
+                            admins.append((context, page))
+                            if verify_upload:
+                                continue
                             capability = await api(context, "GET", "/admin/installation-capabilities")
                             assert capability["capacity_diagnostics"] is (index == 0)
                             await api(context, "PUT", f"/admin/parent-galleries/{account.parent_id}/pricing",
@@ -198,7 +232,65 @@ def test_piloto_local_2_por_3_com_monitor_real(migration_db, monkeypatch, tmp_pa
                                 {"pricing_mode": "fixed", "fixed_unit_price_cents": 1}, status=404)
                             catalog = await api(context, "GET", "/admin/parent-galleries")
                             assert [g["id"] for g in catalog["parent_galleries"]] == [str(account.parent_id)]
-                            admins.append((context, page))
+                        if verify_upload:
+                            balances = list(initial_credits)
+
+                            async def assert_balances():
+                                for (context, _), balance in zip(admins, balances, strict=True):
+                                    payload = await api(context, "GET", "/admin/credits/wallet")
+                                    assert payload["wallet"]["available_credits"] == balance
+                                    assert payload["wallet"]["reserved_credits"] == 0
+
+                            await assert_balances()
+                            for index, (account, (_, page)) in enumerate(zip(accounts, admins, strict=True)):
+                                folder = account.folder_ids[0]
+                                await page.goto(ORIGIN + f"/admin/galleries/sources/{account.parent_id}/edit/imagens?folder={folder}")
+                                jpeg = tmp_path / f"upload-sintetico-{index}.jpg"
+                                Image.new("RGB", (512, 384), (120, 50 + index * 30, 80)).save(jpeg, "JPEG")
+                                async with page.expect_file_chooser() as chooser:
+                                    await page.get_by_role("button", name="Carregar fotos", exact=True).click()
+                                async with page.expect_response(
+                                    lambda response: response.request.method == "PUT"
+                                    and "/api/admin/photo-assets/" in response.url and response.url.endswith("/source")
+                                ) as upload:
+                                    await (await chooser.value).set_files(str(jpeg))
+                                response = await upload.value
+                                assert response.status == 202, await response.text()
+                                await page.get_by_text("1 foto(s) enviada(s).", exact=False).wait_for()
+                                photo_id = UUID(response.url.split("/")[-2])
+                                other_context, _ = admins[1 - index]
+                                denied = await other_context.request.put(
+                                    response.url, data=jpeg.read_bytes(),
+                                    headers={"Origin": ORIGIN, "Content-Type": "image/jpeg"},
+                                )
+                                assert denied.status == 404
+                                with Session(engine) as db:
+                                    photo = db.get(auth.PhotoAsset, photo_id)
+                                    assert (photo.tenant_id, photo.parent_gallery_id, photo.folder_id) == (
+                                        account.tenant_id, account.parent_id, folder,
+                                    )
+                                    assert (tmp_path / "source" / photo.storage_key).read_bytes() == jpeg.read_bytes()
+                                    operation = db.scalars(select(auth.PhotoCreditOperation).where(
+                                        auth.PhotoCreditOperation.tenant_id == account.tenant_id,
+                                        auth.PhotoCreditOperation.photo_asset_id_snapshot == photo_id,
+                                    )).one()
+                                    assert operation.status == "consumed"
+                                    debit = db.scalars(select(auth.PhotographerCreditEntry).where(
+                                        auth.PhotographerCreditEntry.operation_id == operation.id,
+                                        auth.PhotographerCreditEntry.entry_type == "upload_consumption",
+                                    )).one()
+                                    assert (debit.tenant_id, debit.delta) == (account.tenant_id, -1)
+                                balances[index] -= 1
+                                await assert_balances()
+                            assert not external_requests
+                            with Session(engine) as db:
+                                schema = db.scalar(text("SELECT version_num FROM alembic_version"))
+                            (output / "pilot-summary.json").write_text(json.dumps({
+                                "schema": schema, "photographers": len(accounts), "uploads": len(accounts),
+                                "initial_balances": initial_credits, "final_balances": balances,
+                                "cross_tenant_uploads_rejected": len(accounts), "external_requests": 0,
+                            }, indent=2), encoding="utf-8")
+                            return
                         await api(admins[1][0], "GET", "/admin/capacity-observability", status=403)
                         assert await admins[1][1].get_by_role("button", name="Consultar diagnóstico", exact=True).count() == 0
 
