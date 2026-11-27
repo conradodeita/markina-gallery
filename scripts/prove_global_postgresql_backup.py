@@ -13,13 +13,17 @@ import secrets
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
+import zipfile
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from datetime import time as datetime_time
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+from unittest.mock import patch
 
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
@@ -33,6 +37,21 @@ EXPECTED_IMAGE_DIGEST = (
 EXPECTED_CONTEXT = "desktop-linux"
 PROOF_LABEL = "io.pickyourpic.synthetic-postgresql-proof"
 SYSTEM_SCHEMAS = {"information_schema", "pg_catalog"}
+RUNNER_RESTIC_WINDOWS_ARCHIVE_SHA256 = (
+    "bba9061c3dce081701ab353ec8cb73a78be73b71a538aad560f2d1067602b7fe"
+)
+RUNNER_RCLONE_WINDOWS_ARCHIVE_SHA256 = (
+    "8b4fd2737ade4e70c057ef4a49deb7cffe94b0fb9d7587c189d149823f21a1dc"
+)
+
+
+@dataclass(frozen=True)
+class RunnerProofOptions:
+    temp_root: Path
+    restic_executable: Path
+    rclone_executable: Path
+    restic_archive: Path
+    rclone_archive: Path
 
 
 class ProofFailure(RuntimeError):
@@ -182,6 +201,60 @@ def _proof_resources(proof_id: str) -> tuple[list[str], list[str]]:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise ProofFailure("runner_binary_read_failed") from exc
+    return digest.hexdigest()
+
+
+def _verify_release_archive_member(
+    archive_path: Path,
+    executable_path: Path,
+    *,
+    expected_archive_sha256: str,
+) -> None:
+    if _file_sha256(archive_path) != expected_archive_sha256:
+        raise ProofFailure("runner_release_archive_digest_mismatch")
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            matches = [
+                name
+                for name in archive.namelist()
+                if PurePosixPath(name).name.casefold()
+                == executable_path.name.casefold()
+            ]
+            if len(matches) != 1:
+                raise ProofFailure("runner_release_member_ambiguous")
+            digest = hashlib.sha256()
+            size = 0
+            with (
+                archive.open(matches[0]) as expected,
+                executable_path.open("rb") as actual,
+            ):
+                while True:
+                    expected_chunk = expected.read(1024 * 1024)
+                    actual_chunk = actual.read(1024 * 1024)
+                    if expected_chunk != actual_chunk:
+                        raise ProofFailure("runner_executable_not_from_release_archive")
+                    if not expected_chunk:
+                        break
+                    digest.update(expected_chunk)
+                    size += len(expected_chunk)
+                if actual.read(1):
+                    raise ProofFailure("runner_executable_not_from_release_archive")
+    except ProofFailure:
+        raise
+    except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
+        raise ProofFailure("runner_release_archive_invalid") from exc
+    if size == 0 or digest.hexdigest() != _file_sha256(executable_path):
+        raise ProofFailure("runner_executable_not_from_release_archive")
 
 
 def _expect_equal(label: str, expected: Any, actual: Any) -> None:
@@ -1319,6 +1392,29 @@ def _seed_source(
     return str(available)
 
 
+def _seed_runner_canary(engine: Engine, tenant_id: uuid.UUID, proof_id: str) -> str:
+    marker = f"PYP-RESTIC-SYNTHETIC-CANARY-{proof_id}"
+    payload = json.dumps({"canary": marker}, separators=(",", ":"))
+    with engine.begin() as connection:
+        inserted = connection.execute(
+            sa.text(
+                """INSERT INTO proof_fixture.tenant_record
+                       (tenant_id, state, payload, payload_sha256)
+                   VALUES (
+                       :tenant_id, 'verified', CAST(:payload AS jsonb),
+                       digest(convert_to(CAST(:payload AS jsonb)::text, 'UTF8'), 'sha256')
+                   )"""
+            ),
+            {"tenant_id": tenant_id, "payload": payload},
+        )
+        connection.exec_driver_sql(
+            "REFRESH MATERIALIZED VIEW proof_fixture.tenant_snapshot"
+        )
+    if inserted.rowcount != 1:
+        raise ProofFailure("runner_canary_seed_failed")
+    return marker
+
+
 def _seed_large_object(engine: Engine) -> None:
     payload = b"synthetic global PostgreSQL large object proof"
     with engine.begin() as connection:
@@ -2186,6 +2282,420 @@ def _role_present(engine: Engine, role: str) -> bool:
         )
 
 
+def _run_global_backup_runner_proof(
+    *,
+    proof_id: str,
+    network: str,
+    source_name: str,
+    source_db: str,
+    source_engine: Engine,
+    tenant_ids: list[uuid.UUID],
+    roles: tuple[str, str, str],
+    canary: str,
+    reserved_ports: list[int],
+    temp_root: Path,
+    restic_executable: Path,
+    rclone_executable: Path,
+    restic_archive: Path,
+    rclone_archive: Path,
+    owned_containers: list[str],
+) -> dict[str, Any]:
+    """Exercise the real runner against this proof's isolated PostgreSQL fixture."""
+
+    try:
+        resolved_temp_root = temp_root.expanduser().resolve()
+        resolved_temp_base = Path(tempfile.gettempdir()).resolve()
+        if not resolved_temp_root.is_relative_to(
+            resolved_temp_base
+        ) or resolved_temp_root.is_relative_to(ROOT.resolve()):
+            raise ProofFailure("runner_temp_root_outside_temp")
+        resolved_temp_root.mkdir(parents=True, exist_ok=True)
+        restic_path = restic_executable.expanduser().resolve(strict=True)
+        rclone_path = rclone_executable.expanduser().resolve(strict=True)
+        restic_archive_path = restic_archive.expanduser().resolve(strict=True)
+        rclone_archive_path = rclone_archive.expanduser().resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ProofFailure("runner_temp_or_binary_path_invalid") from exc
+    if any(
+        not path.is_file()
+        for path in (restic_path, rclone_path, restic_archive_path, rclone_archive_path)
+    ):
+        raise ProofFailure("runner_binary_unavailable")
+    _verify_release_archive_member(
+        restic_archive_path,
+        restic_path,
+        expected_archive_sha256=RUNNER_RESTIC_WINDOWS_ARCHIVE_SHA256,
+    )
+    _verify_release_archive_member(
+        rclone_archive_path,
+        rclone_path,
+        expected_archive_sha256=RUNNER_RCLONE_WINDOWS_ARCHIVE_SHA256,
+    )
+
+    runner_target_name = f"pyp-global-pg-proof-runner-target-{proof_id}"
+    runner_target_db = f"pyp_global_runner_{proof_id}"
+    runner_target_port = _free_loopback_port()
+    while runner_target_port in reserved_ports:
+        runner_target_port = _free_loopback_port()
+    reserved_ports.append(runner_target_port)
+    runner_target_password = secrets.token_hex(24)
+    runner_target_id = _start_postgres(
+        name=runner_target_name,
+        network=network,
+        database=runner_target_db,
+        port=runner_target_port,
+        password=runner_target_password,
+        proof_id=proof_id,
+    )
+    owned_containers.append(runner_target_id)
+    _assert_ephemeral_storage(runner_target_id)
+    _wait_for_server(runner_target_name, runner_target_db)
+    runner_target_url = (
+        f"postgresql+psycopg://postgres:{runner_target_password}"
+        f"@127.0.0.1:{runner_target_port}/{runner_target_db}"
+    )
+    runner_target_engine = sa.create_engine(runner_target_url, pool_pre_ping=True)
+    _create_roles(runner_target_engine, roles)
+
+    runner_work = resolved_temp_root / f"pyp-global-backup-runner-{proof_id}"
+    try:
+        runner_work.mkdir(mode=0o700, exist_ok=False)
+    except OSError as exc:
+        runner_target_engine.dispose()
+        raise ProofFailure("runner_temp_directory_create_failed") from exc
+    rclone_config = runner_work / "rclone.conf"
+    restic_password_file = runner_work / "restic-password"
+    wrong_password_file = runner_work / "wrong-restic-password"
+    synthetic_password = secrets.token_urlsafe(36)
+    wrong_synthetic_password = secrets.token_urlsafe(36)
+    try:
+        rclone_config.write_text("[local]\ntype = local\n", encoding="utf-8")
+        restic_password_file.write_text(synthetic_password, encoding="utf-8")
+        wrong_password_file.write_text(wrong_synthetic_password, encoding="utf-8")
+    except OSError as exc:
+        runner_target_engine.dispose()
+        raise ProofFailure("runner_temp_configuration_write_failed") from exc
+
+    if str(BACKEND) not in sys.path:
+        sys.path.insert(0, str(BACKEND))
+    try:
+        from app import global_postgresql_backup as global_backup
+    except ImportError as exc:
+        runner_target_engine.dispose()
+        raise ProofFailure("runner_module_unavailable") from exc
+
+    pg_dump_marker = "__pyp_synthetic_docker_pg_dump__"
+    pg_restore_marker = "__pyp_synthetic_docker_pg_restore__"
+    repository = "rclone:local:runner-repository"
+    repository_path = runner_work / "runner-repository"
+    config = global_backup.GlobalPostgreSQLBackupConfig(
+        repository=repository,
+        restic_password_file=restic_password_file,
+        rclone_config_file=rclone_config,
+        repository_root=ROOT,
+        pg_dump_executable=pg_dump_marker,
+        pg_restore_executable=pg_restore_marker,
+        restic_executable=str(restic_path),
+        rclone_executable=str(rclone_path),
+    )
+    source_connection_url = f"postgresql://postgres@/{source_db}"
+    restic_env = {
+        **global_backup._base_environment(),
+        "RESTIC_PASSWORD_FILE": str(restic_password_file),
+        "RCLONE_CONFIG": str(rclone_config),
+    }
+    original_cwd = Path.cwd()
+    original_path = os.environ.get("PATH", "")
+    local_tools_path = str(rclone_path.parent)
+    merged_path = local_tools_path + os.pathsep + original_path
+    init_args = [str(restic_path), "-r", repository, "init"]
+    try:
+        os.chdir(runner_work)
+        with patch.dict(os.environ, {"PATH": merged_path}):
+            restic_env = {
+                **global_backup._base_environment(),
+                "RESTIC_PASSWORD_FILE": str(restic_password_file),
+                "RCLONE_CONFIG": str(rclone_config),
+            }
+            try:
+                initialized = subprocess.run(
+                    init_args,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=restic_env,
+                    timeout=60,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise ProofFailure("runner_repository_init_failed") from exc
+            if initialized.returncode != 0 or not repository_path.is_dir():
+                raise ProofFailure("runner_repository_init_failed")
+
+            invalid_dump = False
+            original_start = global_backup._start
+            original_version_text = global_backup._version_text
+
+            def docker_tool_version(executable: str, args: tuple[str, ...]) -> str:
+                if executable == pg_dump_marker:
+                    tool = "pg_dump"
+                elif executable == pg_restore_marker:
+                    tool = "pg_restore"
+                else:
+                    return original_version_text(executable, args)
+                try:
+                    checked = subprocess.run(
+                        [
+                            "docker",
+                            "exec",
+                            "--user",
+                            "postgres",
+                            source_name,
+                            tool,
+                            *args,
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        timeout=10,
+                        env=global_backup._base_environment(),
+                        check=False,
+                    )
+                except (OSError, subprocess.SubprocessError) as exc:
+                    raise global_backup.GlobalPostgreSQLBackupError(
+                        "tool_version_unverified"
+                    ) from exc
+                if checked.returncode != 0:
+                    raise global_backup.GlobalPostgreSQLBackupError(
+                        "tool_version_unverified"
+                    )
+                try:
+                    return checked.stdout.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise global_backup.GlobalPostgreSQLBackupError(
+                        "tool_version_unverified"
+                    ) from exc
+
+            def docker_aware_start(
+                args: list[str],
+                *,
+                stdin: int | object = subprocess.DEVNULL,
+                stdout: int | object = subprocess.DEVNULL,
+                env: dict[str, str],
+            ) -> subprocess.Popen[bytes]:
+                if args and args[0] == pg_dump_marker and invalid_dump:
+                    return original_start(
+                        [
+                            sys.executable,
+                            "-c",
+                            "import sys; sys.stdout.buffer.write(b'not-a-postgresql-custom-archive')",
+                        ],
+                        stdin=stdin,
+                        stdout=stdout,
+                        env=env,
+                    )
+                if args and args[0] in {pg_dump_marker, pg_restore_marker}:
+                    tool = "pg_dump" if args[0] == pg_dump_marker else "pg_restore"
+                    return subprocess.Popen(
+                        [
+                            "docker",
+                            "exec",
+                            "-i",
+                            "--user",
+                            "postgres",
+                            source_name,
+                            tool,
+                            *args[1:],
+                        ],
+                        stdin=stdin,
+                        stdout=stdout,
+                        stderr=subprocess.DEVNULL,
+                        env=env,
+                        shell=False,
+                    )
+                return original_start(args, stdin=stdin, stdout=stdout, env=env)
+
+            with (
+                patch.object(global_backup, "_start", side_effect=docker_aware_start),
+                patch.object(
+                    global_backup, "_version_text", side_effect=docker_tool_version
+                ),
+            ):
+                try:
+                    receipt = global_backup.create_global_postgresql_backup(
+                        source_connection_url, config
+                    )
+                except global_backup.GlobalPostgreSQLBackupError as exc:
+                    raise ProofFailure(f"runner_backup_failed:{exc.code}") from None
+                if not receipt.verified:
+                    raise ProofFailure("runner_snapshot_not_verified")
+
+                try:
+                    restored_dump = subprocess.run(
+                        [
+                            str(restic_path),
+                            "-r",
+                            repository,
+                            "dump",
+                            receipt.snapshot_id,
+                            global_backup.ARCHIVE_FILENAME,
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        timeout=180,
+                        env=restic_env,
+                        check=False,
+                    )
+                except (OSError, subprocess.SubprocessError) as exc:
+                    raise ProofFailure("runner_snapshot_readback_failed") from exc
+                if (
+                    restored_dump.returncode != 0
+                    or len(restored_dump.stdout) != receipt.dump_size_bytes
+                    or not restored_dump.stdout.startswith(b"PGDMP")
+                ):
+                    raise ProofFailure("runner_snapshot_readback_failed")
+
+                restored = _docker(
+                    "exec",
+                    "-i",
+                    "--user",
+                    "postgres",
+                    runner_target_name,
+                    "pg_restore",
+                    "--exit-on-error",
+                    "--dbname",
+                    runner_target_db,
+                    input_bytes=restored_dump.stdout,
+                    check=False,
+                )
+                if restored.returncode != 0:
+                    raise ProofFailure("runner_restore_failed")
+
+                _expect_equal(
+                    "runner_relations",
+                    _relation_inventory(source_engine),
+                    _relation_inventory(runner_target_engine),
+                )
+                source_data = _data_inventory(source_engine, tenant_ids)
+                runner_data = _data_inventory(runner_target_engine, tenant_ids)
+                _expect_equal("runner_tenant_data", source_data, runner_data)
+                source_extensions = _extension_inventory(source_engine)
+                _expect_equal(
+                    "runner_extensions",
+                    source_extensions,
+                    _extension_inventory(runner_target_engine),
+                )
+                _expect_equal(
+                    "runner_sequences",
+                    _sequence_inventory(source_engine),
+                    _sequence_inventory(runner_target_engine),
+                )
+                _expect_equal(
+                    "runner_large_objects",
+                    _large_object_inventory(source_engine),
+                    _large_object_inventory(runner_target_engine),
+                )
+                source_materialized_views = _materialized_view_inventory(
+                    source_engine, tenant_ids
+                )
+                runner_materialized_views = _materialized_view_inventory(
+                    runner_target_engine, tenant_ids
+                )
+                if source_materialized_views != runner_materialized_views:
+                    raise ProofFailure(
+                        "runner_materialized_views_mismatch:"
+                        + _row_inventory_difference_summary(
+                            source_materialized_views, runner_materialized_views
+                        )
+                    )
+                _expect_equal(
+                    "runner_roles_acl",
+                    _role_inventory(source_engine, roles),
+                    _role_inventory(runner_target_engine, roles),
+                )
+                normalized_objects: list[str] = []
+                source_schema = _schema_definition_inventory(
+                    source_engine, normalized_objects
+                )
+                runner_schema = _schema_definition_inventory(
+                    runner_target_engine, normalized_objects
+                )
+                _expect_equal("runner_schema_catalog", source_schema, runner_schema)
+
+                marker_bytes = canary.encode("utf-8")
+                if not any(
+                    marker_bytes in path.read_bytes()
+                    for path in repository_path.rglob("*")
+                    if path.is_file()
+                ):
+                    plaintext_canary_absent = True
+                else:
+                    raise ProofFailure("runner_plaintext_detected")
+
+                wrong_synthetic_password = secrets.token_urlsafe(36)
+                wrong_password_file.write_text(
+                    wrong_synthetic_password, encoding="utf-8"
+                )
+                wrong_config = replace(config, restic_password_file=wrong_password_file)
+                try:
+                    global_backup.create_global_postgresql_backup(
+                        source_connection_url, wrong_config
+                    )
+                except global_backup.GlobalPostgreSQLBackupError as exc:
+                    wrong_password_error = exc.code
+                    if wrong_password_error not in {
+                        "backup_execution_failed",
+                        "snapshot_create_failed",
+                    } or wrong_synthetic_password in str(exc):
+                        raise ProofFailure(
+                            "runner_wrong_password_not_sanitized"
+                        ) from None
+                else:
+                    raise ProofFailure("runner_wrong_password_accepted")
+
+                invalid_dump = True
+                try:
+                    global_backup.create_global_postgresql_backup(
+                        source_connection_url, config
+                    )
+                except global_backup.GlobalPostgreSQLBackupError as exc:
+                    invalid_archive_error = exc.code
+                    if (
+                        invalid_archive_error != "snapshot_readback_failed"
+                        or "not-a-postgresql-custom-archive" in str(exc)
+                    ):
+                        raise ProofFailure(
+                            "runner_invalid_archive_not_sanitized"
+                        ) from None
+                else:
+                    raise ProofFailure("runner_invalid_archive_accepted")
+                finally:
+                    invalid_dump = False
+
+                if any(
+                    marker_bytes in path.read_bytes()
+                    for path in repository_path.rglob("*")
+                    if path.is_file()
+                ):
+                    raise ProofFailure("runner_plaintext_detected_after_negative_cases")
+
+        return {
+            "status": "verified",
+            "snapshot_id": receipt.snapshot_id,
+            "archive_bytes": receipt.dump_size_bytes,
+            "tenant_count": len(tenant_ids),
+            "table_count": len(source_data),
+            "relation_count": len(_relation_inventory(source_engine)),
+            "sequence_count": len(_sequence_inventory(source_engine)),
+            "extension_count": len(source_extensions),
+            "plaintext_canary_absent": plaintext_canary_absent,
+            "wrong_password_error": wrong_password_error,
+            "invalid_archive_error": invalid_archive_error,
+        }
+    finally:
+        runner_target_engine.dispose()
+        os.chdir(original_cwd)
+
+
 def _safe_error_tail(data: bytes, secrets_to_redact: tuple[str, ...]) -> str:
     decoded = data.decode("utf-8", errors="replace")
     for secret in secrets_to_redact:
@@ -2194,7 +2704,7 @@ def _safe_error_tail(data: bytes, secrets_to_redact: tuple[str, ...]) -> str:
     return "\n".join(decoded.splitlines()[-20:])
 
 
-def run_proof() -> dict[str, Any]:
+def run_proof(*, runner_options: RunnerProofOptions | None = None) -> dict[str, Any]:
     proof_id = uuid.uuid4().hex[:12]
     image_inspect = _lines(
         _docker("image", "inspect", IMAGE, "--format", "{{.Id}}|{{json .RepoDigests}}")
@@ -2227,6 +2737,7 @@ def run_proof() -> dict[str, Any]:
     owned_network: str | None = None
     started = time.monotonic()
     result: dict[str, Any] = {}
+    runner_integration: dict[str, Any] | None = None
 
     try:
         net_id = _lines(
@@ -2294,6 +2805,27 @@ def run_proof() -> dict[str, Any]:
             application_fixture = _seed_application_fixture(
                 source_engine, tenant_ids, proof_id
             )
+            if runner_options is not None:
+                runner_canary = _seed_runner_canary(
+                    source_engine, tenant_ids[0], proof_id
+                )
+                runner_integration = _run_global_backup_runner_proof(
+                    proof_id=proof_id,
+                    network=network,
+                    source_name=source_name,
+                    source_db=source_db,
+                    source_engine=source_engine,
+                    tenant_ids=tenant_ids,
+                    roles=roles,
+                    canary=runner_canary,
+                    reserved_ports=ports,
+                    temp_root=runner_options.temp_root,
+                    restic_executable=runner_options.restic_executable,
+                    rclone_executable=runner_options.rclone_executable,
+                    restic_archive=runner_options.restic_archive,
+                    rclone_archive=runner_options.rclone_archive,
+                    owned_containers=owned_containers,
+                )
             with source_engine.connect() as connection:
                 tenant_count = int(
                     connection.execute(
@@ -2583,6 +3115,8 @@ def run_proof() -> dict[str, Any]:
                 "no-owner-no-privileges_gap",
             ],
         }
+        if runner_integration is not None:
+            result["restic_rclone_runner_integration"] = runner_integration
         return result
     finally:
         for container_id in reversed(owned_containers):
@@ -2615,6 +3149,8 @@ def run_proof() -> dict[str, Any]:
         after = _inventory()
         result["docker_inventory_unchanged"] = after == baseline
         result["docker_inventory_delta"] = _inventory_delta_summary(baseline, after)
+        if after != baseline:
+            raise ProofFailure("docker_inventory_not_unchanged")
 
 
 def main() -> int:
@@ -2622,15 +3158,53 @@ def main() -> int:
     parser.add_argument(
         "--run-local-synthetic-proof",
         action="store_true",
-        help="cria apenas dois PostgreSQL sintéticos descartáveis no Docker local desktop-linux",
+        help="cria PostgreSQL sintéticos descartáveis no Docker local desktop-linux",
     )
+    parser.add_argument(
+        "--with-global-backup-runner",
+        action="store_true",
+        help="exercita o runner real com Restic/Rclone locais e PostgreSQL sintético",
+    )
+    parser.add_argument("--runner-temp-root", type=Path)
+    parser.add_argument("--runner-restic-executable", type=Path)
+    parser.add_argument("--runner-rclone-executable", type=Path)
+    parser.add_argument("--runner-restic-archive", type=Path)
+    parser.add_argument("--runner-rclone-archive", type=Path)
     args = parser.parse_args()
     if not args.run_local_synthetic_proof:
         parser.error(
             "use --run-local-synthetic-proof para executar a prova local isolada"
         )
+    runner_values = (
+        args.runner_temp_root,
+        args.runner_restic_executable,
+        args.runner_rclone_executable,
+        args.runner_restic_archive,
+        args.runner_rclone_archive,
+    )
+    if args.with_global_backup_runner and any(value is None for value in runner_values):
+        parser.error(
+            "--with-global-backup-runner exige --runner-temp-root, "
+            "--runner-restic-executable, --runner-rclone-executable, "
+            "--runner-restic-archive e --runner-rclone-archive"
+        )
+    if not args.with_global_backup_runner and any(
+        value is not None for value in runner_values
+    ):
+        parser.error("parâmetros runner exigem --with-global-backup-runner")
+    runner_options = (
+        RunnerProofOptions(
+            temp_root=args.runner_temp_root,
+            restic_executable=args.runner_restic_executable,
+            rclone_executable=args.runner_rclone_executable,
+            restic_archive=args.runner_restic_archive,
+            rclone_archive=args.runner_rclone_archive,
+        )
+        if args.with_global_backup_runner
+        else None
+    )
     try:
-        result = run_proof()
+        result = run_proof(runner_options=runner_options)
     except ProofFailure as exc:
         print(f"proof_failed: {exc}", file=sys.stderr)
         return 1

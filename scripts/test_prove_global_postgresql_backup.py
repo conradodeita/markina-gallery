@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
+import tempfile
 import unittest
 import uuid
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.prove_global_postgresql_backup import (
+    ProofFailure,
     _fixture_row_summary,
     _fixture_uuid,
     _inventory_delta_summary,
@@ -18,6 +22,7 @@ from scripts.prove_global_postgresql_backup import (
     _restore,
     _row_inventory_difference_summary,
     _schema_catalog_difference_summary,
+    _verify_release_archive_member,
 )
 
 
@@ -46,6 +51,53 @@ class SyntheticFixtureIdTests(unittest.TestCase):
             {"tenants_with_rows": 2, "rows_per_tenant": [1, 2], "total_rows": 3},
         )
         self.assertNotIn(tenant_id, repr(summary))
+
+
+class RunnerToolProvenanceTests(unittest.TestCase):
+    def test_release_archive_digest_and_extracted_executable_must_match(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pyp-runner-tool-test-") as directory:
+            root = Path(directory)
+            archive_path = root / "release.zip"
+            executable_path = root / "runner.exe"
+            release_bytes = b"synthetic official executable fixture"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("tools/runner.exe", release_bytes)
+            executable_path.write_bytes(release_bytes)
+            archive_sha256 = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+
+            _verify_release_archive_member(
+                archive_path,
+                executable_path,
+                expected_archive_sha256=archive_sha256,
+            )
+
+            executable_path.write_bytes(b"different executable")
+            with self.assertRaisesRegex(
+                ProofFailure, "runner_executable_not_from_release_archive"
+            ):
+                _verify_release_archive_member(
+                    archive_path,
+                    executable_path,
+                    expected_archive_sha256=archive_sha256,
+                )
+
+    def test_release_archive_digest_mismatch_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pyp-runner-tool-test-") as directory:
+            root = Path(directory)
+            archive_path = root / "release.zip"
+            executable_path = root / "runner.exe"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("runner.exe", b"synthetic")
+            executable_path.write_bytes(b"synthetic")
+
+            with self.assertRaisesRegex(
+                ProofFailure, "runner_release_archive_digest_mismatch"
+            ):
+                _verify_release_archive_member(
+                    archive_path,
+                    executable_path,
+                    expected_archive_sha256="0" * 64,
+                )
 
 
 class SchemaComparisonTests(unittest.TestCase):
