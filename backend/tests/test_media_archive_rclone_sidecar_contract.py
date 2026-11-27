@@ -6,6 +6,8 @@ It checks the contract corpus before those components are authorized and wired.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 from pathlib import Path
@@ -28,6 +30,14 @@ SIDECAR_KEYS = frozenset({
 UUID_FIELDS = ("tenant_id", "provider_id", "object_id")
 REMOTE_ID = re.compile(r"[A-Za-z0-9_-]{1,256}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+REMOTE_ID_PREFIX = "r1_"
+LOGICAL_KEY_UUIDS = (
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000006",
+    "00000000-0000-4000-8000-000000000007",
+    "00000000-0000-4000-8000-000000000002",
+    "00000000-0000-4000-8000-000000000004",
+)
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "media_archive_rclone_sidecar"
 VALID_FIXTURE = FIXTURE_DIR / "valid_v1.json"
 EXPECTED_CATALOG_ROW = {
@@ -47,6 +57,55 @@ EXPECTED_CATALOG_ROW = {
 
 class SidecarContractError(ValueError):
     """Static test-oracle error; never includes sidecar values or raw bytes."""
+
+
+def _canonical_uuid(value: object) -> str:
+    if not isinstance(value, str):
+        raise SidecarContractError("invalid_remote_id")
+    try:
+        canonical = str(UUID(value))
+    except ValueError as exc:
+        raise SidecarContractError("invalid_remote_id") from exc
+    if canonical != value:
+        raise SidecarContractError("invalid_remote_id")
+    return canonical
+
+
+def _encode_remote_object_id(logical_key: tuple[str, ...]) -> str:
+    """Test-only oracle for the proposed versioned UUID tuple token."""
+    if not isinstance(logical_key, tuple) or len(logical_key) != 5:
+        raise SidecarContractError("invalid_remote_id")
+    canonical_parts = tuple(_canonical_uuid(part) for part in logical_key)
+    payload = ":".join(canonical_parts).encode("ascii")
+    encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    remote_id = f"{REMOTE_ID_PREFIX}{encoded}"
+    if not REMOTE_ID.fullmatch(remote_id):
+        raise SidecarContractError("invalid_remote_id")
+    return remote_id
+
+
+def _decode_remote_object_id(remote_id: object) -> tuple[str, ...]:
+    """Decode the proposed logical key; provider selection stays separate."""
+    if (
+        not isinstance(remote_id, str)
+        or not REMOTE_ID.fullmatch(remote_id)
+        or not remote_id.startswith(REMOTE_ID_PREFIX)
+    ):
+        raise SidecarContractError("invalid_remote_id")
+    encoded = remote_id[len(REMOTE_ID_PREFIX) :]
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        payload = base64.b64decode(encoded + padding, altchars=b"-_", validate=True)
+        canonical_encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        decoded = payload.decode("ascii")
+    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+        raise SidecarContractError("invalid_remote_id") from exc
+    if canonical_encoded != encoded:
+        raise SidecarContractError("invalid_remote_id")
+    parts = tuple(decoded.split(":"))
+    if len(parts) != 5:
+        raise SidecarContractError("invalid_remote_id")
+    return tuple(_canonical_uuid(part) for part in parts)
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -128,6 +187,46 @@ def test_valid_fixture_is_within_limit_and_matches_synthetic_catalog() -> None:
 
     assert len(raw) < MAX_SIDECAR_BYTES
     assert _parse_contract_fixture(raw, expected=EXPECTED_CATALOG_ROW) == EXPECTED_CATALOG_ROW
+
+
+def test_remote_object_id_round_trips_the_canonical_logical_key() -> None:
+    remote_id = _encode_remote_object_id(LOGICAL_KEY_UUIDS)
+
+    assert remote_id == EXPECTED_CATALOG_ROW["remote_object_id"]
+    assert _decode_remote_object_id(remote_id) == LOGICAL_KEY_UUIDS
+    assert "00000000-0000-4000-8000-000000000003" not in remote_id
+
+
+def test_remote_object_id_five_uuid_tuple_stays_within_catalog_limit() -> None:
+    remote_id = _encode_remote_object_id(LOGICAL_KEY_UUIDS)
+
+    assert len(remote_id) == 249
+    assert len(remote_id) <= 256
+    assert REMOTE_ID.fullmatch(remote_id)
+
+
+@pytest.mark.parametrize(
+    "remote_id",
+    [
+        "v2_" + base64.urlsafe_b64encode(":".join(LOGICAL_KEY_UUIDS).encode()).decode().rstrip("="),
+        "r1_!",
+        "r1_" + base64.urlsafe_b64encode(":".join(LOGICAL_KEY_UUIDS[:4]).encode()).decode().rstrip("="),
+        "r1_"
+        + base64.urlsafe_b64encode(
+            ":".join(("not-a-uuid", *LOGICAL_KEY_UUIDS[1:])).encode()
+        ).decode().rstrip("="),
+        "r1_"
+        + base64.urlsafe_b64encode(
+            ":".join(("ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF", *LOGICAL_KEY_UUIDS[1:])).encode()
+        ).decode().rstrip("="),
+        EXPECTED_CATALOG_ROW["remote_object_id"] + "=",
+        EXPECTED_CATALOG_ROW["remote_object_id"] + "A",
+        "r1_" + "A" * 254,
+    ],
+)
+def test_malformed_or_noncanonical_remote_object_id_fails_closed(remote_id: str) -> None:
+    with pytest.raises(SidecarContractError, match="^invalid_remote_id$"):
+        _decode_remote_object_id(remote_id)
 
 
 def test_exact_size_limit_is_allowed_but_next_byte_is_rejected_before_decode(monkeypatch) -> None:

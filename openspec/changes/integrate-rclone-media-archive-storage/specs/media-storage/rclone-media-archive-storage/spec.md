@@ -14,7 +14,9 @@ O provider Rclone SHALL implementar o contrato existente de armazenamento de arq
 
 - **WHEN** o executor existente recebe explicitamente o provider Rclone para um tenant autorizado
 - **THEN** arquivo, readback, recuperação, retry, lease e débito/liberação de créditos seguem os mesmos contratos e registros já usados pelo arquivo frio
-- **AND** o provider não altera prazo, taxa, elegibilidade, reserva, auditoria ou política de retenção
+- **AND** uma nova recuperação paga libera 30 dias fixos após a recuperação íntegra; recuperações já contratadas mantêm o prazo registrado, e o provider não altera o prazo inicial da pasta nem a janela pré-arquivo
+- **AND** o tenant recebe progresso efetivo sem SLA de duração, e créditos só são debitados após promoção bem-sucedida
+- **AND** taxa, elegibilidade, reserva, auditoria, reconciliação e política de retenção permanecem sob o contrato compartilhado, sem regra paralela do provider
 
 ### Requirement: Provider Rclone permanece inativo até os gates
 

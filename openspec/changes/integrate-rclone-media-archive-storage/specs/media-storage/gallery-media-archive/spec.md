@@ -10,8 +10,10 @@ Um provider de armazenamento alternativo SHALL usar o mesmo catálogo, executor,
 
 - **WHEN** o executor recebe explicitamente um provider Rclone durável e autorizado para o tenant
 - **THEN** a pasta e seus objetos seguem o ciclo, ownership, namespace e readback já definidos por `add-gallery-media-archive`
-- **AND** os prazos, opções de reabertura, reserva/débito/liberação de créditos, isenção do proprietário, reconciliação e ausência de expurgo automático permanecem inalterados
-- **AND** as durações selecionáveis de recuperação fria de 7/14/30 dias permanecem distintas da janela normal de reabertura de 30 dias após expiração
+- **AND** elegibilidade, reserva/liberação de créditos em falha comprovada, isenção do proprietário, reconciliação e ausência de expurgo automático seguem o contrato compartilhado
+- **AND** cada nova recuperação paga libera exatamente 30 dias após a recuperação íntegra; prazo inicial por pasta e janela pré-arquivo permanecem como definidos pelo produto, e recuperações já contratadas preservam o prazo registrado
+- **AND** o tenant vê o progresso efetivo da recuperação, sem promessa de SLA de duração, e créditos só são debitados após promoção bem-sucedida
+- **AND** opções históricas de 7/14/30 dias não regem novas recuperações
 
 #### Scenario: Provider não foi aprovado ou configurado
 

@@ -113,7 +113,7 @@ A regra de ciclo de vida está decidida, mas o subitem de V1 permanece bloqueado
 - Alterar OAuth/Google Drive, o adapter Google Drive, task 1.4, backup global, banco, migrations, host ou produção.
 - Criar catálogo, fila, manifesto, ledger, UI ou política de créditos/retenção paralelos.
 - Escolher backend remoto, provisionar credenciais/chaves, ativar outros tenants ou iniciar upload real.
-- Alterar valores ou regras atuais: janela normal de reabertura de 30 dias após expiração, durações selecionáveis de recuperação fria de 7/14/30 dias, cobrança ou retenção.
+- Alterar o prazo inicial da pasta, a janela pré-arquivo, taxa por pasta/ciclo, reserva, isenção, reconciliação ou retenção. Cada nova recuperação paga concede 30 dias fixos após a recuperação íntegra; recuperações já contratadas preservam o prazo registrado. O tenant vê progresso efetivo sem SLA de duração, e o débito só ocorre após promoção bem-sucedida.
 
 ## Direção proposta
 
@@ -341,7 +341,7 @@ O caminho novo para caracterização é `rclone copy` de diretório; a tag v1.76
 
 ### Crédito, retenção e rollout
 
-Esta proposta não muda taxa por pasta/ciclo, reserva idempotente, débito somente após pull integral e íntegro, liberação somente após falha comprovada, isenção do proprietário, durações de recuperação de 7/14/30 dias, janela separada de reabertura de 30 dias, nem ausência de expurgo automático. `reconciliation_required` conserva a reserva e não ganha mecanismo novo de resolução.
+Decisão do proprietário em 27/11/2026: cada nova recuperação paga libera 30 dias fixos contados após a recuperação íntegra. O prazo inicial da pasta e a janela pré-arquivo permanecem inalterados; recuperações já contratadas mantêm o prazo registrado à época. O tenant deve receber barra de progresso efetiva, sem SLA de duração, e o débito só ocorre após a promoção bem-sucedida. O provider não altera taxa por pasta/ciclo, reserva idempotente, liberação somente após falha comprovada, isenção do proprietário nem ausência de expurgo automático. `reconciliation_required` conserva a reserva e não ganha mecanismo novo de resolução. A evidência anterior de opções 7/14/30 permanece histórica e não rege novas recuperações.
 
 Ordem de implementação proposta: (1) revisar este modelo e resolver gates de seleção, identidade, custódia e V1; (2) obter aprovação explícita para migration aditiva e qualquer backfill; (3) adicionar colunas/tabelas nullable sem classificar V1 por suposição; (4) implantar código com seleção/runtime inativos e fila fechada sem binding; (5) provar constraints, tenant isolation, concorrência seleção→fila→claim, rotação de credencial, V1 indisponível/provado sintético, V2 e zero chamadas para mismatch em CI/local; (6) tratar provisionamento e ativação por autorização própria. Esta change não autoriza os passos 2, 3 ou 6.
 
