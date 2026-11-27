@@ -343,7 +343,7 @@ def test_owner_retry_route_reauthenticates_and_uses_original_fee_snapshot(http, 
         f"recoveries/{failed_operation_id}/retry"
     )
     payload = {
-        "duration_days": 7,
+        "duration_days": 14,
         "idempotency_key": "synthetic-owner-retry",
         "current_password": "synthetic-password",
         "totp_code": "123456",
@@ -352,6 +352,7 @@ def test_owner_retry_route_reauthenticates_and_uses_original_fee_snapshot(http, 
     response = client.post(route, json=payload)
     assert response.status_code == 202
     assert response.json()["fee_credits"] == 2
+    assert response.json()["duration_days"] == 14
     assert response.json()["retry_of_operation_id"] == str(failed_operation_id)
     assert reauthenticated == [(session.subject_id, "synthetic-password")]
     retry = client_db.scalar(select(MediaArchiveOperation).where(

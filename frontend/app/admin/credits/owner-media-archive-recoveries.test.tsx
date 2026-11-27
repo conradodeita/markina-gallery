@@ -40,7 +40,7 @@ describe("retry de arquivo frio no console do proprietário", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Operação com falha" }), {
       target: { value: failedRecovery.operation_id },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Novo prazo de acesso" }), { target: { value: "7" } });
+    expect(screen.getByText("Prazo do pedido original: 14 dias.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Senha atual do proprietário"), { target: { value: "synthetic-password" } });
     fireEvent.change(screen.getByLabelText("Código do autenticador"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar retry" }));
@@ -49,7 +49,7 @@ describe("retry de arquivo frio no console do proprietário", () => {
     const [path, init] = fetcher.mock.calls[0];
     expect(String(path)).toContain("/credit-tenants/tenant-one/media-archive/recoveries/" + failedRecovery.operation_id + "/retry");
     expect(JSON.parse(String(init?.body))).toMatchObject({
-      duration_days: 7,
+      duration_days: 14,
       idempotency_key: "archive-retry-synthetic-owner-retry",
       current_password: "synthetic-password",
       totp_code: "123456",

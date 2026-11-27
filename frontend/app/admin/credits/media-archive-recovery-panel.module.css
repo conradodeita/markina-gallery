@@ -51,8 +51,7 @@
 
 .pricing > div { align-content: start; }
 
-.pricingForm label,
-.requestControls label {
+.pricingForm label {
   display: grid;
   gap: 6px;
   color: var(--mk-ink);
@@ -60,8 +59,7 @@
   font-weight: 650;
 }
 
-.pricingForm input,
-.requestControls select {
+.pricingForm input {
   min-height: 44px;
   padding: 9px 12px;
   border: 1px solid var(--line, #cbd5df);
@@ -141,8 +139,14 @@
   flex-wrap: wrap;
 }
 
-.requestControls label {
-  min-width: 150px;
+.recoveryProgress {
+  display: grid;
+  gap: 4px;
+}
+
+.recoveryProgress progress {
+  width: 100%;
+  accent-color: var(--mk-brand);
 }
 
 .candidate > small {
@@ -193,4 +197,3 @@
 .heading > div { flex: 1; min-width: 0; }
 .candidate { flex-wrap: wrap; }
 .requestControls { max-width: 100%; }
-.requestControls select { width: 100%; }

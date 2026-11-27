@@ -62,3 +62,6 @@ d3df5f7bf7b33e8cf44a5b68065aa10a3f6e1df8:openspec/changes/add-production-app-rel
 
 # SHA-256 verificado do archive API do run 46008398565; nenhuma credencial.
 ee168ce19024ad02a2680aea913135a3853bc780:openspec/changes/reconcile-picker-free-app-recovery/validation-results.md:generic-api-key:38
+
+# SHA-256 dos bytes de https://www.postgresql.org/media/keys/ACCC4CF8.asc, chave pública do repositório PGDG.
+9f93383f1e8d5954716a5aa05fd7c2a539386c4a:backend/backup-tools.lock:generic-api-key:30
