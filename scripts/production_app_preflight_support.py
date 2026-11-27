@@ -854,8 +854,9 @@ class LocalSupportHost:
             raise SupportError("backup_retirement_witness_helper_invalid") from None
         if not HEX40.fullmatch(expected) or actual != expected:
             raise SupportError("backup_retirement_witness_helper_mismatch")
+        mode = "rollback-inventory" if operation == "handoff-recovery-inventory" else "inventory"
         result = self._run(
-            [str(BRIDGE_PATH), "--mode", "inventory", "--sha", support_sha, operation],
+            [str(BRIDGE_PATH), "--mode", mode, "--sha", support_sha, operation],
             timeout=180, code=error_code,
         )
         return result.stdout
