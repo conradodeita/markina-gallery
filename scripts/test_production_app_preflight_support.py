@@ -1294,6 +1294,27 @@ class BackupRuntimeRetirementTests(unittest.TestCase):
                 self.assertEqual(output, b"synthetic-output")
                 self.assertEqual(len(observed), 1)
 
+    def test_retirement_unit_state_normalizes_empty_state_only_for_proven_absence(self):
+        host = support.LocalSupportHost()
+        name = "pyp-platform-backup.timer"
+        for present, load, active, unit_state, expected in (
+            (False, "not-found", "inactive", "UnitFileState=\n", "not-found"),
+            (True, "loaded", "inactive", "UnitFileState=\n", ""),
+            (False, "not-found", "failed", "UnitFileState=\n", ""),
+            (False, "not-found", "inactive", "", ""),
+        ):
+            with self.subTest(present=present, load=load, active=active, unit_state=unit_state):
+                fragment = str(support.BACKUP_SYSTEMD_DIR / name) if present else ""
+                output = (
+                    f"LoadState={load}\nActiveState={active}\n{unit_state}"
+                    f"FragmentPath={fragment}\nDropInPaths=\n"
+                ).encode()
+                result = subprocess.CompletedProcess([], 0, output, b"")
+                with (patch.object(host, "_retirement_file_state", return_value={"present": present}),
+                      patch.object(support.subprocess, "run", return_value=result)):
+                    observed = host._retirement_unit_state(name)
+                self.assertEqual(observed["enabled"], expected)
+
     def inventory(self, host):
         return support.SupportCoordinator(host).backup_retirement_inventory(SHA_MAIN, SHA_CONNECTION)
 
