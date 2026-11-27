@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preview_worker_security_journal import DurableJournal, JournalError
@@ -68,6 +69,27 @@ class DurableJournalTests(unittest.TestCase):
             JournalError, "journal_state_directory_permissions_unsafe"
         ):
             self.begin()
+
+    def test_privileged_operator_can_validate_private_directory_of_deploy_owner(self):
+        if os.name != "posix":
+            self.skipTest("permissions POSIX")
+        with patch("os.geteuid", return_value=0):
+            self.journal._check_directory()
+        with (
+            patch("os.geteuid", return_value=self.root.stat().st_uid + 1),
+            self.assertRaisesRegex(
+                JournalError, "journal_state_directory_owner_mismatch"
+            ),
+        ):
+            self.journal._check_directory()
+        self.root.chmod(0o770)
+        with (
+            patch("os.geteuid", return_value=0),
+            self.assertRaisesRegex(
+                JournalError, "journal_state_directory_permissions_unsafe"
+            ),
+        ):
+            self.journal._check_directory()
 
 
 if __name__ == "__main__":

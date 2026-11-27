@@ -16,6 +16,27 @@ O inventário MUST NOT expor ambiente de containers, configuração de conexão,
 - **WHEN** aparece um serviço desconhecido, manifesto inseguro ou duas instâncias ativas do mesmo serviço
 - **THEN** o inventário falha fechado e não produz aprovação operacional
 
+### Requirement: Identidades de containers históricos parados
+O inventário SHALL preservar metadados de identidade dos containers parados, sem depender de manifestos históricos já retirados e sem permitir recriação desses containers. Todo serviço ativo SHALL continuar sujeito à proveniência Compose integral; serviços desconhecidos e duplicidade ativa SHALL continuar bloqueados.
+
+#### Scenario: Histórico parado e runtime ativo
+- **WHEN** um container histórico parado aponta para manifesto retirado
+- **THEN** sua identidade e seus labels são preservados no snapshot sem permitir sua recriação; um manifesto ausente de serviço ativo continua bloqueando
+
+### Requirement: Operação privilegiada com lock existente
+Um operador root SHALL poder adquirir o lock existente do proprietário do diretório de estado privado, sem modificar permissões e mantendo exclusividade e rejeição de symlinks ou escrita por terceiros.
+
+#### Scenario: Operador privilegiado e lock privado
+- **WHEN** root usa um lock existente de outro proprietário
+- **THEN** o diretório de estado deve ser privado e pertencer ao mesmo proprietário do lock; qualquer divergência bloqueia
+
+### Requirement: Seleção explícita de Compose homologado
+A CLI SHALL selecionar somente versões Compose homologadas, atualmente 2.35.1 e 5.6.1. Consultas por serviço SHALL selecionar explicitamente os profiles, sem iniciar serviços; a seleção de profiles não dispensa a verificação dos hashes.
+
+#### Scenario: Worker definido em profile
+- **WHEN** o inventário consulta o hash do worker de prévias definido em profile
+- **THEN** o serviço é incluído na consulta sem iniciar containers, e divergência de hash continua bloqueando
+
 ### Requirement: Manutenção de segurança exclusiva do worker de prévias
 O procedimento SHALL permitir preparar a substituição apenas do preview-adjustment-worker por imagem ARM64 com os quatro pins aprovados, preservando Python, RawTherapee, código e demais distribuições. SHALL exigir inventário atual, autorização da janela, tratamento aprovado dos callbacks e lock comum antes de mutação.
 
