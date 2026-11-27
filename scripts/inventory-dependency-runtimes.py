@@ -32,7 +32,12 @@ def collect():
         '"config_hash":{{json (index .Config.Labels "com.docker.compose.config-hash")}},'
         '"ports":{{json .NetworkSettings.Ports}}}'
     )
-    imagefmt = '{"id":"{{.Id}}","repo_digests":{{json .RepoDigests}},"architecture":{{json .Architecture}},"os":{{json .Os}}}'
+    imagefmt = (
+        '{"id":"{{.Id}}","repo_digests":{{json .RepoDigests}},'
+        '"architecture":{{json .Architecture}},"os":{{json .Os}},'
+        '"build_target":{{if index .Config.Labels "com.markina-gallery.build-target"}}'
+        '{{json (index .Config.Labels "com.markina-gallery.build-target")}}{{else}}null{{end}}}'
+    )
     pycode = (
         "import importlib.metadata as m,json; names=['aiohttp','multidict','urllib3','yarl']; result={};\n"
         "for n in names:\n try: result[n]=m.version(n)\n except m.PackageNotFoundError: result[n]=None\n"
@@ -60,6 +65,20 @@ def collect():
         if item["status"] == "running" and service == "api":
             # Only this non-secret revision field, never the environment map.
             item["source_sha"] = run(["docker", "exec", cid, "printenv", "APP_VERSION"])
+        if (
+            item["status"] == "running"
+            and service == "worker"
+            and item["image"].get("build_target") == "backup-worker"
+        ):
+            item["backup_tools"] = {
+                "postgresql_client_package": run(
+                    ["docker", "exec", cid, "dpkg-query", "-W", "-f=${Version}", "postgresql-client-17"]
+                ),
+                "pg_dump": run(["docker", "exec", cid, "pg_dump", "--version"]),
+                "pg_restore": run(["docker", "exec", cid, "pg_restore", "--version"]),
+                "restic": run(["docker", "exec", cid, "restic", "version"]).splitlines()[0],
+                "rclone": run(["docker", "exec", cid, "rclone", "version"]).splitlines()[0],
+            }
         result["services"][service] = item
     for name in ("web-current.identity", "web-previous.identity", "app-last-healthy.sha", "app-previous.sha"):
         path = pathlib.Path("/var/lib/markina-gallery/deploy-state") / name

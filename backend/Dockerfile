@@ -67,9 +67,50 @@ COPY tests ./tests
 # com o entrypoint já existente; a integração do executor é uma task posterior.
 FROM backend-runtime-base AS backup-worker
 
+ARG TARGETARCH
+
+LABEL com.markina-gallery.build-target="backup-worker"
+
 COPY --from=backup-tools-build /usr/local/bin/restic /usr/local/bin/restic
 COPY --from=backup-tools-build /usr/local/bin/rclone /usr/local/bin/rclone
 RUN mkdir -p /usr/share/licenses/restic /usr/share/licenses/rclone /usr/share/doc/pyp-backup-tools
+COPY backup-tools.lock /tmp/backup-tools.lock
+RUN set -eu; \
+    . /tmp/backup-tools.lock; \
+    case "${TARGETARCH:-}" in \
+      amd64) deb_arch=amd64; client_sha256="$POSTGRESQL_CLIENT_AMD64_SHA256" ;; \
+      arm64) deb_arch=arm64; client_sha256="$POSTGRESQL_CLIENT_ARM64_SHA256" ;; \
+      *) echo 'postgresql_client_unsupported_architecture' >&2; exit 1 ;; \
+    esac; \
+    test "$(dpkg --print-architecture)" = "$deb_arch"; \
+    . /etc/os-release; \
+    test "${VERSION_CODENAME:-}" = "$PGDG_DEBIAN_CODENAME"; \
+    key_path=/usr/share/keyrings/pyp-pgdg.asc; \
+    key_download=/tmp/pyp-pgdg.asc; \
+    curl --fail --location --retry 3 --retry-all-errors "$PGDG_KEY_URL" --output "$key_download"; \
+    printf '%s  %s\n' "$PGDG_KEY_SHA256" "$key_download" | sha256sum --check --status; \
+    install -D -m 0644 "$key_download" "$key_path"; \
+    printf 'deb [arch=%s signed-by=%s] %s %s %s\n' "$deb_arch" "$key_path" "$PGDG_REPOSITORY" "$PGDG_SUITE" "$PGDG_COMPONENT" > /etc/apt/sources.list.d/pyp-pgdg.list; \
+    apt-get update; \
+    cd /tmp; \
+    apt-get download "$POSTGRESQL_CLIENT_PACKAGE=$POSTGRESQL_CLIENT_PACKAGE_VERSION"; \
+    deb_path="/tmp/${POSTGRESQL_CLIENT_PACKAGE}_${POSTGRESQL_CLIENT_PACKAGE_VERSION}_${deb_arch}.deb"; \
+    printf '%s  %s\n' "$client_sha256" "$deb_path" | sha256sum --check --status; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$deb_path"; \
+    pg_dump_version="$(pg_dump --version)"; \
+    case "$pg_dump_version" in \
+      "pg_dump (PostgreSQL) $POSTGRESQL_CLIENT_VERSION"|"pg_dump (PostgreSQL) $POSTGRESQL_CLIENT_VERSION (Debian $POSTGRESQL_CLIENT_PACKAGE_VERSION)") ;; \
+      *) echo 'postgresql_client_pg_dump_version_mismatch' >&2; exit 1 ;; \
+    esac; \
+    pg_restore_version="$(pg_restore --version)"; \
+    case "$pg_restore_version" in \
+      "pg_restore (PostgreSQL) $POSTGRESQL_CLIENT_VERSION"|"pg_restore (PostgreSQL) $POSTGRESQL_CLIENT_VERSION (Debian $POSTGRESQL_CLIENT_PACKAGE_VERSION)") ;; \
+      *) echo 'postgresql_client_pg_restore_version_mismatch' >&2; exit 1 ;; \
+    esac; \
+    test -s /usr/share/doc/postgresql-client-17/copyright || { echo 'postgresql_client_license_notice_missing' >&2; exit 1; }; \
+    rm -f "$deb_path" "$key_download" "$key_path" /etc/apt/sources.list.d/pyp-pgdg.list; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /tmp/backup-tools.lock
 COPY backup-tools.lock /usr/share/doc/pyp-backup-tools/backup-tools.lock
 COPY licenses/backup-tools/restic-LICENSE /usr/share/licenses/restic/LICENSE
 COPY licenses/backup-tools/rclone-COPYING /usr/share/licenses/rclone/COPYING

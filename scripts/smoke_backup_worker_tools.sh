@@ -5,6 +5,15 @@ set -eu
 
 restic version | grep -Eq "^restic ${RESTIC_VERSION}( |$)"
 test "$(rclone version | sed -n '1p')" = "rclone v${RCLONE_VERSION}"
+case "$(pg_dump --version)" in
+  "pg_dump (PostgreSQL) ${POSTGRESQL_CLIENT_VERSION}"|"pg_dump (PostgreSQL) ${POSTGRESQL_CLIENT_VERSION} (Debian ${POSTGRESQL_CLIENT_PACKAGE_VERSION})") ;;
+  *) echo 'backup_worker_pg_dump_version_mismatch' >&2; exit 1 ;;
+esac
+case "$(pg_restore --version)" in
+  "pg_restore (PostgreSQL) ${POSTGRESQL_CLIENT_VERSION}"|"pg_restore (PostgreSQL) ${POSTGRESQL_CLIENT_VERSION} (Debian ${POSTGRESQL_CLIENT_PACKAGE_VERSION})") ;;
+  *) echo 'backup_worker_pg_restore_version_mismatch' >&2; exit 1 ;;
+esac
+test -s /usr/share/doc/postgresql-client-17/copyright
 
 umask 077
 probe_root="$(mktemp -d /tmp/pyp-backup-tools-smoke.XXXXXX)"
@@ -39,5 +48,5 @@ if any(marker in path.read_bytes() for path in root.rglob("*") if path.is_file()
     raise SystemExit("backup_worker_plaintext_detected")
 PY
 
-printf 'backup_worker_tools_smoke=passed restic=%s rclone=%s\n' \
-  "$RESTIC_VERSION" "$RCLONE_VERSION"
+printf 'backup_worker_tools_smoke=passed restic=%s rclone=%s postgresql_client=%s\n' \
+  "$RESTIC_VERSION" "$RCLONE_VERSION" "$POSTGRESQL_CLIENT_VERSION"

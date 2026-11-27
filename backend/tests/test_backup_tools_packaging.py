@@ -58,6 +58,22 @@ def test_backup_tool_lock_pins_official_releases_for_supported_architectures() -
     assert lock["RCLONE_LINUX_ARM64_SHA256"] == (
         "ee169016675e23a69d77240565133ff7dbc9b33d16fa8f7053d4af39f1eaeb78"
     )
+    assert lock["POSTGRESQL_CLIENT_PACKAGE"] == "postgresql-client-17"
+    assert lock["POSTGRESQL_CLIENT_VERSION"] == "17.12"
+    assert lock["POSTGRESQL_CLIENT_PACKAGE_VERSION"] == "17.12-1.pgdg13+1"
+    assert lock["POSTGRESQL_CLIENT_LICENSE"] == "PostgreSQL License"
+    assert lock["POSTGRESQL_CLIENT_LICENSE_SOURCE"] == ("https://www.postgresql.org/about/licence/")
+    assert lock["POSTGRESQL_CLIENT_AMD64_SHA256"] == (
+        "4a8a530be4a549753bd82bec2a5032e91233c6a60ebeb1ca5311717866de4059"
+    )
+    assert lock["POSTGRESQL_CLIENT_ARM64_SHA256"] == (
+        "b048ca8930a7e386ced747f2635ad950edcfc2e70b5584de66e1dc9e31e53636"
+    )
+    assert lock["PGDG_REPOSITORY"] == "https://apt.postgresql.org/pub/repos/apt"
+    assert lock["PGDG_SUITE"] == "trixie-pgdg"
+    assert lock["PGDG_DEBIAN_CODENAME"] == "trixie"
+    assert lock["PGDG_KEY_FINGERPRINT"] == "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+    assert re.fullmatch(r"[0-9a-f]{64}", lock["PGDG_KEY_SHA256"])
 
     for name, value in lock.items():
         if name.endswith("SHA256"):
@@ -82,6 +98,18 @@ def test_only_the_worker_target_receives_backup_tools() -> None:
 
     assert "FROM python:3.13-slim AS backup-tools-build" in dockerfile
     assert "FROM backend-runtime-base AS backup-worker" in dockerfile
+    assert 'LABEL com.markina-gallery.build-target="backup-worker"' in dockerfile
+    assert "postgresql_client_unsupported_architecture" in dockerfile
+    assert (
+        'apt-get download "$POSTGRESQL_CLIENT_PACKAGE=$POSTGRESQL_CLIENT_PACKAGE_VERSION"'
+        in dockerfile
+    )
+    assert "POSTGRESQL_CLIENT_AMD64_SHA256" in dockerfile
+    assert "POSTGRESQL_CLIENT_ARM64_SHA256" in dockerfile
+    assert 'case "$pg_dump_version" in' in dockerfile
+    assert 'case "$pg_restore_version" in' in dockerfile
+    assert "postgresql_client_pg_dump_version_mismatch" in dockerfile
+    assert "postgresql_client_pg_restore_version_mismatch" in dockerfile
     assert "COPY --from=backup-tools-build /usr/local/bin/restic" in dockerfile
     assert "COPY --from=backup-tools-build /usr/local/bin/rclone" in dockerfile
     assert dockerfile.rfind("FROM backend-runtime-base AS api-runtime") > dockerfile.index(
@@ -97,4 +125,5 @@ def test_only_the_worker_target_receives_backup_tools() -> None:
     assert "--target backup-worker" in workflow
     assert "--network none --read-only" in workflow
     assert ". /usr/share/doc/pyp-backup-tools/backup-tools.lock" in smoke
+    assert "pg_dump --version" in smoke and "pg_restore --version" in smoke
     assert "restic init" in smoke and "restic check --read-data" in smoke

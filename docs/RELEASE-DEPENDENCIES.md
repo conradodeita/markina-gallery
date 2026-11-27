@@ -23,6 +23,8 @@ python scripts/dependency_release.py plan --base <checkout-oracle> --target <mai
 
 Esses comandos não alteram servidor/containers. Plano não é fingerprint operacional nem autorização. Nunca usar fixtures dos testes como inventário.
 
+O inventário inclui o label explícito `com.markina-gallery.build-target` como `image.build_target`, porque `docker compose config --hash <service>` não diferencia targets de build. Para o worker `backup-worker`, a coleta lê somente a versão do pacote PostgreSQL e as saídas `--version`/versão dos binários `pg_dump`, `pg_restore`, Restic e Rclone; não lê o ambiente do container. O plano apresenta target anterior/candidato e as ferramentas instaladas. O planejamento `python-security` já calcula sua fingerprint sobre o inventário/candidatos completos, portanto esses metadados entram no hash; esta alteração não cria fingerprint nem aprovação operacional no plano de dependências genérico.
+
 ## Grupo A — frontend
 
 1. Confirmar CI/revisão do SHA integral da main, frontend ARM64 construído e versões conferidas contra o lockfile. Confirmar que o frontend mantém os contratos de autenticação, vendas e entrega; os testes de integração existentes continuam obrigatórios.
