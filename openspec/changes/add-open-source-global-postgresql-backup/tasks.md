@@ -84,6 +84,11 @@
 - `/admin/platform` apresenta status, data, tamanho, duração e prefixo do ID do snapshot somente quando há recibo validado; a UI declara que a leitura não confirma disponibilidade do destino. Testes de UI cobrem recibo atual e recibo anterior após falha. Testes de API foram adicionados para recibo atual, stale, erro sanitizado e ausência de chamada remota.
 - Validação local: suíte combinada do scheduler, integração do worker, helper e empacotamento — 30 passed, 2 skipped (dependência de pagamento ausente e permissão POSIX indisponível no Windows); dentro dela, os 12 testes do scheduler passaram. Vitest da página — 9 passed; ESLint direcionado e `tsc --noEmit` passaram. `py_compile`, Ruff focado e OpenSpec strict passaram. A suíte `test_platform_console.py` não pôde ser coletada porque `mercadopago==3.6.0` não está instalado em nenhum Python local; não houve instalação nem stub. Os testes de API aguardam execução em ambiente com dependências do projeto. Task 3.1 permanece aberta: ações fixas, reautenticação/auditoria correspondentes e validação da API ainda não estão concluídas.
 
+### Estados visuais do backup — progresso da task 3.3 — 27/11/2026
+
+- A UI agora tem regressões explícitas para estado `unknown` sem recibo validado (sem data/tamanho/snapshot apresentados) e `unavailable` (sem detalhe de erro), além dos cenários anteriores `current` e `stale` após falha posterior. O cenário unknown também confirma que a página não solicita rota Restic/Rclone/remota.
+- `frontend/app/admin/platform/page.test.tsx`: 11 passed; ESLint direcionado e `tsc --noEmit` passaram. A task 3.3 continua aberta: estado/resultado da recuperação de mídia ainda não é fornecido, e a UI mantém a mensagem estática de indisponibilidade até a operação correspondente existir.
+
 ### Decisão do proprietário — portabilidade e ensaio em novo servidor — 27/11/2026
 
 - O ensaio de reconstrução completa em um servidor novo foi adiado para depois do lançamento comercial; esse adiamento não reabre nem acrescenta gate de go-live. Até lá, manter portátil o snapshot Restic com archive custom PostgreSQL e permitir validação/restauração somente para PostgreSQL isolado compatível, inclusive no PC de desenvolvimento. Essa decisão não define um manifesto global independente nem altera o manifesto v2 do arquivo frio. O PC não é failover público.

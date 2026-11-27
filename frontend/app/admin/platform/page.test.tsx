@@ -105,6 +105,33 @@ describe("console privado da plataforma", () => {
     expect(screen.getByText(/Estado da tentativa mais recente: falha · 2026-11-04/)).toBeTruthy();
   });
 
+  it("mantém desconhecido quando não existe recibo local validado", async () => {
+    const backupSources = unknownSources.map((source) => source.key === "backup" ? {
+      ...source, state: "unknown", availability: "unknown", scope: "platform_owner",
+      latest_run_status: "unknown", latest_attempt_day: "2026-11-05",
+    } : source);
+    const fetcher = mockApi(true, backupSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Estado desconhecido; nenhuma cópia validada foi confirmada")).toBeTruthy();
+    expect(screen.queryByText(/Último recibo validado/)).toBeNull();
+    expect(screen.queryByText(/Snapshot/)).toBeNull();
+    expect(fetcher.mock.calls.some(([path]) => /restic|rclone|backup-run/i.test(String(path)))).toBe(false);
+  });
+
+  it("mostra backup indisponível sem expor detalhes de erro", async () => {
+    const backupSources = unknownSources.map((source) => source.key === "backup" ? {
+      ...source, state: "unavailable", availability: "unavailable", scope: "platform_owner",
+      latest_run_status: "unknown", error_code: "synthetic_database_credential_detail",
+    } : source);
+    mockApi(true, backupSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Estado do backup indisponível")).toBeTruthy();
+    expect(screen.queryByText(/synthetic_database_credential_detail/)).toBeNull();
+    expect(screen.queryByText(/Último recibo validado/)).toBeNull();
+  });
+
   it("só libera hostname reservado após hash, confirmação e reautenticação", async () => {
     const reservedDetail = { ...tenant, canonical_host: "synthetic.pickyourpic.com.br", canonical_host_status: "reserved",
       gallery_count: 2, photo_count: 7, observed_at: observed };
