@@ -11,6 +11,7 @@
 
 - [x] 2.1 Exibir saldo disponível, reservas e estado por arquivo nos três fluxos de envio de conteúdo, usando leitura autenticada da carteira/operação; verificar consumo confirmado, liberação e conta ilimitada do proprietário sem débito fictício.
 - [x] 2.2 Tratar timeout e confirmação ambígua como pendência até reconciliação, atualizando totais por resposta/leitura autorizada; verificar que a interface não antecipa nem duplica débito e preserva o aviso existente para JPEG repetido.
+- [x] 2.3 Destacar o saldo disponível em formato compacto junto ao progresso do upload, mantendo reservas, estados por arquivo e a apresentação de carteira ilimitada. Em 27/11/2026, 69 testes de frontend, TypeScript e build passaram. Edge com PostgreSQL 17.11 sintético confirmou o saldo exibido após os dois envios (2→1 e 4→3) e o débito confirmado pelo servidor. O estilo de cartões foi substituído pela linha compartilhada de saldo.
 
 ## 3. Catálogo e cards de pacotes
 

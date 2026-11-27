@@ -13,7 +13,7 @@ O fluxo de envio SHALL apresentar saldo e estados de crédito usando respostas c
 #### Scenario: Início de envio em carteira finita
 
 - **WHEN** um fotógrafo ativo inicia o envio de conteúdo com carteira finita
-- **THEN** a tela mostra o saldo disponível e as reservas informados pela carteira do servidor
+- **THEN** a tela mostra um contador compacto de créditos disponíveis junto ao progresso do envio e identifica separadamente as reservas informadas pelo servidor
 
 #### Scenario: Resultado confirmado por arquivo
 

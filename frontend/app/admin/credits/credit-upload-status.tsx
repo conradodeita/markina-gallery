@@ -189,9 +189,8 @@ export function CreditUploadFeedback({ wallet, walletState, items, visible = fal
   if (!visible && !items.length) return null;
   const hasPending = items.some((item) => pendingStatuses.includes(item.status));
   return <section className="folder-upload-wallet" aria-label="Saldo de créditos durante o envio" aria-live="polite">
-    <strong>{wallet?.mode === "unmetered" ? "Carteira ilimitada" : "Carteira de créditos"}</strong>
-    {walletState !== "ready" || !wallet ? <span>{walletState === "failed" ? "Não foi possível consultar o saldo. Cada envio continua sendo autorizado pelo servidor." : "Consultando saldo e reservas…"}</span> : wallet.mode === "unmetered" ? <span>Envios ilimitados na conta do proprietário; nenhum débito finito é aplicado.</span> : <dl>
-      <div><dt>Disponíveis</dt><dd>{wallet.available_credits ?? "Indisponível"}</dd></div>
+    {walletState !== "ready" || !wallet ? <span>{walletState === "failed" ? "Não foi possível consultar o saldo. Cada envio continua sendo autorizado pelo servidor." : "Consultando saldo e reservas…"}</span> : wallet.mode === "unmetered" ? <span>Carteira ilimitada</span> : <dl>
+      <div className="folder-upload-wallet-balance"><dt>Créditos disponíveis</dt><dd>{wallet.available_credits ?? "Indisponível"}</dd></div>
       <div><dt>Reservados</dt><dd>{wallet.reserved_credits}</dd></div>
       <div><dt>Operações pendentes</dt><dd>{wallet.pending_operations}</dd></div>
     </dl>}

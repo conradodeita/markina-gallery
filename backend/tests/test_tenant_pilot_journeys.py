@@ -257,6 +257,15 @@ def run_local_pilot(migration_db, monkeypatch, tmp_path, *, verify_upload):
                                 response = await upload.value
                                 assert response.status == 202, await response.text()
                                 await page.get_by_text("1 foto(s) enviada(s).", exact=False).wait_for()
+                                wallet_panel = page.get_by_label("Saldo de créditos durante o envio")
+                                await wallet_panel.locator(".folder-upload-wallet-balance dd").filter(
+                                    has_text=re.compile(rf"^{balances[index] - 1}$"),
+                                ).wait_for()
+                                await wallet_panel.get_by_text(
+                                    "1 crédito consumido, confirmado pelo servidor.", exact=True,
+                                ).wait_for()
+                                if index == 0:
+                                    await wallet_panel.screenshot(path=output / "contador-apos-upload.png")
                                 photo_id = UUID(response.url.split("/")[-2])
                                 other_context, _ = admins[1 - index]
                                 denied = await other_context.request.put(
