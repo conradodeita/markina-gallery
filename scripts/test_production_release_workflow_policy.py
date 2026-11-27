@@ -278,6 +278,17 @@ def main() -> None:
     require("--mode handoff-release", "deploy usa protocolo de preservação por geração", app_release)
     recovery_workflow = (ROOT / '.github/workflows/production-app-handoff-recovery.yml').read_text(encoding='utf-8')
     recovery_readonly, recovery_mutation = recovery_workflow.split('\n  recover:\n', 1)
+    image_export = recovery_workflow.split('\n  export-reference-images:\n', 1)[1].split('\n  recover:\n', 1)[0]
+    require("inputs.operation == 'export-images'", 'exportação depende de opção read-only explícita', image_export)
+    require('environment: production-preflight', 'exportação usa chave restrita de leitura', image_export)
+    require('matrix:\n        service: [api, web]', 'exportação cobre somente API/web', image_export)
+    require('MARKINA_APP_REFERENCE_IMAGE_EXPORT_SHA=', 'exportação usa comando SSH fixo', image_export)
+    require('retention-days: 1', 'artifacts expiram em um dia', image_export)
+    require('gzip -t "$archive"', 'exportação confere integridade gzip', image_export)
+    require('docker image inspect', 'exportação confere identidade importada', image_export)
+    require('sha256sum "$SERVICE.tar.gz"', 'exportação publica checksum do arquivo', image_export)
+    if 'secrets.PRODUCTION_SSH_PRIVATE_KEY' in image_export:
+        raise AssertionError('exportação deve usar somente chave preflight')
     require('environment: production-preflight', 'diagnóstico separado sem chave de deploy', recovery_readonly)
     require('environment: production\n', 'recuperação exige aprovação protegida própria', recovery_mutation)
     require('needs: [code-evidence, recovery-inventory]', 'recuperação aguarda prova atual e CI', recovery_mutation)

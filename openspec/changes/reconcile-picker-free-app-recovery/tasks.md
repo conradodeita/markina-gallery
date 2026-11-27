@@ -8,9 +8,11 @@
 ## 2. Recuperação API/web por modelo reconstruído
 
 - [x] 2.1 Implementar o recovery explícito em geração Compose nova usando a receita sem Picker, sem iniciar/alterar a testemunha; cobrir fases API→web, fingerprint, lock, journal, aprovação e falhas injetadas em testes.
-- [ ] 2.4 Comprovar o par ativo em diagnóstico protegido e vincular o plano e sua fingerprint às imagens, modelos e versões atuais. Rejeitar par incompleto, ambíguo ou alterado.
+- [x] 2.4 Comprovar o par ativo em diagnóstico protegido e vincular o plano e sua fingerprint às imagens, modelos e versões atuais. Rejeitar par incompleto, ambíguo ou alterado.
 - [ ] 2.2 Executar prova Compose local isolada com PostgreSQL sintético e OAuth sentinela, usando os dois image IDs do par ativo e saudável comprovado em produção; comprovar API/web saudáveis sem o arquivo Picker, sem migration, escrita de cliente ou acesso ao Drive.
 - [x] 2.3 Atualizar o runbook de recovery para distinguir container witness de candidato recriável e orientar inventário/fingerprint/aprovação após falha; validar comandos documentados em ambiente sintético.
+
+- [ ] 2.5 Obter o par ativo por exportação read-only API/web no workflow protegido e validar checksum/image ID antes do ensaio; preservar o contrato de exportação API existente.
 
 ## 3. Integração com a aposentadoria
 
@@ -40,3 +42,8 @@
 - Referência atual, validação local: no Linux, 42 testes de inventário, journal, execução e recuperação passaram. A prova sintética deriva o plano dos containers ativos registrados, rejeita par ambíguo e divergência de imagem/fingerprint, recria os dois serviços na ordem e conserva os anteriores parados. A etapa 2.4 ainda exige diagnóstico protegido no servidor e a 2.2 ainda exige ensaio Compose com ambas as imagens comprovadas e dependências sintéticas.
 
 - Revisão de integração: a CI #45897002359 passou no SHA `e7ee74842952fa41abe37318837d3d14437270d2`. A revisão posterior reutilizou `replacement_document` na referência ativa para fechar o modelo Compose sobre imagem/ambiente/comando observados e retirar instruções de build/dependências. Regressão com modelo de origem contendo build, depends_on e labels Compose passou. Os 42 contratos Linux passaram novamente, assim como Ruff, workflow/política de release e diff-check. O diagnóstico remoto e o ensaio das imagens reais continuam pendentes. Avaliação de refatoração limitada à reutilização dessa função existente.
+
+
+- Diagnóstico 2.4: run #45950979791 passou na main `64c5536dfd7c3ce68072910005b5969518507901`, schema verificado e fingerprint `c33c9c8077bf7b758e93355ed4eef564110898a908fdee876f346fa8b25e3109`. Imagem API `sha256:c0aed86f943e63f51b832c063f25e418e2537bab6ee3546656f5c0b56ef6df4a`; web `sha256:d9dfa2dae3692688c93eebcb9daf9f988a48c9e4aa41ec391b276244ef88f7c6`. Ambas ausentes do Docker local. A exportação API/web está implementada em branch, com 7 testes Linux do exportador passando, incluindo identidade web divergente e recusa de serviço fora do par. A execução protegida e o ensaio continuam pendentes.
+
+- Gates locais da extensão de exportação: 7 testes Linux passaram (API legada, web, imagem/projeto/plataforma/seleção divergentes e serviço inválido); Ruff e política de workflow passaram; YAML e quatro blocos shell do workflow foram analisados, bash -n passou nos scripts com LF canônico. OpenSpec strict e diff-check passaram. A primeira checagem bash direta no checkout Windows detectou CRLF; a sintaxe dos blobs normalizados foi validada sem alterar os scripts por esse motivo. A task 2.5 permanece aberta até exportação real e conferência dos dois artifacts.

@@ -30,3 +30,7 @@ python -m unittest test_production_app_compose_bridge test_production_app_handof
 ```
 
 Ela testa os contratos com Docker/SSH simulados e sistema de arquivos temporário. Uma aprovação ou teste local não comprova estado de produção nem libera uma operação remota.
+
+## Obter imagens para o ensaio
+
+Após atualizar o suporte na main revisada com CI verde, despache `export-images` no mesmo workflow de recuperação. A operação repete o diagnóstico e exporta as imagens API/web selecionadas para artifacts `picker-reference-api-<sha>` e `picker-reference-web-<sha>`, com retenção de um dia. Baixe ambos e confira os arquivos `api.sha256` e `web.sha256` antes de importar. Os IDs importados devem coincidir com `image-id.txt` e com o diagnóstico da referência atual. Use PostgreSQL e OAuth sintéticos no ensaio isolado. Artifact de apenas um serviço ou imagem divergente é insuficiente para concluir a task 2.2.
