@@ -1,5 +1,5 @@
 # RawTherapee oficial 5.13 para o worker opcional de ajuste de prévias.
-FROM python:3.13-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 ARG TARGETARCH
 ARG RAWTHERAPEE_VERSION=5.13
