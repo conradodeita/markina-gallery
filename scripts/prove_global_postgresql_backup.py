@@ -38,6 +38,59 @@ EXPECTED_IMAGE_DIGEST = (
 EXPECTED_CONTEXT = "desktop-linux"
 PROOF_LABEL = "io.pickyourpic.synthetic-postgresql-proof"
 SYSTEM_SCHEMAS = {"information_schema", "pg_catalog"}
+APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
+    "identity_gallery_access": (
+        "client",
+        "client_phone",
+        "parent_gallery",
+        "photo_folder",
+        "photo_asset",
+        "parent_gallery_registration",
+        "gallery_client_state",
+        "gallery_access",
+        "folder_client_grant",
+        "photo_selection",
+        "photo_favorite",
+        "photo_view",
+        "photo_comment",
+        "price_rule",
+    ),
+    "commerce_history": ("payment_group", "sale_order", "sale_order_item"),
+    "media_processing_queue": ("photo_analysis", "media_derivative", "media_job"),
+    "cold_media_catalog": (
+        "media_archive_cycle",
+        "media_archive_operation",
+        "media_archive_object",
+        "media_archive_event",
+    ),
+    "cold_media_recovery_and_credits": (
+        "media_archive_recovery_request",
+        "media_archive_recovery_credit_reservation",
+        "media_archive_recovery_credit_allocation_event",
+    ),
+    "privacy_and_consent": (
+        "gallery_facial_policy",
+        "facial_search_request",
+        "facial_search_consent_proof",
+    ),
+    "notifications_and_audit": (
+        "notification_setting",
+        "notification_event",
+        "notification_delivery",
+        "audit_event",
+        "platform_admin_event",
+        "photographer_credit_entry",
+    ),
+    "gallery_processing_settings": (
+        "gallery_preview_settings",
+        "folder_processing_settings",
+    ),
+    "gallery_access_lifecycle": (
+        "notification_milestone",
+        "gallery_reopening_request",
+        "gallery_reopening_notification_outbox",
+    ),
+}
 RUNNER_RESTIC_WINDOWS_ARCHIVE_SHA256 = (
     "bba9061c3dce081701ab353ec8cb73a78be73b71a538aad560f2d1067602b7fe"
 )
@@ -1516,50 +1569,7 @@ def _seed_application_fixture(
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(days=1)
     folder_expires_at = now + timedelta(days=30)
-    domains: dict[str, tuple[str, ...]] = {
-        "identity_gallery_access": (
-            "client",
-            "client_phone",
-            "parent_gallery",
-            "photo_folder",
-            "photo_asset",
-            "parent_gallery_registration",
-            "gallery_client_state",
-            "gallery_access",
-            "folder_client_grant",
-            "photo_selection",
-            "photo_favorite",
-            "photo_view",
-            "photo_comment",
-            "price_rule",
-        ),
-        "commerce_history": ("payment_group", "sale_order", "sale_order_item"),
-        "media_processing_queue": ("photo_analysis", "media_derivative", "media_job"),
-        "cold_media_catalog": (
-            "media_archive_cycle",
-            "media_archive_operation",
-            "media_archive_object",
-            "media_archive_event",
-        ),
-        "cold_media_recovery_and_credits": (
-            "media_archive_recovery_request",
-            "media_archive_recovery_credit_reservation",
-            "media_archive_recovery_credit_allocation_event",
-        ),
-        "privacy_and_consent": (
-            "gallery_facial_policy",
-            "facial_search_request",
-            "facial_search_consent_proof",
-        ),
-        "notifications_and_audit": (
-            "notification_setting",
-            "notification_event",
-            "notification_delivery",
-            "audit_event",
-            "platform_admin_event",
-            "photographer_credit_entry",
-        ),
-    }
+    domains = APPLICATION_FIXTURE_DOMAINS
     metadata = sa.MetaData()
     populated: dict[str, dict[str, int]] = {
         name: {} for tables in domains.values() for name in tables
@@ -1586,9 +1596,21 @@ def _seed_application_fixture(
             )
         try:
             connection.execute(sa.insert(table).values(**values))
-        except sa.exc.SQLAlchemyError:
+        except sa.exc.SQLAlchemyError as exc:
+            original = getattr(exc, "orig", None)
+            sqlstate = getattr(original, "sqlstate", None)
+            if not isinstance(sqlstate, str) or not re.fullmatch(
+                r"[0-9A-Z]{5}", sqlstate
+            ):
+                sqlstate = "unknown"
+            diagnostic = getattr(original, "diag", None)
+            constraint = getattr(diagnostic, "constraint_name", None)
+            if not isinstance(constraint, str) or not re.fullmatch(
+                r"[a-z][a-z0-9_]{0,62}", constraint
+            ):
+                constraint = "unknown"
             raise ProofFailure(
-                f"synthetic_fixture_insert_failed:{table_name}"
+                f"synthetic_fixture_insert_failed:{table_name}:{sqlstate}:{constraint}"
             ) from None
 
     with engine.begin() as connection:
@@ -1727,6 +1749,33 @@ def _seed_application_fixture(
                     "updated_at": now,
                 },
             )
+            insert(
+                connection,
+                "gallery_preview_settings",
+                {
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "enabled": False,
+                    "generation": 1,
+                    "strength": 50 + tenant_index,
+                    "exposure_tenths": 0,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "folder_processing_settings",
+                {
+                    "tenant_id": tenant_id,
+                    "folder_id": ids["folder"],
+                    "preview_mode": "off",
+                    "facial_mode": "off",
+                    "preview_strength": 50 + tenant_index,
+                    "preview_exposure_tenths": 0,
+                    "revision": 1,
+                    "updated_at": now,
+                },
+            )
             filename = f"proof-{tenant_index}.jpg"
             insert(
                 connection,
@@ -1768,6 +1817,58 @@ def _seed_application_fixture(
                     "status": "active",
                     "selection_started_at": now,
                     "selection_expires_at": expires_at,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "notification_milestone",
+                {
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "client_id": ids["client"],
+                    "kind": "first_access",
+                    "baseline": tenant_index == 0,
+                    "created_at": now,
+                },
+            )
+            reopening_request_id = _fixture_uuid(
+                proof_id, tenant_id, "gallery-reopening-request"
+            )
+            insert(
+                connection,
+                "gallery_reopening_request",
+                {
+                    "id": reopening_request_id,
+                    "tenant_id": tenant_id,
+                    "derived_gallery_id": None,
+                    "parent_gallery_id": ids["gallery"],
+                    "photo_folder_id": None,
+                    "requested_by_client_id": ids["client"],
+                    "idempotency_key": f"synthetic-reopen-{proof_id}-{tenant_index}",
+                    "status": "refused",
+                    "decided_by_admin_id": admin_id,
+                    "decided_at": now,
+                    "approved_until": None,
+                    "approved_duration_days": None,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "gallery_reopening_notification_outbox",
+                {
+                    "id": _fixture_uuid(
+                        proof_id, tenant_id, "gallery-reopening-notification"
+                    ),
+                    "tenant_id": tenant_id,
+                    "gallery_reopening_request_id": reopening_request_id,
+                    "recipient_phone": None,
+                    "status": "skipped",
+                    "attempts": 0,
+                    "last_error": None,
                     "created_at": now,
                     "updated_at": now,
                 },

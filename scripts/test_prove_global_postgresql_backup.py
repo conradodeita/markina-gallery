@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.prove_global_postgresql_backup import (
+    APPLICATION_FIXTURE_DOMAINS,
     ProofFailure,
     _copy_synthetic_repository,
     _fixture_row_summary,
@@ -25,6 +26,26 @@ from scripts.prove_global_postgresql_backup import (
     _schema_catalog_difference_summary,
     _verify_release_archive_member,
 )
+
+
+class ApplicationFixtureDomainTests(unittest.TestCase):
+    def test_fixture_inventories_additional_safe_gallery_states(self) -> None:
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["gallery_processing_settings"],
+            ("gallery_preview_settings", "folder_processing_settings"),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["gallery_access_lifecycle"],
+            (
+                "notification_milestone",
+                "gallery_reopening_request",
+                "gallery_reopening_notification_outbox",
+            ),
+        )
+        tables = [
+            table for group in APPLICATION_FIXTURE_DOMAINS.values() for table in group
+        ]
+        self.assertEqual(len(tables), len(set(tables)))
 
 
 class SyntheticFixtureIdTests(unittest.TestCase):
