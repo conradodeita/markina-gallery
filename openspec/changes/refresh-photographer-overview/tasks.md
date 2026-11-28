@@ -79,3 +79,11 @@
 
 - Edge em 1440, 390 e 320 px validou o atalho de criação, foco do editor, envio de faixas contíguas em centavos, versão seguinte após edição, cancelamento de desativação sem solicitação, confirmação de desativação e reativação. O teste interceptou as requisições e não utilizou dados reais. Todas as larguras couberam sem rolagem horizontal.
 - TypeScript, ESLint, OpenSpec estrito e os testes de catálogo de preços, regras de precificação, navegação, PWA e layout passaram.
+
+## 9. Configurações
+
+- [x] 9.1 Aplicar a composição Stitch a Configurações e à área de marca, mantendo grupos e fluxos protegidos.
+- [x] 9.2 Verificar navegação por seção, persistência de rascunho, prévia e envio sintético em desktop e celular.
+
+- Edge em 1440, 390 e 320 px confirmou sete grupos, rascunho preservado ao recolher, atualização da entrada após salvar, duas prévias da marca-d’água atualizadas, dois PATCHs sintéticos e abertura por link `#whatsapp`, sem rolagem horizontal.
+- Vitest passou 80 testes em 12 arquivos. TypeScript, OpenSpec estrito e ESLint passaram, com aviso preexistente de imagem na prévia da entrada.

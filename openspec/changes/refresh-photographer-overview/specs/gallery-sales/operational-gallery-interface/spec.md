@@ -90,3 +90,12 @@ Tabelas de preço progressivo SHALL usar a estrutura visual responsiva do fotóg
 
 - **WHEN** consulta o catálogo, configura as faixas de uma tabela ou muda sua disponibilidade
 - **THEN** a interface mostra os dados autorizados, usa valores em centavos nas operações, mantém a confirmação de desativação e apresenta a versão e os estados retornados
+
+### Requirement: Apresentação das configurações do fotógrafo
+
+Configurações SHALL organizar os controles existentes por assunto na estrutura responsiva do fotógrafo.
+
+#### Scenario: Fotógrafo navega entre grupos ou configura a identidade do estúdio
+
+- **WHEN** abre uma seção por atalho, recolhe um grupo ou edita a identidade
+- **THEN** a interface preserva rascunhos e destinos existentes, mostra a prévia aplicável e usa os mesmos formulários e controles autorizados

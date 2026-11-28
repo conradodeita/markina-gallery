@@ -74,6 +74,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - `GET /api/admin/pricing-presets?include_inactive=true` fornece `presets[].id,code,name,label,version,active,tiers`; os cartões mostram valores em reais, versão e disponibilidade. O resumo indica tabelas ativas, desativadas e total do catálogo.
 - O editor envia `code,name,tiers[].minimum_quantity,maximum_quantity,unit_price_cents` no `POST /api/admin/pricing-presets` ou `PUT /api/admin/pricing-presets/{id}`. As regras de faixas e centavos continuam existentes. `DELETE /api/admin/pricing-presets/{id}` e `POST /api/admin/pricing-presets/{id}/activate` mantêm os comportamentos de desativação confirmada e reativação.
 
+### Configurações
+
+- Referência Stitch `f1c9d2ab81c145d8becd18f35f96b4e2`: cabeçalho do estúdio, cartões por assunto com ícones e edição da marca com prévia ao lado no desktop. A UI mantém os sete grupos que a aplicação oferece, a prévia da entrada após salvar e a prévia local da marca-d’água.
+- `GET /api/admin/branding` carrega identidade, ativos e proteção. `PATCH /api/admin/branding`, `PUT /api/admin/branding/{asset}` e `PATCH /api/admin/branding/protection` mantêm textos, arquivos e campos existentes. O estado de carregamento, erro ou resposta salva continua visível.
+- Endereço, termos, segurança, WhatsApp, PIX, provedores e encerramento permanecem nos componentes atuais, com as mesmas permissões e endpoints. Atalhos internos e links externos como `#pix` e `#whatsapp` mantêm seus destinos.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

@@ -50,7 +50,7 @@ describe("configurações administrativas de marca", () => {
     stubBrandingFetch(async () => new Response(JSON.stringify(branding)));
     render(<AdminSettingsPage />);
     await screen.findByRole("heading", { name: "Configurações" });
-    const groups = Array.from(document.querySelectorAll<HTMLDetailsElement>("main > details"));
+    const groups = Array.from(document.querySelectorAll<HTMLDetailsElement>("[data-settings-page] > details"));
     expect(groups).toHaveLength(7);
     expect(groups[0].open).toBe(true);
     expect(groups.slice(1).every((group) => !group.open)).toBe(true);
