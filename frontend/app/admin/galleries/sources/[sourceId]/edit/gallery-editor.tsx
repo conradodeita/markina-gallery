@@ -855,6 +855,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
     vendas: "Defina os preços, consulte os recebimentos e organize a jornada de compra.",
     detalhes: "Personalize a imagem de abertura e o título apresentado às suas clientes.",
     imagens: "Organize as pastas e acompanhe o envio e o processamento das fotos.",
+    clientes: "Consulte o link da galeria e gerencie o acesso de cada cliente.",
   };
   const editorDescription = descriptions[currentStep];
   const usesStudioLayout = Boolean(editorDescription);
@@ -1028,10 +1029,24 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       ) : null}
 
       {currentStep === "clientes" ? (
-        <section className="gallery-editor-panel">
-          <div className="section-heading"><div><p className="eyebrow">Etapa 5</p><h2>Clientes e acesso</h2></div><StatusBadge>{linkedClients.length} vínculo(s)</StatusBadge></div>
-          <div className="unlisted-link"><span>Link permanente da Galeria pública</span><strong>{publicLink?.status === "active" ? "Ativo" : publicLink?.status === "legacy_unrecoverable" ? "Link legado indisponível" : "Ainda não disponível"}</strong>{publicLink?.link ? <input aria-label="Link da Galeria pública" readOnly value={publicLink.link} onFocus={(event) => event.currentTarget.select()} /> : null}<small>Este endereço permanece o mesmo enquanto a galeria existir. No primeiro acesso sem sessão válida, a cliente comprova o telefone por código.</small><div className="gallery-access-actions">{publicLink?.link ? <MarkinaButton type="button" variant="secondary" onClick={() => copyAccessLink(publicLink.link, "Link público")}>Copiar link</MarkinaButton> : publicLink?.status === "legacy_unrecoverable" ? <span>Solicite reparação administrativa somente em caso de incidente.</span> : <MarkinaButton type="button" disabled={Boolean(accessBusy)} onClick={createPublicLink}>Criar link permanente</MarkinaButton>}</div></div>
-          <div className="gallery-client-grid">
+        <section className={styles.form} aria-labelledby="editor-clients-title">
+          <div className={`${styles.formHeading} ${styles.mediaHeading}`}><span className={styles.icon}><OverviewIcon name="group" /></span><div><p className="eyebrow">Etapa 5</p><h2 id="editor-clients-title">Clientes e acesso</h2></div><StatusBadge>{linkedClients.length} vínculo(s)</StatusBadge></div>
+          <div className={`unlisted-link ${styles.linkPanel}`}>
+            <div className={styles.linkHeader}>
+              <span>Link permanente da Galeria pública</span>
+              <StatusBadge tone={publicLink?.status === "active" ? "success" : "neutral"}>
+                {publicLink?.status === "active" ? "Ativo" : publicLink?.status === "legacy_unrecoverable" ? "Link legado indisponível" : "Ainda não disponível"}
+              </StatusBadge>
+            </div>
+            {publicLink?.link ? <input aria-label="Link da Galeria pública" readOnly value={publicLink.link} onFocus={(event) => event.currentTarget.select()} /> : null}
+            <small>Este endereço permanece o mesmo enquanto a galeria existir. No primeiro acesso sem sessão válida, a cliente comprova o telefone por código.</small>
+            <div className="gallery-access-actions">
+              {publicLink?.link ? <MarkinaButton type="button" variant="secondary" onClick={() => copyAccessLink(publicLink.link, "Link público")}>Copiar link</MarkinaButton>
+                : publicLink?.status === "legacy_unrecoverable" ? <span>Solicite reparação administrativa somente em caso de incidente.</span>
+                  : <MarkinaButton type="button" disabled={Boolean(accessBusy)} onClick={createPublicLink}>Criar link permanente</MarkinaButton>}
+            </div>
+          </div>
+          <div className={`gallery-client-grid ${styles.clientGrid}`}>
             <section className="gallery-client-card" aria-labelledby="linked-clients-title">
               <p className="eyebrow">Acesso atual</p>
               <h3 id="linked-clients-title">Clientes vinculadas</h3>

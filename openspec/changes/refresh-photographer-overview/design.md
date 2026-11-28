@@ -111,6 +111,11 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - Referências Stitch `f0f04641be844c629aabc2f2133a560e` e `de3239a7c1c14a84b2094be75321a858`: painel de organização, catálogo de pastas, área de trabalho da pasta selecionada e progresso próximo ao conteúdo. A UI usa contagens retornadas e mantém comandos que já têm contrato. Indicadores demonstrativos de desempenho, pause e reordenação ficam fora do recorte.
 - `GET /api/admin/parent-galleries/{id}/folders` fornece nome, público, estado, prazo, contagens e capa. `GET /api/admin/photo-folders/{id}/photos` fornece o conteúdo disponível. Criação, prazo e organização continuam nas rotas existentes. O progresso de upload e a carteira usam as respostas autoritativas do fluxo existente, sem alterar o cálculo da cobrança ou regras de recuperação.
 
+### Clientes e acesso da galeria
+
+- Referência Stitch `56df0606817244b8a6f720c0bfe4c431`: estado do link permanente, clientes com vínculo, busca do diretório e cadastro. O painel usa o link autorizado quando retornado pelo servidor e mantém os estados indisponível e legado.
+- `GET /api/admin/parent-galleries/{id}/clients`, `GET /api/admin/clients?query=...` e `GET /api/admin/parent-galleries/{id}/public-link` abastecem vínculos, diretório e estado do link. Criação, cópia, busca, vínculo, desvinculação com confirmação, conclusão e privilégios permanecem nos controles existentes. O protótipo não fornece regras para personalizar o link.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

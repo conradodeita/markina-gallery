@@ -135,3 +135,11 @@
 
 - Edge em 1440, 390 e 320 px confirmou organização cronológica, POST sintético com prazo de 30 dias, indicação da taxa retornada e abertura da pasta em arquivo frio, com upload bloqueado e atalho para recuperação em Créditos. Não houve upload, recuperação ou débito real, nem rolagem horizontal.
 - Vitest passou 86 testes em cinco arquivos, incluindo pastas, processamento e créditos durante envio. TypeScript, OpenSpec estrito e ESLint passaram, com avisos existentes de imagens.
+
+## 16. Clientes e acesso da galeria
+
+- [x] 16.1 Adaptar a última etapa ao Stitch, mantendo o link e os controles de vínculo autorizados.
+- [x] 16.2 Verificar desktop e celular, consulta, busca e vínculo sintéticos e confirmação de desvinculação.
+
+- Edge em 1440, 390 e 320 px verificou estados de link disponível e legado, busca do diretório, vínculo por PUT sintético e abertura da confirmação de desvinculação. Cancelar não enviou DELETE. O link da fixture era sintético e as três larguras ficaram sem rolagem horizontal.
+- Vitest passou 88 testes em quatro arquivos. TypeScript, OpenSpec estrito e ESLint passaram, com avisos preexistentes de imagens em outras etapas.

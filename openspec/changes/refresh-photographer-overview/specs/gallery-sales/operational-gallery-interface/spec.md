@@ -153,3 +153,12 @@ A etapa SHALL apresentar organização, catálogo e conteúdo da pasta no editor
 
 - **WHEN** seleciona uma pasta ou acompanha um upload
 - **THEN** a interface usa o estado existente de mídia, preserva o progresso e saldo autoritativos e mantém indisponíveis as ações barradas pelo contrato
+
+### Requirement: Apresentação da etapa Clientes e acesso da galeria
+
+A etapa SHALL apresentar o estado do link e os vínculos retornados pelo servidor no editor responsivo.
+
+#### Scenario: Fotógrafo consulta ou atualiza o acesso
+
+- **WHEN** busca clientes, vincula um cadastro ou abre a confirmação de desvinculação
+- **THEN** a interface mantém os formulários, confirmações e permissões existentes e apresenta somente o estado autorizado

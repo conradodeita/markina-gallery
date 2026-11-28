@@ -10,5 +10,5 @@ const photographerShellRoutes = new Set([
 ]);
 
 export function usesPhotographerShell(pathname: string) {
-  return photographerShellRoutes.has(pathname) || /^\/admin\/galleries\/(?:sources\/[^/]+(?:\/edit\/(?:ajustes|vendas|detalhes|imagens))?|[^/]+\/orders)$/.test(pathname);
+  return photographerShellRoutes.has(pathname) || /^\/admin\/galleries\/(?:sources\/[^/]+(?:\/edit\/(?:ajustes|vendas|detalhes|imagens|clientes))?|[^/]+\/orders)$/.test(pathname);
 }
