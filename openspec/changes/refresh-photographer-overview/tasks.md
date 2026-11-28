@@ -167,3 +167,11 @@
 
 - Edge em 1440 px verificou capa e ampliação com fechamento por Escape; em 390 px, prévia parcial com a foto disponível; em 320 px, falha total e retorno. As respostas foram sintéticas e não houve mutações nem rolagem horizontal.
 - Vitest passou 22 testes em três arquivos. ESLint, TypeScript, OpenSpec estrito, diff-check e a verificação de segredos passaram.
+
+## 20. Biblioteca da cliente
+
+- [x] 20.1 Adaptar Suas galerias ao Stitch, mantendo acesso, prazos e histórico da sessão da cliente.
+- [x] 20.2 Validar desktop e celular, filtros, caminhos de acesso, consulta vazia e recuperação após falha.
+
+- Edge em 1440 e 390 px verificou filtros, capa, prazo, navegação de carrinho e saída para Compras. Em 320 px, simulou falha e nova tentativa com lista vazia. Usou respostas sintéticas em ambos os temas, sem escrita ou rolagem horizontal.
+- Vitest passou 22 testes, incluindo biblioteca, carrinho e contrato PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e a verificação de segredos passaram.

@@ -26,12 +26,14 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 - Adaptar o detalhe administrativo da Galeria privada, preservando membros, mídias, uploads e ações existentes.
 - Adaptar a consulta de preços herdados da Galeria privada ao Stitch, mantendo edição na origem.
 - Adaptar o enquadramento da prévia administrativa da Galeria pública, mantendo a apresentação compartilhada e as proteções atuais.
+- Aplicar a tela Suas galerias à biblioteca autenticada da cliente, mantendo os estados e as ações autorizados.
 
 ## Capabilities
 
 ### Modified Capabilities
 
 - `gallery-sales/operational-gallery-interface`: navegação e apresentação responsiva da Visão Geral, catálogos e consulta financeira do fotógrafo.
+- `gallery-sales/original-gallery-experience`: apresentação responsiva da biblioteca autenticada da cliente.
 
 ## Impact
 

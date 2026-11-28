@@ -131,6 +131,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - Referência Stitch `1e08923ff7214627875b011b41977680`: capa em destaque, navegação por pastas e coleção. O modo fotógrafo usa o mesmo componente de apresentação, com indicação de prévia e links de volta ao resumo e ao editor. Os controles exclusivos da cliente continuam na sessão correspondente.
 - A prévia carrega `GET /api/admin/parent-galleries/{id}/editor`, `GET /api/admin/parent-galleries/{id}/folders` e `GET /api/admin/photo-folders/{id}/photos` para as pastas retornadas. Usa somente URLs de prévia autorizadas, respeita a ordem recebida e mantém carregamento, falha e ausência de imagem visíveis.
 
+### Biblioteca da cliente
+
+- Referência Stitch `ed8e21416a564790bc35e127fd0fad61`: título Suas galerias, filtros curtos, cartões com capa e estado e ação abaixo das informações. A navegação existente continua no topo em desktop e na base em celular.
+- `GET /api/library` devolve `journeys` com identificação, nome, evento, estado, capa, prazos por pasta, pedidos e destinos calculados pelo servidor. Os filtros Todas, Ativas e Expiradas usam o estado retornado e não alteram a ordem, os prazos nem o acesso. A revalidação continua ao cruzar prazos, inclusive com um filtro ativo. O carrinho mantém sua consulta e contagem na navegação.
+- Links, capa, pedidos e contingência usam somente os destinos existentes. Sem capa autorizada, o cartão exibe a indisponibilidade. Falha de consulta permite repetir a solicitação, e o vazio geral se distingue do vazio de um filtro. Carrinho, compras e autenticação mantêm seus próprios fluxos.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.
