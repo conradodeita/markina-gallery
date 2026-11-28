@@ -127,3 +127,11 @@
 
 - Edge em 1440 e 390 px confirmou imagem de teste, atualização imediata de posição/tamanho, envio sintético e avanço. Em 320 px a capa ausente desabilitou o salvamento e mostrou instruções. Não houve rolagem horizontal nem upload real.
 - Vitest passou 97 testes em quatro arquivos, incluindo fluxo de processamento e foto de capa obrigatória. TypeScript, OpenSpec estrito e ESLint passaram. Os três avisos de imagens do editor pertencem às outras etapas.
+
+## 15. Imagens e pastas
+
+- [x] 15.1 Aplicar a composição Stitch à organização, catálogo e conteúdo da pasta, preservando controles, crédito e upload existentes.
+- [x] 15.2 Verificar layout, criação sintética, organização, abertura da pasta e política de mídia indisponível.
+
+- Edge em 1440, 390 e 320 px confirmou organização cronológica, POST sintético com prazo de 30 dias, indicação da taxa retornada e abertura da pasta em arquivo frio, com upload bloqueado e atalho para recuperação em Créditos. Não houve upload, recuperação ou débito real, nem rolagem horizontal.
+- Vitest passou 86 testes em cinco arquivos, incluindo pastas, processamento e créditos durante envio. TypeScript, OpenSpec estrito e ESLint passaram, com avisos existentes de imagens.

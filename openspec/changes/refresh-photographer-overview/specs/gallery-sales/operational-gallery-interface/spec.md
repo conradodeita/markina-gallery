@@ -144,3 +144,12 @@ A etapa SHALL exibir a prévia e os controles autorizados da capa e do título n
 
 - **WHEN** a capa está ausente, em processamento, com falha ou pronta
 - **THEN** a interface apresenta o estado correspondente, mantém as proteções existentes e mostra os ajustes do título na prévia disponível
+
+### Requirement: Apresentação da etapa Imagens e pastas
+
+A etapa SHALL apresentar organização, catálogo e conteúdo da pasta no editor responsivo.
+
+#### Scenario: Fotógrafo abre uma pasta ou acompanha o envio
+
+- **WHEN** seleciona uma pasta ou acompanha um upload
+- **THEN** a interface usa o estado existente de mídia, preserva o progresso e saldo autoritativos e mantém indisponíveis as ações barradas pelo contrato

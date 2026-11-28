@@ -106,6 +106,11 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - Referência Stitch `7cb288945dd54e928e4b243248b75574`: trilha do editor, prévia da capa em destaque e controles de imagem e título. A fotografia vem da capa autorizada, sem ativos de demonstração nem filtros de cor. Os controles existentes determinam fonte, cor, posição e tamanho da prévia.
 - `GET /api/admin/parent-galleries/{id}/details` fornece `cover_readiness,font_options,cover_options,settings`. O fluxo mantém as operações existentes de upload JPEG e processamento. A etapa avança após salvar os ajustes com capa pronta e mantém os estados de capa ausente, processando ou com falha.
 
+### Imagens e pastas
+
+- Referências Stitch `f0f04641be844c629aabc2f2133a560e` e `de3239a7c1c14a84b2094be75321a858`: painel de organização, catálogo de pastas, área de trabalho da pasta selecionada e progresso próximo ao conteúdo. A UI usa contagens retornadas e mantém comandos que já têm contrato. Indicadores demonstrativos de desempenho, pause e reordenação ficam fora do recorte.
+- `GET /api/admin/parent-galleries/{id}/folders` fornece nome, público, estado, prazo, contagens e capa. `GET /api/admin/photo-folders/{id}/photos` fornece o conteúdo disponível. Criação, prazo e organização continuam nas rotas existentes. O progresso de upload e a carteira usam as respostas autoritativas do fluxo existente, sem alterar o cálculo da cobrança ou regras de recuperação.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.
