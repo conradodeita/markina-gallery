@@ -286,7 +286,7 @@ export function ClientEditorDialog({
   );
 
   return (
-    <div className="mk-dialog-backdrop" role="presentation">
+    <div className="mk-dialog-backdrop client-edit-backdrop" role="presentation">
       <section
         aria-labelledby="edit-client-title"
         aria-modal="true"

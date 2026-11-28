@@ -13,10 +13,10 @@
 }
 
 .shell {
-  --overview-canvas: #f8f5ec;
-  --overview-surface: #fffdf8;
-  --overview-subtle: #f1ede0;
-  --overview-border: #e8e0ce;
+  --overview-canvas: #fbfaf8;
+  --overview-surface: #fff;
+  --overview-subtle: #f6f3ec;
+  --overview-border: #e9e3d8;
   --overview-ink: #292418;
   --overview-muted: #716b5f;
   --overview-gold: #7a5200;
@@ -40,7 +40,7 @@
 }
 
 :global(html[data-theme="dark"]) .shell {
-  --overview-canvas: #13110d;
+  --overview-canvas: #0e0d0b;
   --overview-surface: #1d1a14;
   --overview-subtle: #252016;
   --overview-border: #393328;

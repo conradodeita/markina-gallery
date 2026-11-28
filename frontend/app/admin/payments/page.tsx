@@ -5,6 +5,7 @@ import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, use
 import { MarkinaButton, MetricCard, StatusBadge, SystemState } from "../../ui-kit";
 import { PaymentActions } from "./payment-actions";
 import { applyPurchasedPhotoExportTheme } from "../purchased-photo-export";
+import { OverviewIcon } from "../overview-icon";
 
 import RemovedHistory from "./removed-history";
 import { OrderDeliveryForm, type OrderDelivery } from "./order-delivery";
@@ -185,15 +186,17 @@ function requestPath(filters: Filters, cursor?: string | null) {
 
 export default function AdminPaymentsPage() {
   const [view, setView] = useState("payments");
-  return <main className={`admin-shell payments-dashboard ${styles.page}`}>
-    <header className={styles.pageHeading}><div><p className="eyebrow">Operação financeira</p>
-    <h1>Vendas e pagamentos</h1></div>
+  return <div className={`payments-dashboard ${styles.page}`}>
+    <header className={styles.pageHeading}><div>
+      <h1>Vendas e pagamentos</h1>
+      <p>Acompanhe pedidos, confira pagamentos e consulte as entregas de suas galerias.</p>
+    </div>
     <label className={styles.mode}>Exibir<select value={view} onChange={(event) => setView(event.target.value)}>
       <option value="payments">Pedidos e pagamentos</option>
       <option value="removed">Histórico de acervo excluído</option>
     </select></label></header>
     {view === "removed" ? <RemovedHistory /> : <PaymentsDashboard />}
-  </main>;
+  </div>;
 }
 
 function PaymentsDashboard() {
@@ -205,7 +208,7 @@ function PaymentsDashboard() {
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [failed, setFailed] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [adminHeaderHeight, setAdminHeaderHeight] = useState(68);
+  const [adminHeaderHeight, setAdminHeaderHeight] = useState(64);
   const [busyAction, setBusyAction] = useState("");
   const [message, setMessage] = useState("");
   const [reopenings, setReopenings] = useState<Reopening[]>([]);
@@ -218,9 +221,11 @@ function PaymentsDashboard() {
   const deepLinkTarget = useRef<{ clientId: string; selectionAnchorId: string } | null>(null);
 
   useEffect(() => {
-    const header = document.querySelector<HTMLElement>(".admin-topbar");
+    const header = document.querySelector<HTMLElement>("[data-photographer-topbar]");
     if (!header) return;
-    const updateHeight = () => setAdminHeaderHeight(Math.ceil(header.getBoundingClientRect().height));
+    const updateHeight = () => setAdminHeaderHeight(
+      window.getComputedStyle(header).position === "sticky" ? Math.ceil(header.getBoundingClientRect().height) : 0,
+    );
     const frame = window.requestAnimationFrame(updateHeight);
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateHeight);
     observer?.observe(header);
@@ -413,8 +418,21 @@ function PaymentsDashboard() {
   if (!dashboard) return <SystemState tone="loading" title="Carregando pagamentos" detail="Consultando pedidos, decisões e entregas transacionais." />;
 
   const hasFilters = filters.financial_status !== "priority" || Object.entries(filters).some(([key, value]) => key !== "financial_status" && Boolean(value));
-  return <section>
-    <p className="intro">Confira o PIX do sistema informado pela cliente. Pagamentos Mercado Pago são confirmados automaticamente pela integração; o histórico comercial permanece mesmo quando a galeria é removida.</p>
+  return <section className={styles.dashboard} aria-label="Consulta financeira">
+    <aside className={styles.paymentNotice} aria-labelledby="payment-security-title">
+      <div className={styles.noticeIcon}><OverviewIcon name="payments" /></div>
+      <div>
+        <h2 id="payment-security-title">Conferência de pagamentos</h2>
+        <p>Confira no extrato o PIX do sistema informado pela cliente antes de confirmar. Os pagamentos do Mercado Pago são confirmados pela integração.</p>
+      </div>
+    </aside>
+
+    <section aria-label="Resumo de pagamentos" className={`payment-summary ${styles.paymentMetrics}`}>
+      <MetricCard icon={<OverviewIcon name="group" />} label="Clientes no resultado" value={dashboard.summary.clients} detail="Com atividade no filtro atual" />
+      <MetricCard icon={<OverviewIcon name="collections" />} label="Valor das fotos selecionadas" value={money(dashboard.summary.selected_cents)} detail={`${dashboard.summary.selected_carts} carrinho(s) sem pagamento comunicado${dashboard.summary.selected_pricing_unavailable ? ` · ${dashboard.summary.selected_pricing_unavailable} sem preço disponível` : ""}`} />
+      <MetricCard icon={<OverviewIcon name="sell" />} label="Valor dos pedidos" value={money(dashboard.summary.reported_cents)} detail={`${dashboard.summary.reported_orders} pagamento(s) comunicado(s)`} tone="warning" />
+      <MetricCard icon={<OverviewIcon name="account_balance_wallet" />} label="Receita confirmada" value={money(dashboard.summary.confirmed_cents)} detail={`${dashboard.summary.confirmed_orders} depósito(s) confirmado(s)`} tone="success" />
+    </section>
 
     <div className="payment-dashboard-body">
       <div className="payment-filter-sticky" style={{ top: `${adminHeaderHeight}px` }}>
@@ -452,14 +470,6 @@ function PaymentsDashboard() {
       {refreshing ? <p role="status">Atualizando resultados…</p> : null}
       {exportMessage ? <p className="form-message" role="status">{exportMessage}</p> : null}
 
-    <section aria-label="Resumo de pagamentos" className="payment-summary">
-      <MetricCard label="Clientes no resultado" value={dashboard.summary.clients} detail="Com atividade no filtro atual" />
-      <MetricCard label="Valor das fotos selecionadas" value={money(dashboard.summary.selected_cents)} detail={`${dashboard.summary.selected_carts} carrinho(s) sem pagamento comunicado${dashboard.summary.selected_pricing_unavailable ? ` · ${dashboard.summary.selected_pricing_unavailable} sem preço disponível` : ""}`} />
-      <MetricCard label="Valor dos pedidos" value={money(dashboard.summary.reported_cents)} detail={`${dashboard.summary.reported_orders} pagamento(s) comunicado(s)`} tone="warning" />
-      <MetricCard label="Receita confirmada" value={money(dashboard.summary.confirmed_cents)} detail={`${dashboard.summary.confirmed_orders} depósito(s) confirmado(s)`} tone="success" />
-    </section>
-
-
     {reopenings.length ? <section className="admin-card"><div className="section-heading"><div><h2>Solicitações de reabertura</h2><p>Cada cartão informa quem receberá o acesso se você aprovar.</p></div><StatusBadge tone="warning">{reopenings.filter((item) => item.status === "pending").length} pendente(s)</StatusBadge></div><div className="payment-orders">{reopenings.map((item) => {
       const scopeDescription = item.folder_id
         ? item.folder_access_scope === "client"
@@ -477,6 +487,7 @@ function PaymentsDashboard() {
     {!dashboard.groups.length && !dashboard.selections_without_order?.length && hasFilters ? <MarkinaButton variant="secondary" onClick={clearFilters}>Limpar filtros</MarkinaButton> : null}
 
     <div className="payment-client-groups">
+      {dashboard.groups.length > 0 && <h2 className={styles.ordersTitle}>Pedidos por cliente</h2>}
       {dashboard.groups.map((group) => <section id={`payment-client-${group.client.id}`} tabIndex={-1} style={{ scrollMarginTop: `${adminHeaderHeight + 12}px` }} className={`admin-card payment-client-card payment-client-card--${group.financial_status}`} key={group.client.id}>
         <header><div><p className="eyebrow">Cliente · {group.totals.orders} pedido(s)</p>
           <StatusBadge tone={groupPresentation(group).tone} className={groupPresentation(group).className}>{groupPresentation(group).label}</StatusBadge>

@@ -39,3 +39,17 @@ Galerias e Clientes SHALL reutilizar a navegação responsiva do painel do fotó
 
 - **WHEN** o fotógrafo busca, carrega mais clientes ou abre uma ação de cadastro ou edição
 - **THEN** o diretório apresenta somente registros retornados da conta, mantém a paginação existente e delega as mudanças aos controles autorizados existentes
+
+#### Scenario: Fotógrafo edita uma cliente em janela de altura limitada
+
+- **WHEN** o editor de cliente está aberto e seu conteúdo cresce além do espaço disponível
+- **THEN** o editor permite alcançar todas as ações por rolagem interna e preserva a posição da página ao fechar
+
+### Requirement: Apresentação do painel de Vendas e pagamentos
+
+Vendas e pagamentos SHALL reutilizar a estrutura visual responsiva do painel do fotógrafo e os contratos financeiros existentes.
+
+#### Scenario: Fotógrafo consulta pedidos e utiliza ações financeiras
+
+- **WHEN** o fotógrafo acessa a consulta, exporta um resultado ou abre um pedido
+- **THEN** a UI exibe valores do filtro real, preserva busca e paginação, e delega decisões, notificações e entregas às permissões e aos controles existentes

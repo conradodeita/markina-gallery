@@ -37,7 +37,7 @@ export function OverviewShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
       <div className={styles.workspace}>
-        <header className={styles.topbar}>
+        <header className={styles.topbar} data-photographer-topbar>
           <Link className={styles.searchLink} href="/admin/galleries#gallery-search">
             <OverviewIcon name="search" />Buscar galerias, eventos e clientes
           </Link>

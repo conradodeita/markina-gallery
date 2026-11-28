@@ -41,3 +41,17 @@
 - Vitest passou 60 testes direcionados em oito arquivos. TypeScript, ESLint e OpenSpec estrito passaram. Os estilos substituídos sem consumidores foram retirados.
 - A regressão do instalador PWA foi corrigida preservando uma única instância na raiz e o contrato de registro do service worker. O ensaio no Edge simulou a disponibilidade do instalador e confirmou que o botão continuou único ao navegar entre Clientes e Galerias.
 - Build e suíte completa seguem na CI da PR.
+
+## 4. Ajuste do tema claro e do editor de cliente
+
+- [x] 4.1 Ajustar os fundos claro e escuro e validar a rolagem do editor no desktop e celular, incluindo conteúdo ampliado e fechamento.
+
+- Edge confirmou os fundos `#fbfaf8` e `#0e0d0b`, com a rolagem contida no diálogo e a posição da página preservada ao fechar, em 1440×900, 1440×590 e 390×844. O formulário simples coube inteiro em 1440×900. Um inventário sintético de 35 itens exigiu rolagem interna e permitiu alcançar todas as ações.
+
+## 5. Vendas e pagamentos
+
+- [x] 5.1 Aplicar o Stitch à consulta financeira com o mesmo resumo, filtros, exportação, pedidos, seleções e histórico.
+- [x] 5.2 Exercitar a visualização responsiva, os estados da lista e os contratos existentes com testes dirigidos.
+
+- Edge com respostas sintéticas confirmou a visualização em 1440, 390 e 320 px, sem rolagem horizontal. O navegador aplicou o provedor PIX, baixou e removeu um CSV sintético, abriu um pedido, alternou para o histórico e confirmou o foco da seleção por link direto.
+- Vitest passou 76 testes em oito arquivos, incluindo pedidos, filtros, exportação, regras financeiras, edição de cliente e contrato PWA. A checagem da faixa de filtros mede o cabeçalho integrado e verifica sua posição após os indicadores. ESLint, TypeScript e OpenSpec estrito passaram. Build final segue na CI.

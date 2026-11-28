@@ -6,7 +6,7 @@ Referência visual aprovada no Google Stitch: projeto Pick your Pic — Visual R
 
 ## Goals / Non-Goals
 
-Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. Reutilizar a estrutura visual nas listas de Galerias e Clientes. Preservar os componentes de aparência, sessão e links com permissões existentes. Criação e edição de galerias, upload, cliente móvel, checkout e pagamentos mantêm suas interfaces até seus incrementos.
+Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. Reutilizar a estrutura visual nas listas de Galerias e Clientes e na área de Vendas e pagamentos. Preservar aparência, sessão e links com permissões existentes. Criação e edição de galerias, upload, cliente móvel e checkout mantêm suas interfaces até seus incrementos.
 
 ## Decisions
 
@@ -37,6 +37,23 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 | Galerias | `GET /api/admin/parent-galleries/overview?query=...` · `total`, `parent_galleries[].id,name,event_name,active,cover_preview_url,private_gallery_count,registration_count` | Carregamento, erro, nenhum resultado, cartão com ou sem capa e situação ativa/bloqueada. Busca por nome, evento, cliente ou telefone; alternância de grade/lista usa os mesmos resultados. Criação e detalhe mantêm suas rotas e autenticação. |
 | Clientes | `GET /api/admin/clients?limit=24&query=...&cursor=...` · `clients[].id,name,phone,aggregates.public_galleries,aggregates.private_galleries,aggregates.orders,deletion_eligible`, `page.has_more,next_cursor` | Carregamento, erro, nenhum cadastro, nenhum resultado ou resultados com e sem vínculo. Busca por nome ou WhatsApp, paginação e edição mantêm o comportamento existente. |
 | Ações de cliente | `POST /api/admin/clients`, `PATCH /api/admin/clients/{id}`, endpoints de alteração de telefone e inventário/exclusão usados por `ClientEditorDialog` | Cadastro, edição e exclusão continuam delegados aos componentes atuais, com os mesmos controles de autorização e confirmação. |
+
+### Ajuste de leitura no tema claro e no editor
+
+- O tema claro aproxima o fundo do branco e mantém superfícies, controles e estados destacados. O fundo escuro aproxima-se do preto, com cartões e controles em um nível distinto.
+- O editor de cliente cabe na janela e rola quando seu conteúdo ultrapassa a altura disponível. A página de fundo conserva a posição enquanto o editor está aberto, incluindo quando inventário ou erro acrescentam conteúdo ao diálogo.
+
+### Vendas e pagamentos
+
+- Referência Dourado Claro `f9bc42a74c3043db91f3a014f6f8f850`: título e modo de exibição, aviso de verificação manual, resumo financeiro, filtros e resultado agrupado. A UI usa o layout da referência e os valores do filtro atual. Métricas de demonstração e registro manual sem contrato correspondente ficam fora deste recorte.
+- O resultado mantém grupos por cliente com pedidos e seleções. Os cartões preservam decisões financeiras protegidas, liberações, confirmações e mensagens. O CSV usa o filtro que gerou a lista.
+
+| Região | Origem e campos | Estados e ações |
+| --- | --- | --- |
+| Pedidos, resumo, filtros e seleção | `GET /api/admin/payment-communications` · `summary`, `facets`, `groups`, `templates`, `selections_without_order`, `page.next_cursor` | Prioridades, busca, filtros, paginação e seleção por link direto. Carregamento, erro, nenhum resultado e lista carregada. |
+| Clientes para filtro e exportação | `GET /api/admin/clients?query=...` e `GET /api/admin/payment-communications/export.csv` | Busca depende dos dados da conta; exportação reutiliza os filtros aplicados e mantém estados de sucesso/erro. |
+| Reabertura e ações do pedido | `GET /api/admin/gallery-reopening-requests`, `POST /api/admin/payment-communications/{id}/{decision\|correction}` e `/api/admin/orders/{id}/delivery` | Decisão autorizada, repetição de notificações e ações financeiras permanecem nos componentes e contratos atuais. |
+| Histórico de acervo excluído | `GET /api/admin/removed-photo-movements` no componente `RemovedHistory` | O histórico mantém filtros, paginação e comprovantes autorizados. |
 
 ## Risks / Trade-offs
 
