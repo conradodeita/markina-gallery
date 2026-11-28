@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { AdminSessionToolbar } from "../admin-session-toolbar";
-import { InstallApp } from "../install-app";
 import { PRODUCT_NAME } from "../product-brand";
 import { ThemeControl } from "../theme-control";
 import { MarkinaLink } from "../ui-kit";
@@ -52,7 +51,6 @@ export function OverviewShell({ children }: { children: ReactNode }) {
               <div className={styles.accountContent}>
                 <AdminSessionToolbar />
                 <ThemeControl />
-                <InstallApp />
               </div>
             </details>
           </div>

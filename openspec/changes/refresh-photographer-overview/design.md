@@ -6,13 +6,13 @@ Referência visual aprovada no Google Stitch: projeto Pick your Pic — Visual R
 
 ## Goals / Non-Goals
 
-Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. Preservar os componentes de aparência, sessão e links com permissões existentes. As demais rotas mantêm a apresentação atual até o seu incremento. A lista de Galerias, a criação, edição e upload, o cliente móvel, o checkout e pagamentos serão validados em incrementos definidos separadamente.
+Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. Reutilizar a estrutura visual nas listas de Galerias e Clientes. Preservar os componentes de aparência, sessão e links com permissões existentes. Criação e edição de galerias, upload, cliente móvel, checkout e pagamentos mantêm suas interfaces até seus incrementos.
 
 ## Decisions
 
 - Encapsular a composição em um módulo CSS, com Plus Jakarta Sans e subconjunto de Material Symbols distribuídos localmente e acompanhados das licenças OFL e Apache 2.0. A estrutura reutiliza a navegação administrativa, a sessão e as variantes de aparência. O filtro do cabeçalho leva à busca existente em Galerias; a Visão Geral não introduz índice global.
 - Priorizar a sequência hero, indicadores, prática de publicação, galerias, seleções e carteira. Preservar as cinco métricas já oferecidas pela aplicação e manter a carteira após a operação recente.
-- Preservar os destinos reais dos links, as permissões de console e monitor, as ações de instalar aplicativo, notificações da sessão e saída. O tema completo continua disponível junto ao perfil.
+- Preservar os destinos reais dos links, as permissões de console e monitor, as notificações da sessão e a saída. O tema completo continua disponível junto ao perfil. O instalador mantém uma única instância global, apresentada como ação flutuante quando disponível nas rotas com a navegação Dourado Claro.
 - Usar aparência sem capa para as galerias recentes. A projeção atual não fornece capa, imagem ou data da galeria. A composição não cria solicitação por cartão e não incorpora dados, capas ou ações demonstrativas do protótipo.
 
 ### Mapa tela, resposta e estados
@@ -26,6 +26,17 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. P
 | Seleções em andamento | Mesmo resumo · `recent_selections[].scope_id,client,gallery,parent_gallery,selected_count,selection_started_at`; a resposta inclui `last_selected_at`, sem renderização no cartão | Lista vazia ou seleção com horário local e atalho à seleção correspondente em Vendas e pagamentos. |
 | Carteira e movimentações | `GET /api/admin/credits/wallet` · `wallet.mode,available_credits,reserved_credits,pending_operations,recent_consumed_credits,recent_period_days,can_upload_content`; `entries[].id,type,delta,source_reference,description,created_at` | Carregando, disponível, ilimitado, sem movimentações, saldo insuficiente ou indisponível. A falha da carteira preserva indicadores e atalhos do resumo. |
 | Prática e ações de publicação | Dicas fixas, URLs `/admin/galleries` e `/admin/galleries/new` | Criação e consulta usam rotas existentes. A busca direciona ao filtro da lista, que consulta `GET /api/admin/parent-galleries/overview?query=...`. |
+
+### Catálogos administrativos
+
+- Galerias Dourado Claro `7938e6b20cd54c78af6773376d61d555`: composição com título e ação Criar galeria, resumo, busca e catálogo em grade ou lista. Exibir galerias públicas retornadas pelo catálogo. O contador de resultados vem de `total`; vínculos, cadastros e estado de cada cartão vêm da galeria correspondente. Somatórias auxiliares indicam que se referem aos resultados exibidos. O estado «Sem capa» acompanha a ausência de `cover_preview_url`. As galerias privadas continuam acessíveis no espaço de cada galeria pública, onde já são operadas.
+- Clientes Dourado Claro `490cf547c6e248cba09f80f5d1563c5f`: composição com título, atalho de cadastro, busca e registros alinhados em colunas no desktop. A apresentação móvel empilha os dados. Os indicadores da lista consideram somente clientes carregadas e são identificados como tal. A edição e o cadastro usam os formulários existentes. Última atividade, exportação e filtros demonstrativos do protótipo exigem contratos próprios e ficam fora deste recorte.
+
+| Região | Origem e campos | Estados e ações |
+| --- | --- | --- |
+| Galerias | `GET /api/admin/parent-galleries/overview?query=...` · `total`, `parent_galleries[].id,name,event_name,active,cover_preview_url,private_gallery_count,registration_count` | Carregamento, erro, nenhum resultado, cartão com ou sem capa e situação ativa/bloqueada. Busca por nome, evento, cliente ou telefone; alternância de grade/lista usa os mesmos resultados. Criação e detalhe mantêm suas rotas e autenticação. |
+| Clientes | `GET /api/admin/clients?limit=24&query=...&cursor=...` · `clients[].id,name,phone,aggregates.public_galleries,aggregates.private_galleries,aggregates.orders,deletion_eligible`, `page.has_more,next_cursor` | Carregamento, erro, nenhum cadastro, nenhum resultado ou resultados com e sem vínculo. Busca por nome ou WhatsApp, paginação e edição mantêm o comportamento existente. |
+| Ações de cliente | `POST /api/admin/clients`, `PATCH /api/admin/clients/{id}`, endpoints de alteração de telefone e inventário/exclusão usados por `ClientEditorDialog` | Cadastro, edição e exclusão continuam delegados aos componentes atuais, com os mesmos controles de autorização e confirmação. |
 
 ## Risks / Trade-offs
 

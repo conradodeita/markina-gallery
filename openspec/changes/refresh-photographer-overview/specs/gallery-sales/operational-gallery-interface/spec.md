@@ -25,3 +25,17 @@ A Visão Geral SHALL reunir navegação, busca de galerias e ações de sessão 
 
 - **WHEN** a carteira aguarda resposta, possui saldo sem movimentações ou falha ao carregar
 - **THEN** o painel apresenta o estado correspondente e mantém disponíveis os indicadores e atalhos operacionais já carregados
+
+### Requirement: Apresentação dos catálogos administrativos
+
+Galerias e Clientes SHALL reutilizar a navegação responsiva do painel do fotógrafo e os endpoints autenticados de cada catálogo. A UI MUST apresentar carregamento, erro e resultados vazios, refletir apenas os registros autorizados e preservar as ações e rotas existentes.
+
+#### Scenario: Fotógrafo consulta Galerias
+
+- **WHEN** o fotógrafo busca ou alterna a apresentação do catálogo
+- **THEN** os cartões usam as galerias públicas retornadas, exibem capa somente quando fornecida e mantêm criação e abertura dos detalhes autorizados
+
+#### Scenario: Fotógrafo consulta Clientes
+
+- **WHEN** o fotógrafo busca, carrega mais clientes ou abre uma ação de cadastro ou edição
+- **THEN** o diretório apresenta somente registros retornados da conta, mantém a paginação existente e delega as mudanças aos controles autorizados existentes

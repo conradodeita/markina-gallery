@@ -68,13 +68,13 @@ describe("telas administrativas de galerias", () => {
     render(<GalleriesPage />);
     await screen.findByText("Nenhum resultado nesta visão.");
     fireEvent.change(
-      screen.getByLabelText("Buscar galeria por nome, evento, cliente ou telefone"),
+      screen.getByRole("searchbox", { name: "Buscar galeria por nome, evento, cliente ou telefone" }),
       { target: { value: "Maria" } },
     );
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith(
         "/api/admin/parent-galleries/overview?query=Maria",
-        { credentials: "same-origin" },
+        expect.objectContaining({ credentials: "same-origin", signal: expect.any(AbortSignal) }),
       ),
     );
     expect(fetchMock.mock.calls.some(([path]) => String(path).includes("derived-galleries"))).toBe(false);

@@ -19,3 +19,25 @@
 1. Entrar como fotógrafo de teste e abrir a Visão Geral. Conferir barra lateral, indicadores, ritual e galerias recentes.
 2. Acionar a busca e digitar um termo no filtro da lista de Galerias. Voltar à Visão Geral e alternar entre os temas.
 3. Conferir saldo e movimentações. Reduzir a janela para celular, abrir o menu e navegar pelo teclado.
+
+## 2. Galerias
+
+- [x] 2.1 Adaptar a lista autenticada conforme o Stitch, com busca real, capas autorizadas, estados de carregamento/vazio/erro, alternância de apresentação e atalhos existentes.
+- [x] 2.2 Verificar contratos e renderização no desktop e celular, incluindo capa, abertura da galeria e rótulos coerentes com a resposta.
+
+- Com backend local e sessão de teste da conta A, a resposta exibiu três registros e a fonte «Piloto abstrato A». Uma busca inexistente mostrou o estado vazio e a busca «Piloto» restaurou o cartão. A tela coube em 1440 px e 390 px.
+- No Edge com respostas sintéticas, a lista coube em 1280, 390 e 320 px e exibiu capa quando fornecida, marcador sem capa e os dois modos de apresentação. O link abriu o detalhe da galeria e manteve o atalho existente de edição. Mudanças rápidas de consulta descartam a resposta de solicitações canceladas.
+
+## 3. Clientes
+
+- [x] 3.1 Adaptar o diretório autenticado conforme o Stitch, com resumo da lista, busca, linhas responsivas e formulários protegidos existentes.
+- [x] 3.2 Verificar contratos e renderização no desktop e celular, incluindo paginação, estados do diretório, cadastro e edição.
+
+- Com o backend local autenticado, a conta de teste A exibiu três clientes e a B não exibiu resultados. O diretório coube no desktop e em 390 px. A busca inexistente apresentou o estado vazio e Editar abriu, em 390 px, o diálogo da cliente «Sintética A0» com o nome retornado.
+- Com respostas sintéticas, Edge passou em 1280, 390 e 320 px, incluindo paginação por cursor, busca, CTA até o formulário e abertura do editor. O cadastro e as operações autorizadas de edição/exclusão continuam cobertos pelos testes do diretório.
+
+### Verificações compartilhadas
+
+- Vitest passou 60 testes direcionados em oito arquivos. TypeScript, ESLint e OpenSpec estrito passaram. Os estilos substituídos sem consumidores foram retirados.
+- A regressão do instalador PWA foi corrigida preservando uma única instância na raiz e o contrato de registro do service worker. O ensaio no Edge simulou a disponibilidade do instalador e confirmou que o botão continuou único ao navegar entre Clientes e Galerias.
+- Build e suíte completa seguem na CI da PR.

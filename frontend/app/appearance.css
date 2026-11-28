@@ -10,6 +10,8 @@
 
 .appearance-toolbar { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:8px 20px; padding:6px var(--mk-page-gutter); color:var(--mk-ink); background:var(--mk-surface-gradient); border-bottom:1px solid var(--mk-border); }
 .appearance-toolbar .pwa-install-bar { padding:0; border:0; background:transparent; flex-wrap:wrap; }
+.appearance-toolbar--integrated { position:fixed; z-index:7; inset-inline-end:16px; bottom:max(16px, env(safe-area-inset-bottom)); max-width:calc(100% - 32px); padding:6px; border:1px solid var(--mk-border); border-radius:12px; }
+.appearance-toolbar--integrated:empty { display:none; }
 .mk-dialog-backdrop { z-index:100; }
 .client-checkout-qr,.gallery-pix-qr,.whatsapp-pairing-qr { background:#fff; color-scheme:light; }
 .theme-control { display:flex; align-items:center; gap:8px; font-size:.8rem; font-weight:600; }

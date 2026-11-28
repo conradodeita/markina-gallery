@@ -105,9 +105,9 @@ describe("diretório global de clientes", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<ClientDirectory />);
 
-    const card = (await screen.findByText("Ana Vinculada")).closest("article")!;
-    expect(within(card).getByText("Já vinculada")).toBeTruthy();
-    expect(within(card).getByText("3")).toBeTruthy();
+    const row = await screen.findByRole("row", { name: /Ana Vinculada/ });
+    expect(within(row).getByText("Já vinculada")).toBeTruthy();
+    expect(within(row).getByText("3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Carregar mais" }));
     expect(await screen.findByText("Bia Cliente")).toBeTruthy();
 

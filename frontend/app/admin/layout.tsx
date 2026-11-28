@@ -7,9 +7,10 @@ import Link from "next/link";
 import { AdminNavigation } from "./admin-navigation";
 import { usePathname } from "next/navigation";
 import { OverviewShell } from "./overview-shell";
+import { usesPhotographerShell } from "./photographer-shell-routes";
 
 export default function AdminLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  if (usePathname() === "/admin") return <OverviewShell>{children}</OverviewShell>;
+  if (usesPhotographerShell(usePathname())) return <OverviewShell>{children}</OverviewShell>;
 
   return <div className="admin-frame"><header className="admin-topbar"><Link className="admin-brand" href="/admin"><BrandLogo /><small>Central do fotógrafo</small></Link><AdminNavigation /></header><OnboardingGateNotice /><main className="admin-content"><TenantAddressNotice />{children}</main></div>;
 }

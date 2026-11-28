@@ -1,6 +1,7 @@
 import { PRODUCT_NAME } from "./product-brand";
 import type { Metadata, Viewport } from "next";
 import { AppearanceToolbar } from "./appearance-toolbar";
+import { InstallApp } from "./install-app";
 import { themeBootstrap } from "./theme";
 import { SessionBoundary } from "./session-boundary";
 import { MonitorActivity } from "./monitor-activity";
@@ -27,7 +28,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: themeBootstrap }} /></head>
-      <body><AppearanceToolbar /><SessionBoundary><MonitorActivity />{children}</SessionBoundary></body>
+      <body><AppearanceToolbar><InstallApp /></AppearanceToolbar><SessionBoundary><MonitorActivity />{children}</SessionBoundary></body>
     </html>
   );
 }
