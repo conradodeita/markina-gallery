@@ -420,10 +420,23 @@ def test_session_and_membership_are_revalidated_and_sources_do_not_claim_health(
     client, session, _tenant_id, _ = http
     response = client.get("/admin/platform/console/sources")
     assert response.status_code == 200
-    assert {item["key"] for item in response.json()["items"]} == {"backup", "drive", "archive", "restore"}
+    assert {item["key"] for item in response.json()["items"]} == {
+        "backup", "drive", "archive", "restore", "postgres_restore",
+    }
     sources = {item["key"]: item for item in response.json()["items"]}
-    assert all(sources[key]["state"] == "unknown" and sources[key]["source"] is None
-               and sources[key]["observed_at"] is None for key in ("backup", "archive", "restore"))
+    assert sources["backup"]["state"] == "unknown"
+    assert sources["backup"]["source"] == "application_database.global_postgresql_backup_run"
+    assert sources["backup"]["observed_at"] is not None
+    assert sources["archive"]["state"] == "unknown"
+    assert sources["archive"]["source"] is None
+    assert sources["archive"]["reason"] == "source_not_integrated"
+    assert sources["restore"]["state"] == "unknown"
+    assert sources["restore"]["source"] == "application_database.media_archive_operation"
+    assert sources["restore"]["observed_at"] is None
+    assert sources["restore"]["reason"] == "no_recovery_operation"
+    assert sources["postgres_restore"]["state"] == "unknown"
+    assert sources["postgres_restore"]["source"] is None
+    assert sources["postgres_restore"]["reason"] == "restore_bootstrap_not_integrated"
     assert sources["drive"]["state"] == sources["drive"]["availability"] == "unknown"
     assert sources["drive"]["source"] == "application_database.google_drive_connection"
     assert sources["drive"]["scope"] == "platform_owner"
@@ -433,6 +446,78 @@ def test_session_and_membership_are_revalidated_and_sources_do_not_claim_health(
     membership.active = False
     client_db.commit()
     assert client.get("/admin/platform/console/tenants?mode=all").status_code == 403
+
+
+def test_sources_expose_only_allowlisted_media_restore_status(http, client_db):
+    client, _session, tenant_id, photographer_id = http
+    photo = create_photo(client_db, tenant_id)
+    folder = client_db.get(PhotoFolder, photo.folder_id)
+    cycle = MediaArchiveCycle(
+        tenant_id=tenant_id,
+        parent_gallery_id=photo.parent_gallery_id,
+        folder_id=folder.id,
+        cycle_number=1,
+        state="archived",
+        manifest_sha256="a" * 64,
+        object_count=1,
+        total_bytes=1,
+        archived_at=now(),
+    )
+    client_db.add(cycle)
+    client_db.flush()
+    client_db.add(
+        MediaArchiveOperation(
+            tenant_id=tenant_id,
+            cycle_id=cycle.id,
+            operation_type="restore",
+            status="reconciliation_required",
+            idempotency_key="synthetic-owner-console-restore",
+            actor_type="tenant",
+            actor_admin_id=photographer_id,
+            details={"synthetic_private_detail": "must_not_leave_database"},
+            last_error="synthetic_internal_detail_must_not_leave_database",
+        )
+    )
+    client_db.flush()
+
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    sources = {item["key"]: item for item in response.json()["items"]}
+    restore = sources["restore"]
+    assert restore["state"] == restore["availability"] == "unknown"
+    assert restore["source"] == "application_database.media_archive_operation"
+    assert restore["latest_run_status"] == "reconciliation_required"
+    assert restore["observed_at"] is not None
+    assert "tenant_id" not in restore
+    assert "last_error" not in restore and "details" not in restore
+    assert sources["postgres_restore"]["state"] == "unknown"
+    assert sources["postgres_restore"]["source"] is None
+    assert "must_not_leave_database" not in response.text
+    assert "synthetic_internal_detail" not in response.text
+
+
+def test_media_restore_source_reports_unavailable_without_database_error_details():
+    observed_at = now()
+
+    class BrokenSession:
+        def scalar(self, _statement):
+            raise SQLAlchemyError("synthetic_private_database_detail")
+
+        def rollback(self):
+            return None
+
+    result = console._media_archive_restore_source(BrokenSession(), observed_at=observed_at)
+
+    assert result["state"] == result["availability"] == "unavailable"
+    assert result["source"] == "application_database.media_archive_operation"
+    assert result["observed_at"] == observed_at
+    assert result["reason"] == "source_unavailable"
+    assert set(result) == {
+        "key", "state", "availability", "source", "scope", "observed_at",
+        "latest_run_status", "reason",
+    }
+    assert "synthetic_private_database_detail" not in str(result)
 
 
 def test_drive_source_exposes_only_persisted_owner_state_and_quota_without_claiming_health(http, client_db):

@@ -15,6 +15,7 @@ from app.admin_account import AdminAccountError, reauthenticate_admin
 from app.auth import (
     AdminUser,
     GoogleDriveConnection,
+    MediaArchiveOperation,
     ParentGallery,
     PhotoAsset,
     PlatformAdminEvent,
@@ -666,6 +667,8 @@ def _global_backup_source(db, *, observed_at):
             validated_day = date.fromisoformat(receipt["scheduled_day"])
         except ValueError:
             validated_day = None
+        if validated_day is not None and validated_day > observed_at.date():
+            validated_day = None
 
     state = "unknown"
     if validated_day is not None:
@@ -688,6 +691,76 @@ def _global_backup_source(db, *, observed_at):
         "snapshot_id": receipt.get("snapshot_id") if validated_day else None,
         "dump_size_bytes": receipt.get("dump_size_bytes") if validated_day else None,
         "duration_ms": receipt.get("duration_ms") if validated_day else None,
+    }
+
+
+def _media_archive_restore_source(db, *, observed_at):
+    source = "application_database.media_archive_operation"
+    try:
+        operation = db.scalar(
+            select(MediaArchiveOperation)
+            .where(MediaArchiveOperation.operation_type == "restore")
+            .order_by(
+                MediaArchiveOperation.updated_at.desc(),
+                MediaArchiveOperation.created_at.desc(),
+            )
+            .limit(1)
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        return {
+            "key": "restore",
+            "state": "unavailable",
+            "availability": "unavailable",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": observed_at,
+            "latest_run_status": None,
+            "reason": "source_unavailable",
+        }
+
+    if operation is None:
+        return {
+            "key": "restore",
+            "state": "unknown",
+            "availability": "unknown",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": None,
+            "latest_run_status": None,
+            "reason": "no_recovery_operation",
+        }
+
+    allowed_statuses = {
+        "queued",
+        "processing",
+        "failed",
+        "reconciliation_required",
+        "completed",
+        "cancelled",
+    }
+    status = operation.status if operation.status in allowed_statuses else "unknown"
+    return {
+        "key": "restore",
+        "state": "unknown",
+        "availability": "unknown",
+        "source": source,
+        "scope": "platform_owner",
+        "observed_at": operation.updated_at or operation.created_at,
+        "latest_run_status": status,
+    }
+
+
+def _global_postgresql_restore_source():
+    return {
+        "key": "postgres_restore",
+        "state": "unknown",
+        "availability": "unknown",
+        "source": None,
+        "scope": "platform_owner",
+        "observed_at": None,
+        "latest_run_status": None,
+        "reason": "restore_bootstrap_not_integrated",
     }
 
 
@@ -716,10 +789,12 @@ def sources(request: Request, response: Response):
             and connection.state == "connected" else None,
         }
         backup = _global_backup_source(db, observed_at=observed_at)
-        unknown = [{"key": key, "state": "unknown", "availability": "unknown", "source": None,
-                    "scope": "platform", "observed_at": None, "reason": "source_not_integrated"}
-                   for key in ("archive", "restore")]
-        return {"items": [backup, drive, *unknown]}
+        archive = {"key": "archive", "state": "unknown", "availability": "unknown",
+                   "source": None, "scope": "platform_owner", "observed_at": None,
+                   "reason": "source_not_integrated"}
+        restore = _media_archive_restore_source(db, observed_at=observed_at)
+        postgres_restore = _global_postgresql_restore_source()
+        return {"items": [backup, drive, archive, restore, postgres_restore]}
 
 
 class StatusInput(BaseModel):

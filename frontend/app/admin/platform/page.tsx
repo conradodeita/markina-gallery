@@ -17,6 +17,8 @@ type Detail = Omit<Tenant, "admin_email"> & { gallery_count: number; photo_count
 type Page = { items: Tenant[]; has_more: boolean; observed_at: string };
 type Mode = "" | "all" | "alphabetical" | "recent";
 type Audit = { id: string; action: string; result: string; created_at: string; reason_code?: string; evidence_sha256?: string };
+const EXPECTED_SOURCE_KEYS = ["backup", "drive", "archive", "restore", "postgres_restore"] as const;
+
 type Source = {
   key: string;
   state: string;
@@ -83,6 +85,19 @@ function sourceEvidenceDateLabel(source: Source | undefined) {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "Idade e evidência não informadas";
   return `${source?.last_validated_at ? "Última evidência" : "Estado observado"} em ${date.toLocaleString("pt-BR")}`;
+}
+
+function mediaRestoreOperationLabel(source: Source | undefined) {
+  const labels: Record<string, string> = {
+    queued: "aguardando processamento",
+    processing: "em processamento",
+    failed: "falha",
+    reconciliation_required: "reconciliação necessária",
+    completed: "concluída",
+    cancelled: "cancelada",
+  };
+  if (!source?.latest_run_status) return null;
+  return labels[source.latest_run_status] ?? "desconhecida";
 }
 
 function driveStateLabel(source: Source) {
@@ -152,7 +167,10 @@ function ConsoleContent() {
       if (!response.ok) throw new Error();
       const result = await response.json();
       if (!sourceController.signal.aborted) {
-        if (Array.isArray(result.items) && result.items.length === 4) setSources(result.items as Source[]);
+        const hasExpectedSources = Array.isArray(result.items)
+          && result.items.length === EXPECTED_SOURCE_KEYS.length
+          && EXPECTED_SOURCE_KEYS.every((key) => result.items.some((item: { key?: unknown }) => item?.key === key));
+        if (hasExpectedSources) setSources(result.items as Source[]);
         else setSourcesFailed(true);
       }
     }).catch(() => { if (!sourceController.signal.aborted) setSourcesFailed(true); });
@@ -326,6 +344,15 @@ function ConsoleContent() {
           </div>;
         })()}
         {(() => {
+          const restore = sources.find((item) => item.key === "postgres_restore");
+          return <div>
+            <h3>Recuperação global do PostgreSQL</h3>
+            <p>{sourceStateLabel(restore, "Recuperação global do PostgreSQL")}</p>
+            <p>{sourceOriginLabel(restore)}</p>
+            <small>{sourceEvidenceDateLabel(restore)}. Nenhum restore é iniciado nesta consulta.</small>
+          </div>;
+        })()}
+        {(() => {
           const archive = sources.find((item) => item.key === "archive");
           return <div>
             <h3>Arquivo frio de mídia</h3>
@@ -336,11 +363,13 @@ function ConsoleContent() {
         })()}
         {(() => {
           const restore = sources.find((item) => item.key === "restore");
+          const operationStatus = mediaRestoreOperationLabel(restore);
           return <div>
             <h3>Recuperação de mídia</h3>
             <p>{sourceStateLabel(restore, "Recuperação de mídia")}</p>
+            {operationStatus ? <p>Operação de recuperação registrada: {operationStatus}</p> : null}
             <p>{sourceOriginLabel(restore)}</p>
-            <small>{sourceEvidenceDateLabel(restore)}</small>
+            <small>{sourceEvidenceDateLabel(restore)}. O registro local não confirma disponibilidade remota da mídia.</small>
           </div>;
         })()}
       </> : null}

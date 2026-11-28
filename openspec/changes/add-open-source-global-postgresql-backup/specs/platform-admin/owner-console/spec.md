@@ -32,6 +32,10 @@ A página SHALL apresentar somente evidência persistida e MUST NOT iniciar back
 - **WHEN** não há recibo local validado
 - **THEN** a interface mostra estado desconhecido e não afirma sucesso
 
+#### Scenario: Recibo validado com data futura
+- **WHEN** o recibo local informa data posterior ao dia observado
+- **THEN** a interface mantém o estado desconhecido e não expõe snapshot, tamanho ou instante como evidência validada
+
 #### Scenario: Tabela local indisponível
 - **WHEN** a consulta do recibo falha
 - **THEN** a interface mostra estado indisponível sem expor detalhes do erro
@@ -60,3 +64,11 @@ A interface SHALL mostrar origem, alvo isolado, resultado de verificação e est
 #### Scenario: Recuperação isolada concluída
 - **WHEN** a restauração isolada termina
 - **THEN** a interface mostra a evidência sanitizada e mantém o banco ativo sem alteração até a autorização operacional correspondente
+
+#### Scenario: Operação de recuperação de mídia registrada
+- **WHEN** existe uma operação local `restore` no catálogo de operações de mídia
+- **THEN** a interface apresenta somente o status allowlisted e o instante do registro, sem tenant, identificador de operação, detalhes ou erro interno, e não interpreta esse registro como disponibilidade remota da mídia ou recuperação global do PostgreSQL
+
+#### Scenario: Restauração global sem recibo durável
+- **WHEN** o bootstrap protegido ainda não grava um recibo durável de restauração PostgreSQL
+- **THEN** o Console mostra a restauração global como desconhecida, sem origem, idade ou evidência de sucesso, mantendo-a distinta da recuperação de mídia

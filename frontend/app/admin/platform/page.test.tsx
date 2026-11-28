@@ -9,9 +9,12 @@ const tenant = { tenant_id: "00000000-0000-4000-8000-000000000100", status: "act
 const json = (data: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } }));
 const unknownSources: Array<{ key: string; state: string; availability: string; source: string | null; scope: string;
   observed_at: string | null; connection_updated_at?: string | null; quota_limit: string | null;
-  quota_usage: string | null; quota_observed_at: string | null }> = ["backup", "drive", "archive", "restore"].map((key) => ({
-  key, state: "unknown", availability: "unknown", source: key === "drive" ? "application_database.google_drive_connection" : null,
-  scope: key === "drive" ? "platform_owner" : "platform", observed_at: key === "drive" ? observed : null,
+  quota_usage: string | null; quota_observed_at: string | null }> = ["backup", "drive", "archive", "restore", "postgres_restore"].map((key) => ({
+  key, state: "unknown", availability: "unknown",
+  source: key === "drive" ? "application_database.google_drive_connection"
+    : key === "restore" ? "application_database.media_archive_operation" : null,
+  scope: key === "drive" ? "platform_owner" : "platform",
+  observed_at: key === "drive" ? observed : null,
   quota_limit: null, quota_usage: null, quota_observed_at: null,
 }));
 
@@ -40,6 +43,18 @@ describe("console privado da plataforma", () => {
     expect(fetcher.mock.calls.map(([path]) => String(path))).toEqual(["/api/admin/platform/console/capabilities"]);
   });
 
+  it("falha fechado quando fontes retorna chave extra ou incompleta", async () => {
+    const fetcher = mockApi(true, [...unknownSources, {
+      key: "unexpected", state: "current", availability: "current", source: "synthetic",
+      scope: "platform", observed_at: observed, quota_limit: null, quota_usage: null, quota_observed_at: null,
+    }]);
+    render(<PlatformConsole />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Não foi possível consultar as fontes de acompanhamento.");
+    expect(screen.queryByText("Recuperação global do PostgreSQL: estado desconhecido")).toBeNull();
+    expect(fetcher.mock.calls.some(([path]) => String(path).endsWith("/sources"))).toBe(true);
+  });
+
   it("inicia limpo, consulta explicitamente e apresenta somente o resumo selecionado", async () => {
     const fetcher = mockApi();
     render(<PlatformConsole />);
@@ -56,8 +71,10 @@ describe("console privado da plataforma", () => {
     expect(screen.getByText(/Registro consultado em/)).toBeTruthy();
     expect(screen.getByText("Arquivo frio de mídia: estado desconhecido")).toBeTruthy();
     expect(screen.getByText("Recuperação de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Recuperação global do PostgreSQL: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Origem: registros locais de recuperação")).toBeTruthy();
     expect(screen.getAllByText("Origem não registrada")).toHaveLength(2);
-    expect(screen.getAllByText("Idade e evidência não informadas")).toHaveLength(2);
+    expect(screen.getAllByText(/Idade e evidência não informadas/)).toHaveLength(3);
     expect(screen.queryByText(/backup saudável/i)).toBeNull();
   });
 
@@ -173,6 +190,20 @@ describe("console privado da plataforma", () => {
     expect(screen.getByText("Origem: catálogo local do arquivo frio")).toBeTruthy();
     expect(screen.getByText(/Última evidência em/)).toBeTruthy();
     expect(screen.queryByText(/disponibilidade remota confirmada/i)).toBeNull();
+  });
+
+  it("mostra status persistido da operação de mídia sem tratá-lo como restauração global", async () => {
+    const mediaSources = unknownSources.map((source) => source.key === "restore" ? {
+      ...source, latest_run_status: "reconciliation_required", observed_at: observed,
+    } : source);
+    const fetcher = mockApi(true, mediaSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Recuperação de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Operação de recuperação registrada: reconciliação necessária")).toBeTruthy();
+    expect(screen.getByText("Recuperação global do PostgreSQL: estado desconhecido")).toBeTruthy();
+    expect(screen.queryByText(/restauração global concluída/i)).toBeNull();
+    expect(fetcher.mock.calls.some(([path]) => /restic|rclone|backup-run/i.test(String(path)))).toBe(false);
   });
 
   it("só libera hostname reservado após hash, confirmação e reautenticação", async () => {
