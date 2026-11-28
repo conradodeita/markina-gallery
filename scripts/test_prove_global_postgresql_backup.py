@@ -111,6 +111,13 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
                 "gallery_reopening_notification_outbox",
             ),
         )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["tenant_membership"], ("tenant_admin",)
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["gallery_lifecycle_history"],
+            ("gallery_lifecycle_operation",),
+        )
         tables = [
             table for group in APPLICATION_FIXTURE_DOMAINS.values() for table in group
         ]

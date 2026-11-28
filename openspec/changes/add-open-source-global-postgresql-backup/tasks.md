@@ -149,3 +149,9 @@
 - A prova integrada mais recente tem **57 tabelas tenant-scoped** com dados para cada um dos dois fotógrafos e dois recibos globais; veja o hash e o inventário em `validation-results.md`. Isso valida essas relações selecionadas, não a população de todas as 114 tabelas tenant-scoped do ORM.
 - A revisão de manutenção reutilizou o mapa `APPLICATION_FIXTURE_DOMAINS` e o helper `insert` existentes; as novas linhas ampliam a prova sem substituir outro fluxo, e não foi identificada refatoração segura adicional neste escopo.
 - A task 1.1 continua aberta para a reconciliação das relações restantes e inventário/provisionamento do runtime real.
+
+### Membership do tenant e histórico de ciclo cancelado — progresso da task 1.1 — 28/11/2026
+
+- O mapa explícito da fixture agora inclui `tenant_admin`, já semeado pelo bootstrap sintético com uma associação ativa para cada um dos dois tenants, e `gallery_lifecycle_operation`, com uma operação `delete_parent_gallery` cancelada por tenant. A operação não tem lease nem início destrutivo; nenhum worker é iniciado. Isso torna explícitas no recibo a associação fotógrafo/tenant e a preservação de um estado terminal sem criar efeito externo.
+- O mapa passou de 57 para **59 tabelas tenant-scoped** com dados sintéticos por tenant. Isso não cobre as 114 tabelas tenant-scoped do ORM: categorias com credenciais/sessões, dados biométricos e efeitos financeiros ou externos continuam sem fabricação indiscriminada.
+- **1.1 continua aberta** para reconciliar as relações restantes, o runtime PostgreSQL real e o provisionamento de roles/extensões/ACLs. A execução é somente local e sintética.

@@ -109,6 +109,8 @@ APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
         "gallery_reopening_notification_outbox",
     ),
     "photographer_profile": ("photographer_business_profile",),
+    "tenant_membership": ("tenant_admin",),
+    "gallery_lifecycle_history": ("gallery_lifecycle_operation",),
 }
 RUNNER_RESTIC_WINDOWS_ARCHIVE_SHA256 = (
     "bba9061c3dce081701ab353ec8cb73a78be73b71a538aad560f2d1067602b7fe"
@@ -1764,6 +1766,7 @@ def _seed_application_fixture(
                     "derived-gallery-photo-origin",
                     "private-upload-batch",
                     "private-gallery-notification",
+                    "gallery-lifecycle-operation",
                     "payment-group",
                     "order",
                     "archive-cycle",
@@ -2200,6 +2203,34 @@ def _seed_application_fixture(
                     "parent_gallery_id": ids["gallery"],
                     "client_id": ids["client"],
                     "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "gallery_lifecycle_operation",
+                {
+                    "id": ids["gallery-lifecycle-operation"],
+                    "tenant_id": tenant_id,
+                    "operation_type": "delete_parent_gallery",
+                    "target_parent_gallery_id": ids["gallery"],
+                    "target_client_id": None,
+                    "actor_admin_id": admin_id,
+                    "idempotency_key": (
+                        f"synthetic-proof:{proof_id}:{tenant_index}:cancelled-lifecycle"
+                    ),
+                    "status": "cancelled",
+                    "manifest": {
+                        "fixture": "synthetic-only",
+                        "external_actions": False,
+                    },
+                    "last_error": None,
+                    "attempts": 0,
+                    "lease_token": None,
+                    "lease_expires_at": None,
+                    "destructive_started_at": None,
+                    "completed_at": None,
+                    "created_at": now,
+                    "updated_at": now,
                 },
             )
             for table_name in ("photo_selection", "photo_favorite", "photo_view"):
