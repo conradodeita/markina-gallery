@@ -49,3 +49,17 @@ A ampliação SHALL mostrar a posição na sequência de fotos autorizadas e pre
 - **WHEN** a cliente amplia uma prévia e avança ou retorna
 - **THEN** o visualizador atualiza a mídia protegida e a posição na sequência
 - **AND** fechar retorna à coleção com foco no botão de origem
+
+### Requirement: Revisão responsiva do carrinho e dos meios disponíveis
+
+O carrinho SHALL apresentar fotos separadas por galeria, o resumo e os meios de pagamento habilitados com os dados retornados. Os grupos sem cobrança SHALL manter a finalização própria.
+
+#### Scenario: Cliente revisa uma seleção com cobrança
+
+- **WHEN** a cliente abre o carrinho
+- **THEN** a interface organiza itens, estado das prévias e totais e oferece apenas os meios e ações disponíveis
+
+#### Scenario: Cliente comunica um PIX
+
+- **WHEN** a comunicação é aceita pelo servidor
+- **THEN** a interface informa que o pagamento aguarda conferência e oferece acesso ao registro no histórico

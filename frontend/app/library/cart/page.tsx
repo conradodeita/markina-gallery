@@ -4,12 +4,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PurchasePreview } from "../../purchase-preview";
 import { notifyCartChanged } from "../../client-navigation";
-import { SystemState } from "../../ui-kit";
+import { MarkinaButton, MarkinaLink, SystemState } from "../../ui-kit";
 import MercadoPagoResume from "./mercadopago-resume";
 import PaymentLogo from "../payment-logo";
 import paymentStyles from "../payment-methods.module.css";
 import { MERCADO_PAGO_MINIMUM_TOTAL_CENTS, paymentMoney } from "../mercadopago";
 import { clientMediaStatusMessage, type MediaArchiveStatus } from "../../media-archive-status";
+import library from "../library.module.css";
+import styles from "./cart.module.css";
 
 type CartGroup = { payment_required?: boolean; message?: string; revision?: string; gallery_id: string; parent_gallery_id: string; name: string; quantity: number;
   legacy_review_url?: string | null; total_cents: number | null; error: string | null; browse_url: string;
@@ -121,58 +123,85 @@ export default function CartPage() {
     finally { locked.current = false; setBusy(false); }
   }
 
-  if (reported) return <section className="unified-cart"><h1>Pagamento informado</h1><p>Seu pagamento aguarda a confirmação do fotógrafo.</p><Link className="primary" href={`/library/purchases#payment-${reported}`}>Ver compra</Link><Link href="/library">Continuar nas galerias</Link></section>;
-  return <section className="unified-cart">
-    <h1>{!cart?.groups.length ? "Seu carrinho" : cart.groups.every((group) => group.payment_required === false) ? "Revise suas fotos" : "Revise suas fotos e escolha como pagar"}</h1>
-    <MercadoPagoResume />
-    {notice ? <p role="status">{notice} <Link href="/library/purchases">Ver histórico</Link></p> : null}
-    {error ? <div role="alert"><p>{error}</p><button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Atualizar revisão</button></div> : null}
-    {!cart && !error ? <SystemState tone="loading" title="Carregando carrinho" detail="Buscando suas fotos selecionadas." /> : null}
-    {cart?.quantity === 0 ? <><p>Seu carrinho está vazio.</p><Link className="primary" href="/library">Escolher fotos</Link></> : null}
-    {cart?.groups.map((group) => <section className="unified-cart-group" key={group.gallery_id} aria-label={`Fotos de ${group.name}`}>
-      <div className="section-heading"><h2>{group.name}</h2><span>{group.quantity} foto(s){group.total_cents !== null ? ` · ${money(group.total_cents)}` : ""}</span></div>
-      {group.message?.trim() ? <p style={{ whiteSpace: "pre-wrap" }}>{group.message}</p> : null}
-      {group.error ? <p role="alert">{group.error}</p> : null}
-      <div className="unified-cart-photos">{group.items.map((photo) => <figure key={photo.id}>
-        {photo.preview_url ? <PurchasePreview path={photo.preview_url} name={photo.name} /> : <div className="purchase-preview-unavailable" role="img" aria-label={`Prévia indisponível de ${photo.name}`}>Prévia indisponível no momento</div>}
-        <figcaption><strong>{photo.name}</strong>{photo.folder_name ? <small>{photo.folder_name}</small> : null}{photo.media_status && photo.media_status !== "available" ? <small>{clientMediaStatusMessage(photo.media_status)}</small> : null}</figcaption>
-        <button type="button" className="secondary" disabled={busy} aria-label={`Remover ${photo.name} de ${group.name}`} onClick={() => void remove(group, photo.id)}>Remover</button>
-      </figure>)}</div>
-      <div className="dashboard-actions"><Link href={group.browse_url}>Continuar escolhendo</Link><button type="button" className="secondary" disabled={busy} onClick={() => void remove(group)}>Remover seleção de {group.name}</button></div>
-      {group.payment_required === false ? <button type="button" className="primary" disabled={busy || !!group.error || !group.revision} onClick={() => void finalize(group)}>{busy ? "Salvando…" : "Finalizar seleção"}</button> : null}
-      {error && group.legacy_review_url ? <Link href={group.legacy_review_url}>Retomar pagamento anterior de {group.name}</Link> : null}
-    </section>)}
-    {cart && cart.groups.some((group) => group.payment_required !== false) ? <section className="unified-payment" aria-label="Pagamento PIX do sistema">
-      <h2>Total {cart.total_cents === null ? "a conferir" : money(cart.total_cents)}</h2>
-      <p>{cart.groups.filter((group) => group.payment_required !== false).reduce((sum, group) => sum + group.quantity, 0)} foto(s) com cobrança</p>
-      {cart.payment_error ? <p role="alert">{cart.payment_error}</p> : null}
-      <div className={paymentStyles.choices} aria-label="Formas de pagamento">
-        {cart.pix_available !== false ? <a className={paymentStyles.option} href="#cart-system-pix" aria-label="Pagar com PIX do sistema">
-          <PaymentLogo provider="pix" /><span><strong>PIX do sistema</strong><small>Pague pelo QR Code. O fotógrafo confere seu pagamento.</small></span>
-        </a> : null}
-        {cart.mercadopago_available && cart.cart_revision ? cart.total_cents !== null &&
-          cart.total_cents < MERCADO_PAGO_MINIMUM_TOTAL_CENTS ? <div className={paymentStyles.option}
-            aria-disabled="true" aria-label="Mercado Pago indisponível para este valor">
-            <PaymentLogo provider="mercadopago" /><span><strong>Mercado Pago</strong>
-              <small>Disponível a partir de {paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Selecione mais fotos ou use o PIX do sistema.</small></span>
-          </div> : <Link className={paymentStyles.option}
-            aria-label="Pagar com Mercado Pago" data-mp-checkout-cta="checkout-api" href="/library/checkout">
-            <PaymentLogo provider="mercadopago" /><span><strong>Pagar com Mercado Pago</strong><small>Cartão de crédito ou PIX · confirmação automática</small></span>
-          </Link> : null}
-      </div>
-      <div id="cart-system-pix" className={paymentStyles.manualPix}>
-      {cart.pix_available !== false ? cart.payment ? <>
-        <h3>Pague com PIX</h3>
-        {cart.payment.receiver_name ? <p>Recebedor: {cart.payment.receiver_name}</p> : null}
-        <img className="unified-pix-qr" src={cart.payment.pix_qr_code} alt="QR Code do PIX da compra" width={240} height={240} />
-        <label htmlFor="pix-copy">PIX copia e cola</label><textarea id="pix-copy" readOnly value={cart.payment.pix_copy_paste} rows={3} />
-        <button type="button" className="secondary" onClick={() => { void navigator.clipboard.writeText(cart.payment!.pix_copy_paste).then(() => setNotice("Código PIX copiado.")).catch(() => setNotice("Selecione e copie o código acima.")); }}>Copiar PIX</button>
-        {cart.payment.pix_instructions ? <p>{cart.payment.pix_instructions}</p> : null}
-        <p>Após pagar {money(cart.payment.total_cents)}, informe o pagamento para o fotógrafo conferir.</p>
-        <button type="button" className="primary" disabled={busy} onClick={() => void report()}>{busy ? "Salvando…" : "Informar pagamento"}</button>
-      </> : !error && cart.can_prepare ? <p role="status">Preparando PIX…</p> : <p>Confira os avisos acima para continuar.</p>
-        : <p>O PIX do sistema não está disponível para esta compra.</p>}
-      </div>
-    </section> : null}
+  if (reported) return <section className={`${library.library} ${styles.receipt}`}>
+    <header className={library.heading}>
+      <h1>Pagamento informado</h1>
+      <p>Seu pagamento aguarda a confirmação do fotógrafo.</p>
+    </header>
+    <div className={styles.actions}>
+      <MarkinaLink className={styles.primary} href={`/library/purchases#payment-${reported}`}>Ver compra</MarkinaLink>
+      <MarkinaLink href="/library" variant="secondary">Continuar nas galerias</MarkinaLink>
+    </div>
   </section>;
+
+  const chargedGroups = cart?.groups.filter((group) => group.payment_required !== false) ?? [];
+  return <div className={library.library}>
+    <header className={library.heading}>
+      <h1>{!cart?.groups.length ? "Seu carrinho" : chargedGroups.length ? "Revise suas fotos e escolha como pagar" : "Revise suas fotos"}</h1>
+    </header>
+    <div className={library.content}>
+      <MercadoPagoResume />
+      {notice ? <p className={styles.notice} role="status">{notice} <Link href="/library/purchases">Ver histórico</Link></p> : null}
+      {error ? <div className={library.error}>
+        <SystemState tone="error" title="Não foi possível completar esta etapa" detail={error} />
+        <MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void refresh()}>Atualizar revisão</MarkinaButton>
+      </div> : null}
+      {!cart && !error ? <SystemState tone="loading" title="Carregando carrinho" detail="Buscando suas fotos selecionadas." /> : null}
+      {cart?.quantity === 0 ? <div className={styles.receipt}><p>Seu carrinho está vazio.</p><MarkinaLink href="/library" className={styles.primary}>Escolher fotos</MarkinaLink></div> : null}
+      <div className={chargedGroups.length ? styles.twoColumn : undefined}>
+        <div className={library.content}>
+          {cart?.groups.map((group) => <section className={styles.group} key={group.gallery_id} aria-label={`Fotos de ${group.name}`}>
+            <div className={styles.groupHeading}><h2>{group.name}</h2><span>{group.quantity} foto(s){group.total_cents !== null ? ` · ${money(group.total_cents)}` : ""}</span></div>
+            {group.message?.trim() ? <p className={styles.message}>{group.message}</p> : null}
+            {group.error ? <p role="alert">{group.error}</p> : null}
+            <div className={styles.photos}>{group.items.map((photo) => <figure key={photo.id}>
+              {photo.preview_url ? <PurchasePreview path={photo.preview_url} name={photo.name} /> : <div className="purchase-preview-unavailable" role="img" aria-label={`Prévia indisponível de ${photo.name}`}>Prévia indisponível no momento</div>}
+              <figcaption><strong>{photo.name}</strong>{photo.folder_name ? <small>{photo.folder_name}</small> : null}{photo.media_status && photo.media_status !== "available" ? <small>{clientMediaStatusMessage(photo.media_status)}</small> : null}</figcaption>
+              <MarkinaButton type="button" variant="secondary" disabled={busy} aria-label={`Remover ${photo.name} de ${group.name}`} onClick={() => void remove(group, photo.id)}>Remover</MarkinaButton>
+            </figure>)}</div>
+            <div className={styles.actions}>
+              <MarkinaLink href={group.browse_url} variant="secondary">Continuar escolhendo</MarkinaLink>
+              <MarkinaButton type="button" variant="secondary" disabled={busy} onClick={() => void remove(group)}>Remover seleção de {group.name}</MarkinaButton>
+              {group.payment_required === false ? <MarkinaButton type="button" className={styles.primary} disabled={busy || !!group.error || !group.revision} onClick={() => void finalize(group)}>{busy ? "Salvando…" : "Finalizar seleção"}</MarkinaButton> : null}
+            </div>
+            {error && group.legacy_review_url ? <Link href={group.legacy_review_url}>Retomar pagamento anterior de {group.name}</Link> : null}
+          </section>)}
+        </div>
+        {cart && chargedGroups.length ? <section className={styles.payment} aria-label="Resumo do pedido e pagamento">
+          <header className={styles.summary}>
+            <h2>Resumo do pedido</h2>
+            <div><span>{chargedGroups.reduce((sum, group) => sum + group.quantity, 0)} foto(s) com cobrança</span><strong>Total {cart.total_cents === null ? "a conferir" : money(cart.total_cents)}</strong></div>
+          </header>
+          {cart.payment_error ? <p role="alert">{cart.payment_error}</p> : null}
+          <div className={`${paymentStyles.choices} ${styles.methods}`} role="group" aria-label="Formas de pagamento">
+            {cart.pix_available !== false ? <a className={paymentStyles.option} href="#cart-system-pix" aria-label="Pagar com PIX do sistema">
+              <PaymentLogo provider="pix" /><span><strong>PIX do sistema</strong><small>Pague pelo QR Code. O fotógrafo confere seu pagamento.</small></span>
+            </a> : null}
+            {cart.mercadopago_available && cart.cart_revision ? cart.total_cents !== null &&
+              cart.total_cents < MERCADO_PAGO_MINIMUM_TOTAL_CENTS ? <div className={paymentStyles.option}
+                aria-disabled="true" aria-label="Mercado Pago indisponível para este valor">
+                <PaymentLogo provider="mercadopago" /><span><strong>Mercado Pago</strong>
+                  <small>Disponível a partir de {paymentMoney(MERCADO_PAGO_MINIMUM_TOTAL_CENTS)}. Selecione mais fotos ou use o PIX do sistema.</small></span>
+              </div> : <Link className={paymentStyles.option}
+                aria-label="Pagar com Mercado Pago" data-mp-checkout-cta="checkout-api" href="/library/checkout">
+                <PaymentLogo provider="mercadopago" /><span><strong>Pagar com Mercado Pago</strong><small>Cartão de crédito ou PIX · confirmação automática</small></span>
+              </Link> : null}
+          </div>
+          <div id="cart-system-pix" className={paymentStyles.manualPix}>
+            {cart.pix_available !== false ? cart.payment ? <>
+              <h3>Pague com PIX</h3>
+              {cart.payment.receiver_name ? <p>Recebedor: {cart.payment.receiver_name}</p> : null}
+              <img className={styles.qr} src={cart.payment.pix_qr_code} alt="QR Code do PIX da compra" width={240} height={240} />
+              <div className={styles.pixCode}><label htmlFor="pix-copy">PIX copia e cola</label><textarea id="pix-copy" readOnly value={cart.payment.pix_copy_paste} rows={3} /></div>
+              <MarkinaButton type="button" variant="secondary" onClick={() => { void navigator.clipboard.writeText(cart.payment!.pix_copy_paste).then(() => setNotice("Código PIX copiado.")).catch(() => setNotice("Selecione e copie o código acima.")); }}>Copiar PIX</MarkinaButton>
+              {cart.payment.pix_instructions ? <p>{cart.payment.pix_instructions}</p> : null}
+              <p>Após pagar {money(cart.payment.total_cents)}, informe o pagamento para o fotógrafo conferir.</p>
+              <MarkinaButton type="button" className={styles.primary} disabled={busy} onClick={() => void report()}>{busy ? "Salvando…" : "Informar pagamento"}</MarkinaButton>
+            </> : !error && cart.can_prepare ? <p role="status">Preparando PIX…</p> : <p>Confira os avisos acima para continuar.</p>
+              : <p>O PIX do sistema não está disponível para esta compra.</p>}
+          </div>
+        </section> : null}
+      </div>
+    </div>
+  </div>;
 }

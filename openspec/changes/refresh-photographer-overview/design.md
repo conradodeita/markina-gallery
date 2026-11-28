@@ -160,6 +160,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - A ampliação usa a mesma prévia protegida e mantém a consulta da foto, registro de visualização, regiões autorizadas e operações da galeria. O contador mede a sequência de fotos já disponível ao visualizador. Pacotes, limites ou valores demonstrativos não dão origem a novos campos ou ações.
 - O diálogo mantém o foco no conjunto de controles e o devolve ao botão de abertura ao fechar. Comentários e busca por região continuam condicionados ao fluxo existente.
 
+### Carrinho da cliente
+
+- Referências Stitch `3bd17fcaa0754991b8fc4b84e11d184b`, `60c80a95e6ee4e05bb59a8e43e090a6f` e `da607ec9e1fd4686bbc23e74e2e41b71`: revisão por galeria, fotos, resumo com meios disponíveis, código PIX e estado de pagamento informado.
+- `GET /api/library/cart` e `POST /api/library/cart/prepare` fornecem grupos, quantidade, estado da mídia, revisão, totais, meios habilitados e dados PIX. Os grupos sem cobrança mantêm a finalização separada. `GET /api/library/mercadopago/active` abastece o acompanhamento dos pagamentos já iniciados.
+- Preservam-se as rotas, autorização, cálculo, limites, revisão e idempotência existentes para exclusão, finalização e comunicação. O retorno de `POST /api/library/payments/{id}/report` permite apresentar a confirmação de comunicação e o link para o histórico. A situação final do pagamento continua sujeita à conferência do fotógrafo. Franquias, valores e tempos demonstrativos do protótipo não aparecem na tela.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

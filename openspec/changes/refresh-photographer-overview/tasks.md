@@ -207,3 +207,11 @@
 
 - Edge em 1440, 390 e 320 px verificou 1 de 2 e 2 de 2, zoom de 150%, foco circular com Tab, retorno por Escape e a URL de prévia autorizada. A interceptação registrou apenas as duas visualizações sintéticas esperadas e não houve rolagem horizontal.
 - Vitest passou 77 testes com visualizador, galeria, regiões, busca facial e PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram. Permanecem os avisos anteriores de imagem.
+
+## 25. Carrinho da cliente
+
+- [x] 25.1 Adaptar revisão, resumo do pedido, meios disponíveis e confirmação de comunicação sem alterar os contratos de cobrança.
+- [x] 25.2 Validar desktop e celular com dados sintéticos, incluindo grupo sem cobrança, erro, PIX e caminho Mercado Pago.
+
+- Edge em 1440 px verificou grupo, prévia, total, PIX preparado e atalho Mercado Pago. Em 390 px, validou a cópia com clipboard simulado, a revisão e idempotência no POST interceptado e o retorno de comunicação pendente. Em 320 px, repetiu após 503 e finalizou uma seleção sem cobrança. Não houve rolagem horizontal nem chamadas reais de pagamento.
+- Vitest passou 38 testes de carrinho, checkout, prévias e PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram. Permanecem os avisos anteriores de imagem e limpeza de requisição.
