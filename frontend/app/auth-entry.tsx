@@ -3,9 +3,8 @@
 import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { safeAdminReturn, safeClientGalleryReturn, safeClientPurchaseReturn } from "./session-recovery";
-
-
-import { FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
+import styles from "./auth-entry.module.css";
 
 type Context = "client" | "admin";
 type Step = "details" | "private-notice" | "code" | "recovery-email" | "recovery-code" | "recovery-sent";
@@ -367,16 +366,24 @@ export function AuthEntry({
     setClientPhone("");
     setRecoveryEmail("");
   }
+  const confirmingClient = context === "client" && step === "code";
   return (
-    <main className="auth-shell">
-      <section className="auth-card" aria-labelledby="entry-title">
+    <main className={styles.shell}>
+      <header className={styles.brand}>
         <BrandLogo src={branding.logo_url} className="product-logo--entry" />
-        <h1 id="entry-title">{branding.login_title}</h1>
-        <p className="intro">{branding.login_intro}</p>
-        <p className="auth-helper">{branding.login_helper}</p>
+      </header>
+      <div className={confirmingClient ? styles.centered : styles.layout}>
+      {confirmingClient ? null : <div className={styles.editorial} aria-hidden="true" />}
+      <section className={`${styles.card} ${confirmingClient ? styles.confirmation : ""}`} aria-labelledby="entry-title">
+        <div className={styles.heading}>
+          <h1 id="entry-title">{confirmingClient ? "Confirme seu acesso" : branding.login_title}</h1>
+          {confirmingClient
+            ? <p>Digite o código de seis dígitos do WhatsApp.</p>
+            : <><p>{branding.login_intro}</p><p>{branding.login_helper}</p></>}
+        </div>
         {recoveryContext ? <p role="status">Sua sessão terminou ou não está disponível. Entre novamente para continuar.{recoveryContext === "client" && !invitation.accessToken && !contextualClientReauthentication ? " Reabra o link enviado pelo seu fotógrafo." : ""}</p> : null}
         <div
-          className="context-tabs"
+          className={`context-tabs ${styles.tabs}`}
           role="tablist"
           aria-label="Tipo de acesso"
         >
@@ -511,13 +518,14 @@ export function AuthEntry({
             </button>
           </section>
         ) : step === "code" ? (
-          <form onSubmit={verifyCode} className="auth-form">
+          <form onSubmit={verifyCode} className={`auth-form ${confirmingClient ? styles.otpForm : ""}`}>
             <label>
               {context === "client"
                 ? "Código de acesso"
                 : "Código do autenticador ou de recuperação"}
               <input
                 name="code"
+                className={confirmingClient ? styles.otpInput : undefined}
                 inputMode={context === "client" ? "numeric" : "text"}
                 autoComplete="one-time-code"
                 pattern={context === "client" ? "[0-9]{6}" : "[0-9]{6}|[A-Za-z0-9_-]{24}"}
@@ -590,6 +598,7 @@ export function AuthEntry({
           </p>
         )}
       </section>
+      </div>
     </main>
   );
 }

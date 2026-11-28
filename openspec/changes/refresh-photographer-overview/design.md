@@ -166,6 +166,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - `GET /api/library/cart` e `POST /api/library/cart/prepare` fornecem grupos, quantidade, estado da mídia, revisão, totais, meios habilitados e dados PIX. Os grupos sem cobrança mantêm a finalização separada. `GET /api/library/mercadopago/active` abastece o acompanhamento dos pagamentos já iniciados.
 - Preservam-se as rotas, autorização, cálculo, limites, revisão e idempotência existentes para exclusão, finalização e comunicação. O retorno de `POST /api/library/payments/{id}/report` permite apresentar a confirmação de comunicação e o link para o histórico. A situação final do pagamento continua sujeita à conferência do fotógrafo. Franquias, valores e tempos demonstrativos do protótipo não aparecem na tela.
 
+### Entrada e confirmação da cliente
+
+- Referências Stitch `c8c389ee323844eebc28c2659a3bc0ce` e `5f4376115e884b4fa2e294ba4849fa8b`: identidade da marca, escolha de contexto, formulário e cartão de confirmação. A tela usa a marca entregue pelo serviço e uma foto editorial sintética e local para desktop. O arquivo da foto do Stitch não estava disponível. Os campos continuam prioritários em celular.
+- A entrada mantém consulta de marca e sessão, contexto do convite, retorno autorizado e orientação quando o cliente abre sem convite. `POST /api/auth/client/challenge`, `POST /api/auth/client/verify` e `POST /api/auth/client/resend` preservam corpo e autorização atuais.
+- O cartão de OTP usa um campo de seis dígitos com preenchimento automático, erro e reenvio existentes. A apresentação não divulga se há vínculo nem indica envio confirmado sem evidência. As regras de senha, TOTP e recuperação do fotógrafo permanecem nos fluxos atuais.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

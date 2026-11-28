@@ -1,0 +1,175 @@
+.shell {
+  --auth-canvas: #fbfaf8;
+  --auth-accent: #7a5200;
+  display: grid;
+  min-height: calc(100svh - 3.25rem);
+  gap: clamp(1rem, 3vw, 2rem);
+  align-content: start;
+  padding: clamp(.9rem, 3vw, 2.5rem);
+  background: var(--auth-canvas);
+  color: var(--mk-ink);
+}
+
+:global(html[data-theme="dark"]) .shell {
+  --auth-canvas: #0e0d0b;
+  --auth-accent: #f2c343;
+}
+
+.brand {
+  width: min(100%, 70rem);
+  margin-inline: auto;
+}
+
+.layout,
+.centered {
+  width: min(100%, 65rem);
+  margin-inline: auto;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 1fr);
+  min-height: min(70svh, 34rem);
+  overflow: hidden;
+  border: 1px solid var(--mk-border);
+  border-radius: 1.35rem;
+  background: var(--mk-surface);
+  box-shadow: var(--mk-shadow-md);
+}
+
+.centered {
+  max-width: 30rem;
+}
+
+.editorial {
+  min-height: 15rem;
+  background-image:
+    url("/login-editorial.webp"),
+    radial-gradient(ellipse at 68% 30%, #efd196 0, #d0a265 21%, transparent 45%),
+    radial-gradient(ellipse at 76% 7%, #f4dfb9, transparent 60%),
+    linear-gradient(154deg, #ceae7d 0%, #a17650 46%, #534033 77%, #2d261e 100%);
+  background-position: center;
+  background-size: cover;
+}
+
+:global(html[data-theme="dark"]) .editorial {
+  background-image:
+    linear-gradient(rgb(19 12 7 / 20%), rgb(19 12 7 / 30%)),
+    url("/login-editorial.webp"),
+    radial-gradient(ellipse at 62% 31%, #ba8843 0, #7f552c 24%, transparent 47%),
+    linear-gradient(154deg, #6a4c37, #3e2920 48%, #1c1613 90%);
+}
+
+.card {
+  min-width: 0;
+  padding: clamp(1.15rem, 4vw, 2.75rem);
+  align-self: center;
+}
+
+.confirmation {
+  border: 1px solid var(--mk-border);
+  border-radius: 1.2rem;
+  background: var(--mk-surface);
+  box-shadow: var(--mk-shadow-md);
+}
+
+.heading {
+  display: grid;
+  gap: .65rem;
+  margin-block-end: 1.25rem;
+}
+
+.heading h1,
+.heading p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.heading h1 {
+  font-family: var(--font-playfair-display);
+  font-size: clamp(1.75rem, 6vw, 2.5rem);
+  line-height: 1.12;
+}
+
+.confirmation h1 {
+  font-family: inherit;
+}
+
+.heading p,
+.card :global(.auth-helper) {
+  color: var(--mk-ink-muted);
+  line-height: 1.45;
+}
+
+.confirmation .heading {
+  text-align: center;
+}
+
+.tabs {
+  margin-block-start: 1rem;
+  border: 1px solid var(--mk-border);
+  border-radius: .9rem;
+}
+
+.tabs button {
+  min-height: 44px;
+}
+
+.tabs [aria-selected="true"] {
+  border: 1px solid var(--mk-border);
+  color: var(--auth-accent);
+}
+
+.card :global(.auth-form) {
+  gap: .85rem;
+  margin-block-start: 1.15rem;
+}
+
+.card :global(.auth-form h2),
+.card :global(.auth-form p) {
+  margin: 0;
+}
+
+.card :global(.auth-form h2) {
+  font-size: 1.2rem;
+}
+
+.card :global(.auth-form input),
+.card :global(.auth-form button) {
+  min-height: 44px;
+}
+
+.card :global(.auth-form button.primary) {
+  background: linear-gradient(115deg, #735000, #936101);
+  color: #fff;
+}
+
+.card :global(.auth-form .link-button) {
+  color: var(--auth-accent);
+}
+
+.card :global(.auth-form a.link-button) {
+  display: grid;
+  min-height: 44px;
+  place-items: center;
+  text-align: center;
+}
+
+.otpForm .otpInput {
+  text-align: center;
+  font-size: 1.45rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: .45em;
+}
+
+@media (max-width: 720px) {
+  .layout {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .editorial {
+    display: none;
+  }
+}

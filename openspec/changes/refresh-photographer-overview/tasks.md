@@ -215,3 +215,11 @@
 
 - Edge em 1440 px verificou grupo, prévia, total, PIX preparado e atalho Mercado Pago. Em 390 px, validou a cópia com clipboard simulado, a revisão e idempotência no POST interceptado e o retorno de comunicação pendente. Em 320 px, repetiu após 503 e finalizou uma seleção sem cobrança. Não houve rolagem horizontal nem chamadas reais de pagamento.
 - Vitest passou 38 testes de carrinho, checkout, prévias e PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram. Permanecem os avisos anteriores de imagem e limpeza de requisição.
+
+## 26. Entrada e confirmação de acesso
+
+- [x] 26.1 Adaptar a entrada e a confirmação da cliente ao Stitch, mantendo marca, convite, fatores e respostas neutras.
+- [x] 26.2 Validar desktop e celular, seleção de papel, falta de convite, OTP inválido, reenvio e retorno autorizado em respostas sintéticas.
+
+- Edge em 1440 px verificou a orientação sem convite, troca para Fotógrafo, campos e marca da fixture. Em 390 px, realizou desafio sintético do convite, erro neutro, reenvio e redirecionamento à biblioteca. Em 320 px, exibiu o aviso da galeria privada antes do OTP, seguiu com convite e abriu a biblioteca. Os POSTs de autenticação foram interceptados, sem envio de código real ou rolagem horizontal.
+- O painel editorial usa WebP local de 84.796 bytes, sem metadados, carregado em desktop e ausente das requisições nas duas larguras de celular testadas. Vitest passou 70 testes, incluindo sessão, convite, recuperação e PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram.
