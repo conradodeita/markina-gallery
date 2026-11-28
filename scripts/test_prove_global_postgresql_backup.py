@@ -16,11 +16,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.prove_global_postgresql_backup import (
     APPLICATION_FIXTURE_DOMAINS,
     ProofFailure,
+    _completed_asset_file_cleanup_fixture,
     _copy_synthetic_repository,
     _fixture_row_summary,
     _fixture_uuid,
     _global_backup_receipt_fixture,
     _inventory_delta_summary,
+    _legacy_payment_without_provider_issue_fixture,
     _no_owner_profile_summary,
     _normalize_varchar_text_array_casts,
     _restore,
@@ -57,6 +59,14 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
         self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["disabled_payment_preferences"],
             ("payment_preferences",),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["legacy_payment_without_provider_issue"],
+            ("provider_payment",),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["completed_asset_file_cleanup"],
+            ("asset_file_cleanup",),
         )
         self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["tenant_branding"],
@@ -126,6 +136,52 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
             table for group in APPLICATION_FIXTURE_DOMAINS.values() for table in group
         ]
         self.assertEqual(len(tables), len(set(tables)))
+
+    def test_legacy_payment_fixture_never_claims_provider_issue_or_confirmation(
+        self,
+    ) -> None:
+        tenant_id = uuid.UUID("00000000-0000-4000-8000-000000000001")
+        client_id = uuid.UUID("00000000-0000-4000-8000-000000000002")
+        observed_at = datetime(2026, 11, 28, 12, tzinfo=timezone.utc)
+
+        row = _legacy_payment_without_provider_issue_fixture(
+            "synthetic-proof",
+            tenant_id,
+            client_id,
+            observed_at,
+            total_cents=500,
+        )
+
+        self.assertEqual(row["provider"], "infinitepay")
+        self.assertEqual(row["state"], "failed_before_issue")
+        self.assertEqual(row["total_cents"], 500)
+        self.assertIsNone(row["provider_transaction_nsu"])
+        self.assertIsNone(row["confirmed_at"])
+        self.assertEqual(row["created_at"], observed_at)
+        self.assertTrue(row["checkout_key"].startswith("synthetic-before-issue-"))
+
+    def test_cleanup_fixture_is_terminal_and_confined_to_its_synthetic_tenant(
+        self,
+    ) -> None:
+        tenant_id = uuid.UUID("00000000-0000-4000-8000-000000000001")
+        observed_at = datetime(2026, 11, 28, 12, tzinfo=timezone.utc)
+
+        row = _completed_asset_file_cleanup_fixture(
+            "synthetic-proof", tenant_id, observed_at
+        )
+
+        self.assertEqual(row["status"], "completed")
+        self.assertEqual(row["attempts"], 1)
+        self.assertEqual(
+            row["paths"],
+            [
+                {
+                    "root": "source",
+                    "path": f"tenants/{tenant_id}/synthetic-proof/synthetic-proof/removed.jpg",
+                }
+            ],
+        )
+        self.assertEqual(row["completed_at"], observed_at)
 
 
 class SyntheticFixtureIdTests(unittest.TestCase):

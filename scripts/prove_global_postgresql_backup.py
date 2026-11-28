@@ -56,6 +56,8 @@ APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
         "price_rule",
     ),
     "commerce_history": ("payment_group", "sale_order", "sale_order_item"),
+    "legacy_payment_without_provider_issue": ("provider_payment",),
+    "completed_asset_file_cleanup": ("asset_file_cleanup",),
     "media_processing_queue": ("photo_analysis", "media_derivative", "media_job"),
     "cold_media_catalog": (
         "media_archive_cycle",
@@ -1602,6 +1604,61 @@ def _global_backup_receipt_fixture(
     )
 
 
+def _legacy_payment_without_provider_issue_fixture(
+    proof_id: str,
+    tenant_id: uuid.UUID,
+    client_id: uuid.UUID,
+    observed_at: datetime,
+    *,
+    total_cents: int,
+) -> dict[str, Any]:
+    """Representa somente uma tentativa sintética encerrada antes do provider."""
+    return {
+        "id": _fixture_uuid(proof_id, tenant_id, "payment-failed-before-issue"),
+        "tenant_id": tenant_id,
+        "client_id": client_id,
+        "provider": "infinitepay",
+        "checkout_key": f"synthetic-before-issue-{proof_id[:32]}-{tenant_id.hex[:8]}",
+        "cart_revision": _sha256(f"synthetic-cart:{proof_id}:{tenant_id}".encode()),
+        "total_cents": total_cents,
+        "handle_snapshot": "synthetic-disabled-provider",
+        "checkout_methods_snapshot": ["credit_card"],
+        "capture_method": None,
+        "cart_dismissed_at": None,
+        "configuration_version": 1,
+        "verification_profile": "synthetic-before-issue",
+        "state": "failed_before_issue",
+        "revision_number": 0,
+        "provider_transaction_nsu": None,
+        "confirmed_at": None,
+        "created_at": observed_at,
+        "updated_at": observed_at,
+    }
+
+
+def _completed_asset_file_cleanup_fixture(
+    proof_id: str,
+    tenant_id: uuid.UUID,
+    observed_at: datetime,
+) -> dict[str, Any]:
+    """Preserva um recibo terminal com caminho sintético confinado ao tenant."""
+    return {
+        "id": _fixture_uuid(proof_id, tenant_id, "completed-asset-file-cleanup"),
+        "tenant_id": tenant_id,
+        "paths": [
+            {
+                "root": "source",
+                "path": f"tenants/{tenant_id}/synthetic-proof/{proof_id}/removed.jpg",
+            }
+        ],
+        "status": "completed",
+        "attempts": 1,
+        "last_error": None,
+        "created_at": observed_at,
+        "completed_at": observed_at,
+    }
+
+
 def _fixture_row_summary(
     populated: dict[str, dict[str, int]],
 ) -> dict[str, dict[str, Any]]:
@@ -1811,6 +1868,22 @@ def _seed_application_fixture(
                     "created_at": now,
                     "retired_at": None,
                 },
+            )
+            insert(
+                connection,
+                "provider_payment",
+                _legacy_payment_without_provider_issue_fixture(
+                    proof_id,
+                    tenant_id,
+                    ids["client"],
+                    now,
+                    total_cents=500,
+                ),
+            )
+            insert(
+                connection,
+                "asset_file_cleanup",
+                _completed_asset_file_cleanup_fixture(proof_id, tenant_id, now),
             )
             gallery_name = f"Synthetic Gallery {tenant_index}"
             insert(
