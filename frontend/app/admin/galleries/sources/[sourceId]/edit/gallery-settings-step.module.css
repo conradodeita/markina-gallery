@@ -1,0 +1,88 @@
+.page,
+.form,
+.fields {
+  display: grid;
+  min-width: 0;
+}
+
+.page {
+  gap: 16px;
+}
+
+.page h1 {
+  font-size: clamp(1.85rem, 3vw, 2.35rem);
+  letter-spacing: -.045em;
+  overflow-wrap: anywhere;
+}
+
+.page :global(.gallery-editor-heading a) {
+  color: var(--overview-gold);
+}
+
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.page :global(.gallery-stepper) {
+  margin-block: 0;
+}
+
+.page :global(.gallery-stepper a.is-current) {
+  background: var(--overview-gold-soft);
+  box-shadow: none;
+}
+
+.page :global(.gallery-stepper a.is-current span) {
+  background: var(--overview-gold);
+  color: var(--overview-surface);
+}
+
+.form {
+  gap: 18px;
+  padding: clamp(14px, 2vw, 24px);
+  border: 1px solid var(--overview-border);
+  border-radius: 16px;
+  background: var(--overview-surface);
+}
+
+.formHeading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.formHeading h2,
+.formHeading p {
+  margin: 0;
+}
+
+.icon {
+  display: grid;
+  flex: 0 0 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--overview-gold);
+  background: var(--overview-gold-soft);
+}
+
+.fields {
+  gap: 14px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--overview-border);
+  border-radius: 13px;
+}
+
+.fields legend {
+  padding-inline: 6px;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.fields :global(.gallery-toggle) {
+  width: fit-content;
+}

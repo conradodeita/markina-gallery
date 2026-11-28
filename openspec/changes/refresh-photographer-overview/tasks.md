@@ -103,3 +103,11 @@
 
 - Edge em 1440, 390 e 320 px exibiu o total confirmado sem contar cancelados, preservou carrinho reaberto, executou busca por nome com acento e por ID e combinou filtro de situação, sem rolagem horizontal ou nova consulta causada pelos filtros. O snapshot PIX foi visível somente no pedido pendente do ensaio. Todas as requisições do teste foram de leitura sobre respostas sintéticas.
 - Vitest passou 28 testes em cinco arquivos. TypeScript, ESLint e OpenSpec estrito passaram.
+
+## 12. Ajustes da galeria
+
+- [x] 12.1 Adaptar a primeira etapa do editor conforme Stitch, preservando trilha, metadados e modos de acesso existentes.
+- [x] 12.2 Validar navegação, rascunho, patch de ajuste e avanço em desktop e celular.
+
+- Edge em 1440, 390 e 320 px verificou a etapa ativa e a rota da prévia, cancelou a saída com rascunho e conferiu PATCH sintético. Um HTTP 422 preservou o título; o segundo envio, aceito, avançou para Vendas com os campos e o modo selecionado. As três larguras ficaram sem rolagem horizontal.
+- Vitest passou 97 testes em quatro arquivos, incluindo preservação do modo legado. TypeScript e OpenSpec estrito passaram. ESLint manteve quatro avisos preexistentes de imagens em outras etapas do editor.

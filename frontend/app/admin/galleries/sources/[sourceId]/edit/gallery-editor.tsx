@@ -21,6 +21,8 @@ import { FolderProcessingPanel } from "../../../folder-processing-panel";
 import { isDefinitiveUploadRejection, useCreditUploadStatus } from "../../../../credits/credit-upload-status";
 import { GlobalPixSummary, type GlobalPix } from "../../../../settings/pix-panel";
 import { formatBrazilianCurrency, maskBrazilianCurrencyInput, parseBrazilianCurrency, type PriceTier } from "../../../pricing-rules";
+import { OverviewIcon } from "../../../../overview-icon";
+import styles from "./gallery-settings-step.module.css";
 
 type StepId = "ajustes" | "vendas" | "detalhes" | "imagens" | "clientes";
 type EditorStep = { id: StepId; label: string; status: "complete" | "pending" | "unavailable"; available: boolean };
@@ -848,15 +850,18 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   if (loading || !editor) return <SystemState tone="loading" title="Abrindo a galeria" detail="Consultando etapas, permissões e conteúdo." />;
 
   return (
-    <main className="admin-shell gallery-editor-shell">
+    <div className={currentStep === "ajustes" ? styles.page : "admin-shell gallery-editor-shell"}>
       <div className="gallery-editor-heading">
         <div>
           <Link href="/admin/galleries" onClick={confirmDiscard}>← Galerias</Link>
-          <p className="eyebrow">Galeria do evento · link não listado</p>
+          <p className="eyebrow">{currentStep === "ajustes" ? "Galeria pública" : "Galeria do evento · link não listado"}</p>
           <h1>{editor.gallery.name}</h1>
-          <p className="intro">Organize as pastas, revise as fotos e vincule clientes sem sair desta galeria.</p>
+          <p className="intro">{currentStep === "ajustes" ? "Defina a identificação, o modo de acesso e a disponibilidade da galeria." : "Organize as pastas, revise as fotos e vincule clientes sem sair desta galeria."}</p>
         </div>
-        <StatusBadge tone={editor.gallery.active ? "success" : "danger"}>{editor.gallery.active ? "Ativa" : "Bloqueada"}</StatusBadge>
+        <div className={styles.headerActions}>
+          <StatusBadge tone={editor.gallery.active ? "success" : "danger"}>{editor.gallery.active ? "Ativa" : "Bloqueada"}</StatusBadge>
+          {currentStep === "ajustes" ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/preview`} onClick={confirmDiscard}>Visualizar galeria pública</Link> : null}
+        </div>
       </div>
       <nav className="gallery-stepper" aria-label="Etapas da galeria">
         {editor.steps.map((item, index) => (
@@ -867,15 +872,21 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       </nav>
 
       {currentStep === "ajustes" ? (
-        <form id="gallery-settings-step" className="gallery-editor-panel gallery-settings-form" onSubmit={saveSettings} onChange={() => setDirty(true)}>
-          <div className="section-heading"><div><p className="eyebrow">Etapa 1</p><h2>Ajustes da galeria</h2></div></div>
-          <label>Título da galeria<input name="name" defaultValue={editor.gallery.name} required /></label>
-          <label>Evento<input name="event_name" defaultValue={editor.gallery.event_name} /></label>
-          <label>Descrição administrativa<textarea name="description" defaultValue={editor.gallery.description} rows={4} /><small className="field-hint">Uso interno do fotógrafo para registrar contexto, observações e pendências desta galeria.</small></label>
-          {editor.gallery.access_mode === "collective_protected" ? <p role="status">Modo protegido legado: o acesso continua bloqueado. Escolher outro modo altera a possibilidade de entrada e navegação, sem ativar vínculos pendentes.</p> : null}
-          <label>Modo de acesso<select name="access_mode" defaultValue={editor.gallery.access_mode === "collective_protected" ? "" : editor.gallery.access_mode}>{editor.gallery.access_mode === "collective_protected" ? <option value="">Manter modo protegido legado</option> : null}<option value="standard">Padrão</option><option value="invite_only">Somente convite individual</option></select><small className="field-hint">A autorização é aplicada pelo backend; nenhuma opção libera prévias antes do login.</small></label>
-          <div className="access-mode-hints" role="region" aria-label="Como funcionam os modos de acesso"><article><strong>Padrão</strong><p>Quem recebe o link válido e confirma o código no WhatsApp pode entrar, sem cadastro prévio pelo fotógrafo.</p></article><article><strong>Somente convite individual</strong><p>Só entram clientes vinculadas pelo fotógrafo ou autorizadas por convite individual. Encaminhar o link geral não dá acesso a outra pessoa.</p></article><p>Nos dois modos, cada cliente vê as pastas comuns e somente as exclusivas atribuídas a ela. Seleções e compras continuam individuais.</p></div>
-          <label className="gallery-toggle"><input name="active" type="checkbox" defaultChecked={editor.gallery.active} /> Galeria ativa</label>
+        <form id="gallery-settings-step" className={`gallery-settings-form ${styles.form}`} onSubmit={saveSettings} onChange={() => setDirty(true)}>
+          <div className={styles.formHeading}><span className={styles.icon}><OverviewIcon name="settings" /></span><div><p className="eyebrow">Etapa 1</p><h2>Ajustes da galeria</h2></div></div>
+          <fieldset className={styles.fields}>
+            <legend>Identificação da galeria</legend>
+            <label>Título da galeria<input name="name" defaultValue={editor.gallery.name} required /></label>
+            <label>Evento<input name="event_name" defaultValue={editor.gallery.event_name} /></label>
+            <label>Descrição administrativa<textarea name="description" defaultValue={editor.gallery.description} rows={4} /><small className="field-hint">Uso interno do fotógrafo para registrar contexto, observações e pendências desta galeria.</small></label>
+          </fieldset>
+          <fieldset className={styles.fields}>
+            <legend>Segurança e modo de acesso</legend>
+            {editor.gallery.access_mode === "collective_protected" ? <p role="status">Modo protegido legado: o acesso continua bloqueado. Escolher outro modo altera a possibilidade de entrada e navegação, sem ativar vínculos pendentes.</p> : null}
+            <label>Modo de acesso<select name="access_mode" defaultValue={editor.gallery.access_mode === "collective_protected" ? "" : editor.gallery.access_mode}>{editor.gallery.access_mode === "collective_protected" ? <option value="">Manter modo protegido legado</option> : null}<option value="standard">Padrão</option><option value="invite_only">Somente convite individual</option></select><small className="field-hint">A autorização é aplicada pelo backend; nenhuma opção libera prévias antes do login.</small></label>
+            <div className="access-mode-hints" role="region" aria-label="Como funcionam os modos de acesso"><article><strong>Padrão</strong><p>Quem recebe o link válido e confirma o código no WhatsApp pode entrar, sem cadastro prévio pelo fotógrafo.</p></article><article><strong>Somente convite individual</strong><p>Só entram clientes vinculadas pelo fotógrafo ou autorizadas por convite individual. Encaminhar o link geral não dá acesso a outra pessoa.</p></article><p>Nos dois modos, cada cliente vê as pastas comuns e somente as exclusivas atribuídas a ela. Seleções e compras continuam individuais.</p></div>
+            <label className="gallery-toggle"><input name="active" type="checkbox" defaultChecked={editor.gallery.active} /> Galeria ativa</label>
+          </fieldset>
         </form>
       ) : null}
 
@@ -1046,6 +1057,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         {previous ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/${previous}`} onClick={confirmDiscard}>← Voltar</Link> : <span />}
       {next && activeEditableForm ? <MarkinaButton type="submit" form={activeEditableForm} disabled={savingStep || (currentStep === "detalhes" && !coverReady)}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : currentStep === "imagens" ? <MarkinaButton type="button" disabled={savingStep} onClick={saveImagesAndAdvance}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : next ? <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/edit/${next}`}>Avançar →</Link> : <MarkinaButton type="button" disabled={savingStep} onClick={completeGallery}>{savingStep ? "Verificando…" : "Concluir"}</MarkinaButton>}
       </footer>
-    </main>
+    </div>
   );
 }

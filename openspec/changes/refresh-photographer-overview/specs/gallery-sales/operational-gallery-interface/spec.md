@@ -117,3 +117,12 @@ A consulta SHALL apresentar métricas e snapshots dos pedidos retornados à gale
 
 - **WHEN** filtra a lista ou abre o snapshot de um pedido pendente
 - **THEN** a tela mantém os totais da galeria, apresenta os registros correspondentes e exibe as instruções PIX somente quando o pedido pendente as fornece
+
+### Requirement: Apresentação da etapa Ajustes da galeria
+
+A primeira etapa SHALL apresentar metadados, situação e modos de acesso do editor autenticado em um layout responsivo.
+
+#### Scenario: Fotógrafo ajusta os dados ou modo de acesso
+
+- **WHEN** altera a identificação, a situação ativa ou o modo de acesso
+- **THEN** a interface usa as opções fornecidas, mantém o rascunho diante de erro e avança após o salvamento existente

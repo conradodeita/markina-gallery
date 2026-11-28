@@ -91,6 +91,11 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - Referência Stitch `85a405cea370449585c8e2f1314507e0`: cabeçalho, resumo, aviso de preservação dos snapshots, busca por cliente ou ID e cartões de pedidos. Contagens são calculadas sobre a resposta autorizada; o total confirmado soma somente o subtotal de cada pedido confirmado nesta galeria.
 - `GET /api/admin/derived-galleries/{id}/orders` fornece `orders[].id,payment_status,cart_reopened_at,total_cents,payment_group,client_name,created_at,price_rule,sales_message,pix,items`. Busca e filtros usam a lista carregada; a consulta é somente leitura. Confirmação, CSV e entrega continuam no fluxo de Vendas e pagamentos.
 
+### Ajustes da galeria
+
+- Referência Stitch `c7d92f1bd8874527932cb7c91733ed17`: cabeçalho, prévia, trilha de etapas, identificação e bloco de acesso. A primeira etapa usa as permissões e as opções reais, inclusive o estado protegido legado. As demais etapas continuam com seus próprios formulários.
+- `GET /api/admin/parent-galleries/{id}/editor` fornece `gallery.name,event_name,description,active,access_mode` e `steps[].id,label,status,available`. O controle mantém `PATCH /api/admin/parent-galleries/{id}/settings`, avanço somente após sucesso, estados de salvamento e confirmação existente ao sair com mudanças.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.
