@@ -120,9 +120,10 @@
 
 ### Console: progresso do estado de recuperação — task 3.3 — 27/11/2026
 
-- A rota `/admin/platform/console/sources` agora lê o status mais recente `restore` de `media_archive_operation`, uma operação durável já existente, e retorna apenas status allowlisted e timestamp. Não inclui tenant, IDs, `details`, erro interno ou conteúdo; falha de banco vira `unavailable` sanitizado, ausência de operação permanece `unknown`.
-- O Console mostra recuperação fria de mídia separada da restauração global PostgreSQL. Não existe hoje modelo/recibo durável para restore global; essa fonte permanece `unknown`, sem origem ou data. A UI não consulta Restic/Rclone/Drive e não declara disponibilidade remota a partir de um registro local.
-- **3.3 permanece aberta.** O status de uma operação histórica não define por si só disponibilidade atual do destino/mídia; não há limite de frescor aprovado nem prova integrada de restore global. Ausência, reconciliação pendente, erro da consulta e recibo de cópia com data futura são mantidos como desconhecidos/indisponíveis sem sucesso inventado.
+- A rota `/admin/platform/console/sources` lê o ciclo mais recente de `media_archive_cycle` e a operação `restore` mais recente de `media_archive_operation`. Retorna apenas estados allowlisted e timestamps, sem tenant, IDs, manifesto, erro interno ou conteúdo; falha de consulta vira `unavailable` sanitizado e ausência de ciclo/operação permanece `unknown`.
+- Para ciclo `archived`, `archived_at` só é apresentado como última evidência quando o SHA-256 do manifesto é válido, contagem/tamanho são positivos e o timestamp não está no futuro. Mesmo assim, disponibilidade/estado do arquivo frio permanecem `unknown`: o Console mostra o estado registrado do ciclo e a evidência local, sem consultar provider nem afirmar disponibilidade remota.
+- O Console mantém recuperação fria de mídia separada da restauração global PostgreSQL. Não existe modelo/recibo durável para restore global; essa fonte permanece `unknown`, sem origem ou data. A UI não consulta Restic/Rclone/Drive.
+- **3.3 permanece aberta.** Não há limite de frescor aprovado nem prova integrada de restore global; uma operação `completed` ou um ciclo `archived` não comprova disponibilidade atual. Ausência, reconciliação pendente, erro da consulta, metadados incompletos e recibo de cópia com data futura permanecem desconhecidos/indisponíveis sem sucesso inventado.
 
 ### Regressão do estado de recuperação concluída — progresso da task 3.3 — 27/11/2026
 

@@ -2,7 +2,7 @@
 
 import re
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -15,6 +15,7 @@ from app.admin_account import AdminAccountError, reauthenticate_admin
 from app.auth import (
     AdminUser,
     GoogleDriveConnection,
+    MediaArchiveCycle,
     MediaArchiveOperation,
     ParentGallery,
     PhotoAsset,
@@ -694,6 +695,98 @@ def _global_backup_source(db, *, observed_at):
     }
 
 
+def _media_archive_cycle_source(db, *, observed_at):
+    source = "application_database.media_archive_cycle"
+    try:
+        cycle = db.scalar(
+            select(MediaArchiveCycle)
+            .order_by(
+                MediaArchiveCycle.updated_at.desc(),
+                MediaArchiveCycle.created_at.desc(),
+            )
+            .limit(1)
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        return {
+            "key": "archive",
+            "state": "unavailable",
+            "availability": "unavailable",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": observed_at,
+            "latest_run_status": None,
+            "last_validated_at": None,
+            "reason": "source_unavailable",
+        }
+
+    if cycle is None:
+        return {
+            "key": "archive",
+            "state": "unknown",
+            "availability": "unknown",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": None,
+            "latest_run_status": None,
+            "last_validated_at": None,
+            "reason": "no_archive_cycle",
+        }
+
+    allowed_states = {
+        "local",
+        "archiving",
+        "archived",
+        "restoring",
+        "reconciliation_required",
+        "deleting",
+        "deleted",
+    }
+    status = cycle.state if cycle.state in allowed_states else "unknown"
+    evidence_at = None
+    archive_time = cycle.archived_at
+    if (
+        status == "archived"
+        and isinstance(cycle.manifest_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", cycle.manifest_sha256)
+        and type(cycle.object_count) is int
+        and cycle.object_count > 0
+        and type(cycle.total_bytes) is int
+        and cycle.total_bytes > 0
+        and isinstance(archive_time, datetime)
+    ):
+        archive_time_utc = (
+            archive_time.replace(tzinfo=timezone.utc)  # noqa: UP017
+            if archive_time.tzinfo is None
+            else archive_time.astimezone(timezone.utc)  # noqa: UP017
+        )
+        observed_time_utc = (
+            observed_at.replace(tzinfo=timezone.utc)  # noqa: UP017
+            if observed_at.tzinfo is None
+            else observed_at.astimezone(timezone.utc)  # noqa: UP017
+        )
+        if archive_time_utc <= observed_time_utc:
+            evidence_at = archive_time_utc
+
+    updated_at = cycle.updated_at or cycle.created_at
+    if isinstance(updated_at, datetime):
+        updated_at = (
+            updated_at.replace(tzinfo=timezone.utc)  # noqa: UP017
+            if updated_at.tzinfo is None
+            else updated_at.astimezone(timezone.utc)  # noqa: UP017
+        )
+    return {
+        "key": "archive",
+        "state": "unknown",
+        "availability": "unknown",
+        "source": source,
+        "scope": "platform_owner",
+        "observed_at": updated_at,
+        "latest_run_status": status,
+        "last_validated_at": evidence_at,
+    }
+
+
 def _media_archive_restore_source(db, *, observed_at):
     source = "application_database.media_archive_operation"
     try:
@@ -789,9 +882,7 @@ def sources(request: Request, response: Response):
             and connection.state == "connected" else None,
         }
         backup = _global_backup_source(db, observed_at=observed_at)
-        archive = {"key": "archive", "state": "unknown", "availability": "unknown",
-                   "source": None, "scope": "platform_owner", "observed_at": None,
-                   "reason": "source_not_integrated"}
+        archive = _media_archive_cycle_source(db, observed_at=observed_at)
         restore = _media_archive_restore_source(db, observed_at=observed_at)
         postgres_restore = _global_postgresql_restore_source()
         return {"items": [backup, drive, archive, restore, postgres_restore]}

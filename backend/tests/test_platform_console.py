@@ -428,8 +428,9 @@ def test_session_and_membership_are_revalidated_and_sources_do_not_claim_health(
     assert sources["backup"]["source"] == "application_database.global_postgresql_backup_run"
     assert sources["backup"]["observed_at"] is not None
     assert sources["archive"]["state"] == "unknown"
-    assert sources["archive"]["source"] is None
-    assert sources["archive"]["reason"] == "source_not_integrated"
+    assert sources["archive"]["source"] == "application_database.media_archive_cycle"
+    assert sources["archive"]["observed_at"] is None
+    assert sources["archive"]["reason"] == "no_archive_cycle"
     assert sources["restore"]["state"] == "unknown"
     assert sources["restore"]["source"] == "application_database.media_archive_operation"
     assert sources["restore"]["observed_at"] is None
@@ -446,6 +447,87 @@ def test_session_and_membership_are_revalidated_and_sources_do_not_claim_health(
     membership.active = False
     client_db.commit()
     assert client.get("/admin/platform/console/tenants?mode=all").status_code == 403
+
+
+def test_archive_source_shows_validated_catalog_timestamp_without_remote_availability(http, client_db):
+    client, _session, tenant_id, _photographer_id = http
+    photo = create_photo(client_db, tenant_id)
+    folder = client_db.get(PhotoFolder, photo.folder_id)
+    archived_at = now() - timedelta(minutes=5)
+    cycle = MediaArchiveCycle(
+        tenant_id=tenant_id,
+        parent_gallery_id=photo.parent_gallery_id,
+        folder_id=folder.id,
+        cycle_number=1,
+        state="archived",
+        manifest_sha256="a" * 64,
+        object_count=1,
+        total_bytes=1024,
+        archived_at=archived_at,
+    )
+    client_db.add(cycle)
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    sources = {item["key"]: item for item in response.json()["items"]}
+    archive = sources["archive"]
+    assert archive["state"] == archive["availability"] == "unknown"
+    assert archive["source"] == "application_database.media_archive_cycle"
+    assert archive["latest_run_status"] == "archived"
+    assert archive["last_validated_at"] is not None
+    assert "tenant_id" not in archive and "cycle_id" not in archive
+    assert "manifest_sha256" not in archive and "remote_object_id" not in archive
+    assert "availability remota confirmada" not in response.text.lower()
+
+
+def test_archive_source_does_not_validate_future_or_incomplete_cycle(http, client_db):
+    client, _session, tenant_id, _photographer_id = http
+    photo = create_photo(client_db, tenant_id)
+    folder = client_db.get(PhotoFolder, photo.folder_id)
+    cycle = MediaArchiveCycle(
+        tenant_id=tenant_id,
+        parent_gallery_id=photo.parent_gallery_id,
+        folder_id=folder.id,
+        cycle_number=1,
+        state="archived",
+        manifest_sha256="z" * 64,
+        object_count=0,
+        total_bytes=0,
+        archived_at=now() + timedelta(days=1),
+    )
+    client_db.add(cycle)
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    archive = next(item for item in response.json()["items"] if item["key"] == "archive")
+    assert archive["state"] == archive["availability"] == "unknown"
+    assert archive["latest_run_status"] == "archived"
+    assert archive["last_validated_at"] is None
+
+
+def test_media_archive_source_reports_unavailable_without_database_error_details():
+    observed_at = now()
+
+    class BrokenSession:
+        def scalar(self, _statement):
+            raise SQLAlchemyError("synthetic_private_database_detail")
+
+        def rollback(self):
+            return None
+
+    result = console._media_archive_cycle_source(BrokenSession(), observed_at=observed_at)
+
+    assert result["state"] == result["availability"] == "unavailable"
+    assert result["source"] == "application_database.media_archive_cycle"
+    assert result["observed_at"] == observed_at
+    assert result["reason"] == "source_unavailable"
+    assert result["latest_run_status"] is None
+    assert result["last_validated_at"] is None
+    assert "synthetic_private_database_detail" not in str(result)
 
 
 def test_sources_expose_only_allowlisted_media_restore_status(http, client_db):

@@ -100,6 +100,20 @@ function mediaRestoreOperationLabel(source: Source | undefined) {
   return labels[source.latest_run_status] ?? "desconhecida";
 }
 
+function mediaArchiveCycleLabel(source: Source | undefined) {
+  const labels: Record<string, string> = {
+    local: "local",
+    archiving: "em arquivamento",
+    archived: "arquivado",
+    restoring: "em recuperação",
+    reconciliation_required: "reconciliação necessária",
+    deleting: "em exclusão",
+    deleted: "excluído",
+  };
+  if (!source?.latest_run_status) return null;
+  return labels[source.latest_run_status] ?? "desconhecido";
+}
+
 function driveStateLabel(source: Source) {
   if (source.availability === "authorization_recorded") return "Autorização registrada";
   if (source.availability === "revoked") return "Autorização revogada";
@@ -354,11 +368,13 @@ function ConsoleContent() {
         })()}
         {(() => {
           const archive = sources.find((item) => item.key === "archive");
+          const cycleStatus = mediaArchiveCycleLabel(archive);
           return <div>
             <h3>Arquivo frio de mídia</h3>
             <p>{sourceStateLabel(archive, "Arquivo frio de mídia")}</p>
+            {cycleStatus ? <p>Último estado do ciclo registrado: {cycleStatus}</p> : null}
             <p>{sourceOriginLabel(archive)}</p>
-            <small>{sourceEvidenceDateLabel(archive)}</small>
+            <small>{sourceEvidenceDateLabel(archive)}. O catálogo local não confirma disponibilidade remota.</small>
           </div>;
         })()}
         {(() => {
