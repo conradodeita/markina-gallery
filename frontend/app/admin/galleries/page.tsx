@@ -48,7 +48,7 @@ export default function GalleriesPage() {
       </div>
       <label className="gallery-search">
         Buscar galeria por nome, evento, cliente ou telefone
-        <input value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input id="gallery-search" value={query} onChange={(event) => setQuery(event.target.value)} />
       </label>
       {loading ? <p className="form-message" role="status">Carregando galerias…</p> : null}
       {!loading && failed ? <p className="notice" role="alert">Não foi possível carregar as galerias.</p> : null}
