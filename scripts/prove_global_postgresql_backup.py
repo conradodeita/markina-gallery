@@ -111,6 +111,7 @@ APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
     "photographer_profile": ("photographer_business_profile",),
     "tenant_membership": ("tenant_admin",),
     "gallery_lifecycle_history": ("gallery_lifecycle_operation",),
+    "disabled_legacy_preview_adjustment": ("preview_adjustment_settings",),
 }
 RUNNER_RESTIC_WINDOWS_ARCHIVE_SHA256 = (
     "bba9061c3dce081701ab353ec8cb73a78be73b71a538aad560f2d1067602b7fe"
@@ -1883,6 +1884,45 @@ def _seed_application_fixture(
                     "updated_at": now,
                 },
             )
+            legacy_preview_settings = sa.Table(
+                "preview_adjustment_settings", metadata, autoload_with=connection
+            )
+            existing_preview_settings = (
+                connection.execute(
+                    sa.select(
+                        legacy_preview_settings.c.id,
+                        legacy_preview_settings.c.enabled,
+                        legacy_preview_settings.c.generation,
+                        legacy_preview_settings.c.strength,
+                    ).where(legacy_preview_settings.c.tenant_id == tenant_id)
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if existing_preview_settings is None:
+                insert(
+                    connection,
+                    "preview_adjustment_settings",
+                    {
+                        "tenant_id": tenant_id,
+                        "id": 1,
+                        "enabled": False,
+                        "generation": 1,
+                        "strength": 50,
+                        "updated_at": now,
+                    },
+                )
+            elif (
+                existing_preview_settings["id"] != 1
+                or existing_preview_settings["enabled"] is not False
+                or type(existing_preview_settings["generation"]) is not int
+                or existing_preview_settings["generation"] < 1
+                or type(existing_preview_settings["strength"]) is not int
+                or not 10 <= existing_preview_settings["strength"] <= 100
+            ):
+                raise ProofFailure(
+                    "synthetic_fixture_legacy_preview_settings_not_inert"
+                )
             filename = f"proof-{tenant_index}.jpg"
             insert(
                 connection,

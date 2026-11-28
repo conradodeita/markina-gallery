@@ -118,6 +118,10 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
             APPLICATION_FIXTURE_DOMAINS["gallery_lifecycle_history"],
             ("gallery_lifecycle_operation",),
         )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["disabled_legacy_preview_adjustment"],
+            ("preview_adjustment_settings",),
+        )
         tables = [
             table for group in APPLICATION_FIXTURE_DOMAINS.values() for table in group
         ]

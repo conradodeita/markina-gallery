@@ -155,3 +155,8 @@
 - O mapa explícito da fixture agora inclui `tenant_admin`, já semeado pelo bootstrap sintético com uma associação ativa para cada um dos dois tenants, e `gallery_lifecycle_operation`, com uma operação `delete_parent_gallery` cancelada por tenant. A operação não tem lease nem início destrutivo; nenhum worker é iniciado. Isso torna explícitas no recibo a associação fotógrafo/tenant e a preservação de um estado terminal sem criar efeito externo.
 - O mapa passou de 57 para **59 tabelas tenant-scoped** com dados sintéticos por tenant. Isso não cobre as 114 tabelas tenant-scoped do ORM: categorias com credenciais/sessões, dados biométricos e efeitos financeiros ou externos continuam sem fabricação indiscriminada.
 - **1.1 continua aberta** para reconciliar as relações restantes, o runtime PostgreSQL real e o provisionamento de roles/extensões/ACLs. A execução é somente local e sintética.
+
+### Configuração legada de prévias preservada desligada — progresso da task 1.1 — 28/11/2026
+
+- A fixture agora inclui `preview_adjustment_settings` no mapa tenant-scoped. A migration cria o default legado desligado (`enabled=false`, `generation=1`, `strength=50`) para o tenant inicial; o fixture preserva esse registro e cria o mesmo default desligado para o segundo tenant somente quando ausente. Estado ativo, fora das faixas ou inesperado falha fechado; nenhum job/worker de prévias é iniciado.
+- O mapa explícito passou de 59 para **60 tabelas tenant-scoped** com dados sintéticos nos dois tenants. **1.1 continua aberta**: há 114 tabelas tenant-scoped no ORM, e continuam faltando reconciliação das demais relações e inventário/provisionamento do runtime PostgreSQL real.
