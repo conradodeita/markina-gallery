@@ -1,10 +1,14 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import { MarkinaButton, StatusBadge, SystemState } from "../../../../ui-kit";
+import { MarkinaButton, MarkinaLink, MetricCard, PageHeading, StatusBadge, SystemState } from "../../../../ui-kit";
+import { OverviewIcon } from "../../../overview-icon";
+import catalogStyles from "../../../catalog.module.css";
+import styles from "./source-summary.module.css";
 import { ClientGalleryCard, type ClientGalleryRow } from "../../client-gallery-card";
 import { folderAccessStatusLabel, type MediaArchiveStatus } from "../../../../media-archive-status";
 import { useFolderAccessClock } from "../../../../use-folder-access-clock";
@@ -202,20 +206,49 @@ export default function SourceGalleryDetailPage() {
     || Boolean(phoneDigits && person.phone.replace(/\D/g, "").includes(phoneDigits)));
 
   return (
-    <main className="admin-shell">
-      <Link href="/admin/galleries">← Galerias</Link>
-      <p className="eyebrow">Galeria pública · compartilhamento protegido</p>
-      <h1>{summary.name}</h1>
-      <p className="intro">{summary.event_name || "Evento sem nome"}. O acesso às fotos segue o modo configurado e sempre exige autenticação da cliente.</p>
-      <div className="action-grid"><Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/preview`}>Visualizar galeria</Link><Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/ajustes`}>Editar galeria</Link><Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/imagens`}>Abrir imagens</Link><MarkinaButton className="mk-button--danger" disabled={deletionBusy || Boolean(operation)} onClick={openDeletionConfirmation}>{deletionBusy ? "Preparando…" : "Excluir Galeria pública"}</MarkinaButton></div>
-      {deletionError && !deletionPreview && !operation ? <p className="form-message form-message--error" role="alert">{deletionError}</p> : null}
-      <section className="admin-card"><div className="source-summary"><Link className="source-summary-cover" href={`/admin/galleries/sources/${sourceId}/preview`}>{summary.cover_preview_url ? <img src={`/api${summary.cover_preview_url}`} alt="Capa da galeria" /> : "Sem capa definida"}</Link><div><h2>Resumo da galeria</h2><p>{summary.counts.folders} pastas · {summary.counts.photos} fotos · {summary.counts.clients} clientes vinculadas</p><p><strong>Link seguro:</strong> {summary.public_link_status === "active" ? "ativo" : "indisponível"}</p><Link href={`/admin/galleries/sources/${sourceId}/edit/clientes`}>Gerenciar links e clientes</Link><label className="gallery-search source-client-search">Buscar cliente nesta galeria por nome ou telefone<input type="search" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Ex.: Ana ou 11999999999" aria-controls="gallery-linked-clients" /></label></div></div></section>
-      <section className="admin-card"><h2>Pastas Públicas</h2>{folders.length ? <div className="source-folder-cards">{folders.map((folder) => <Link aria-label={`Abrir pasta ${folder.name}`} className="source-folder-card" href={`/admin/galleries/sources/${sourceId}/edit/imagens?folder=${encodeURIComponent(folder.id)}`} key={folder.id}><span className="source-folder-card__preview">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : <b>Pasta sem miniatura</b>}</span><span><strong>{folder.name}</strong><small>{folder.photo_count} foto(s)</small></span><StatusBadge tone={folderAccessStatusLabel(folder, observedAt) === "Disponível" ? "success" : "warning"}>{folderAccessStatusLabel(folder, observedAt)}</StatusBadge></Link>)}</div> : <SystemState title="Nenhuma pasta" detail="Abra a etapa Imagens para criar a primeira pasta desta galeria." />}</section>
-      <section id="gallery-linked-clients" className="admin-card"><h2>Clientes vinculadas</h2>{visibleClients.length ? <div className="gallery-linked-clients">{visibleClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} parentGalleryId={sourceId} linkedClients={summary.clients} onRefresh={() => setRefresh((value) => value + 1)} />)}</div> : summary.clients.length ? <div><SystemState title="Nenhuma cliente encontrada nesta galeria" detail="Revise o nome ou telefone pesquisado." /><button type="button" className="link-button" onClick={() => setClientQuery("")}>Limpar busca</button></div> : <SystemState title="Nenhuma cliente vinculada" detail="O vínculo pode nascer pelo login no link ou pela etapa Clientes." />}</section>
+    <div className={catalogStyles.catalog}>
+      <Link className={styles.back} href="/admin/galleries"><span aria-hidden="true">←</span> Galerias</Link>
+      <PageHeading
+        eyebrow="Galeria pública"
+        title={summary.name}
+        detail={summary.event_name || "Evento sem nome"}
+        actions={<>
+          <MarkinaLink href={`/admin/galleries/sources/${sourceId}/edit/ajustes`} variant="secondary"><OverviewIcon name="settings" /> Editar galeria</MarkinaLink>
+          <MarkinaLink href={`/admin/galleries/sources/${sourceId}/preview`}><OverviewIcon name="collections" /> Visualizar galeria</MarkinaLink>
+        </>}
+      />
+      <aside className={styles.access} aria-label="Acesso da galeria">
+        <div><strong>Compartilhamento protegido</strong><p>O acesso às fotos segue o modo configurado e exige autenticação da cliente.</p></div>
+        <StatusBadge tone={summary.public_link_status === "active" ? "success" : "neutral"}>{summary.public_link_status === "active" ? "Link seguro ativo" : "Link seguro indisponível"}</StatusBadge>
+      </aside>
+      <div className={styles.summary}>
+        <Link className={styles.cover} href={`/admin/galleries/sources/${sourceId}/preview`} aria-label="Abrir prévia da capa">
+          {summary.cover_preview_url ? <Image src={`/api${summary.cover_preview_url}`} alt="" fill unoptimized /> : <span><OverviewIcon name="photo_camera" /> Sem capa definida</span>}
+        </Link>
+        <section className={styles.panel} aria-labelledby="source-summary-title">
+          <h2 id="source-summary-title">Resumo da galeria</h2>
+          <div className={catalogStyles.metrics}>
+            <MetricCard label="Fotos" value={summary.counts.photos} detail="na galeria" icon={<OverviewIcon name="photo_camera" />} />
+            <MetricCard label="Pastas" value={summary.counts.folders} detail="na galeria" icon={<OverviewIcon name="folder_open" />} />
+            <MetricCard label="Clientes vinculadas" value={summary.counts.clients} detail="com registro na galeria" icon={<OverviewIcon name="group" />} />
+          </div>
+        </section>
+      </div>
+      <section className={styles.panel} aria-labelledby="source-folders-title">
+        <div className={styles.panelHeading}><h2 id="source-folders-title">Pastas Públicas</h2><MarkinaLink href={`/admin/galleries/sources/${sourceId}/edit/imagens`} variant="secondary">Abrir imagens</MarkinaLink></div>
+        {folders.length ? <div className="source-folder-cards">{folders.map((folder) => <Link aria-label={`Abrir pasta ${folder.name}`} className="source-folder-card" href={`/admin/galleries/sources/${sourceId}/edit/imagens?folder=${encodeURIComponent(folder.id)}`} key={folder.id}><span className={`source-folder-card__preview ${styles.folderPreview}`}>{folder.preview_url ? <Image src={`/api${folder.preview_url}`} alt="" fill unoptimized /> : <b>Pasta sem miniatura</b>}</span><span><strong>{folder.name}</strong><small>{folder.photo_count} foto(s)</small></span><StatusBadge tone={folderAccessStatusLabel(folder, observedAt) === "Disponível" ? "success" : "warning"}>{folderAccessStatusLabel(folder, observedAt)}</StatusBadge></Link>)}</div> : <SystemState title="Nenhuma pasta" detail="Abra a etapa Imagens para criar a primeira pasta desta galeria." />}
+      </section>
+      <section className={styles.panel} aria-labelledby="source-clients-title">
+        <div className={styles.panelHeading}><h2 id="source-clients-title">Clientes vinculadas</h2><MarkinaLink href={`/admin/galleries/sources/${sourceId}/edit/clientes`} variant="secondary">Gerenciar links e clientes</MarkinaLink></div>
+        <label className={catalogStyles.search}><span id="source-client-search-label">Buscar cliente nesta galeria por nome ou telefone</span><span className={catalogStyles.searchField}><OverviewIcon name="search" /><input aria-labelledby="source-client-search-label" type="search" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Ex.: Ana ou 11999999999" aria-controls="gallery-linked-clients" /></span></label>
+        <div id="gallery-linked-clients">{visibleClients.length ? <div className="gallery-linked-clients">{visibleClients.map((person) => <ClientGalleryCard key={person.client_id} person={person} parentGalleryId={sourceId} linkedClients={summary.clients} onRefresh={() => setRefresh((value) => value + 1)} />)}</div> : summary.clients.length ? <div><SystemState title="Nenhuma cliente encontrada nesta galeria" detail="Revise o nome ou telefone pesquisado." /><button type="button" className="link-button" onClick={() => setClientQuery("")}>Limpar busca</button></div> : <SystemState title="Nenhuma cliente vinculada" detail="O vínculo pode nascer pelo login no link ou pela etapa Clientes." />}</div>
+      </section>
+
+      <div><MarkinaButton variant="quiet" className="mk-button--danger" disabled={deletionBusy || Boolean(operation)} onClick={openDeletionConfirmation}>{deletionBusy ? "Preparando…" : "Excluir Galeria pública"}</MarkinaButton>{deletionError && !deletionPreview && !operation ? <p className="form-message form-message--error" role="alert">{deletionError}</p> : null}</div>
 
       {deletionPreview ? <div className="mk-dialog-backdrop" role="presentation"><section aria-labelledby="delete-gallery-title" aria-modal="true" className="mk-dialog lifecycle-dialog" role="dialog"><p className="eyebrow">Confirmação única</p><h2 id="delete-gallery-title">Excluir “{deletionPreview.target.name}”?</h2><p>A Galeria pública e o acesso compartilhável serão removidos. Esta limpeza não poderá ser restaurada depois que a etapa física começar.</p><div className="lifecycle-inventory"><section><h3>Será removido</h3><ul>{inventoryRows(deletionPreview.inventory.remove).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section><section><h3>Será preservado</h3><ul>{inventoryRows(deletionPreview.inventory.preserve).map((item) => <li key={item.key}><strong>{item.value}</strong> {item.label}</li>)}</ul></section></div><p>As galerias privadas dependentes, pastas, fotos e prévias também serão removidas. Clientes, nomes das fotos, movimentos e estados financeiros permanecem no histórico.</p>{deletionError ? <p className="form-message form-message--error" role="alert">{deletionError}</p> : null}<div className="mk-dialog__actions"><MarkinaButton type="button" variant="secondary" disabled={deletionBusy} onClick={() => { setDeletionPreview(null); setDeletionError(""); }}>Cancelar</MarkinaButton><MarkinaButton type="button" className="mk-button--danger" disabled={deletionBusy} onClick={confirmDeletion}>{deletionBusy ? "Iniciando…" : operation?.actions.can_retry ? `Retomar exclusão de ${deletionPreview.target.name}` : `Excluir ${deletionPreview.target.name}`}</MarkinaButton></div></section></div> : null}
 
       {operation ? <section className="admin-card lifecycle-progress" aria-live="polite"><div className="section-heading"><div><p className="eyebrow">Exclusão da Galeria pública</p><h2>{operation.progress.label}</h2></div><StatusBadge tone={operation.status === "completed" ? "success" : operation.status === "failed" ? "danger" : operation.status === "cancelled" ? "warning" : "neutral"}>{operation.progress.percent}%</StatusBadge></div><progress value={operation.progress.percent} max={100} /><p>{deletionError || operation.last_error || (operation.actions.should_poll ? "A operação continua em segundo plano. Esta página atualiza o progresso automaticamente." : "A operação não exige novas etapas automáticas.")}</p><div className="lifecycle-actions">{operation.actions.can_cancel ? <MarkinaButton type="button" variant="secondary" disabled={deletionBusy} onClick={() => operationAction("cancel")}>Cancelar antes da remoção física</MarkinaButton> : null}{operation.actions.can_retry ? <MarkinaButton type="button" disabled={deletionBusy} onClick={openDeletionConfirmation}>Retomar operação</MarkinaButton> : null}{operation.status === "completed" ? <MarkinaButton type="button" onClick={() => router.push("/admin/galleries")}>Voltar para galerias</MarkinaButton> : null}{operation.status === "cancelled" ? <MarkinaButton type="button" variant="secondary" onClick={() => { setOperation(null); setDeletionError(""); }}>Fechar acompanhamento</MarkinaButton> : null}</div></section> : null}
-    </main>
+    </div>
   );
 }

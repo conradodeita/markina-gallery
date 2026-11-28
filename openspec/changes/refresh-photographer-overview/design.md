@@ -80,6 +80,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - `GET /api/admin/branding` carrega identidade, ativos e proteção. `PATCH /api/admin/branding`, `PUT /api/admin/branding/{asset}` e `PATCH /api/admin/branding/protection` mantêm textos, arquivos e campos existentes. O estado de carregamento, erro ou resposta salva continua visível.
 - Endereço, termos, segurança, WhatsApp, PIX, provedores e encerramento permanecem nos componentes atuais, com as mesmas permissões e endpoints. Atalhos internos e links externos como `#pix` e `#whatsapp` mantêm seus destinos.
 
+### Resumo da Galeria pública
+
+- Referência Stitch `4cf26c3c9f7f4fde986239056bb8d0b7`: caminho de volta ao catálogo, cabeçalho com ações, capa autorizada, indicadores e pastas em cartões. O resumo usa nome, evento, link protegido e contagens da API. Estatísticas demonstrativas de seleção, datas e resolução não são apresentadas como dados.
+- `GET /api/admin/parent-galleries/{id}/summary` fornece `name,event_name,cover_preview_url,public_link_status,counts,clients,deletion_operation`. `GET /api/admin/parent-galleries/{id}/folders` fornece `id,name,status,photo_count,preview_url,media_state,access_expires_at` de cada pasta. Se a capa não está disponível, a superfície informa seu estado.
+- A busca local procura nome ou telefone entre as clientes autorizadas retornadas. Prévia, ajustes, imagens, clientes, pastas e inventário/andamento da exclusão mantêm rotas, permissões e confirmações atuais.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

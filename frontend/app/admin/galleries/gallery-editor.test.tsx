@@ -1269,8 +1269,8 @@ describe("editor administrativo de galeria", () => {
     render(<SourceGalleryDetailPage />);
     expect(await screen.findByRole("heading", { name: "Evento completo" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Pastas Públicas" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Capa da galeria" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/preview");
-    expect(screen.getByText("ativo")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Abrir prévia da capa" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/preview");
+    expect(screen.getByText("Link seguro ativo")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Abrir pasta Lote inicial" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/imagens?folder=folder-1");
     expect(screen.getByRole("article", { name: "Cliente Ana Resumo" })).toBeTruthy();
     expect(screen.getByText("Aguardando pagamento")).toBeTruthy();
@@ -1301,7 +1301,7 @@ describe("editor administrativo de galeria", () => {
     expect(screen.getByText("Nenhuma cliente encontrada nesta galeria")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Limpar busca" }));
     expect(screen.getAllByRole("article", { name: /^Cliente / })).toHaveLength(2);
-    expect(screen.getByText(/2 clientes vinculadas/)).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Resumo da galeria" })).getByText("Clientes vinculadas").nextElementSibling?.textContent).toBe("2");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

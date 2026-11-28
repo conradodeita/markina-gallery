@@ -99,3 +99,12 @@ Configurações SHALL organizar os controles existentes por assunto na estrutura
 
 - **WHEN** abre uma seção por atalho, recolhe um grupo ou edita a identidade
 - **THEN** a interface preserva rascunhos e destinos existentes, mostra a prévia aplicável e usa os mesmos formulários e controles autorizados
+
+### Requirement: Apresentação do resumo administrativo da Galeria pública
+
+O resumo SHALL usar a estrutura responsiva do fotógrafo e apresentar somente capa, métricas, pastas e clientes autorizadas para a galeria consultada.
+
+#### Scenario: Fotógrafo consulta ou administra a galeria
+
+- **WHEN** consulta capa ou pastas, busca clientes ou abre uma ação de gestão
+- **THEN** a interface representa o estado retornado, mantém atalhos e encaminha ações aos fluxos existentes com suas permissões e confirmações

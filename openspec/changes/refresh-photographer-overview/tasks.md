@@ -87,3 +87,11 @@
 
 - Edge em 1440, 390 e 320 px confirmou sete grupos, rascunho preservado ao recolher, atualização da entrada após salvar, duas prévias da marca-d’água atualizadas, dois PATCHs sintéticos e abertura por link `#whatsapp`, sem rolagem horizontal.
 - Vitest passou 80 testes em 12 arquivos. TypeScript, OpenSpec estrito e ESLint passaram, com aviso preexistente de imagem na prévia da entrada.
+
+## 10. Resumo da Galeria pública
+
+- [x] 10.1 Aplicar o layout Stitch com capa, resumo, pastas, busca de clientes e ações existentes.
+- [x] 10.2 Validar desktop e celular, estados da capa e das pastas, busca, navegação e abertura segura da confirmação de exclusão.
+
+- Edge em 1440, 390 e 320 px verificou capa renderizada ou ausente, estado do link protegido, atalhos de edição/prévia/pasta, busca por telefone e inventário de exclusão cancelado sem escrita. As respostas foram sintéticas e a página coube nas três larguras.
+- Vitest passou 110 testes em cinco arquivos, incluindo cenários de exclusão simulada e cartões de clientes. TypeScript, ESLint e OpenSpec estrito passaram, com avisos preexistentes no arquivo amplo de testes do editor.

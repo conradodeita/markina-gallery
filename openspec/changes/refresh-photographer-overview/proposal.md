@@ -16,6 +16,7 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 - Adaptar Notificações com filtros por destinatário, configurações e prévias de cada canal.
 - Adaptar a lista e o formulário de Tabelas de preço progressivo, preservando versões, faixas e estados das tabelas.
 - Aplicar o Stitch a Configurações, preservando seus grupos e formulários autorizados.
+- Adaptar o resumo administrativo da Galeria pública, com capa, indicadores, pastas, clientes e ações existentes.
 
 ## Capabilities
 
