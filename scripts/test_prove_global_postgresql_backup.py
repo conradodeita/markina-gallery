@@ -51,6 +51,14 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
 
     def test_fixture_inventories_additional_safe_gallery_states(self) -> None:
         self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["tenant_credit_wallet_modes"],
+            ("tenant_credit_wallet",),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["disabled_payment_preferences"],
+            ("payment_preferences",),
+        )
+        self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["revoked_gallery_capabilities"],
             ("gallery_access_capability",),
         )

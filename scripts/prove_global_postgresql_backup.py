@@ -79,6 +79,8 @@ APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
     "private_upload_batches": ("private_upload_batch", "private_upload_batch_asset"),
     "private_gallery_notifications": ("gallery_membership_notification_outbox",),
     "revoked_gallery_capabilities": ("gallery_access_capability",),
+    "disabled_payment_preferences": ("payment_preferences",),
+    "tenant_credit_wallet_modes": ("tenant_credit_wallet",),
     "privacy_and_consent": (
         "gallery_facial_policy",
         "facial_search_request",
@@ -1698,6 +1700,30 @@ def _seed_application_fixture(
                     ).scalar_one()
                 )
             )
+            wallet_table = sa.Table(
+                "tenant_credit_wallet", metadata, autoload_with=connection
+            )
+            wallet_mode = connection.execute(
+                sa.select(wallet_table.c.mode).where(
+                    wallet_table.c.tenant_id == tenant_id
+                )
+            ).scalar_one_or_none()
+            expected_wallet_mode = (
+                "unmetered" if tenant_id == tenant_ids[0] else "finite"
+            )
+            if wallet_mode is None:
+                insert(
+                    connection,
+                    "tenant_credit_wallet",
+                    {
+                        "tenant_id": tenant_id,
+                        "mode": expected_wallet_mode,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+            elif wallet_mode != expected_wallet_mode:
+                raise ProofFailure("synthetic_fixture_wallet_mode_unexpected")
             insert(
                 connection,
                 "photographer_business_profile",
@@ -1722,6 +1748,7 @@ def _seed_application_fixture(
                     "folder",
                     "photo",
                     "revoked-gallery-capability",
+                    "disabled-payment-preferences",
                     "derived-gallery",
                     "derived-gallery-membership",
                     "derived-gallery-photo",
@@ -1901,6 +1928,18 @@ def _seed_application_fixture(
                     "rotated_from_id": None,
                     "actor_admin_id": admin_id,
                     "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "payment_preferences",
+                {
+                    "id": ids["disabled-payment-preferences"],
+                    "tenant_id": tenant_id,
+                    "account_id": None,
+                    "version": 0,
+                    "pix_enabled": False,
+                    "mercadopago_enabled": False,
                 },
             )
             insert(
