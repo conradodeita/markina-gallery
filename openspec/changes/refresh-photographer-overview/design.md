@@ -172,6 +172,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - A entrada mantém consulta de marca e sessão, contexto do convite, retorno autorizado e orientação quando o cliente abre sem convite. `POST /api/auth/client/challenge`, `POST /api/auth/client/verify` e `POST /api/auth/client/resend` preservam corpo e autorização atuais.
 - O cartão de OTP usa um campo de seis dígitos com preenchimento automático, erro e reenvio existentes. A apresentação não divulga se há vínculo nem indica envio confirmado sem evidência. As regras de senha, TOTP e recuperação do fotógrafo permanecem nos fluxos atuais.
 
+### Recuperação, nova senha e confirmação de e-mail
+
+- Referências Stitch `6583bb91b93c4ac8b0927c2b7b3468ba`, `6b5fc858f126412c923038b23409b260` e `ba2b027af52240f4b93c21dd16b6efd5`. A recuperação no login mostra a etapa atual. As páginas de link apresentam o cartão de confirmação, os campos e o retorno ao login.
+- O fluxo de recuperação mantém `/api/auth/admin/recovery/{challenge,resend,verify,reset}` e `/api/auth/photographer-signup/recovery/email-link`, com as mesmas mensagens neutras e fatores. Contas que recebem link direto por e-mail podem saltar a etapa de WhatsApp. A interface indica as etapas sem representar envio, elegibilidade ou resultado antes da resposta. Os formulários são separados para abrir a entrada de código vazia após o e-mail.
+- Em `/admin/reset-password`, `/admin/verify-email` e `/photographer-access-recovery`, o token continua retirado do fragmento e enviado somente por POST explícito. A troca de e-mail mantém `/api/auth/admin/email/confirm`. A recuperação assistida mantém `/api/auth/photographer-access-recovery/confirm` e aguarda o proprietário. Os cartões preservam estados de link, falha e conclusão; a validação da senha e dos fatores permanece no contrato atual.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

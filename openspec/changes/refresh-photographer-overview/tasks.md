@@ -223,3 +223,11 @@
 
 - Edge em 1440 px verificou a orientação sem convite, troca para Fotógrafo, campos e marca da fixture. Em 390 px, realizou desafio sintético do convite, erro neutro, reenvio e redirecionamento à biblioteca. Em 320 px, exibiu o aviso da galeria privada antes do OTP, seguiu com convite e abriu a biblioteca. Os POSTs de autenticação foram interceptados, sem envio de código real ou rolagem horizontal.
 - O painel editorial usa WebP local de 84.796 bytes, sem metadados, carregado em desktop e ausente das requisições nas duas larguras de celular testadas. Vitest passou 70 testes, incluindo sessão, convite, recuperação e PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram.
+
+## 27. Recuperação, nova senha e confirmação de e-mail
+
+- [x] 27.1 Adaptar a recuperação no login e os cartões públicos de nova senha, confirmação de e-mail e recuperação assistida.
+- [x] 27.2 Validar desktop e celular com links/respostas sintéticos, incluindo falha, conclusão e submissão explícita.
+
+- Edge em 1440 px verificou escolha do fluxo, progresso, campo de código vazio, reenvio e conclusão neutra. Em 390 px, testou redefinição com segundo fator e recuperação assistida, rejeitando confirmação de senha divergente localmente. Em 320 px, testou link ausente, confirmação explícita de e-mail e nova tentativa após 503. Tokens foram removidos da URL, com apenas POSTs interceptados e zero rolagem horizontal.
+- Vitest passou 78 testes, incluindo autenticação, sessão, ações públicas e PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram.

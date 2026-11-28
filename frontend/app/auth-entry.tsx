@@ -15,6 +15,11 @@ const brazilPhoneError =
 const clientOtpGuidance =
   "O código será enviado somente se este telefone tiver acesso à galeria. Se não receber, confirme seu acesso com o fotógrafo.";
 const defaultBranding = { login_title: "Sua galeria, do seu jeito.", login_intro: "Entre para acessar fotos, seleções e entregas — ou gerenciar sua operação.", login_helper: "Escolha seu tipo de acesso para continuar.", logo_url: null as string | null, app_icon_url: null as string | null, favicon_url: null as string | null };
+const recoverySteps = [
+  { step: "recovery-email", label: "Informe o e-mail" },
+  { step: "recovery-code", label: "Confirme pelo WhatsApp, quando aplicável" },
+  { step: "recovery-sent", label: "Confira a caixa de entrada" },
+] as const;
 
 type AuthEntryProps = {
   navigate?: (destination: string) => void;
@@ -367,19 +372,23 @@ export function AuthEntry({
     setRecoveryEmail("");
   }
   const confirmingClient = context === "client" && step === "code";
+  const recoveringAdmin = context === "admin" && recoverySteps.some((item) => item.step === step);
   return (
     <main className={styles.shell}>
       <header className={styles.brand}>
         <BrandLogo src={branding.logo_url} className="product-logo--entry" />
       </header>
-      <div className={confirmingClient ? styles.centered : styles.layout}>
-      {confirmingClient ? null : <div className={styles.editorial} aria-hidden="true" />}
+      <div className={confirmingClient ? styles.centered : recoveringAdmin ? styles.recoveryLayout : styles.layout}>
+      {recoveringAdmin ? <aside className={styles.recoverySteps} aria-labelledby="recovery-steps-title">
+        <h2 id="recovery-steps-title">Etapas da recuperação</h2>
+        <ol>{recoverySteps.map((item) => <li key={item.step} aria-current={item.step === step ? "step" : undefined}>{item.label}</li>)}</ol>
+      </aside> : confirmingClient ? null : <div className={styles.editorial} aria-hidden="true" />}
       <section className={`${styles.card} ${confirmingClient ? styles.confirmation : ""}`} aria-labelledby="entry-title">
         <div className={styles.heading}>
-          <h1 id="entry-title">{confirmingClient ? "Confirme seu acesso" : branding.login_title}</h1>
+          <h1 id="entry-title">{confirmingClient ? "Confirme seu acesso" : recoveringAdmin ? "Recuperação de acesso do fotógrafo" : branding.login_title}</h1>
           {confirmingClient
             ? <p>Digite o código de seis dígitos do WhatsApp.</p>
-            : <><p>{branding.login_intro}</p><p>{branding.login_helper}</p></>}
+            : recoveringAdmin ? null : <><p>{branding.login_intro}</p><p>{branding.login_helper}</p></>}
         </div>
         {recoveryContext ? <p role="status">Sua sessão terminou ou não está disponível. Entre novamente para continuar.{recoveryContext === "client" && !invitation.accessToken && !contextualClientReauthentication ? " Reabra o link enviado pelo seu fotógrafo." : ""}</p> : null}
         <div
@@ -556,7 +565,7 @@ export function AuthEntry({
             </button>
           </form>
         ) : step === "recovery-email" ? (
-          <form onSubmit={requestRecovery} className="auth-form" aria-labelledby="recovery-title">
+          <form key="recovery-email" onSubmit={requestRecovery} className="auth-form" aria-labelledby="recovery-title">
             <div>
               <h2 id="recovery-title">Recuperar acesso</h2>
               <p className="auth-helper">Informe o e-mail administrativo. Contas com WhatsApp próprio recebem um código nesse canal. Contas criadas pelo website podem solicitar um link por e-mail e confirmar com o autenticador ou código de recuperação.</p>
@@ -570,14 +579,14 @@ export function AuthEntry({
             <button type="button" className="secondary" onClick={() => { setStep("details"); setMessage(""); }}>Voltar ao login</button>
           </form>
         ) : step === "recovery-code" ? (
-          <form onSubmit={verifyRecovery} className="auth-form" aria-labelledby="recovery-code-title">
+          <form key="recovery-code" onSubmit={verifyRecovery} className={`auth-form ${styles.otpForm}`} aria-labelledby="recovery-code-title">
             <div>
               <h2 id="recovery-code-title">Confirme pelo WhatsApp</h2>
               <p className="auth-helper">Digite o código de seis dígitos. Por segurança, a resposta não confirma se o e-mail está cadastrado.</p>
             </div>
             <label>
               Código de recuperação
-              <input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required autoFocus />
+              <input className={styles.otpInput} name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required autoFocus />
             </label>
             <button className="primary" disabled={loading}>{loading ? "Validando…" : "Validar código"}</button>
             <button type="button" className="link-button" disabled={loading} onClick={resendRecovery}>Reenviar código</button>

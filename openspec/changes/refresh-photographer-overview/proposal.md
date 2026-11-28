@@ -33,6 +33,7 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 - Adaptar a ampliação de foto da cliente à tela de visualização, preservando as funções e proteções da galeria.
 - Adaptar a revisão do carrinho, os meios de pagamento disponíveis e o recibo de comunicação do PIX ao Stitch.
 - Adaptar a entrada e a confirmação por WhatsApp ao Stitch, mantendo o fluxo autorizado de autenticação.
+- Adaptar a recuperação do fotógrafo, a redefinição por link e a confirmação de e-mail, preservando os fatores existentes.
 
 ## Capabilities
 
@@ -40,7 +41,7 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 
 - `gallery-sales/operational-gallery-interface`: navegação e apresentação responsiva da Visão Geral, catálogos e consulta financeira do fotógrafo.
 - `gallery-sales/original-gallery-experience`: apresentação responsiva da biblioteca autenticada da cliente.
-- `auth`: apresentação acessível da entrada e da confirmação de acesso da cliente.
+- `auth`: apresentação acessível da entrada, da confirmação de acesso e das ações de conta.
 
 ## Impact
 

@@ -21,7 +21,8 @@
 }
 
 .layout,
-.centered {
+.centered,
+.recoveryLayout {
   width: min(100%, 65rem);
   margin-inline: auto;
 }
@@ -39,6 +40,49 @@
 
 .centered {
   max-width: 30rem;
+}
+
+.recoveryLayout {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) minmax(0, 2fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.recoveryLayout .card,
+.recoverySteps {
+  border: 1px solid var(--mk-border);
+  border-radius: 1.1rem;
+  background: var(--mk-surface);
+  box-shadow: var(--mk-shadow-sm);
+}
+
+.recoverySteps {
+  padding: clamp(.85rem, 2vw, 1.35rem);
+}
+
+.recoverySteps h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.recoverySteps ol {
+  display: grid;
+  gap: .45rem;
+  margin-block: .75rem 0;
+  padding-inline-start: 1.5rem;
+}
+
+.recoverySteps li {
+  padding: .35rem .5rem;
+  border-radius: .45rem;
+  color: var(--mk-ink-muted);
+}
+
+.recoverySteps [aria-current="step"] {
+  background: var(--mk-brand-soft);
+  color: var(--auth-accent);
+  font-weight: 750;
 }
 
 .editorial {
@@ -95,6 +139,36 @@
   font-family: inherit;
 }
 
+.accountAction {
+  max-width: 34rem;
+}
+
+.accountAction :global(.account-action-link) {
+  display: grid;
+  min-height: 44px;
+  place-items: center;
+  text-align: center;
+  text-decoration: none;
+}
+
+.accountSuccess,
+.accountProblem {
+  border: 1px solid var(--mk-border);
+  border-radius: .65rem;
+  padding: .75rem;
+  line-height: 1.45;
+}
+
+.accountSuccess {
+  background: var(--mk-success-soft);
+  color: var(--mk-ink);
+}
+
+.accountProblem {
+  background: var(--mk-danger-soft);
+  color: var(--mk-danger);
+}
+
 .heading p,
 .card :global(.auth-helper) {
   color: var(--mk-ink-muted);
@@ -139,7 +213,8 @@
   min-height: 44px;
 }
 
-.card :global(.auth-form button.primary) {
+.card :global(.auth-form button.primary),
+.card :global(.auth-form a.primary) {
   background: linear-gradient(115deg, #735000, #936101);
   color: #fff;
 }
@@ -166,6 +241,10 @@
 @media (max-width: 720px) {
   .layout {
     min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recoveryLayout {
     grid-template-columns: minmax(0, 1fr);
   }
 

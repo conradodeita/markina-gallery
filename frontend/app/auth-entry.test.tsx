@@ -509,7 +509,7 @@ describe("entrada com identidade configurável", () => {
     fireEvent.change(screen.getByLabelText("E-mail administrativo"), { target: { value: "admin@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Receber código" }));
 
-    await screen.findByLabelText("Código de recuperação");
+    expect(await screen.findByLabelText("Código de recuperação")).toHaveProperty("value", "");
     fireEvent.click(screen.getByRole("button", { name: "Reenviar código" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/admin/recovery/resend", expect.objectContaining({ method: "POST" })));
     fireEvent.change(screen.getByLabelText("Código de recuperação"), { target: { value: "123456" } });
