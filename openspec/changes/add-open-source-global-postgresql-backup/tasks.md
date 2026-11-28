@@ -115,7 +115,7 @@
 ### Incremento da cobertura da fixture PostgreSQL — 27/11/2026
 
 - A prova local posterior ampliou a fixture de 33 para 41 tabelas tenant-scoped com uma linha sintética em cada um dos dois fotógrafos. Foram acrescentados `gallery_preview_settings`, `folder_processing_settings`, `notification_milestone`, `gallery_reopening_request` e `gallery_reopening_notification_outbox`; configurações e estados permanecem inertes, sem envio externo, cobrança ou processamento. `credit_package` continua global e inativo.
-- `APPLICATION_FIXTURE_DOMAINS` explicita os grupos de domínio da fixture, e um teste focado verifica as novas tabelas e a ausência de duplicatas. A comparação continua incluindo inventário/schema das relações não semeadas; isso não equivale a cobertura de dados representativos em todas as tabelas.
+- `APPLICATION_FIXTURE_DOMAINS` explicita os grupos de domínio da fixture, e um teste focado verifica as novas tabelas e a ausência de duplicatas. A prova também semeia na tabela global `global_postgresql_backup_run` um recibo `validated` e um `unknown`, para verificar que ambos sobrevivem ao dump/restore. A comparação continua incluindo inventário/schema das relações não semeadas; isso não equivale a cobertura de dados representativos em todas as tabelas.
 - **1.1 permanece aberta.** O inventário validado agora contém 139 tabelas e 967 relações, mas ainda faltam reconciliar a versão/extensões/roles do runtime por inventário autorizado e definir/provar provisionamento de globals/ACL. A evidência desta atualização está em `validation-results.md`; o ensaio é estritamente local e sintético.
 
 ### Console: progresso do estado de recuperação — task 3.3 — 27/11/2026

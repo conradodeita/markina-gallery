@@ -1549,6 +1549,37 @@ def _fixture_uuid(proof_id: str, tenant_id: uuid.UUID, label: str) -> uuid.UUID:
     return uuid.uuid5(namespace, f"{tenant_id}:{label}")
 
 
+def _global_backup_receipt_fixture(
+    proof_id: str, tenant_id: uuid.UUID, observed_at: datetime
+) -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "id": _fixture_uuid(proof_id, tenant_id, "backup-receipt-validated"),
+            "scheduled_day": observed_at.date(),
+            "status": "validated",
+            "started_at": observed_at - timedelta(minutes=2),
+            "finished_at": observed_at - timedelta(minutes=1),
+            "snapshot_id": "a" * 32,
+            "dump_size_bytes": 4096,
+            "duration_ms": 60_000,
+            "verified": True,
+            "error_code": None,
+        },
+        {
+            "id": _fixture_uuid(proof_id, tenant_id, "backup-receipt-unknown"),
+            "scheduled_day": observed_at.date() - timedelta(days=1),
+            "status": "unknown",
+            "started_at": observed_at - timedelta(days=1, minutes=2),
+            "finished_at": None,
+            "snapshot_id": None,
+            "dump_size_bytes": None,
+            "duration_ms": None,
+            "verified": False,
+            "error_code": "synthetic_readback_uncertain",
+        },
+    )
+
+
 def _fixture_row_summary(
     populated: dict[str, dict[str, int]],
 ) -> dict[str, dict[str, Any]]:
@@ -1640,6 +1671,8 @@ def _seed_application_fixture(
                 "updated_at": now,
             },
         )
+        for receipt in _global_backup_receipt_fixture(proof_id, tenant_ids[0], now):
+            insert(connection, "global_postgresql_backup_run", receipt)
 
         for tenant_index, tenant_id in enumerate(tenant_ids, start=1):
             admin_id = uuid.UUID(
@@ -2495,6 +2528,7 @@ def _seed_application_fixture(
         "tenant_count": len(tenant_ids),
         "domains": {name: list(tables) for name, tables in domains.items()},
         "representative_tables_with_rows": len(populated),
+        "global_backup_receipt_rows": {"validated": 1, "unknown": 1},
         "inactive_global_credit_package": 1,
         "remote_services_or_workers_used": False,
         "biometric_payloads_seeded": False,

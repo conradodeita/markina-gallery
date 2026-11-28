@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import uuid
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,6 +19,7 @@ from scripts.prove_global_postgresql_backup import (
     _copy_synthetic_repository,
     _fixture_row_summary,
     _fixture_uuid,
+    _global_backup_receipt_fixture,
     _inventory_delta_summary,
     _no_owner_profile_summary,
     _normalize_varchar_text_array_casts,
@@ -29,6 +31,24 @@ from scripts.prove_global_postgresql_backup import (
 
 
 class ApplicationFixtureDomainTests(unittest.TestCase):
+    def test_global_backup_receipt_fixture_covers_verified_and_unknown_states(
+        self,
+    ) -> None:
+        observed_at = datetime(2026, 11, 27, 12, tzinfo=timezone.utc)
+        tenant_id = uuid.UUID("00000000-0000-4000-8000-000000000001")
+
+        rows = _global_backup_receipt_fixture("synthetic-proof", tenant_id, observed_at)
+
+        self.assertEqual([row["status"] for row in rows], ["validated", "unknown"])
+        self.assertEqual([row["verified"] for row in rows], [True, False])
+        self.assertEqual(rows[0]["scheduled_day"], observed_at.date())
+        self.assertEqual(
+            rows[1]["scheduled_day"], observed_at.date() - timedelta(days=1)
+        )
+        self.assertNotEqual(rows[0]["id"], rows[1]["id"])
+        self.assertEqual(rows[0]["snapshot_id"], "a" * 32)
+        self.assertEqual(rows[1]["error_code"], "synthetic_readback_uncertain")
+
     def test_fixture_inventories_additional_safe_gallery_states(self) -> None:
         self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["gallery_processing_settings"],
