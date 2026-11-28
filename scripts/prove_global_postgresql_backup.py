@@ -28,6 +28,7 @@ from unittest.mock import patch
 
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -3158,6 +3159,7 @@ def _run_global_backup_runner_proof(
         sys.path.insert(0, str(BACKEND))
     try:
         from app import global_postgresql_backup as global_backup
+        from app import global_postgresql_backup_scheduler as backup_scheduler
     except ImportError as exc:
         runner_target_engine.dispose()
         raise ProofFailure("runner_module_unavailable") from exc
@@ -3179,15 +3181,16 @@ def _run_global_backup_runner_proof(
         rclone_executable=str(rclone_path),
     )
     source_connection_url = f"postgresql://postgres@/{source_db}"
-    restic_env = {
-        **global_backup._base_environment(),
-        "RESTIC_PASSWORD_FILE": str(restic_password_file),
-        "RCLONE_CONFIG": str(rclone_config),
-    }
     original_cwd = Path.cwd()
     original_path = os.environ.get("PATH", "")
     local_tools_path = str(rclone_path.parent)
     merged_path = local_tools_path + os.pathsep + original_path
+    restic_env = {
+        **global_backup._base_environment(),
+        "PATH": merged_path,
+        "RESTIC_PASSWORD_FILE": str(restic_password_file),
+        "RCLONE_CONFIG": str(rclone_config),
+    }
     init_args = [str(restic_path), "-r", repository, "init"]
     try:
         os.chdir(runner_work)
@@ -3211,6 +3214,43 @@ def _run_global_backup_runner_proof(
                 raise ProofFailure("runner_repository_init_failed") from exc
             if initialized.returncode != 0 or not repository_path.is_dir():
                 raise ProofFailure("runner_repository_init_failed")
+
+            retention_seed_base = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            seeded_snapshot_ids: list[str] = []
+            for index, days_before in enumerate((2, 1), start=1):
+                seed_time = (
+                    retention_seed_base - timedelta(days=days_before)
+                ).strftime("%Y-%m-%d %H:%M:%S")
+                seeded = _run(
+                    [
+                        str(restic_path),
+                        "-r",
+                        repository,
+                        "backup",
+                        "--json",
+                        "--stdin",
+                        "--stdin-filename",
+                        f"synthetic-retention-seed-{index}.dump",
+                        "--tag",
+                        global_backup.SNAPSHOT_TAG,
+                        "--time",
+                        seed_time,
+                    ],
+                    input_bytes=f"synthetic-global-backup-seed-{index}".encode("ascii"),
+                    env=restic_env,
+                )
+                try:
+                    seeded_snapshot_ids.append(
+                        global_backup._snapshot_id(seeded.stdout)
+                    )
+                except global_backup.GlobalPostgreSQLBackupError:
+                    raise ProofFailure(
+                        "runner_retention_seed_receipt_invalid"
+                    ) from None
+            if len(set(seeded_snapshot_ids)) != 2:
+                raise ProofFailure("runner_retention_seed_ids_ambiguous")
 
             invalid_dump = False
             original_start = global_backup._start
@@ -3308,6 +3348,42 @@ def _run_global_backup_runner_proof(
                     raise ProofFailure(f"runner_backup_failed:{exc.code}") from None
                 if not receipt.verified:
                     raise ProofFailure("runner_snapshot_not_verified")
+
+                before_retention = global_backup._restic_snapshot_inventory(
+                    config=config, restic_environment=restic_env
+                )
+                if (
+                    len(before_retention) != 3
+                    or {item.snapshot_id for item in before_retention}
+                    != {*seeded_snapshot_ids, receipt.snapshot_id}
+                    or any(
+                        item.tags != (global_backup.SNAPSHOT_TAG,)
+                        for item in before_retention
+                    )
+                ):
+                    raise ProofFailure("runner_retention_seed_inventory_invalid")
+                try:
+                    retention_receipt = (
+                        global_backup.apply_global_postgresql_backup_retention(
+                            config, receipt.snapshot_id
+                        )
+                    )
+                except global_backup.GlobalPostgreSQLBackupError as exc:
+                    raise ProofFailure(f"runner_retention_failed:{exc.code}") from None
+                retained_inventory = global_backup._restic_snapshot_inventory(
+                    config=config, restic_environment=restic_env
+                )
+                if (
+                    retention_receipt.snapshot_id != receipt.snapshot_id
+                    or retention_receipt.removed_snapshot_count != 2
+                    or len(retained_inventory) != 1
+                    or retained_inventory[0].snapshot_id != receipt.snapshot_id
+                ):
+                    raise ProofFailure("runner_retention_result_invalid")
+                _run(
+                    [str(restic_path), "-r", repository, "check", "--read-data"],
+                    env=restic_env,
+                )
 
                 relocated_repository_file_count = _copy_synthetic_repository(
                     repository_path,
@@ -3461,6 +3537,109 @@ def _run_global_backup_runner_proof(
                 finally:
                     invalid_dump = False
 
+                inventory_after_invalid_backup = (
+                    global_backup._restic_snapshot_inventory(
+                        config=config, restic_environment=restic_env
+                    )
+                )
+                inventory_ids_before_retry = {
+                    item.snapshot_id for item in inventory_after_invalid_backup
+                }
+                if receipt.snapshot_id not in inventory_ids_before_retry:
+                    raise ProofFailure("runner_retention_lost_last_validated_snapshot")
+                try:
+                    global_backup.apply_global_postgresql_backup_retention(
+                        config, receipt.snapshot_id
+                    )
+                except global_backup.GlobalPostgreSQLBackupError as exc:
+                    if exc.code != "retention_target_not_latest":
+                        raise ProofFailure(
+                            "runner_failed_backup_retention_gate_invalid"
+                        ) from None
+                else:
+                    raise ProofFailure("runner_failed_backup_triggered_retention")
+                inventory_after_rejected_retention = (
+                    global_backup._restic_snapshot_inventory(
+                        config=config, restic_environment=restic_env
+                    )
+                )
+                if {
+                    item.snapshot_id for item in inventory_after_rejected_retention
+                } != inventory_ids_before_retry:
+                    raise ProofFailure(
+                        "runner_failed_backup_changed_retention_inventory"
+                    )
+
+                time.sleep(2)
+                scheduler_session_factory = sessionmaker(
+                    bind=runner_target_engine, expire_on_commit=False
+                )
+                with scheduler_session_factory() as db:
+                    latest_scheduled_day = db.scalar(
+                        sa.select(
+                            sa.func.max(
+                                backup_scheduler.GlobalPostgreSQLBackupRun.scheduled_day
+                            )
+                        )
+                    )
+                if latest_scheduled_day is None:
+                    raise ProofFailure("runner_scheduler_state_table_missing")
+                scheduler_day = latest_scheduled_day + timedelta(days=1)
+                scheduler_instant = datetime.combine(
+                    scheduler_day, datetime_time(hour=12, tzinfo=timezone.utc)
+                )
+                scheduler_clock = lambda: scheduler_instant + timedelta(seconds=1)
+                scheduler_arguments = {
+                    "session_factory": scheduler_session_factory,
+                    "database_engine": runner_target_engine,
+                    "enabled": True,
+                    "instant": scheduler_instant,
+                    "clock": scheduler_clock,
+                    "config_loader": lambda: config,
+                    "database_url_loader": lambda: source_connection_url,
+                    "backup_runner": global_backup.create_global_postgresql_backup,
+                    "retention_runner": global_backup.apply_global_postgresql_backup_retention,
+                    "snapshot_presence_checker": global_backup.global_postgresql_backup_snapshot_is_present,
+                }
+                if not backup_scheduler.process_scheduled_global_postgresql_backup(
+                    **scheduler_arguments
+                ):
+                    raise ProofFailure("runner_scheduler_attempt_not_recorded")
+                with scheduler_session_factory() as db:
+                    scheduled_run = db.scalar(
+                        sa.select(backup_scheduler.GlobalPostgreSQLBackupRun).where(
+                            backup_scheduler.GlobalPostgreSQLBackupRun.scheduled_day
+                            == scheduler_day
+                        )
+                    )
+                if (
+                    scheduled_run is None
+                    or scheduled_run.status != "validated"
+                    or not scheduled_run.verified
+                    or scheduled_run.retention_status != "complete"
+                    or scheduled_run.snapshot_id is None
+                ):
+                    raise ProofFailure("runner_scheduler_receipt_not_validated")
+                if backup_scheduler.process_scheduled_global_postgresql_backup(
+                    **scheduler_arguments
+                ):
+                    raise ProofFailure("runner_scheduler_duplicate_daily_attempt")
+                scheduled_retention_inventory = (
+                    global_backup._restic_snapshot_inventory(
+                        config=config, restic_environment=restic_env
+                    )
+                )
+                if (
+                    len(scheduled_retention_inventory) != 1
+                    or scheduled_retention_inventory[0].snapshot_id
+                    != scheduled_run.snapshot_id
+                ):
+                    raise ProofFailure("runner_scheduler_retention_result_invalid")
+                _run(
+                    [str(restic_path), "-r", repository, "check", "--read-data"],
+                    env=restic_env,
+                )
+
                 if any(
                     marker_bytes in path.read_bytes()
                     for repository_root in (
@@ -3485,6 +3664,15 @@ def _run_global_backup_runner_proof(
             "plaintext_canary_absent": plaintext_canary_absent,
             "wrong_password_error": wrong_password_error,
             "invalid_archive_error": invalid_archive_error,
+            "retention_snapshots_before": len(before_retention),
+            "retention_snapshots_removed": retention_receipt.removed_snapshot_count,
+            "retention_snapshots_after": len(retained_inventory),
+            "retention_check_read_data": "passed",
+            "failed_backup_preserved_last_validated_snapshot": True,
+            "scheduled_daily_run_status": scheduled_run.status,
+            "scheduled_daily_retention_status": scheduled_run.retention_status,
+            "scheduled_daily_snapshot_removed_previous": True,
+            "scheduled_duplicate_attempt_rejected": True,
         }
     finally:
         runner_target_engine.dispose()

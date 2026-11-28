@@ -47,7 +47,7 @@
 
 ## 5. Integração e fechamento da proposta
 
-- [ ] 5.1 Executar prova integrada sintética de backup diário, verificação, restauração global isolada, retenção configurada e recuperação após falhas; registrar versões, fixture, duração, resultados, skips e limites em evidência versionada.
+- [x] 5.1 Executar prova integrada sintética de backup diário, verificação, restauração global isolada, retenção configurada e recuperação após falhas; registrar versões, fixture, duração, resultados, skips e limites em evidência versionada.
 - [ ] 5.2 Revisar o diff e os consumidores diretamente afetados para evitar duplicação de engine/worker/UI; executar OpenSpec estrito, testes, lint, typecheck e build aplicáveis, corrigir falhas e registrar evidência antes da revisão humana.
 
 ## Workflow follow-up
