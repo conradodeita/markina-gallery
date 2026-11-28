@@ -162,3 +162,12 @@ A etapa SHALL apresentar o estado do link e os vínculos retornados pelo servido
 
 - **WHEN** busca clientes, vincula um cadastro ou abre a confirmação de desvinculação
 - **THEN** a interface mantém os formulários, confirmações e permissões existentes e apresenta somente o estado autorizado
+
+### Requirement: Apresentação do detalhe administrativo da Galeria privada
+
+O detalhe SHALL distinguir fotos herdadas e exclusivas, mostrar membros e disponibilidade e preservar ações autenticadas existentes.
+
+#### Scenario: Fotógrafo consulta o acervo e abre ações administrativas
+
+- **WHEN** revisa membros, mídias ou controles de estado da galeria
+- **THEN** a interface apresenta a informação autorizada e mantém os caminhos e confirmações de cada ação

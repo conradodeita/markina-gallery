@@ -143,3 +143,11 @@
 
 - Edge em 1440, 390 e 320 px verificou estados de link disponível e legado, busca do diretório, vínculo por PUT sintético e abertura da confirmação de desvinculação. Cancelar não enviou DELETE. O link da fixture era sintético e as três larguras ficaram sem rolagem horizontal.
 - Vitest passou 88 testes em quatro arquivos. TypeScript, OpenSpec estrito e ESLint passaram, com avisos preexistentes de imagens em outras etapas.
+
+## 17. Detalhe da Galeria privada
+
+- [x] 17.1 Adaptar o detalhe administrativo ao Stitch, mantendo acervo, membros, status e ações existentes.
+- [x] 17.2 Validar membros, indicação de estados, atalhos e confirmação cancelável em desktop e celular.
+
+- Edge em 1440, 390 e 320 px verificou membro sintético, referência do acervo público, atalho aos pedidos, âncora de revisão, configuração herdada e cancelamento de bloqueio e exclusão. Não houve mutação e a página coube nos três tamanhos.
+- Vitest passou 19 testes em quatro arquivos, incluindo crédito durante envio e confirmação de bloqueio. TypeScript, OpenSpec estrito e ESLint passaram, com os avisos anteriores de imagem do acervo.

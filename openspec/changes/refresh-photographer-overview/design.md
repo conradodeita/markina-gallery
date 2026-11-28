@@ -116,6 +116,11 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - Referência Stitch `56df0606817244b8a6f720c0bfe4c431`: estado do link permanente, clientes com vínculo, busca do diretório e cadastro. O painel usa o link autorizado quando retornado pelo servidor e mantém os estados indisponível e legado.
 - `GET /api/admin/parent-galleries/{id}/clients`, `GET /api/admin/clients?query=...` e `GET /api/admin/parent-galleries/{id}/public-link` abastecem vínculos, diretório e estado do link. Criação, cópia, busca, vínculo, desvinculação com confirmação, conclusão e privilégios permanecem nos controles existentes. O protótipo não fornece regras para personalizar o link.
 
+### Detalhe da Galeria privada
+
+- Referência Stitch `60ea6f495b6d4564b7cb71b5dfd60d72`: estado do acesso, membros, acervo herdado, arquivos exclusivos e controles de manutenção. A tela usa os contadores retornados, mantém as fotos herdadas separadas e oferece os destinos administrativos existentes.
+- A família `GET /api/admin/derived-galleries/{id}` e os sub-recursos `photos,folders,members,facial-index,upload-batches` fornece estado, acervo e controles. Nenhum processamento, upload, desbloqueio, regra comercial ou permissão é alterado pelo redesign.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.
