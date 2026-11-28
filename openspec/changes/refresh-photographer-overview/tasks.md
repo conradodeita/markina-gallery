@@ -95,3 +95,11 @@
 
 - Edge em 1440, 390 e 320 px verificou capa renderizada ou ausente, estado do link protegido, atalhos de edição/prévia/pasta, busca por telefone e inventário de exclusão cancelado sem escrita. As respostas foram sintéticas e a página coube nas três larguras.
 - Vitest passou 110 testes em cinco arquivos, incluindo cenários de exclusão simulada e cartões de clientes. TypeScript, ESLint e OpenSpec estrito passaram, com avisos preexistentes no arquivo amplo de testes do editor.
+
+## 11. Pedidos da galeria
+
+- [x] 11.1 Adaptar a consulta ao Stitch com métricas reais, busca, filtros e snapshots.
+- [x] 11.2 Conferir desktop e celular, cálculo local de contagens, busca e instruções protegidas.
+
+- Edge em 1440, 390 e 320 px exibiu o total confirmado sem contar cancelados, preservou carrinho reaberto, executou busca por nome com acento e por ID e combinou filtro de situação, sem rolagem horizontal ou nova consulta causada pelos filtros. O snapshot PIX foi visível somente no pedido pendente do ensaio. Todas as requisições do teste foram de leitura sobre respostas sintéticas.
+- Vitest passou 28 testes em cinco arquivos. TypeScript, ESLint e OpenSpec estrito passaram.

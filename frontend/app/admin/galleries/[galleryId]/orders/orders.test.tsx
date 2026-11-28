@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import GalleryOrdersPage from "./page";
 
@@ -26,4 +26,23 @@ it.each(["pending", "confirmed"])("preserva a consulta de um pedido %s efetivo",
   expect(await screen.findByText(payment_status === "pending" ? "Pendente de confirmação" : "Confirmado")).toBeTruthy();
   expect(screen.getByText(/Integra o PIX único/)).toBeTruthy();
   expect(screen.queryByText("Carrinho reaberto")).toBeNull();
+});
+
+it("busca por nome ou ID e filtra a situação sem nova consulta ou alteração do total confirmado", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ orders: [
+    { ...order, id: "pedido-confirmado", client_name: "Ágata", payment_status: "confirmed", total_cents: 1200 },
+    { ...order, id: "pedido-pendente", client_name: "Beatriz", payment_status: "pending", total_cents: 500 },
+  ] })));
+  vi.stubGlobal("fetch", fetch);
+  render(<GalleryOrdersPage />);
+  await screen.findByRole("heading", { name: "Ágata · R$ 12,00" });
+  const search = screen.getByRole("searchbox", { name: "Buscar pedido por cliente ou ID" });
+  fireEvent.change(search, { target: { value: "agata" } });
+  expect(screen.queryByRole("heading", { name: "Beatriz · R$ 5,00" })).toBeNull();
+  fireEvent.change(search, { target: { value: "pedido-pend" } });
+  expect(screen.getByRole("heading", { name: "Beatriz · R$ 5,00" })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Situação"), { target: { value: "confirmed" } });
+  expect(screen.getByText("Nenhum pedido neste filtro")).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Resumo dos pedidos" })).getByText("R$ 12,00")).toBeTruthy();
+  expect(fetch).toHaveBeenCalledOnce();
 });

@@ -86,6 +86,11 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - `GET /api/admin/parent-galleries/{id}/summary` fornece `name,event_name,cover_preview_url,public_link_status,counts,clients,deletion_operation`. `GET /api/admin/parent-galleries/{id}/folders` fornece `id,name,status,photo_count,preview_url,media_state,access_expires_at` de cada pasta. Se a capa não está disponível, a superfície informa seu estado.
 - A busca local procura nome ou telefone entre as clientes autorizadas retornadas. Prévia, ajustes, imagens, clientes, pastas e inventário/andamento da exclusão mantêm rotas, permissões e confirmações atuais.
 
+### Pedidos da galeria
+
+- Referência Stitch `85a405cea370449585c8e2f1314507e0`: cabeçalho, resumo, aviso de preservação dos snapshots, busca por cliente ou ID e cartões de pedidos. Contagens são calculadas sobre a resposta autorizada; o total confirmado soma somente o subtotal de cada pedido confirmado nesta galeria.
+- `GET /api/admin/derived-galleries/{id}/orders` fornece `orders[].id,payment_status,cart_reopened_at,total_cents,payment_group,client_name,created_at,price_rule,sales_message,pix,items`. Busca e filtros usam a lista carregada; a consulta é somente leitura. Confirmação, CSV e entrega continuam no fluxo de Vendas e pagamentos.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

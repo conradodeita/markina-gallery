@@ -108,3 +108,12 @@ O resumo SHALL usar a estrutura responsiva do fotógrafo e apresentar somente ca
 
 - **WHEN** consulta capa ou pastas, busca clientes ou abre uma ação de gestão
 - **THEN** a interface representa o estado retornado, mantém atalhos e encaminha ações aos fluxos existentes com suas permissões e confirmações
+
+### Requirement: Apresentação da consulta de pedidos da galeria
+
+A consulta SHALL apresentar métricas e snapshots dos pedidos retornados à galeria autorizada. A busca por cliente ou identificador e o filtro por situação SHALL operar sobre esses registros. A tela MUST manter instruções PIX condicionadas ao estado do pedido e encaminhar a confirmação financeira para o fluxo próprio.
+
+#### Scenario: Fotógrafo consulta pedidos de uma galeria
+
+- **WHEN** filtra a lista ou abre o snapshot de um pedido pendente
+- **THEN** a tela mantém os totais da galeria, apresenta os registros correspondentes e exibe as instruções PIX somente quando o pedido pendente as fornece
