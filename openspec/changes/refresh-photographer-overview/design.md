@@ -149,6 +149,11 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - `GET /api/library/purchases` fornece pedidos individuais, grupos PIX, Mercado Pago, registros legados InfinitePay e movimentos removidos. A interface preserva esses grupos, seus estados existentes, links por âncora e a sequência da resposta. As etapas financeiras seguem em seus próprios destinos.
 - Fotos ficam reunidas no pedido correspondente. As prévias mantêm proteção e a abertura do álbum usa a URL autorizada já validada. A demonstração de download ZIP e os filtros de pedido do Stitch ficam fora deste recorte, pois disponibilidade de prévia, entrega externa e confirmação de pagamento têm contratos distintos.
 
+### Conferência de prévias
+
+- Referência Stitch `921325db234946b2b4fd536cac35a2a0`: item de navegação do fotógrafo, consulta curta por identificador, enquadramento da imagem e estados de carregamento e indisponibilidade.
+- A página usa `GET /api/admin` para confirmar o acesso e solicita somente `GET /api/admin/photo-assets/{photo_id}/preview` para a mídia. O endpoint entrega o derivado autorizado sem marca-d'água, com a resolução de conferência. O simulador e os metadados da amostra não têm dados nesse contrato.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

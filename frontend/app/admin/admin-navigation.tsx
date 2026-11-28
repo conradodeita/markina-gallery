@@ -9,6 +9,7 @@ import { OverviewIcon } from "./overview-icon";
 const navigation = [
   { href: "/admin", label: "Visão geral", icon: "grid_view" },
   { href: "/admin/galleries", label: "Galerias", icon: "photo_library" },
+  { href: "/admin/previews", label: "Conferência de prévias", icon: "collections" },
   { href: "/admin/clients", label: "Clientes", icon: "group" },
   { href: "/admin/payments", label: "Vendas e pagamentos", icon: "payments" },
   { href: "/admin/notifications", label: "Notificações", icon: "notifications" },

@@ -191,3 +191,11 @@
 
 - Edge em 1440 e 390 px verificou grupos Mercado Pago e InfinitePay, link autorizado de álbum e ampliação/fechamento por Escape com retorno do foco. Em 320 px, repetiu uma consulta com falha e exibiu o histórico vazio. As respostas foram sintéticas, sem escrita nem rolagem horizontal.
 - Vitest passou 29 testes, incluindo entrega, histórico e integração de apresentação Mercado Pago. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram.
+
+## 23. Conferência de prévias
+
+- [x] 23.1 Adaptar o acesso administrativo por identificador, com o visualizador e as proteções existentes.
+- [x] 23.2 Validar desktop e celular, acesso autorizado/negado e prévia disponível/indisponível.
+
+- Edge em 1440 px abriu a prévia no endpoint protegido. Em 390 px, verificou a mensagem de indisponibilidade e repetiu a mesma consulta; em 320 px, negou acesso e não consultou a mídia. Nos três casos, a navegação indicou a rota, sem escrita nem rolagem horizontal.
+- Vitest passou sete testes de navegação e PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram.

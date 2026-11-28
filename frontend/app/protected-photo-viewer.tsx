@@ -29,6 +29,7 @@ export function ProtectedPhotoViewer({ photos, label }: { photos: ProtectedPhoto
   const active = photos[current];
 
   useEffect(() => {
+    if (photos.length < 2) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "ArrowLeft") setCurrent((index) => Math.max(0, index - 1));
       if (event.key === "ArrowRight") setCurrent((index) => Math.min(photos.length - 1, index + 1));
@@ -41,11 +42,11 @@ export function ProtectedPhotoViewer({ photos, label }: { photos: ProtectedPhoto
 
   return <section className="protected-viewer" aria-label={label}>
     <PreviewImage key={active.id} photo={active} />
-    <div className="viewer-controls">
+    {photos.length > 1 ? <><div className="viewer-controls">
       <button className="secondary" disabled={current === 0} onClick={() => setCurrent(current - 1)}>Anterior</button>
       <p><strong>{active.name}</strong><br /><span>{current + 1} de {photos.length}</span></p>
       <button className="secondary" disabled={current === photos.length - 1} onClick={() => setCurrent(current + 1)}>Próxima</button>
     </div>
-    <p className="viewer-hint">Use as setas do teclado para navegar. A prévia é protegida e não é o arquivo original.</p>
+    <p className="viewer-hint">Use as setas do teclado para navegar. A prévia é protegida e não é o arquivo original.</p></> : null}
   </section>;
 }

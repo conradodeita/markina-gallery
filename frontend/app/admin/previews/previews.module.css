@@ -1,0 +1,99 @@
+.page {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.form,
+.stage,
+.viewerInfo {
+  min-width: 0;
+  padding: clamp(1rem, 2.5vw, 1.5rem);
+  border: 1px solid var(--mk-border);
+  border-radius: 1rem;
+  background: var(--mk-surface);
+}
+
+.form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: .65rem;
+}
+
+.form label {
+  display: grid;
+  gap: .4rem;
+  font-size: .85rem;
+  font-weight: 750;
+}
+
+.form input {
+  min-width: 0;
+  min-height: 44px;
+  padding: .55rem .75rem;
+  border: 1px solid var(--mk-border);
+  border-radius: .65rem;
+  background: var(--mk-surface-subtle);
+  color: var(--mk-ink);
+}
+
+.form button {
+  min-height: 44px;
+  border-color: transparent;
+  background: var(--overview-gradient);
+  color: #fff;
+}
+
+.form button:disabled {
+  opacity: .65;
+  cursor: not-allowed;
+}
+
+.state,
+.workspace,
+.stage,
+.viewerInfo {
+  display: grid;
+  gap: .75rem;
+}
+
+.state > a,
+.state > button {
+  justify-self: start;
+}
+
+.workspace {
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, .42fr);
+  align-items: start;
+}
+
+.workspace h2,
+.viewerInfo p,
+.stage :global(.protected-viewer) {
+  margin: 0;
+}
+
+.workspace h2 {
+  font-size: 1.05rem;
+}
+
+.viewerInfo p {
+  color: var(--mk-ink-muted);
+  line-height: 1.5;
+}
+
+.stage :global(.viewer-stage) {
+  min-height: clamp(10rem, 28vw, 20rem);
+}
+
+.stage :global(.viewer-image) {
+  max-height: 62svh;
+}
+
+@media (max-width: 700px) {
+  .form,
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+}

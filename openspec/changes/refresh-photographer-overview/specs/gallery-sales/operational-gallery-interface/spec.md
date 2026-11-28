@@ -189,3 +189,12 @@ A prévia SHALL usar a apresentação compartilhada e indicar o modo fotógrafo.
 
 - **WHEN** os dados autorizados carregam ou uma seção está indisponível
 - **THEN** a interface apresenta as prévias e estados correspondentes, preservando as proteções e os caminhos de retorno
+
+### Requirement: Conferência responsiva de prévia por identificador
+
+A Conferência de prévias SHALL apresentar o formulário e o derivado administrativo autorizado sem expor acesso ao original.
+
+#### Scenario: Fotógrafo consulta uma foto
+
+- **WHEN** o fotógrafo autenticado informa o identificador e solicita a prévia
+- **THEN** a tela mostra carregamento, prévia disponível ou indisponibilidade conforme a resposta do endpoint protegido

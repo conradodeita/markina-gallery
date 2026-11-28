@@ -2,6 +2,7 @@ const photographerShellRoutes = new Set([
   "/admin",
   "/admin/galleries",
   "/admin/galleries/new",
+  "/admin/previews",
   "/admin/clients",
   "/admin/payments",
   "/admin/notifications",
