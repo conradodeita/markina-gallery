@@ -32,4 +32,12 @@ describe("navegação administrativa", () => {
     render(<AdminNavigation />);
     expect(screen.getByRole("link", { name: "Créditos" }).getAttribute("aria-current")).toBe("page");
   });
+
+  it("indica a Conferência de prévias como rota ativa", () => {
+    mockPathname.mockReturnValue("/admin/previews");
+    render(<AdminNavigation />);
+    const preview = screen.getByRole("link", { name: "Conferência de prévias" });
+    expect(preview.getAttribute("href")).toBe("/admin/previews");
+    expect(preview.getAttribute("aria-current")).toBe("page");
+  });
 });

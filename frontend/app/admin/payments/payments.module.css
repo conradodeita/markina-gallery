@@ -1,11 +1,25 @@
-.page { min-width:0; }
-.pageHeading { display:flex; align-items:center; justify-content:space-between; gap:24px; }
-.pageHeading h1 { margin:0; font-size:clamp(1.8rem,3.5vw,2.65rem); letter-spacing:-.04em; }
-.pageHeading :global(.eyebrow) { margin:0 0 8px; }
+.page { display:grid; gap:24px; min-width:0; }
+.pageHeading { display:flex; align-items:end; justify-content:space-between; gap:24px; }
+.pageHeading h1 { margin:0; font-size:clamp(1.9rem,3vw,2.35rem); font-weight:800; letter-spacing:-.045em; }
+.pageHeading p { margin:8px 0 0; color:var(--mk-ink-muted); line-height:1.55; }
 .mode { display:grid; gap:6px; min-width:250px; font-size:.8rem; font-weight:700; color:var(--mk-ink-muted); }
 .mode select { min-height:44px; border:1px solid var(--mk-border); border-radius:var(--mk-radius-sm); padding:8px 12px; font:inherit; font-size:.9rem; color:var(--mk-ink); background:var(--mk-surface); }
-.page :global(.intro) { margin:0 0 20px; max-width:90ch; color:var(--mk-ink-muted); line-height:1.6; }
-.page :global(.payment-client-card) { border-radius:var(--mk-radius-lg); }
+.dashboard { display:grid; gap:20px; min-width:0; }
+.paymentNotice { display:flex; align-items:start; gap:13px; padding:16px 18px; border:1px solid var(--overview-border); border-inline-start:3px solid var(--overview-gold); border-radius:14px; background:var(--overview-subtle); }
+.noticeIcon,
+.paymentMetrics :global(.mk-metric__icon) { display:grid; flex:none; place-items:center; width:36px; height:36px; border-radius:10px; color:var(--overview-gold); background:var(--overview-gold-soft); }
+.paymentNotice h2 { margin:0; color:var(--overview-gold); font-size:.95rem; font-weight:800; }
+.paymentNotice p { margin:5px 0 0; color:var(--mk-ink-muted); font-size:.88rem; line-height:1.5; }
+.page .paymentMetrics { grid-template-columns:repeat(2,minmax(0,1fr)); margin:0; }
+.paymentMetrics :global(.mk-metric) { grid-template-columns:minmax(0,1fr) 36px; gap:6px 10px; padding:17px; }
+.paymentMetrics :global(.mk-metric)::before { content:none; }
+.paymentMetrics :global(.mk-metric__icon) { grid-column:2; grid-row:1 / 3; }
+.paymentMetrics :global(.mk-metric) > span { grid-row:1; color:var(--mk-ink); font-size:.84rem; font-weight:750; }
+.paymentMetrics :global(.mk-metric) > strong { grid-row:2; font-size:clamp(1.3rem,2vw,1.75rem); overflow-wrap:anywhere; }
+.paymentMetrics :global(.mk-metric) > small { grid-column:1 / -1; }
+.ordersTitle { margin:0; padding-bottom:10px; border-bottom:1px solid var(--mk-border); font-size:1.15rem; letter-spacing:-.02em; }
+.page :global(.payment-client-card) { padding:clamp(14px,2vw,22px); border-radius:var(--mk-radius-md); background:var(--mk-surface); }
+.page :global(.payment-filter-sticky) { padding:12px 14px; box-shadow:0 3px 10px #0000000b; }
 .page :global(.payment-client-card > header h2) { margin-top:8px; font-size:clamp(1.25rem,2vw,1.6rem); overflow-wrap:anywhere; }
 .page :global(.payment-order__heading) { align-items:center; }
 .page :global(.payment-order__heading h3) { font-size:1.1rem; }
@@ -64,11 +78,18 @@ button.thumbnail { cursor:zoom-in; }
 .deliverySection :global(.order-delivery-form > p) { margin:4px 0; color:var(--mk-ink-muted); font-size:.85rem; }
 .deliverySection :global(.order-delivery-actions) { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
 @media (max-width:900px) { .orderDetail { grid-template-columns:1fr; grid-template-areas:"facts" "photos" "payment" "delivery"; } }
+@media (min-width:70rem) {
+  .page .paymentMetrics { grid-template-columns:repeat(4,minmax(0,1fr)); }
+}
+@media (max-width:56rem) {
+  .page :global(.payment-filter-sticky) { position:static; }
+}
 @media (max-width:600px) {
   .pageHeading { align-items:stretch; flex-direction:column; gap:18px; }
   .mode { min-width:0; }
   .page :global(.payment-filter-sticky) { display:grid; grid-template-columns:1fr; }
   .page :global(.payment-filter-bar__actions) { flex-direction:row; flex-wrap:wrap; }
   .page :global(.payment-filter-bar__actions .mk-button) { flex:1; }
+  .page .paymentMetrics { grid-template-columns:minmax(0,1fr); }
   .photoSection,.paymentSection,.deliverySection { padding:12px; }
 }

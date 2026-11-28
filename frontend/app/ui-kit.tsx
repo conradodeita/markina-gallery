@@ -25,8 +25,8 @@ export function PageHeading({ eyebrow, title, detail, actions }: { eyebrow?: str
   return <header className="mk-page-heading"><div>{eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}<h1>{title}</h1>{detail ? <p>{detail}</p> : null}</div>{actions ? <div className="mk-page-heading__actions">{actions}</div> : null}</header>;
 }
 
-export function MetricCard({ label, value, detail, tone = "neutral" }: { label: string; value: ReactNode; detail: string; tone?: "neutral" | "success" | "warning" | "danger" }) {
-  return <SurfaceCard className={`mk-metric mk-metric--${tone}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></SurfaceCard>;
+export function MetricCard({ label, value, detail, icon, tone = "neutral" }: { label: string; value: ReactNode; detail: string; icon?: ReactNode; tone?: "neutral" | "success" | "warning" | "danger" }) {
+  return <SurfaceCard className={`mk-metric mk-metric--${tone}`}>{icon && <div className="mk-metric__icon">{icon}</div>}<span>{label}</span><strong>{value}</strong><small>{detail}</small></SurfaceCard>;
 }
 
 export function SystemState({ title, detail, tone = "empty" }: { title: string; detail: string; tone?: "empty" | "error" | "loading" }) {

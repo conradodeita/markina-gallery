@@ -1,53 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-
-import { MarkinaLink, PageHeading, StatusBadge, SystemState } from "../ui-kit";
-import { EmptyState } from "../validation-ui";
 import Link from "next/link";
+
+import { MarkinaButton, MarkinaLink, StatusBadge, SystemState } from "../ui-kit";
 import { GalleryCardPreview, galleryCoverUrl } from "../gallery-card-preview";
 import { SelectionDeadline } from "../selection-deadline";
+import styles from "./library.module.css";
 
-type PublicGallery = {
-  id: string;
-  name: string;
-  event_name: string;
-  access_mode: "standard" | "invite_only" | "collective_protected";
-  gallery_status: "active" | "pending_review" | "blocked";
-  browse_url: string | null;
-};
-type PrivateGallery = {
-  id: string;
-  name: string;
-  message: string;
-  gallery_status: "active" | "expired" | "origin_removed";
-  origin_removed: boolean;
-  origin: { id: string; name: string; available: boolean; browse_url: string | null };
-  folders: Array<{ id: string; name: string }>;
-};
 type Journey = {
   id: string;
   name: string;
   event_name: string;
   status: "active" | "pending_review" | "blocked" | "expired" | "origin_removed" | "unavailable";
-  primary_surface: "public" | "private" | "unavailable";
   browse_url: string | null;
   cover_preview_url?: string | null;
-  public_gallery: PublicGallery | null;
-  private_gallery: PrivateGallery | null;
   selection_deadlines?: Array<{ folder_id: string; folder_name: string; expires_at: string }>;
-  selection: {
-    quantity: number;
-    total_cents?: number;
-    savings_cents?: number;
-    pricing_error?: string;
-  };
-  orders?: Array<{ order_id: string; commercial_state: "awaiting_payment" | "payment_reported" | "purchased" | "selection_finalized" | "cancelled"; total_cents: number }>;
-  has_prepared_photos: boolean;
+  orders?: Array<{ commercial_state: "awaiting_payment" | "payment_reported" | "purchased" | "selection_finalized" | "cancelled" }>;
   actions: {
     continue_url: string | null;
-    review_url: string | null;
-    orders_url?: string | null;
     prepared_url: string | null;
     fallback_url: string | null;
   };
@@ -61,10 +32,56 @@ const journeyStatus = {
   unavailable: { label: "Indisponível", tone: "neutral" as const },
 };
 
+const galleryFilters = [
+  { value: "all", label: "Todas" },
+  { value: "active", label: "Ativas" },
+  { value: "expired", label: "Expiradas" },
+] as const;
+
+function JourneyCard({ journey, hidden, revalidateLibrary }: { journey: Journey; hidden: boolean; revalidateLibrary: () => void }) {
+  const status = journeyStatus[journey.status] ?? journeyStatus.unavailable;
+  const latestOrder = journey.orders?.find((order) => order.commercial_state !== "awaiting_payment");
+  const browse = journey.actions.continue_url ?? journey.actions.prepared_url ?? journey.actions.fallback_url ?? journey.browse_url;
+  const primaryAction = browse ? { href: browse, label: "Ver fotos" } : latestOrder ? { href: "/library/purchases", label: latestOrder.commercial_state === "selection_finalized" ? "Ver seleção" : "Ver compra" } : null;
+  const deadlines = journey.selection_deadlines ?? [];
+  return (
+    <article className={styles.card} hidden={hidden}>
+      <div className={styles.cover}>
+        {browse ? <Link href={browse} aria-label={`Abrir galeria ${journey.name}`}><GalleryCardPreview src={galleryCoverUrl(journey.cover_preview_url)} name={journey.name} protectedPhoto /></Link> : <GalleryCardPreview src={null} name={journey.name} />}
+        <StatusBadge className={styles.status} tone={status.tone}>{status.label}</StatusBadge>
+      </div>
+      <div className={styles.details}>
+        <h2>{journey.name}</h2>
+        {journey.event_name ? <p>{journey.event_name}</p> : null}
+        {latestOrder ? <StatusBadge tone={latestOrder.commercial_state === "purchased" ? "success" : latestOrder.commercial_state === "payment_reported" ? "warning" : "neutral"}>{latestOrder.commercial_state === "selection_finalized" ? "Seleção finalizada" : latestOrder.commercial_state === "purchased" ? "Pagamento confirmado" : latestOrder.commercial_state === "payment_reported" ? "Pagamento informado" : "Pagamento não localizado"}</StatusBadge> : null}
+        {deadlines.length ? <section className={styles.deadlines} aria-label={"Prazos de seleção: " + journey.name}>
+          <h3>Prazo para novas seleções</h3>
+          {deadlines.map((deadline) => <div
+            className={styles.deadline}
+            key={deadline.folder_id}
+            role="group"
+            aria-label={"Prazo na pasta " + deadline.folder_name}
+          >
+            <strong>{deadline.folder_name}</strong>
+            <SelectionDeadline
+              expiresAt={deadline.expires_at}
+                onRevalidate={revalidateLibrary}
+            />
+          </div>)}
+        </section> : null}
+        <div className={styles.actions}>
+          {primaryAction ? <MarkinaLink href={primaryAction.href} prefetch>{primaryAction.label}</MarkinaLink> : <p>Indisponível</p>}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export default function LibraryPage() {
   const [journeys, setJourneys] = useState<Journey[] | null>(null);
   const [journeysFailed, setJourneysFailed] = useState(false);
   const [libraryRequest, setLibraryRequest] = useState(0);
+  const [filter, setFilter] = useState<(typeof galleryFilters)[number]["value"]>("all");
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revalidateLibrary = useCallback(() => {
     if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
@@ -77,6 +94,7 @@ export default function LibraryPage() {
       .then(async (libraryResponse) => {
         if (!libraryResponse.ok) throw new Error();
         const library = await libraryResponse.json();
+        if (controller.signal.aborted) return;
         setJourneys(library.journeys ?? []);
         setJourneysFailed(false);
       })
@@ -98,53 +116,41 @@ export default function LibraryPage() {
     if (destination) window.location.replace(destination);
   }, []);
 
-  if (!journeys) return <SystemState tone="loading" title="Carregando sua biblioteca" detail="Consultando suas galerias e seleções." />;
-  if (journeysFailed) return <main className="admin-shell"><h1>Biblioteca indisponível</h1><p className="intro">Não foi possível consultar suas galerias. Tente novamente.</p></main>;
+  const includesJourney = (journey: Journey) => filter === "all" || journey.status === filter;
+  const hasVisibleJourneys = journeys?.some(includesJourney);
 
   return (
-    <main className="admin-shell library-shell">
-      <PageHeading title="Galerias" />
+    <div className={styles.library}>
+      <header className={styles.heading}>
+        <h1>Suas galerias</h1>
+        <p>Acesse seus ensaios e retome suas seleções de fotos.</p>
+      </header>
 
-      <section className="library-section" aria-labelledby="journey-library-title">
-        <div className="section-heading"><h2 id="journey-library-title">Galerias</h2><StatusBadge>{journeys.length}</StatusBadge></div>
-        {journeys.length ? <div className="library-card-grid">{journeys.map((journey) => {
-          const status = journeyStatus[journey.status] ?? journeyStatus.unavailable;
-          const latestOrder = journey.orders?.find((order) => order.commercial_state !== "awaiting_payment");
-          const browse = journey.actions.continue_url ?? journey.actions.prepared_url ?? journey.actions.fallback_url ?? journey.browse_url;
-          const primaryAction = browse ? { href: browse, label: "Ver fotos" } : latestOrder ? { href: "/library/purchases", label: latestOrder.commercial_state === "selection_finalized" ? "Ver seleção" : "Ver compra" } : null;
-          const deadlines = journey.selection_deadlines ?? [];
-          const refreshDeadlineId = deadlines.find((deadline) => Date.parse(deadline.expires_at) > Date.now())?.folder_id
-            ?? deadlines[0]?.folder_id;
-          return (
-            <article className={`library-card journey-card journey-card--${journey.status}`} key={journey.id}>
-              {browse ? <Link href={browse} className="library-cover-link" aria-label={`Abrir galeria ${journey.name}`}><GalleryCardPreview src={galleryCoverUrl(journey.cover_preview_url)} name={journey.name} /></Link> : <GalleryCardPreview src={null} name={journey.name} />}
-              <header><StatusBadge tone={status.tone}>{status.label}</StatusBadge></header>
-              <strong>{journey.name}</strong>
-              {journey.event_name ? <small>{journey.event_name}</small> : null}
-              {latestOrder ? <StatusBadge tone={latestOrder.commercial_state === "purchased" ? "success" : latestOrder.commercial_state === "payment_reported" ? "warning" : "neutral"}>{latestOrder.commercial_state === "selection_finalized" ? "Seleção finalizada" : latestOrder.commercial_state === "purchased" ? "Pagamento confirmado" : latestOrder.commercial_state === "payment_reported" ? "Pagamento informado" : "Pagamento não localizado"}</StatusBadge> : null}
-              {deadlines.length ? <section className="library-card-deadlines" aria-label={"Prazos de seleção: " + journey.name}>
-                <h3>Prazo para novas seleções</h3>
-                {deadlines.map((deadline) => <div
-                  className="library-card-deadline"
-                  key={deadline.folder_id}
-                  role="group"
-                  aria-label={"Prazo na pasta " + deadline.folder_name}
-                >
-                  <strong>{deadline.folder_name}</strong>
-                  <SelectionDeadline
-                    expiresAt={deadline.expires_at}
-                    onRevalidate={deadline.folder_id === refreshDeadlineId ? revalidateLibrary : undefined}
-                  />
-                </div>)}
-              </section> : null}
-              <div className="library-card-actions">
-                {primaryAction ? <MarkinaLink href={primaryAction.href} prefetch>{primaryAction.label}</MarkinaLink> : <span>Indisponível</span>}
-              </div>
-            </article>
-          );
-        })}</div> : <EmptyState title="Nenhuma galeria disponível" detail="Links e convites autorizados aparecerão aqui como uma única jornada por evento." />}
+      <section className={styles.content} aria-label="Galerias">
+        {journeysFailed ? <div className={styles.error}>
+          <SystemState tone="error" title="Biblioteca indisponível" detail="Não foi possível consultar suas galerias." />
+          <MarkinaButton type="button" variant="secondary" onClick={() => {
+            setJourneysFailed(false);
+            setJourneys(null);
+            revalidateLibrary();
+          }}>Tentar novamente</MarkinaButton>
+        </div> : !journeys ? <SystemState tone="loading" title="Carregando sua biblioteca" detail="Consultando suas galerias e seleções." /> : journeys.length === 0
+          ? <SystemState title="Nenhuma galeria disponível" detail="Links e convites autorizados aparecerão aqui." />
+          : <>
+          <div className={styles.filters} role="group" aria-label="Filtrar galerias">
+            {galleryFilters.map(({ value, label }) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>
+              {label}{value === "all" ? ` (${journeys.length})` : ""}
+            </button>)}
+          </div>
+          <div className={styles.grid} hidden={!hasVisibleJourneys}>
+            {journeys.map((journey) => (
+              <JourneyCard key={journey.id} journey={journey} hidden={!includesJourney(journey)} revalidateLibrary={revalidateLibrary} />
+            ))}
+          </div>
+          {hasVisibleJourneys ? null : <SystemState title="Nenhuma galeria neste filtro" detail="Selecione Todas para ver as galerias disponíveis." />}
+        </>}
       </section>
 
-    </main>
+    </div>
   );
 }

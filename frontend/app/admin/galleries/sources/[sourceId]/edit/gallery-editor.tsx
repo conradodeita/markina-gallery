@@ -2,6 +2,7 @@
 import { confirmDuplicateJpegs, isJpegFilename, jpegStorageKey, uploadJpeg } from "../../../../../upload-jpeg";
 import { notifyPhotographerOnboardingGate } from "../../../../../photographer-onboarding-gate";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -21,6 +22,8 @@ import { FolderProcessingPanel } from "../../../folder-processing-panel";
 import { isDefinitiveUploadRejection, useCreditUploadStatus } from "../../../../credits/credit-upload-status";
 import { GlobalPixSummary, type GlobalPix } from "../../../../settings/pix-panel";
 import { formatBrazilianCurrency, maskBrazilianCurrencyInput, parseBrazilianCurrency, type PriceTier } from "../../../pricing-rules";
+import { OverviewIcon } from "../../../../overview-icon";
+import styles from "./gallery-settings-step.module.css";
 
 type StepId = "ajustes" | "vendas" | "detalhes" | "imagens" | "clientes";
 type EditorStep = { id: StepId; label: string; status: "complete" | "pending" | "unavailable"; available: boolean };
@@ -847,16 +850,29 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   if (failed) return <SystemState tone="error" title="Galeria indisponível" detail="Não foi possível carregar o editor. Atualize a página ou entre novamente." />;
   if (loading || !editor) return <SystemState tone="loading" title="Abrindo a galeria" detail="Consultando etapas, permissões e conteúdo." />;
 
+  const descriptions: Partial<Record<StepId, string>> = {
+    ajustes: "Defina a identificação, o modo de acesso e a disponibilidade da galeria.",
+    vendas: "Defina os preços, consulte os recebimentos e organize a jornada de compra.",
+    detalhes: "Personalize a imagem de abertura e o título apresentado às suas clientes.",
+    imagens: "Organize as pastas e acompanhe o envio e o processamento das fotos.",
+    clientes: "Consulte o link da galeria e gerencie o acesso de cada cliente.",
+  };
+  const editorDescription = descriptions[currentStep];
+  const usesStudioLayout = Boolean(editorDescription);
+
   return (
-    <main className="admin-shell gallery-editor-shell">
+    <div className={usesStudioLayout ? styles.page : "admin-shell gallery-editor-shell"}>
       <div className="gallery-editor-heading">
         <div>
           <Link href="/admin/galleries" onClick={confirmDiscard}>← Galerias</Link>
-          <p className="eyebrow">Galeria do evento · link não listado</p>
+          <p className="eyebrow">{usesStudioLayout ? "Galeria pública" : "Galeria do evento · link não listado"}</p>
           <h1>{editor.gallery.name}</h1>
-          <p className="intro">Organize as pastas, revise as fotos e vincule clientes sem sair desta galeria.</p>
+          <p className="intro">{editorDescription ?? "Organize as pastas, revise as fotos e vincule clientes sem sair desta galeria."}</p>
         </div>
-        <StatusBadge tone={editor.gallery.active ? "success" : "danger"}>{editor.gallery.active ? "Ativa" : "Bloqueada"}</StatusBadge>
+        <div className={styles.headerActions}>
+          <StatusBadge tone={editor.gallery.active ? "success" : "danger"}>{editor.gallery.active ? "Ativa" : "Bloqueada"}</StatusBadge>
+          {usesStudioLayout ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/preview`} onClick={confirmDiscard}>Visualizar galeria pública</Link> : null}
+        </div>
       </div>
       <nav className="gallery-stepper" aria-label="Etapas da galeria">
         {editor.steps.map((item, index) => (
@@ -867,26 +883,31 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       </nav>
 
       {currentStep === "ajustes" ? (
-        <form id="gallery-settings-step" className="gallery-editor-panel gallery-settings-form" onSubmit={saveSettings} onChange={() => setDirty(true)}>
-          <div className="section-heading"><div><p className="eyebrow">Etapa 1</p><h2>Ajustes da galeria</h2></div></div>
-          <label>Título da galeria<input name="name" defaultValue={editor.gallery.name} required /></label>
-          <label>Evento<input name="event_name" defaultValue={editor.gallery.event_name} /></label>
-          <label>Descrição administrativa<textarea name="description" defaultValue={editor.gallery.description} rows={4} /><small className="field-hint">Uso interno do fotógrafo para registrar contexto, observações e pendências desta galeria.</small></label>
-          {editor.gallery.access_mode === "collective_protected" ? <p role="status">Modo protegido legado: o acesso continua bloqueado. Escolher outro modo altera a possibilidade de entrada e navegação, sem ativar vínculos pendentes.</p> : null}
-          <label>Modo de acesso<select name="access_mode" defaultValue={editor.gallery.access_mode === "collective_protected" ? "" : editor.gallery.access_mode}>{editor.gallery.access_mode === "collective_protected" ? <option value="">Manter modo protegido legado</option> : null}<option value="standard">Padrão</option><option value="invite_only">Somente convite individual</option></select><small className="field-hint">A autorização é aplicada pelo backend; nenhuma opção libera prévias antes do login.</small></label>
-          <div className="access-mode-hints" role="region" aria-label="Como funcionam os modos de acesso"><article><strong>Padrão</strong><p>Quem recebe o link válido e confirma o código no WhatsApp pode entrar, sem cadastro prévio pelo fotógrafo.</p></article><article><strong>Somente convite individual</strong><p>Só entram clientes vinculadas pelo fotógrafo ou autorizadas por convite individual. Encaminhar o link geral não dá acesso a outra pessoa.</p></article><p>Nos dois modos, cada cliente vê as pastas comuns e somente as exclusivas atribuídas a ela. Seleções e compras continuam individuais.</p></div>
-          <label className="gallery-toggle"><input name="active" type="checkbox" defaultChecked={editor.gallery.active} /> Galeria ativa</label>
+        <form id="gallery-settings-step" className={`gallery-settings-form ${styles.form}`} onSubmit={saveSettings} onChange={() => setDirty(true)}>
+          <div className={styles.formHeading}><span className={styles.icon}><OverviewIcon name="settings" /></span><div><p className="eyebrow">Etapa 1</p><h2>Ajustes da galeria</h2></div></div>
+          <fieldset className={styles.fields}>
+            <legend>Identificação da galeria</legend>
+            <label>Título da galeria<input name="name" defaultValue={editor.gallery.name} required /></label>
+            <label>Evento<input name="event_name" defaultValue={editor.gallery.event_name} /></label>
+            <label>Descrição administrativa<textarea name="description" defaultValue={editor.gallery.description} rows={4} /><small className="field-hint">Uso interno do fotógrafo para registrar contexto, observações e pendências desta galeria.</small></label>
+          </fieldset>
+          <fieldset className={styles.fields}>
+            <legend>Segurança e modo de acesso</legend>
+            {editor.gallery.access_mode === "collective_protected" ? <p role="status">Modo protegido legado: o acesso continua bloqueado. Escolher outro modo altera a possibilidade de entrada e navegação, sem ativar vínculos pendentes.</p> : null}
+            <label>Modo de acesso<select name="access_mode" defaultValue={editor.gallery.access_mode === "collective_protected" ? "" : editor.gallery.access_mode}>{editor.gallery.access_mode === "collective_protected" ? <option value="">Manter modo protegido legado</option> : null}<option value="standard">Padrão</option><option value="invite_only">Somente convite individual</option></select><small className="field-hint">A autorização é aplicada pelo backend; nenhuma opção libera prévias antes do login.</small></label>
+            <div className="access-mode-hints" role="region" aria-label="Como funcionam os modos de acesso"><article><strong>Padrão</strong><p>Quem recebe o link válido e confirma o código no WhatsApp pode entrar, sem cadastro prévio pelo fotógrafo.</p></article><article><strong>Somente convite individual</strong><p>Só entram clientes vinculadas pelo fotógrafo ou autorizadas por convite individual. Encaminhar o link geral não dá acesso a outra pessoa.</p></article><p>Nos dois modos, cada cliente vê as pastas comuns e somente as exclusivas atribuídas a ela. Seleções e compras continuam individuais.</p></div>
+            <label className="gallery-toggle"><input name="active" type="checkbox" defaultChecked={editor.gallery.active} /> Galeria ativa</label>
+          </fieldset>
         </form>
       ) : null}
 
       {currentStep === "vendas" ? (
-        <section className="gallery-editor-panel">
-          <p className="eyebrow">Etapa {currentIndex + 1}</p>
-          <h2>Vendas</h2>
+        <section className={styles.form} aria-labelledby="editor-sales-title">
+          <div className={styles.formHeading}><span className={styles.icon}><OverviewIcon name="sell" /></span><div><p className="eyebrow">Etapa {currentIndex + 1}</p><h2 id="editor-sales-title">Vendas</h2></div></div>
           {!sales?.available ? <SystemState title="Configuração comercial indisponível" detail={sales?.reason ?? "O backend não habilitou esta capacidade."} /> : (
-            <form id="gallery-sales-step" className="gallery-sales-editor" onSubmit={saveSales} onChange={() => { setDirty(true); setSalesError(""); }}>
+            <form id="gallery-sales-step" className={`gallery-sales-editor ${styles.sales}`} onSubmit={saveSales} onChange={() => { setDirty(true); setSalesError(""); }}>
               {salesError ? <p className="form-message form-message--error" role="alert">{salesError}</p> : null}
-              <fieldset className="gallery-sales-section">
+              <fieldset className={`gallery-sales-section ${styles.prices}`}>
                 <legend>Preço das fotos</legend>
                 <p>Escolha um valor fixo para qualquer quantidade ou aplique uma tabela progressiva cadastrada na sua conta. Pedidos existentes não são recalculados.</p>
                 {sales.pricing_review_required || sales.pricing_mode === "legacy_volume" ? <div className="notice" role="alert"><strong>Configuração legada precisa de revisão.</strong><span>As faixas antigas não serão convertidas automaticamente. Escolha um dos modos abaixo e confirme a conversão.</span></div> : null}
@@ -932,16 +953,21 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       ) : null}
 
       {currentStep === "detalhes" ? (
-        <section className="gallery-editor-panel">
-          <div className="section-heading">
+        <section className={styles.form} aria-labelledby="editor-details-title">
+          <div className={styles.formHeading}>
+            <span className={styles.icon}><OverviewIcon name="photo_camera" /></span>
             <div>
               <p className="eyebrow">Etapa 3</p>
-              <h2>Detalhes e apresentação</h2>
-              <p className="gallery-scope-note">Configure como esta galeria será apresentada. A marca-d’água vale para as galerias da sua conta e fica em Configurações.</p>
+              <h2 id="editor-details-title">Detalhes e apresentação</h2>
             </div>
           </div>
+          <p className={styles.detailsNote}>A marca-d’água vale para as galerias da sua conta e fica em <Link href="/admin/settings#settings-brand" onClick={confirmDiscard}>Configurações</Link>. A capa fica sem marca-d’água.</p>
           <form id="gallery-details-step" className="gallery-settings-form gallery-visual-settings" onSubmit={saveVisualSettings} onChange={(event) => { setDirty(true); updateVisualPreview(event); }}>
-            <div className="gallery-customization-layout">
+            <div className={`gallery-customization-layout ${styles.details}`}>
+              <aside className="gallery-customization-preview" aria-live="polite">
+                <h3>Prévia da capa</h3>
+                {coverPreviewUrl ? <div className="gallery-customization-preview-image"><Image src={`/api${coverPreviewUrl}`} alt="Prévia da capa da galeria" fill unoptimized /><strong className={`title-${visualPreview?.cover_title_position ?? "bottom-left"}`} style={{ color: visualPreview?.cover_title_color, fontFamily: titleFontFamily, fontSize: `${Math.min(visualPreview?.cover_title_size ?? 24, 34)}px` }}>{editor.gallery.name}</strong></div> : <div className="gallery-customization-preview-empty"><strong>Envie uma capa para visualizar o título</strong><span>A capa ficará sem marca-d’água e continuará fora das pastas de conteúdo.</span></div>}
+              </aside>
               <div className="gallery-customization-panels">
                 <fieldset className="gallery-customization-panel">
                   <legend>Capa e título</legend>
@@ -957,19 +983,16 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                   <label>Posição do título<select name="cover_title_position" defaultValue={editor.gallery.cover_title_position}><option value="top-left">Superior esquerdo</option><option value="top-center">Superior centro</option><option value="top-right">Superior direito</option><option value="middle-left">Centro esquerdo</option><option value="middle-center">Centro</option><option value="middle-right">Centro direito</option><option value="bottom-left">Inferior esquerdo</option><option value="bottom-center">Inferior centro</option><option value="bottom-right">Inferior direito</option></select></label>
                 </fieldset>
               </div>
-              <aside className="gallery-customization-preview" aria-live="polite">
-                <p className="eyebrow">Prévia da capa</p>
-                {coverPreviewUrl ? <div className="gallery-customization-preview-image"><img src={`/api${coverPreviewUrl}`} alt="Prévia da capa da galeria" /><strong className={`title-${visualPreview?.cover_title_position ?? "bottom-left"}`} style={{ color: visualPreview?.cover_title_color, fontFamily: titleFontFamily, fontSize: `${Math.min(visualPreview?.cover_title_size ?? 24, 34)}px` }}>{editor.gallery.name}</strong></div> : <div className="gallery-customization-preview-empty"><strong>Envie uma capa para visualizar o título</strong><span>A capa ficará sem marca-d’água e continuará fora das pastas de conteúdo.</span></div>}
-              </aside>
             </div>
           </form>
         </section>
       ) : null}
 
       {currentStep === "imagens" ? (
-        <section className="gallery-editor-panel">
-          <div className="section-heading"><div><p className="eyebrow">Etapa 4</p><h2>Imagens e pastas</h2></div><StatusBadge>{folders.length} pasta(s)</StatusBadge></div>
+        <section className={styles.form} aria-labelledby="editor-images-title">
+          <div className={`${styles.formHeading} ${styles.mediaHeading}`}><span className={styles.icon}><OverviewIcon name="folder_open" /></span><div><p className="eyebrow">Etapa 4</p><h2 id="editor-images-title">Imagens e pastas</h2></div><StatusBadge>{folders.length} pasta(s)</StatusBadge></div>
           <p className="gallery-scope-note">Crie pastas e revise os JPEGs. Cada foto fica disponível automaticamente assim que sua prévia protegida termina de processar.</p>
+          <div className={styles.mediaControls}>
           <fieldset className="gallery-organization-panel">
             <legend>Organização das pastas</legend>
             <label>Exibição das pastas<select aria-label="Exibição das pastas" value={visualPreview?.folder_display_mode ?? editor.gallery.folder_display_mode} onChange={saveFolderOrganization}><option value="individual">Pastas lado a lado</option><option value="sequential">Sequência cronológica</option></select></label>
@@ -981,8 +1004,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
             <FolderDeadlineFields mode="creation" startsAt="release" />
             <MarkinaButton disabled={!editor.actions.can_create_folder}>Criar pasta</MarkinaButton>
           </form>
-          <FolderUploadProgress uploads={uploads} wallet={creditUpload.wallet} walletState={creditUpload.walletState}
-            creditItems={creditUpload.items} onVerifyPending={creditUpload.verifyPending} />
+          </div>
           {folders.length ? <div className="gallery-folder-grid">{folders.map((folder) => { const title = folder.audience_scope === "selected" && folder.client_names?.length ? `${folder.name} — ${folder.client_names.join(", ")}` : folder.name; return <article key={folder.id} className={`${folderPublicationClass(folder)} ${folder.id === openFolderId ? "is-open" : ""}`}><button type="button" aria-label={`Abrir pasta ${title}`} disabled={folderDeleteBusy || folderRenameBusy} onClick={() => inspectFolder(folder.id)}><span className="gallery-folder-cover">{folder.preview_url ? <img src={`/api${folder.preview_url}`} alt="" /> : null}<b>{folder.photo_count ? `${folder.photo_count} fotos` : "Pasta vazia"}</b></span><strong>{title}</strong><small>{folder.audience_scope === "selected" ? "Privada · " : "Pública · "}{folderAccessStatusLabel(folder, observedAt)}</small><FolderPublicationSummary folder={folder} at={observedAt} />{uploads[folder.id] ? <small>{uploads[folder.id].current}/{uploads[folder.id].total} · {uploads[folder.id].phase === "uploading" ? "Enviando" : uploads[folder.id].phase === "success" ? "Enviado" : "Interrompido"}</small> : null}</button><div className="gallery-folder-actions"><button type="button" className="link-button" disabled={folderRenameBusy || folderDeleteBusy || bulkDeleteBusy || uploading || (folder.media_state !== undefined && folder.media_state !== "available")} onClick={() => { void renameFolder(folder); }}>Renomear</button><button type="button" className="link-button danger-action" disabled={folderDeleteBusy || bulkDeleteBusy || uploading || folderRenameBusy || (folder.media_state !== undefined && folder.media_state !== "available")} onClick={() => deleteFolder(folder)} aria-label={`Excluir pasta ${folder.name}`}>{folderDeleteBusy ? "Excluindo…" : "Excluir pasta"}</button></div><div className="gallery-folder-deadline"><strong>{folder.access_expires_at ? `Acesso até ${new Date(folder.access_expires_at).toLocaleString("pt-BR")}` : folder.access_duration_days ? `${folder.access_duration_days} dias após a liberação` : "Prazo indeterminado"}</strong>{folder.status !== "released" || (!folder.access_duration_days && !folder.access_expires_at) ? <form className="gallery-inline-form" onSubmit={(event) => { void configureFolderDeadline(folder, event); }}><FolderDeadlineFields mode="existing" startsAt={folder.released_at ? "save" : "release"} initialDays={folder.released_at ? null : folder.access_duration_days} /><MarkinaButton disabled={savingStep}>{folder.released_at ? "Definir prazo" : "Salvar prazo"}</MarkinaButton></form> : null}
             {folder.can_renew_deadline && folder.audience_scope !== "selected" ? <details className="gallery-folder-renewal">
               <summary>Renovar prazo</summary>
@@ -993,8 +1015,11 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
               </form>
             </details> : null}
           </div></article>; })}</div> : <SystemState title="Nenhuma pasta nesta galeria" detail="Crie a primeira pasta para iniciar o carregamento das fotos." />}
+          <FolderUploadProgress uploads={uploads} wallet={creditUpload.wallet} walletState={creditUpload.walletState}
+            creditItems={creditUpload.items} onVerifyPending={creditUpload.verifyPending} />
           {selectedFolder ? (
-            <div className="gallery-folder-workspace">
+            <div className={`gallery-folder-workspace ${styles.mediaWorkspace}`}>
+              <div className={styles.formHeading}><span className={styles.icon}><OverviewIcon name="collections" /></span><div><p className="eyebrow">Conteúdo da pasta</p><strong>{selectedFolder.name}</strong></div></div>
               {selectedFolder.media_state && selectedFolder.media_state !== "available" ? <p role="status">{mediaArchiveStatusLabel(selectedFolder.media_state)}{selectedFolder.media_state === "archived" ? <>. Consulte <Link href="/admin/credits">Créditos</Link> para solicitar a recuperação.</> : "."}</p> : <FolderProcessingPanel key={selectedFolder.id} folderId={selectedFolder.id} folderName={selectedFolder.name} uploading={uploads[selectedFolder.id]?.phase === "uploading"} />}
                 {photos.length ? <><div className="folder-photo-toolbar"><label><input type="checkbox" checked={photos.length > 0 && selectedPhotoIds.length === photos.length} disabled={bulkDeleteBusy} onChange={(event) => setSelectedPhotoIds(event.target.checked ? photos.map((photo) => photo.id) : [])} /> Selecionar todas</label><MarkinaButton type="button" className="mk-button--danger" disabled={bulkDeleteBusy || !selectedPhotoIds.some((id) => photos.some((photo) => photo.id === id && photo.can_delete))} onClick={deleteSelectedPhotos}>{bulkDeleteBusy ? "Excluindo…" : "Excluir selecionadas"}</MarkinaButton></div><div className="folder-photo-grid">{photos.map((photo) => <article key={photo.id} className={`photo-state-${photo.publication_state ?? "processing"}`}><label className="photo-select"><input type="checkbox" checked={selectedPhotoIds.includes(photo.id)} disabled={bulkDeleteBusy || !photo.can_delete} onChange={(event) => setSelectedPhotoIds((current) => event.target.checked ? [...current, photo.id] : current.filter((id) => id !== photo.id))} /> {photo.can_delete ? "Selecionar" : selectedFolder.media_state && selectedFolder.media_state !== "available" ? "Mídia arquivada" : "Compra confirmada"}</label>{photo.preview_url ? <button type="button" className="photo-preview-button" onClick={() => setExpandedPhoto(photo)} aria-label={`Ampliar ${photo.name}`}><img src={`/api${photo.preview_url}`} alt={`Prévia com marca d’água de ${photo.name}`} /></button> : <div className="gallery-cover">{selectedFolder.media_state && selectedFolder.media_state !== "available" ? mediaArchiveStatusLabel(selectedFolder.media_state) : "Preparando prévia"}</div>}<strong>{photo.name}</strong><small>{photo.error ?? (selectedFolder.media_state && selectedFolder.media_state !== "available" ? mediaArchiveStatusLabel(selectedFolder.media_state) : photo.publication_state === "published" ? "Disponível" : photo.publication_state === "ready_to_publish" ? "Aguardando liberação automática" : photo.publication_state === "failed" ? "Falha no processamento" : "Preparando prévia")}</small><div className="photo-card-actions"><button type="button" className="link-button danger-action" disabled={bulkDeleteBusy || !photo.can_delete} title={photo.can_delete ? "Excluir foto" : "Há uma compra confirmada para esta foto"} onClick={() => deletePhoto(photo)}>{photo.can_delete ? "Excluir" : selectedFolder.media_state && selectedFolder.media_state !== "available" ? "Indisponível" : "Compra confirmada"}</button></div></article>)}</div></> : <SystemState title="Pasta sem fotos" detail="Selecione arquivos JPEG para iniciar o processamento." />}
                 <form ref={uploadForm} className="gallery-inline-form" onSubmit={uploadPhotos}><input name="folder" type="hidden" value={selectedFolder.id} /><input ref={uploadInput} name="jpeg" type="file" accept="image/jpeg,.jpg,.jpeg" multiple required hidden onChange={() => uploadForm.current?.requestSubmit()} /><MarkinaButton type="button" disabled={!editor.actions.can_upload || uploading || (selectedFolder.media_state !== undefined && selectedFolder.media_state !== "available")} onClick={() => uploadInput.current?.click()}>Carregar fotos</MarkinaButton></form>
@@ -1004,10 +1029,24 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       ) : null}
 
       {currentStep === "clientes" ? (
-        <section className="gallery-editor-panel">
-          <div className="section-heading"><div><p className="eyebrow">Etapa 5</p><h2>Clientes e acesso</h2></div><StatusBadge>{linkedClients.length} vínculo(s)</StatusBadge></div>
-          <div className="unlisted-link"><span>Link permanente da Galeria pública</span><strong>{publicLink?.status === "active" ? "Ativo" : publicLink?.status === "legacy_unrecoverable" ? "Link legado indisponível" : "Ainda não disponível"}</strong>{publicLink?.link ? <input aria-label="Link da Galeria pública" readOnly value={publicLink.link} onFocus={(event) => event.currentTarget.select()} /> : null}<small>Este endereço permanece o mesmo enquanto a galeria existir. No primeiro acesso sem sessão válida, a cliente comprova o telefone por código.</small><div className="gallery-access-actions">{publicLink?.link ? <MarkinaButton type="button" variant="secondary" onClick={() => copyAccessLink(publicLink.link, "Link público")}>Copiar link</MarkinaButton> : publicLink?.status === "legacy_unrecoverable" ? <span>Solicite reparação administrativa somente em caso de incidente.</span> : <MarkinaButton type="button" disabled={Boolean(accessBusy)} onClick={createPublicLink}>Criar link permanente</MarkinaButton>}</div></div>
-          <div className="gallery-client-grid">
+        <section className={styles.form} aria-labelledby="editor-clients-title">
+          <div className={`${styles.formHeading} ${styles.mediaHeading}`}><span className={styles.icon}><OverviewIcon name="group" /></span><div><p className="eyebrow">Etapa 5</p><h2 id="editor-clients-title">Clientes e acesso</h2></div><StatusBadge>{linkedClients.length} vínculo(s)</StatusBadge></div>
+          <div className={`unlisted-link ${styles.linkPanel}`}>
+            <div className={styles.linkHeader}>
+              <span>Link permanente da Galeria pública</span>
+              <StatusBadge tone={publicLink?.status === "active" ? "success" : "neutral"}>
+                {publicLink?.status === "active" ? "Ativo" : publicLink?.status === "legacy_unrecoverable" ? "Link legado indisponível" : "Ainda não disponível"}
+              </StatusBadge>
+            </div>
+            {publicLink?.link ? <input aria-label="Link da Galeria pública" readOnly value={publicLink.link} onFocus={(event) => event.currentTarget.select()} /> : null}
+            <small>Este endereço permanece o mesmo enquanto a galeria existir. No primeiro acesso sem sessão válida, a cliente comprova o telefone por código.</small>
+            <div className="gallery-access-actions">
+              {publicLink?.link ? <MarkinaButton type="button" variant="secondary" onClick={() => copyAccessLink(publicLink.link, "Link público")}>Copiar link</MarkinaButton>
+                : publicLink?.status === "legacy_unrecoverable" ? <span>Solicite reparação administrativa somente em caso de incidente.</span>
+                  : <MarkinaButton type="button" disabled={Boolean(accessBusy)} onClick={createPublicLink}>Criar link permanente</MarkinaButton>}
+            </div>
+          </div>
+          <div className={`gallery-client-grid ${styles.clientGrid}`}>
             <section className="gallery-client-card" aria-labelledby="linked-clients-title">
               <p className="eyebrow">Acesso atual</p>
               <h3 id="linked-clients-title">Clientes vinculadas</h3>
@@ -1046,6 +1085,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
         {previous ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/edit/${previous}`} onClick={confirmDiscard}>← Voltar</Link> : <span />}
       {next && activeEditableForm ? <MarkinaButton type="submit" form={activeEditableForm} disabled={savingStep || (currentStep === "detalhes" && !coverReady)}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : currentStep === "imagens" ? <MarkinaButton type="button" disabled={savingStep} onClick={saveImagesAndAdvance}>{savingStep ? "Salvando…" : "Salvar e avançar →"}</MarkinaButton> : next ? <Link className="mk-button mk-button--primary" href={`/admin/galleries/sources/${sourceId}/edit/${next}`}>Avançar →</Link> : <MarkinaButton type="button" disabled={savingStep} onClick={completeGallery}>{savingStep ? "Verificando…" : "Concluir"}</MarkinaButton>}
       </footer>
-    </main>
+    </div>
   );
 }

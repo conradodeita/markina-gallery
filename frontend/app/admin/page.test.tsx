@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/link", () => ({
@@ -119,6 +119,33 @@ function dashboardFetcher(summaryPayload: unknown = summary, wallet: TestWallet 
 }
 
 describe("painel operacional", () => {
+  it("mostra os indicadores e atalhos enquanto a carteira carrega, antes de exibir o saldo e o histórico vazio", async () => {
+    let replyToWallet!: (response: Response) => void;
+    const walletResponse = new Promise<Response>((resolve) => {
+      replyToWallet = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) =>
+      String(input) === "/api/admin/credits/wallet"
+        ? walletResponse
+        : Promise.resolve(new Response(JSON.stringify(summary), { status: 200 })),
+    ));
+    render(<AdminPage />);
+
+    const wallet = await screen.findByRole("region", { name: "Carteira de créditos" });
+    expect(within(wallet).getByRole("status").textContent).toContain("Consultando carteira");
+    const metrics = screen.getByRole("region", { name: "Indicadores operacionais" });
+    expect(within(metrics).getAllByText(/Galerias públicas|Clientes|Pastas com importação ativa|Pastas liberadas|Armazenamento de fotos/))
+      .toHaveLength(5);
+    expect(screen.getByRole("link", { name: "Nova galeria" }).getAttribute("href")).toBe("/admin/galleries/new");
+
+    replyToWallet(new Response(JSON.stringify({ wallet: finiteWallet, entries: [] }), { status: 200 }));
+
+    expect(await within(wallet).findByText("Nenhuma movimentação")).toBeTruthy();
+    expect(within(wallet).getByText("4", { selector: "strong" })).toBeTruthy();
+    expect(within(wallet).getByRole("link", { name: /Ver carteira/ }).getAttribute("href"))
+      .toBe("/admin/credits");
+  });
+
   it("mostra o estado vazio da seleção e preserva os atalhos de galerias recentes", async () => {
     vi.stubGlobal("fetch", dashboardFetcher({ ...summary, recent_selections: [] }));
     render(<AdminPage />);
@@ -148,7 +175,7 @@ describe("painel operacional", () => {
     expect(screen.getByText("Armazenamento de fotos")).toBeTruthy();
     expect(screen.getByText("512 MB")).toBeTruthy();
     expect(screen.getByText("5 fotos")).toBeTruthy();
-    expect(screen.getByText("Prática de publicação")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Atenção agora · Ritual de publicação" })).toBeTruthy();
     expect(screen.getByText(/Vincule clientes e publique/)).toBeTruthy();
     expect(screen.queryByText(/responsável/i)).toBeNull();
     expect(
@@ -160,7 +187,7 @@ describe("painel operacional", () => {
     expect(screen.getByText("Ativa")).toBeTruthy();
     expect(screen.getByText("Bloqueada")).toBeTruthy();
     expect(screen.getByText("Formatura")).toBeTruthy();
-    expect(screen.getByText("Galerias recentes")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Acesso recente · Galerias recentes" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Clientes com seleção em andamento" })).toBeTruthy();
     expect(screen.getByText(`3 foto(s) · Iniciada em ${new Date("2026-11-05T12:00:00+00:00").toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}`)).toBeTruthy();
     expect(screen.getByText("1 foto(s) · Iniciada em Horário não registrado")).toBeTruthy();

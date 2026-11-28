@@ -153,6 +153,27 @@ describe("apresentação editorial compartilhada", () => {
     expect(onExpandedPhotoChange).toHaveBeenLastCalledWith(null);
   });
 
+  it("atualiza a posição na sequência, limita o Tab e retorna ao botão de ampliação", () => {
+    render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} />);
+    const opener = screen.getByRole("button", { name: "Ampliar prévia protegida de Horizontal.jpg" });
+    fireEvent.click(opener);
+    const preview = screen.getByRole("dialog");
+    const next = screen.getByRole("button", { name: "Próxima" });
+    const close = screen.getByRole("button", { name: "Fechar" });
+    expect(document.activeElement).toBe(preview);
+    expect(screen.getByText("Foto 1 de 2")).toBeTruthy();
+    fireEvent.keyDown(preview, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(next);
+    fireEvent.keyDown(next, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    fireEvent.click(next);
+    expect(screen.getByText("Foto 2 de 2")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Prévia ampliada de Vertical.jpg" })).toBeTruthy();
+    fireEvent.keyDown(close, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
   it("explica a limitação de screenshot e bloqueia cópia direta", () => {
     render(<GalleryPresentation galleryName="Evento" folders={folders.slice(0, 1)} />);
     fireEvent.keyUp(window, { key: "PrintScreen" });

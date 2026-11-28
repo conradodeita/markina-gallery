@@ -1,0 +1,183 @@
+# Design
+
+## Context
+
+Referência visual aprovada no Google Stitch: projeto Pick your Pic — Visual Redesign `14942044356996446740`, tela Visão Geral Dourado Claro `5e4c66ed48ca4027b89852acba9d7018`. A variante escura `57bdcac29d814bd48c3c3e6ff6a44bec` orienta a paleta correspondente. A composição usa barra lateral de 264 px, cabeçalho de 64 px, fundo contínuo quente, corpo com cinco métricas em 3+2, três etapas de publicação e cartões recentes em pares. No celular, navegação recolhível e conteúdo em uma coluna.
+
+## Goals / Non-Goals
+
+Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. Reutilizar a estrutura visual nas listas de Galerias e Clientes, em Vendas e pagamentos e no formulário inicial de Nova galeria. Preservar aparência, sessão e links com permissões existentes. Edição de galerias, upload, cliente móvel e checkout mantêm suas interfaces até seus incrementos.
+
+## Decisions
+
+- Encapsular a composição em um módulo CSS, com Plus Jakarta Sans e subconjunto de Material Symbols distribuídos localmente e acompanhados das licenças OFL e Apache 2.0. A estrutura reutiliza a navegação administrativa, a sessão e as variantes de aparência. O filtro do cabeçalho leva à busca existente em Galerias; a Visão Geral não introduz índice global.
+- Priorizar a sequência hero, indicadores, prática de publicação, galerias, seleções e carteira. Preservar as cinco métricas já oferecidas pela aplicação e manter a carteira após a operação recente.
+- Preservar os destinos reais dos links, as permissões de console e monitor, as notificações da sessão e a saída. O tema completo continua disponível junto ao perfil. O instalador mantém uma única instância global, apresentada como ação flutuante quando disponível nas rotas com a navegação Dourado Claro.
+- Usar aparência sem capa para as galerias recentes. A projeção atual não fornece capa, imagem ou data da galeria. A composição não cria solicitação por cartão e não incorpora dados, capas ou ações demonstrativas do protótipo.
+
+### Mapa tela, resposta e estados
+
+| Região | Origem e campos | Estado e ação |
+| --- | --- | --- |
+| Admissão ao painel e sessão | `GET /api/auth/destination` (`destination`) e `GET /api/auth/identity` (`role`, `identity`) pelos componentes existentes | Redirecionamento e escopo seguem a sessão atual. O menu de conta carrega a identidade autorizada. |
+| Endereço da marca | `GET /api/admin/onboarding/address` (`base_domain,hostname,state,choice_complete,suggested_prefix,public_url`) pelo aviso existente | Escolha pendente ou erro de consulta aparecem no aviso próprio. Conta com escolha concluída mantém a tela livre do aviso. |
+| Indicadores operacionais | `GET /api/admin/validation-summary` · `counts.parent_galleries`, `clients`, `folders_with_active_imports`, `photos_in_folders_with_active_imports`, `folders_released`; `storage.photo_count`, `bytes`, `available` | Carregamento e erro do resumo; armazenamento indisponível quando a medição não responde. |
+| Galerias recentes | Mesmo resumo · `recent_galleries[].id,name,active,event_name` | Lista vazia ou cartões com estado ativo/bloqueado e link para `/admin/galleries/sources/{id}`. A projeção não inclui capa. |
+| Seleções em andamento | Mesmo resumo · `recent_selections[].scope_id,client,gallery,parent_gallery,selected_count,selection_started_at`; a resposta inclui `last_selected_at`, sem renderização no cartão | Lista vazia ou seleção com horário local e atalho à seleção correspondente em Vendas e pagamentos. |
+| Carteira e movimentações | `GET /api/admin/credits/wallet` · `wallet.mode,available_credits,reserved_credits,pending_operations,recent_consumed_credits,recent_period_days,can_upload_content`; `entries[].id,type,delta,source_reference,description,created_at` | Carregando, disponível, ilimitado, sem movimentações, saldo insuficiente ou indisponível. A falha da carteira preserva indicadores e atalhos do resumo. |
+| Prática e ações de publicação | Dicas fixas, URLs `/admin/galleries` e `/admin/galleries/new` | Criação e consulta usam rotas existentes. A busca direciona ao filtro da lista, que consulta `GET /api/admin/parent-galleries/overview?query=...`. |
+
+### Catálogos administrativos
+
+- Galerias Dourado Claro `7938e6b20cd54c78af6773376d61d555`: composição com título e ação Criar galeria, resumo, busca e catálogo em grade ou lista. Exibir galerias públicas retornadas pelo catálogo. O contador de resultados vem de `total`; vínculos, cadastros e estado de cada cartão vêm da galeria correspondente. Somatórias auxiliares indicam que se referem aos resultados exibidos. O estado «Sem capa» acompanha a ausência de `cover_preview_url`. As galerias privadas continuam acessíveis no espaço de cada galeria pública, onde já são operadas.
+- Clientes Dourado Claro `490cf547c6e248cba09f80f5d1563c5f`: composição com título, atalho de cadastro, busca e registros alinhados em colunas no desktop. A apresentação móvel empilha os dados. Os indicadores da lista consideram somente clientes carregadas e são identificados como tal. A edição e o cadastro usam os formulários existentes. Última atividade, exportação e filtros demonstrativos do protótipo exigem contratos próprios e ficam fora deste recorte.
+
+| Região | Origem e campos | Estados e ações |
+| --- | --- | --- |
+| Galerias | `GET /api/admin/parent-galleries/overview?query=...` · `total`, `parent_galleries[].id,name,event_name,active,cover_preview_url,private_gallery_count,registration_count` | Carregamento, erro, nenhum resultado, cartão com ou sem capa e situação ativa/bloqueada. Busca por nome, evento, cliente ou telefone; alternância de grade/lista usa os mesmos resultados. Criação e detalhe mantêm suas rotas e autenticação. |
+| Clientes | `GET /api/admin/clients?limit=24&query=...&cursor=...` · `clients[].id,name,phone,aggregates.public_galleries,aggregates.private_galleries,aggregates.orders,deletion_eligible`, `page.has_more,next_cursor` | Carregamento, erro, nenhum cadastro, nenhum resultado ou resultados com e sem vínculo. Busca por nome ou WhatsApp, paginação e edição mantêm o comportamento existente. |
+| Ações de cliente | `POST /api/admin/clients`, `PATCH /api/admin/clients/{id}`, endpoints de alteração de telefone e inventário/exclusão usados por `ClientEditorDialog` | Cadastro, edição e exclusão continuam delegados aos componentes atuais, com os mesmos controles de autorização e confirmação. |
+
+### Ajuste de leitura no tema claro e no editor
+
+- O tema claro aproxima o fundo do branco e mantém superfícies, controles e estados destacados. O fundo escuro aproxima-se do preto, com cartões e controles em um nível distinto.
+- O editor de cliente cabe na janela e rola quando seu conteúdo ultrapassa a altura disponível. A página de fundo conserva a posição enquanto o editor está aberto, incluindo quando inventário ou erro acrescentam conteúdo ao diálogo.
+
+### Vendas e pagamentos
+
+- Referência Dourado Claro `f9bc42a74c3043db91f3a014f6f8f850`: título e modo de exibição, aviso de verificação manual, resumo financeiro, filtros e resultado agrupado. A UI usa o layout da referência e os valores do filtro atual. Métricas de demonstração e registro manual sem contrato correspondente ficam fora deste recorte.
+- O resultado mantém grupos por cliente com pedidos e seleções. Os cartões preservam decisões financeiras protegidas, liberações, confirmações e mensagens. O CSV usa o filtro que gerou a lista.
+
+| Região | Origem e campos | Estados e ações |
+| --- | --- | --- |
+| Pedidos, resumo, filtros e seleção | `GET /api/admin/payment-communications` · `summary`, `facets`, `groups`, `templates`, `selections_without_order`, `page.next_cursor` | Prioridades, busca, filtros, paginação e seleção por link direto. Carregamento, erro, nenhum resultado e lista carregada. |
+| Clientes para filtro e exportação | `GET /api/admin/clients?query=...` e `GET /api/admin/payment-communications/export.csv` | Busca depende dos dados da conta; exportação reutiliza os filtros aplicados e mantém estados de sucesso/erro. |
+| Reabertura e ações do pedido | `GET /api/admin/gallery-reopening-requests`, `POST /api/admin/payment-communications/{id}/{decision\|correction}` e `/api/admin/orders/{id}/delivery` | Decisão autorizada, repetição de notificações e ações financeiras permanecem nos componentes e contratos atuais. |
+| Histórico de acervo excluído | `GET /api/admin/removed-photo-movements` no componente `RemovedHistory` | O histórico mantém filtros, paginação e comprovantes autorizados. |
+
+### Nova galeria
+
+- Referência Dourado Claro `b8b084ff16534752a299c6789f6d2e55`: link de retorno, cabeçalho editorial e formulário com três campos e ações. Os temas claro e escuro usam os tokens das outras telas do fotógrafo.
+- `POST /api/admin/parent-galleries` recebe `name`, `event_name` e `description`, com `null` para opcionais vazios. A interface usa somente `id` da resposta para seguir ao editor existente em `/admin/galleries/sources/{id}/edit/ajustes`. A autenticação, a criação e a emissão de acesso continuam com o endpoint atual.
+- A interface apresenta validação nativa do título, envio em andamento, rejeição e erro de resultado incerto. Um envio em andamento aceita uma única solicitação. Campos são preservados após erro. Em resultado incerto, a mensagem orienta conferir o catálogo antes de reenviar.
+
+### Notificações
+
+- Referência Stitch `97c1495c2c88493f8fd77537eb577d58`: cabeçalho, faixa de informações sobre os canais, controle por destinatário e eventos expansíveis. Mostrar o estado de WhatsApp fornecido pela API. Indicadores de volume e conexões demonstrativas ficam fora deste recorte.
+- `GET /api/admin/notification-settings` fornece `settings` e `whatsapp_editable`. A UI usa `recipient` para selecionar eventos de fotógrafo ou cliente e preserva edições ainda não salvas ao alternar o filtro. Deep links existentes podem abrir o evento correspondente.
+- `PUT /api/admin/notification-settings/{event_type}` mantém `version`, habilitação e textos de cada canal, inclusive bloqueio do WhatsApp sem conexão, conflito e erros. A prévia substitui as variáveis de forma local, sem envio.
+- A central de mídia fria mantém os contratos `GET /api/admin/media-archive/notices?limit=50` e `POST /api/admin/media-archive/notices/{id}/read`, com o mesmo vínculo às pastas e estados de leitura.
+
+### Tabelas de preço progressivo
+
+- Referência Stitch `05c0a1e7df4f471e8bc4d8c88b2fd58c`: título com atalho de criação, explicação da progressão, resumo do catálogo e cartões junto ao editor. A interface usa contagens do catálogo carregado. Indicadores demonstrativos de conversão e uso por galeria ficam fora do recorte.
+- `GET /api/admin/pricing-presets?include_inactive=true` fornece `presets[].id,code,name,label,version,active,tiers`; os cartões mostram valores em reais, versão e disponibilidade. O resumo indica tabelas ativas, desativadas e total do catálogo.
+- O editor envia `code,name,tiers[].minimum_quantity,maximum_quantity,unit_price_cents` no `POST /api/admin/pricing-presets` ou `PUT /api/admin/pricing-presets/{id}`. As regras de faixas e centavos continuam existentes. `DELETE /api/admin/pricing-presets/{id}` e `POST /api/admin/pricing-presets/{id}/activate` mantêm os comportamentos de desativação confirmada e reativação.
+
+### Configurações
+
+- Referência Stitch `f1c9d2ab81c145d8becd18f35f96b4e2`: cabeçalho do estúdio, cartões por assunto com ícones e edição da marca com prévia ao lado no desktop. A UI mantém os sete grupos que a aplicação oferece, a prévia da entrada após salvar e a prévia local da marca-d’água.
+- `GET /api/admin/branding` carrega identidade, ativos e proteção. `PATCH /api/admin/branding`, `PUT /api/admin/branding/{asset}` e `PATCH /api/admin/branding/protection` mantêm textos, arquivos e campos existentes. O estado de carregamento, erro ou resposta salva continua visível.
+- Endereço, termos, segurança, WhatsApp, PIX, provedores e encerramento permanecem nos componentes atuais, com as mesmas permissões e endpoints. Atalhos internos e links externos como `#pix` e `#whatsapp` mantêm seus destinos.
+
+### Resumo da Galeria pública
+
+- Referência Stitch `4cf26c3c9f7f4fde986239056bb8d0b7`: caminho de volta ao catálogo, cabeçalho com ações, capa autorizada, indicadores e pastas em cartões. O resumo usa nome, evento, link protegido e contagens da API. Estatísticas demonstrativas de seleção, datas e resolução não são apresentadas como dados.
+- `GET /api/admin/parent-galleries/{id}/summary` fornece `name,event_name,cover_preview_url,public_link_status,counts,clients,deletion_operation`. `GET /api/admin/parent-galleries/{id}/folders` fornece `id,name,status,photo_count,preview_url,media_state,access_expires_at` de cada pasta. Se a capa não está disponível, a superfície informa seu estado.
+- A busca local procura nome ou telefone entre as clientes autorizadas retornadas. Prévia, ajustes, imagens, clientes, pastas e inventário/andamento da exclusão mantêm rotas, permissões e confirmações atuais.
+
+### Pedidos da galeria
+
+- Referência Stitch `85a405cea370449585c8e2f1314507e0`: cabeçalho, resumo, aviso de preservação dos snapshots, busca por cliente ou ID e cartões de pedidos. Contagens são calculadas sobre a resposta autorizada; o total confirmado soma somente o subtotal de cada pedido confirmado nesta galeria.
+- `GET /api/admin/derived-galleries/{id}/orders` fornece `orders[].id,payment_status,cart_reopened_at,total_cents,payment_group,client_name,created_at,price_rule,sales_message,pix,items`. Busca e filtros usam a lista carregada; a consulta é somente leitura. Confirmação, CSV e entrega continuam no fluxo de Vendas e pagamentos.
+
+### Ajustes da galeria
+
+- Referência Stitch `c7d92f1bd8874527932cb7c91733ed17`: cabeçalho, prévia, trilha de etapas, identificação e bloco de acesso. A primeira etapa usa as permissões e as opções reais, inclusive o estado protegido legado. As demais etapas continuam com seus próprios formulários.
+- `GET /api/admin/parent-galleries/{id}/editor` fornece `gallery.name,event_name,description,active,access_mode` e `steps[].id,label,status,available`. O controle mantém `PATCH /api/admin/parent-galleries/{id}/settings`, avanço somente após sucesso, estados de salvamento e confirmação existente ao sair com mudanças.
+
+### Vendas da galeria
+
+- Referência Stitch `16f4e7e2a7084819b60ab22b353eeb8e`: trilha do editor, escolha de precificação, simulação, PIX somente leitura e jornada da cliente. As opções são as existentes, com valores e disponibilidade da API.
+- `GET /api/admin/parent-galleries/{id}/sales` e `GET /api/admin/pricing-presets` fornecem a configuração e as tabelas ativas. `GET /api/admin/pricing-presets/{id}/quote?quantity=...` calcula a prévia do preço progressivo. O `PUT /api/admin/parent-galleries/{id}/sales` mantém centavos, modo, tabela selecionada, conversão legada, exigência de pagamento, mensagem e preferências. Nenhum pagamento é realizado nessa etapa.
+
+### Detalhes e apresentação da galeria
+
+- Referência Stitch `7cb288945dd54e928e4b243248b75574`: trilha do editor, prévia da capa em destaque e controles de imagem e título. A fotografia vem da capa autorizada, sem ativos de demonstração nem filtros de cor. Os controles existentes determinam fonte, cor, posição e tamanho da prévia.
+- `GET /api/admin/parent-galleries/{id}/details` fornece `cover_readiness,font_options,cover_options,settings`. O fluxo mantém as operações existentes de upload JPEG e processamento. A etapa avança após salvar os ajustes com capa pronta e mantém os estados de capa ausente, processando ou com falha.
+
+### Imagens e pastas
+
+- Referências Stitch `f0f04641be844c629aabc2f2133a560e` e `de3239a7c1c14a84b2094be75321a858`: painel de organização, catálogo de pastas, área de trabalho da pasta selecionada e progresso próximo ao conteúdo. A UI usa contagens retornadas e mantém comandos que já têm contrato. Indicadores demonstrativos de desempenho, pause e reordenação ficam fora do recorte.
+- `GET /api/admin/parent-galleries/{id}/folders` fornece nome, público, estado, prazo, contagens e capa. `GET /api/admin/photo-folders/{id}/photos` fornece o conteúdo disponível. Criação, prazo e organização continuam nas rotas existentes. O progresso de upload e a carteira usam as respostas autoritativas do fluxo existente, sem alterar o cálculo da cobrança ou regras de recuperação.
+
+### Clientes e acesso da galeria
+
+- Referência Stitch `56df0606817244b8a6f720c0bfe4c431`: estado do link permanente, clientes com vínculo, busca do diretório e cadastro. O painel usa o link autorizado quando retornado pelo servidor e mantém os estados indisponível e legado.
+- `GET /api/admin/parent-galleries/{id}/clients`, `GET /api/admin/clients?query=...` e `GET /api/admin/parent-galleries/{id}/public-link` abastecem vínculos, diretório e estado do link. Criação, cópia, busca, vínculo, desvinculação com confirmação, conclusão e privilégios permanecem nos controles existentes. O protótipo não fornece regras para personalizar o link.
+
+### Detalhe da Galeria privada
+
+- Referência Stitch `60ea6f495b6d4564b7cb71b5dfd60d72`: estado do acesso, membros, acervo herdado, arquivos exclusivos e controles de manutenção. A tela usa os contadores retornados, mantém as fotos herdadas separadas e oferece os destinos administrativos existentes.
+- A família `GET /api/admin/derived-galleries/{id}` e os sub-recursos `photos,folders,members,facial-index,upload-batches` fornece estado, acervo e controles. Nenhum processamento, upload, desbloqueio, regra comercial ou permissão é alterado pelo redesign.
+
+### Configuração comercial da Galeria privada
+
+- Referência Stitch `8bf52e18bf2e4cb6976ef4fa06598d0d`: cabeçalho de herança, estado somente leitura e cartões com as condições disponíveis. `GET /api/admin/derived-galleries/{id}/pricing` fornece `inherited_from_parent_gallery_id,editable,pricing_mode,fixed_unit_price_cents,pricing_snapshot,pricing_review_required`. Preço fixo e faixas da tabela progressiva só aparecem quando fornecidos. Uma configuração legada em revisão encaminha para a origem.
+- O PIX é configurado em Configurações. Dados de cobrança, franquias ou valores demonstrativos ficam fora da apresentação da herança. A página não edita nem confirma pedidos.
+
+### Prévia administrativa da Galeria pública
+
+- Referência Stitch `1e08923ff7214627875b011b41977680`: capa em destaque, navegação por pastas e coleção. O modo fotógrafo usa o mesmo componente de apresentação, com indicação de prévia e links de volta ao resumo e ao editor. Os controles exclusivos da cliente continuam na sessão correspondente.
+- A prévia carrega `GET /api/admin/parent-galleries/{id}/editor`, `GET /api/admin/parent-galleries/{id}/folders` e `GET /api/admin/photo-folders/{id}/photos` para as pastas retornadas. Usa somente URLs de prévia autorizadas, respeita a ordem recebida e mantém carregamento, falha e ausência de imagem visíveis.
+
+### Biblioteca da cliente
+
+- Referência Stitch `ed8e21416a564790bc35e127fd0fad61`: título Suas galerias, filtros curtos, cartões com capa e estado e ação abaixo das informações. A navegação existente continua no topo em desktop e na base em celular.
+- `GET /api/library` devolve `journeys` com identificação, nome, evento, estado, capa, prazos por pasta, pedidos e destinos calculados pelo servidor. Os filtros Todas, Ativas e Expiradas usam o estado retornado e não alteram a ordem, os prazos nem o acesso. A revalidação continua ao cruzar prazos, inclusive com um filtro ativo. O carrinho mantém sua consulta e contagem na navegação.
+- Links, capa, pedidos e contingência usam somente os destinos existentes. Sem capa autorizada, o cartão exibe a indisponibilidade. Falha de consulta permite repetir a solicitação, e o vazio geral se distingue do vazio de um filtro. Carrinho, compras e autenticação mantêm seus próprios fluxos.
+
+### Galeria da cliente
+
+- Referência Stitch `009c375a9ff64b0bb05365ff49f62876`: cabeçalho compacto, navegação da coleção, controle de seleção por foto e resumo de seleção. A rota única `/public-galleries/{id}` preserva as pastas comuns e atribuídas. O caminho de galeria privada legado continua redirecionando ao destino autorizado.
+- `GET /api/public-galleries/{id}` fornece título, contexto e apresentação. `GET /api/public-galleries/{id}/photos` fornece as pastas autorizadas, os prazos, as prévias, o estado comercial de cada foto e a seleção inicial. A coleção mantém as proteções de mídia, modos e ações existentes. A busca facial, registro de visualização, seleção, favoritos, comentários e solicitação de reabertura conservam os contratos e permissões atuais.
+- O cabeçalho permanece legível durante a consulta das fotos e a grade informa falha com nova tentativa. A prévia usa o título e a configuração da galeria. Prazos, seleção e estado de reabertura derivam do servidor. O protótipo oferece controles demonstrativos que não têm ação equivalente nesse fluxo, como prazo livre e estimativa de prorrogação.
+
+### Minhas compras
+
+- Referência Stitch `44c40b122af8421f8ad5ed920e08df2b`: cabeçalho compacto, cartões de consulta e indicação das entregas liberadas.
+- `GET /api/library/purchases` fornece pedidos individuais, grupos PIX, Mercado Pago, registros legados InfinitePay e movimentos removidos. A interface preserva esses grupos, seus estados existentes, links por âncora e a sequência da resposta. As etapas financeiras seguem em seus próprios destinos.
+- Fotos ficam reunidas no pedido correspondente. As prévias mantêm proteção e a abertura do álbum usa a URL autorizada já validada. A demonstração de download ZIP e os filtros de pedido do Stitch ficam fora deste recorte, pois disponibilidade de prévia, entrega externa e confirmação de pagamento têm contratos distintos.
+
+### Conferência de prévias
+
+- Referência Stitch `921325db234946b2b4fd536cac35a2a0`: item de navegação do fotógrafo, consulta curta por identificador, enquadramento da imagem e estados de carregamento e indisponibilidade.
+- A página usa `GET /api/admin` para confirmar o acesso e solicita somente `GET /api/admin/photo-assets/{photo_id}/preview` para a mídia. O endpoint entrega o derivado autorizado sem marca-d'água, com a resolução de conferência. O simulador e os metadados da amostra não têm dados nesse contrato.
+
+### Visualização da foto
+
+- Referências Stitch `89260da1838e498eb4762b507b83fa04` e `fa091cdab2ff4a59961647686ae4bb59`: posição na sequência, imagem central e controles de seleção, navegação e zoom acessíveis.
+- A ampliação usa a mesma prévia protegida e mantém a consulta da foto, registro de visualização, regiões autorizadas e operações da galeria. O contador mede a sequência de fotos já disponível ao visualizador. Pacotes, limites ou valores demonstrativos não dão origem a novos campos ou ações.
+- O diálogo mantém o foco no conjunto de controles e o devolve ao botão de abertura ao fechar. Comentários e busca por região continuam condicionados ao fluxo existente.
+
+### Carrinho da cliente
+
+- Referências Stitch `3bd17fcaa0754991b8fc4b84e11d184b`, `60c80a95e6ee4e05bb59a8e43e090a6f` e `da607ec9e1fd4686bbc23e74e2e41b71`: revisão por galeria, fotos, resumo com meios disponíveis, código PIX e estado de pagamento informado.
+- `GET /api/library/cart` e `POST /api/library/cart/prepare` fornecem grupos, quantidade, estado da mídia, revisão, totais, meios habilitados e dados PIX. Os grupos sem cobrança mantêm a finalização separada. `GET /api/library/mercadopago/active` abastece o acompanhamento dos pagamentos já iniciados.
+- Preservam-se as rotas, autorização, cálculo, limites, revisão e idempotência existentes para exclusão, finalização e comunicação. O retorno de `POST /api/library/payments/{id}/report` permite apresentar a confirmação de comunicação e o link para o histórico. A situação final do pagamento continua sujeita à conferência do fotógrafo. Franquias, valores e tempos demonstrativos do protótipo não aparecem na tela.
+
+### Entrada e confirmação da cliente
+
+- Referências Stitch `c8c389ee323844eebc28c2659a3bc0ce` e `5f4376115e884b4fa2e294ba4849fa8b`: identidade da marca, escolha de contexto, formulário e cartão de confirmação. A tela usa a marca entregue pelo serviço e uma foto editorial sintética e local para desktop. O arquivo da foto do Stitch não estava disponível. Os campos continuam prioritários em celular.
+- A entrada mantém consulta de marca e sessão, contexto do convite, retorno autorizado e orientação quando o cliente abre sem convite. `POST /api/auth/client/challenge`, `POST /api/auth/client/verify` e `POST /api/auth/client/resend` preservam corpo e autorização atuais.
+- O cartão de OTP usa um campo de seis dígitos com preenchimento automático, erro e reenvio existentes. A apresentação não divulga se há vínculo nem indica envio confirmado sem evidência. As regras de senha, TOTP e recuperação do fotógrafo permanecem nos fluxos atuais.
+
+### Recuperação, nova senha e confirmação de e-mail
+
+- Referências Stitch `6583bb91b93c4ac8b0927c2b7b3468ba`, `6b5fc858f126412c923038b23409b260` e `ba2b027af52240f4b93c21dd16b6efd5`. A recuperação no login mostra a etapa atual. As páginas de link apresentam o cartão de confirmação, os campos e o retorno ao login.
+- O fluxo de recuperação mantém `/api/auth/admin/recovery/{challenge,resend,verify,reset}` e `/api/auth/photographer-signup/recovery/email-link`, com as mesmas mensagens neutras e fatores. Contas que recebem link direto por e-mail podem saltar a etapa de WhatsApp. A interface indica as etapas sem representar envio, elegibilidade ou resultado antes da resposta. Os formulários são separados para abrir a entrada de código vazia após o e-mail.
+- Em `/admin/reset-password`, `/admin/verify-email` e `/photographer-access-recovery`, o token continua retirado do fragmento e enviado somente por POST explícito. A troca de e-mail mantém `/api/auth/admin/email/confirm`. A recuperação assistida mantém `/api/auth/photographer-access-recovery/confirm` e aguarda o proprietário. Os cartões preservam estados de link, falha e conclusão; a validação da senha e dos fatores permanece no contrato atual.
+
+## Risks / Trade-offs
+
+O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

@@ -1,11 +1,10 @@
 import { PRODUCT_NAME } from "./product-brand";
 import type { Metadata, Viewport } from "next";
+import { AppearanceToolbar } from "./appearance-toolbar";
 import { InstallApp } from "./install-app";
-import { ThemeControl } from "./theme-control";
 import { themeBootstrap } from "./theme";
 import { SessionBoundary } from "./session-boundary";
 import { MonitorActivity } from "./monitor-activity";
-import { AdminSessionToolbar } from "./admin-session-toolbar";
 import "./local-fonts.css";
 import "./design-tokens.css";
 import "./design-system.css";
@@ -29,7 +28,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: themeBootstrap }} /></head>
-      <body><div className="appearance-toolbar"><ThemeControl /><AdminSessionToolbar /><InstallApp /></div><SessionBoundary><MonitorActivity />{children}</SessionBoundary></body>
+      <body><AppearanceToolbar><InstallApp /></AppearanceToolbar><SessionBoundary><MonitorActivity />{children}</SessionBoundary></body>
     </html>
   );
 }

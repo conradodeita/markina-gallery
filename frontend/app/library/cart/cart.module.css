@@ -1,0 +1,200 @@
+.twoColumn {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(19rem, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.group,
+.payment,
+.receipt {
+  display: grid;
+  min-width: 0;
+  gap: .8rem;
+  padding: clamp(.85rem, 2vw, 1.35rem);
+  border: 1px solid var(--mk-border);
+  border-radius: 1rem;
+  background: var(--mk-surface);
+  box-shadow: var(--mk-shadow-sm);
+}
+
+.groupHeading,
+.summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .4rem .8rem;
+}
+
+.group h2,
+.payment h2,
+.payment h3,
+.receipt p {
+  margin: 0;
+}
+
+.groupHeading h2,
+.payment h2 {
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
+.groupHeading > span,
+.summary > div > span {
+  color: var(--mk-ink-muted);
+  font-size: .87rem;
+}
+
+.message {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.photos {
+  display: grid;
+  gap: .6rem;
+}
+
+.photos figure {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .55rem .7rem;
+  padding-block: .5rem;
+  margin: 0;
+  border-block-end: 1px solid var(--mk-border);
+}
+
+.photos figure > img,
+.photos figure > :global(.purchase-preview-unavailable) {
+  width: 100%;
+  min-height: 0;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  border-radius: .55rem;
+}
+
+.photos figure > :global(.purchase-preview-unavailable) {
+  padding: .2rem;
+  font-size: .65rem;
+  text-align: center;
+}
+
+.photos figcaption {
+  display: grid;
+  gap: .2rem;
+  overflow-wrap: anywhere;
+}
+
+.photos figcaption > small {
+  color: var(--mk-ink-muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.summary,
+.pixCode {
+  display: grid;
+  gap: .5rem;
+}
+
+.summary {
+  padding-block-end: .8rem;
+  border-block-end: 1px solid var(--mk-border);
+}
+
+.summary strong {
+  font-size: 1.15rem;
+}
+
+.methods {
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+}
+
+.payment h3 {
+  font-size: 1.05rem;
+}
+
+.qr {
+  justify-self: center;
+  max-width: 100%;
+  height: auto;
+  padding: .55rem;
+  border: 1px solid var(--mk-border);
+  border-radius: .65rem;
+  background: #fff;
+}
+
+.pixCode label {
+  font-weight: 750;
+}
+
+.pixCode textarea {
+  width: 100%;
+  padding: .65rem;
+  resize: vertical;
+  border: 1px solid var(--mk-border);
+  border-radius: .65rem;
+  background: var(--mk-surface-subtle);
+  color: var(--mk-ink);
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  margin: 0;
+  padding: .8rem 1rem;
+  border-radius: .7rem;
+  background: var(--mk-surface-subtle);
+}
+
+.receipt {
+  max-width: 36rem;
+  margin-inline: auto;
+  text-align: center;
+}
+
+.receipt header {
+  margin-block-end: .35rem;
+}
+
+.receipt .actions {
+  justify-content: center;
+}
+
+.receipt > a {
+  justify-self: center;
+}
+
+.primary {
+  background: linear-gradient(115deg, #735000, #936101);
+  color: #fff;
+  border-color: #735000;
+}
+
+@media (max-width: 790px) {
+  .twoColumn {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 460px) {
+  .photos figure {
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+  }
+
+  .photos figure > button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .actions > * {
+    flex: 1 1 100%;
+  }
+}

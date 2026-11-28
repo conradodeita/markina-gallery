@@ -1,0 +1,29 @@
+.page {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.page :global(.gallery-presentation) {
+  --mk-surface-subtle: var(--overview-surface);
+  border: 1px solid var(--overview-border);
+  border-radius: 16px;
+}
+
+.page :global(.gallery-presentation-hero) {
+  border-radius: 12px;
+}
+
+.page :global(.gallery-presentation-mode) {
+  border-inline-start: 3px solid var(--overview-gold);
+  background: var(--overview-subtle);
+  color: var(--overview-gold);
+}

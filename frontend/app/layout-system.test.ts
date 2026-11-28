@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const globals = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+const catalog = readFileSync(join(process.cwd(), "app", "admin", "catalog.module.css"), "utf8");
+const pricing = readFileSync(join(process.cwd(), "app", "admin", "pricing", "pricing.module.css"), "utf8");
 const tokens = readFileSync(join(process.cwd(), "app", "design-tokens.css"), "utf8");
 const presentation = readFileSync(join(process.cwd(), "app", "gallery-presentation.tsx"), "utf8");
 const publicGallery = readFileSync(join(process.cwd(), "app", "public-galleries", "[galleryId]", "page.tsx"), "utf8");
@@ -70,8 +72,6 @@ describe("sistema global de layout fluido", () => {
     for (const selector of [
       ".gallery-editor-shell",
       ".gallery-preview-page",
-      ".pricing-presets-page",
-      ".client-directory-shell",
       ".client-checkout-review",
       ".private-gallery-detail",
       ".admin-notifications-page",
@@ -88,8 +88,6 @@ describe("sistema global de layout fluido", () => {
       ".selection-summary--floating",
       ".gallery-editor-shell",
       ".gallery-preview-page",
-      ".pricing-presets-page",
-      ".client-directory-shell",
       ".client-checkout-review",
       ".private-gallery-detail",
       ".admin-notifications-page",
@@ -107,10 +105,20 @@ describe("sistema global de layout fluido", () => {
   });
 
   it("adapta grids compartilhados à largura disponível", () => {
-    expect(globals).toContain(".client-directory-grid { grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); }");
     const presentationRules = [...globals.matchAll(/\.gallery-presentation-grid\s*\{([^}]*)\}/g)].map((match) => match[1]);
     expect(presentationRules.some((rule) => rule.includes("repeat(auto-fit,minmax(240px,1fr))"))).toBe(true);
     expect(globals).toContain(".public-photo-grid { grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }");
+  });
+
+  it("mantém catálogos administrativos fluidos e empilha as linhas de clientes em telas estreitas", () => {
+    expect(catalog).toMatch(/\.catalog\s*\{[^}]*min-width:\s*0/);
+    expect(catalog).toMatch(/\.directoryTable\s*\{[^}]*width:\s*100%/);
+    expect(catalog).toMatch(/@media\s*\(max-width:[^)]+\)\s*\{[^]*\.directoryTable tbody tr\s*\{[^}]*display:\s*grid/);
+  });
+
+  it("empilha catálogo e editor de preços quando as duas colunas deixam de caber", () => {
+    expect(pricing).toMatch(/\.workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1\.1fr\)/);
+    expect(pricing).toMatch(/@media\s*\(max-width:\s*65rem\)\s*\{\s*\.workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   });
 
   it("mantém duas colunas efetivas na grade fotográfica da cliente no mobile", () => {

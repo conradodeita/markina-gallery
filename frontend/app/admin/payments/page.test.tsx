@@ -468,9 +468,10 @@ describe("controle operacional de pagamentos", () => {
 });
 
 describe("filtro de cliente com sugestões", () => {
-  it("mantém a faixa antes do resumo e ajusta o sticky à altura real do cabeçalho", async () => {
+  it("mostra o resumo antes dos filtros e ajusta a faixa à altura real do cabeçalho", async () => {
     const header = document.createElement("header");
-    header.className = "admin-topbar";
+    header.setAttribute("data-photographer-topbar", "");
+    header.style.position = "sticky";
     Object.defineProperty(header, "getBoundingClientRect", {
       value: () => ({ height: 146, width: 390, top: 0, left: 0, right: 390, bottom: 146, x: 0, y: 0, toJSON: () => ({}) }),
     });
@@ -485,7 +486,7 @@ describe("filtro de cliente com sugestões", () => {
     const body = screen.getByLabelText("Cliente / telefone").closest(".payment-dashboard-body")!;
     const sticky = body.querySelector(".payment-filter-sticky")!;
     const summary = screen.getByRole("region", { name: "Resumo de pagamentos" });
-    expect(sticky.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(summary.compareDocumentPosition(sticky) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await waitFor(() => expect(sticky.getAttribute("style")).toContain("top: 146px"));
     header.remove();
   });

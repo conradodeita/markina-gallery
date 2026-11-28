@@ -1,0 +1,98 @@
+.progression {
+  display: flex;
+  gap: 12px;
+  align-items: start;
+  padding: 16px 18px;
+  border: 1px solid var(--mk-border);
+  border-inline-start: 3px solid var(--overview-gold);
+  border-radius: 14px;
+  background: var(--mk-surface);
+}
+
+.icon {
+  display: grid;
+  flex: 0 0 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--overview-gold);
+  background: var(--overview-gold-soft);
+}
+
+.progression h2,
+.list h2,
+.editor h2,
+.preset h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.progression p {
+  margin: 5px 0 0;
+  color: var(--mk-ink-muted);
+  font-size: .88rem;
+  line-height: 1.5;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.list,
+.editor {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.preset {
+  padding: 16px;
+}
+
+.preset dt,
+.preset dd {
+  overflow-wrap: anywhere;
+}
+
+.editor {
+  padding: clamp(14px, 2vw, 22px);
+  border: 1px solid var(--mk-border);
+  border-radius: 16px;
+  background: var(--mk-surface);
+  scroll-margin-top: 80px;
+}
+
+.editor:focus-visible {
+  outline: 2px solid var(--overview-gold);
+  outline-offset: 2px;
+}
+
+.editor .tier {
+  grid-template-columns: minmax(0, 1fr) minmax(0, .75fr);
+}
+
+.tier > span {
+  grid-column: 1 / -1;
+}
+
+.editor :global(.pricing-preset-identity) {
+  grid-template-columns: minmax(0, .65fr) minmax(0, 1fr);
+}
+
+@media (max-width: 65rem) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 34rem) {
+  .editor .tier,
+  .editor :global(.pricing-preset-identity) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

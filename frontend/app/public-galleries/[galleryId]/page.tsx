@@ -10,11 +10,12 @@ import { PushControl, LogoutButton } from "../../push-control";
 import { FacialApiError, facialSearchApi, type FacialSearchResult } from "../../facial-search-client";
 import { galleryFontFamily } from "../../gallery-fonts";
 import { GalleryPresentation, type GalleryPresentationFolder } from "../../gallery-presentation";
-import { SystemState } from "../../ui-kit";
+import { MarkinaButton, MarkinaLink, SystemState } from "../../ui-kit";
 import { FacialSearchPanel } from "../facial-search-panel";
 import { FaceRegionViewer } from "../../face-region-viewer";
 import { SelectionDeadline } from "../../selection-deadline";
 import { clientMediaStatusMessage, type MediaArchiveStatus } from "../../media-archive-status";
+import styles from "./gallery.module.css";
 
 type PublicGallery = { id: string; name: string; event_name: string | null; description: string | null; access_mode: "standard" | "invite_only" | "collective_protected"; photos_url: string; favorites_enabled: boolean; comments_enabled: boolean; folder_display_mode: "individual" | "sequential"; cover_preview_url: string | null; cover_title_font: string; cover_title_color: string; cover_title_size: number; cover_title_position: string; support_contact_email?: string | null };
 type Comment = { id: string; photo_id: string; body: string };
@@ -286,7 +287,7 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
     </section>;
   }
 
-  if (failedGalleryId === galleryId) return <main className="admin-shell"><SystemState tone="error" title="Galeria indisponível" detail="Seu acesso não permite abrir esta grade ou a Galeria pública não está mais disponível." /><Link href="/library">Voltar à biblioteca</Link></main>;
+  if (failedGalleryId === galleryId) return <main className={`admin-shell public-gallery-shell ${styles.shell}`}><SystemState tone="error" title="Galeria indisponível" detail="Seu acesso não permite abrir esta grade ou a Galeria pública não está mais disponível." /><MarkinaLink href="/library" variant="secondary" className={styles.returnLink}>Voltar à biblioteca</MarkinaLink></main>;
   if (!gallery || gallery.id !== galleryId) return <SystemState tone="loading" title="Abrindo Galeria pública" detail="Confirmando seu acesso antes de carregar qualquer prévia." />;
 
   const photosLoading = photoLoad.galleryId !== galleryId || photoLoad.status === "loading";
@@ -315,16 +316,22 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
 
 
   return (
-    <main className="admin-shell public-gallery-shell">
-      <nav className="public-gallery-navigation" aria-label="Acessos da cliente">
-        <Link href="/library">← Minha biblioteca</Link>
-        <PushControl /><LogoutButton />
-      </nav>
+    <main className={`admin-shell public-gallery-shell ${styles.shell}`}>
+      <header className={styles.header}>
+        <nav className={styles.navigation} aria-label="Acessos da cliente">
+          <Link href="/library" className={styles.returnLink}><span aria-hidden="true">←</span> Minhas galerias</Link>
+          <div className={styles.controls}><PushControl /><LogoutButton /></div>
+        </nav>
+        <div className={styles.title}>
+          <h1>{gallery.name}</h1>
+          {gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null}
+        </div>
+      </header>
       <ClientNavigation />
       <FacialSearchPanel galleryId={galleryId} result={facialResult} onResult={receiveFacialResult} />
       {regionMessage ? <p role="status">{regionMessage}</p> : null}
       {message ? <p className="public-selection-result" role="status">{message}</p> : null}
-      {folderAccess.length ? <section className="gallery-folder-access-list" aria-labelledby="gallery-folder-access-title">
+      {folderAccess.length ? <section className={`gallery-folder-access-list ${styles.deadlines}`} aria-labelledby="gallery-folder-access-title">
         <h2 id="gallery-folder-access-title">Prazo de acesso por pasta</h2>
         {folderAccess.map((folder) => <article className="admin-card gallery-folder-access-card" key={folder.id}>
           <h3>{folder.name}</h3>
@@ -345,7 +352,13 @@ function PublicGallery({ galleryId }: { galleryId: string }) {
           </> : null}
         </article>)}
       </section> : null}
-      {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="Você já pode acessar sua galeria enquanto as prévias são preparadas." /> : photosFailed ? <SystemState tone="error" title="Não foi possível carregar as fotos" detail="Atualize a página para tentar novamente. Seus acessos continuam disponíveis acima." /> : <GalleryPresentation galleryName={gallery.name} context={gallery.description || gallery.event_name ? <p>{gallery.description || gallery.event_name}</p> : null} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} deferGridImages onExpandedPhotoChange={(photo) => { if (photo) void fetch(`/api/public-galleries/${galleryId}/photos/${photo.id}/view`, { method: "POST", credentials: "same-origin" }); }} renderExpandedPhotoContent={gallery.comments_enabled ? renderPhotoComments : undefined} renderExpandedMedia={(photo) => <FaceRegionViewer key={photo.id} galleryId={galleryId} photo={photo} onRegion={(id) => { void searchRegion(id); }} busy={regionPending} searchResult={facialResult?.id === regionSearchId ? facialResult : null} searchStatus={regionMessage || (facialResult ? facialResult.status : "")} />} featuredGroups={featuredGroups} revealFeaturedRequestId={facialResult?.status === "ready" && facialResult.id === initiatedSearchId ? facialResult.id : null} separateFeaturedPhotos={Boolean(facialResult?.status === "ready")} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
+      {photosLoading ? <SystemState tone="loading" title="Carregando fotos" detail="As prévias estão sendo consultadas." /> : photosFailed ? <div className={styles.retry}>
+        <SystemState tone="error" title="Não foi possível carregar as fotos" detail="A consulta da coleção está indisponível." />
+        <MarkinaButton type="button" variant="secondary" onClick={() => {
+          setPhotoLoad({ galleryId, status: "loading" });
+          setRefresh((value) => value + 1);
+        }}>Tentar novamente</MarkinaButton>
+      </div> : <GalleryPresentation galleryName={gallery.name} showHeader={false} coverUrl={gallery.cover_preview_url ? `/api${gallery.cover_preview_url}` : null} folders={folders} deferGridImages onExpandedPhotoChange={(photo) => { if (photo) void fetch(`/api/public-galleries/${galleryId}/photos/${photo.id}/view`, { method: "POST", credentials: "same-origin" }); }} renderExpandedPhotoContent={gallery.comments_enabled ? renderPhotoComments : undefined} renderExpandedMedia={(photo) => <FaceRegionViewer key={photo.id} galleryId={galleryId} photo={photo} onRegion={(id) => { void searchRegion(id); }} busy={regionPending} searchResult={facialResult?.id === regionSearchId ? facialResult : null} searchStatus={regionMessage || (facialResult ? facialResult.status : "")} />} featuredGroups={featuredGroups} revealFeaturedRequestId={facialResult?.status === "ready" && facialResult.id === initiatedSearchId ? facialResult.id : null} separateFeaturedPhotos={Boolean(facialResult?.status === "ready")} folderDisplayMode={gallery.folder_display_mode ?? "individual"} titleStyle={{ color: gallery.cover_title_color, fontFamily: galleryFontFamily(gallery.cover_title_font), fontSize: gallery.cover_title_size, position: gallery.cover_title_position }} emptyDetail="Nenhuma foto disponível." showCopyrightProtectionDialog renderPhotoMarkers={(photo) => {
         const selected = selectedIds.includes(photo.id);
         const favorited = favoriteIds.includes(photo.id);
         const frozenLabel = photo.commercial_state === "selection_finalized" ? "Seleção finalizada" : photo.commercial_state === "purchased" ? "Comprada" : photo.commercial_state === "payment_reported" ? "Pagamento informado" : photo.commercial_state === "awaiting_payment" ? "Aguardando pagamento" : null;

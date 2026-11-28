@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import { MarkinaButton, PageHeading, StatusBadge, SurfaceCard, SystemState } from "../../ui-kit";
+import { MarkinaButton, MarkinaLink, MetricCard, PageHeading, StatusBadge, SystemState } from "../../ui-kit";
+import { OverviewIcon } from "../overview-icon";
+import styles from "../catalog.module.css";
 import {
   ClientCreateForm,
   type ClientDirectoryItem,
@@ -14,6 +16,10 @@ type DirectoryResponse = {
   clients: ClientDirectoryItem[];
   page: { has_more: boolean; next_cursor: string | null };
 };
+
+function hasGallery(person: ClientDirectoryItem) {
+  return Boolean(person.aggregates?.public_galleries || person.aggregates?.private_galleries);
+}
 
 export function ClientDirectory() {
   const [clients, setClients] = useState<ClientDirectoryItem[]>([]);
@@ -76,48 +82,42 @@ export function ClientDirectory() {
   }
 
   return (
-    <div className="admin-shell client-directory-shell">
+    <div className={styles.catalog}>
       <PageHeading
-        eyebrow="Relacionamento"
         title="Clientes"
         detail="Cadastre, encontre e mantenha uma única identidade por WhatsApp, mesmo antes de criar uma galeria."
+        actions={<MarkinaLink href="#cadastro-cliente"><OverviewIcon name="add" /> Cadastrar cliente</MarkinaLink>}
       />
       {message ? (
         <p className="notice" role="status">
           {message}
         </p>
       ) : null}
-      <section className="client-directory-layout">
-        <SurfaceCard className="client-directory-create">
-          <p className="eyebrow">Novo cadastro</p>
-          <h2>Cadastrar cliente</h2>
-          <p className="gallery-scope-note">
-            O telefone normalizado identifica a cliente em todas as galerias e não pode ser
-            duplicado.
-          </p>
-          <ClientCreateForm
-            onCreated={() => {
-              setMessage("Cliente cadastrada no diretório da sua conta.");
-              setRefresh((value) => value + 1);
-            }}
-          />
-        </SurfaceCard>
-        <section className="client-directory-results" aria-labelledby="client-directory-title">
-          <div className="client-directory-toolbar">
-            <div>
-              <p className="eyebrow">Cadastro da sua conta</p>
-              <h2 id="client-directory-title">Pessoas cadastradas</h2>
-            </div>
-            <label>
-              Buscar por nome ou WhatsApp
+      {!loading && !error && clients.length > 0 && (
+        <section className={styles.metrics} aria-label="Resumo das clientes exibidas">
+          <MetricCard icon={<OverviewIcon name="group" />} label="Clientes exibidas" value={clients.length} detail={query ? "correspondentes à busca" : "carregadas no diretório"} />
+          <MetricCard icon={<OverviewIcon name="folder_shared" />} label="Com galerias" value={clients.filter(hasGallery).length} detail="entre as clientes exibidas" />
+          <MetricCard icon={<OverviewIcon name="payments" />} label="Com pedidos" value={clients.filter((person) => (person.aggregates?.orders ?? 0) > 0).length} detail="entre as clientes exibidas" />
+        </section>
+      )}
+      <section className={styles.catalogPanel} aria-labelledby="client-directory-title">
+        <div className={styles.panelHeading}>
+          <h2 id="client-directory-title"><OverviewIcon name="group" /> Pessoas cadastradas</h2>
+        </div>
+        <div className={styles.directory}>
+          <label className={styles.search}>
+            <span id="client-directory-search-label">Buscar por nome ou WhatsApp</span>
+            <span className={styles.searchField}>
+              <OverviewIcon name="search" />
               <input
+                aria-labelledby="client-directory-search-label"
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Ex.: Ana ou 11999999999"
               />
-            </label>
-          </div>
+            </span>
+          </label>
           {loading ? (
             <SystemState
               tone="loading"
@@ -128,53 +128,50 @@ export function ClientDirectory() {
             <SystemState tone="error" title="Diretório indisponível" detail={error} />
           ) : clients.length ? (
             <>
-              <div className="client-directory-grid">
-                {clients.map((person) => {
-                  const aggregates = person.aggregates ?? {
-                    public_galleries: 0,
-                    private_galleries: 0,
-                    orders: 0,
-                  };
-                  const linked = aggregates.public_galleries + aggregates.private_galleries > 0;
-                  return (
-                    <article className="client-directory-card" key={person.id}>
-                      <header>
-                        <div>
-                          <strong>{person.name}</strong>
-                          <small>{person.phone}</small>
-                        </div>
-                        <StatusBadge tone={linked ? "success" : "neutral"}>
-                          {linked ? "Já vinculada" : "Sem galeria"}
-                        </StatusBadge>
-                      </header>
-                      <dl>
-                        <div>
-                          <dt>Públicas</dt>
-                          <dd>{aggregates.public_galleries}</dd>
-                        </div>
-                        <div>
-                          <dt>Privadas</dt>
-                          <dd>{aggregates.private_galleries}</dd>
-                        </div>
-                        <div>
-                          <dt>Pedidos</dt>
-                          <dd>{aggregates.orders}</dd>
-                        </div>
-                      </dl>
-                      <div className="client-directory-card-footer">
-                        <span>
-                          {person.deletion_eligible
-                            ? "Sem histórico comercial protegido"
-                            : "Histórico comercial preservado"}
-                        </span>
-                        <MarkinaButton type="button" variant="secondary" onClick={() => setEditing(person)}>
-                          Editar
-                        </MarkinaButton>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
+              <table className={styles.directoryTable} aria-label="Pessoas cadastradas" role="table">
+                <thead role="rowgroup">
+                  <tr role="row">
+                    <th scope="col" role="columnheader">Cliente</th>
+                    <th scope="col" role="columnheader">Contato</th>
+                    <th scope="col" role="columnheader">Galerias e pedidos</th>
+                    <th scope="col" role="columnheader">Histórico</th>
+                    <th scope="col" role="columnheader">Ações</th>
+                  </tr>
+                </thead>
+                <tbody role="rowgroup">
+                  {clients.map((person) => {
+                    const linked = hasGallery(person);
+                    const initials = person.name.trim().split(/\s+/).slice(0, 2).map((name) => name.charAt(0)).join("");
+                    return (
+                      <tr key={person.id} role="row">
+                        <th scope="row" role="rowheader">
+                          <span className={styles.clientName}>
+                            <span className={styles.clientAvatar} aria-hidden="true">{initials}</span>
+                            <span>{person.name}</span>
+                          </span>
+                        </th>
+                        <td role="cell"><span className={styles.clientContact}>{person.phone}</span></td>
+                        <td role="cell">
+                          <StatusBadge tone={linked ? "success" : "neutral"}>
+                            {linked ? "Já vinculada" : "Sem galeria"}
+                          </StatusBadge>
+                          <dl className={styles.clientTotals}>
+                            <div><dt>Públicas</dt><dd>{person.aggregates?.public_galleries ?? 0}</dd></div>
+                            <div><dt>Privadas</dt><dd>{person.aggregates?.private_galleries ?? 0}</dd></div>
+                            <div><dt>Pedidos</dt><dd>{person.aggregates?.orders ?? 0}</dd></div>
+                          </dl>
+                        </td>
+                        <td role="cell">{person.deletion_eligible ? "Sem histórico comercial protegido" : "Histórico comercial preservado"}</td>
+                        <td role="cell">
+                          <MarkinaButton type="button" variant="secondary" onClick={() => setEditing(person)}>
+                            Editar
+                          </MarkinaButton>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
               {nextCursor ? (
                 <MarkinaButton type="button" variant="secondary" disabled={loadingMore} onClick={loadMore}>
                   {loadingMore ? "Carregando…" : "Carregar mais"}
@@ -187,11 +184,23 @@ export function ClientDirectory() {
               detail={
                 query
                   ? "Revise o nome ou o número informado."
-                  : "Use o cadastro ao lado; nenhuma galeria é necessária para começar."
+                  : "Cadastre a primeira cliente. Nenhuma galeria é necessária para começar."
               }
             />
           )}
-        </section>
+        </div>
+      </section>
+      <section className={styles.clientForm} id="cadastro-cliente" tabIndex={-1} aria-labelledby="create-client-title">
+        <h2 id="create-client-title">Cadastrar cliente</h2>
+        <p className="gallery-scope-note">
+          O telefone normalizado identifica a cliente em todas as galerias e não pode ser duplicado.
+        </p>
+        <ClientCreateForm
+          onCreated={() => {
+            setMessage("Cliente cadastrada no diretório da sua conta.");
+            setRefresh((value) => value + 1);
+          }}
+        />
       </section>
       {editing ? (
         <ClientEditorDialog

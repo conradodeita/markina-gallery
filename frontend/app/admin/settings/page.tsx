@@ -1,10 +1,11 @@
 "use client";
 
-import { PRODUCT_NAME, DEFAULT_WATERMARK_TEXT } from "../../product-brand";
+import { DEFAULT_WATERMARK_TEXT } from "../../product-brand";
 
 
 import { ChangeEvent, CSSProperties, FormEvent, MouseEvent, ReactNode, useEffect, useRef, useState } from "react";
-import { SystemState } from "../../ui-kit";
+import { MarkinaButton, PageHeading, SystemState } from "../../ui-kit";
+import { OverviewIcon } from "../overview-icon";
 import PixPanel from "./pix-panel";
 import PaymentProvidersPanel from "./payment-providers-panel";
 import WhatsAppPanel from "./whatsapp-panel";
@@ -195,11 +196,12 @@ function handleSettingsAnchor(event: MouseEvent<HTMLElement>) {
   if (link instanceof HTMLAnchorElement) revealSettingsAnchor(link.hash);
 }
 
-function SettingsGroup({ id, title, description, children, initiallyOpen = false }: {
-  id: string; title: string; description: string; children: ReactNode; initiallyOpen?: boolean;
+function SettingsGroup({ id, title, description, icon, children, initiallyOpen = false }: {
+  id: string; title: string; description: string; icon: string; children: ReactNode; initiallyOpen?: boolean;
 }) {
   return <details id={id} className={styles.group} open={initiallyOpen}>
     <summary className={styles.groupSummary}>
+      <span className={styles.groupIcon}><OverviewIcon name={icon} /></span>
       <div className={styles.groupHeading}>
         <h2>{title}</h2>
         <p>{description}</p>
@@ -343,12 +345,8 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <main className={`admin-shell ${styles.page}`} onClick={handleSettingsAnchor}>
-      <header className={styles.pageHeader}>
-        <p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p>
-        <h1>Configurações</h1>
-        <p>Encontre cada ajuste pelo assunto: acesso, comunicação, recebimentos, marca e encerramento da conta.</p>
-      </header>
+    <div className={styles.page} data-settings-page onClick={handleSettingsAnchor}>
+      <PageHeading title="Configurações" detail="Gerencie acesso, comunicação, recebimentos e identidade do seu estúdio." />
       <nav className={styles.navigation} aria-label="Seções de configurações">
         <a href="#settings-start">Primeiros passos</a>
         <a href="#settings-security">Acesso e segurança</a>
@@ -359,31 +357,34 @@ export default function AdminSettingsPage() {
         <a href="#settings-terms">Termos de uso</a>
       </nav>
 
-      <SettingsGroup id="settings-start" title="Primeiros passos" description="Configure o link da sua marca e acompanhe o que falta para operar." initiallyOpen>
+      <SettingsGroup id="settings-start" icon="grid_view" title="Primeiros passos" description="Configure o link da sua marca e acompanhe o que falta para operar." initiallyOpen>
         <TenantAddressPanel />
         <OnboardingPanel termsPortalTarget={termsPortalTarget} />
       </SettingsGroup>
 
-      <SettingsGroup id="settings-security" title="Acesso e segurança" description="Gerencie sua senha, autenticador e formas de recuperar o acesso à conta.">
+      <SettingsGroup id="settings-security" icon="settings" title="Acesso e segurança" description="Gerencie sua senha, autenticador e formas de recuperar o acesso à conta.">
         <SecurityPanel />
       </SettingsGroup>
 
-      <SettingsGroup id="settings-whatsapp" title="WhatsApp" description="Conecte seu número para enviar notificações aos clientes.">
+      <SettingsGroup id="settings-whatsapp" icon="notifications" title="WhatsApp" description="Conecte seu número para enviar notificações aos clientes.">
         <WhatsAppPanel />
       </SettingsGroup>
 
-      <SettingsGroup id="settings-payments" title="Recebimentos" description="Configure como os clientes pagam pelas fotos e onde você recebe.">
+      <SettingsGroup id="settings-payments" icon="payments" title="Recebimentos" description="Configure como os clientes pagam pelas fotos e onde você recebe.">
         <PixPanel />
         <PaymentProvidersPanel />
       </SettingsGroup>
 
-      <SettingsGroup id="settings-brand" title="Marca e aparência" description="Personalize a entrada da plataforma e a proteção visual aplicada às prévias.">
-        <form className="gallery-editor-panel gallery-settings-form" onSubmit={save}>
-          <h3>Textos da página de entrada</h3>
-          <p>Os textos são simples, sem HTML ou scripts.</p>
-          <label>Título da entrada<input name="login_title" defaultValue={settings.login_title} maxLength={120} required /></label>
-          <label>Texto introdutório<textarea name="login_intro" defaultValue={settings.login_intro} maxLength={300} rows={3} required /></label>
-          <label>Orientação auxiliar<input name="login_helper" defaultValue={settings.login_helper} maxLength={240} required /></label>
+      <SettingsGroup id="settings-brand" icon="photo_camera" title="Marca e aparência" description="Personalize a entrada da plataforma e a proteção visual aplicada às prévias.">
+        <form className={`gallery-editor-panel gallery-settings-form ${styles.entryForm}`} onSubmit={save}>
+          <div className={styles.entryFields}>
+            <h3>Textos da página de entrada</h3>
+            <p>Os textos são simples, sem HTML ou scripts.</p>
+            <label>Título da entrada<input name="login_title" defaultValue={settings.login_title} maxLength={120} required /></label>
+            <label>Texto introdutório<textarea name="login_intro" defaultValue={settings.login_intro} maxLength={300} rows={3} required /></label>
+            <label>Orientação auxiliar<input name="login_helper" defaultValue={settings.login_helper} maxLength={240} required /></label>
+            <MarkinaButton type="submit">Salvar textos</MarkinaButton>
+          </div>
           <div className="auth-preview" aria-live="polite">
             <p className="eyebrow">Prévia</p>
             {settings.logo_url ? <img className="auth-brand-logo" src={`/api${settings.logo_url}?v=${assetVersion}`} alt="Logo configurado" /> : null}
@@ -391,7 +392,6 @@ export default function AdminSettingsPage() {
             <p>{settings.login_intro}</p>
             <small>{settings.login_helper}</small>
           </div>
-          <button className="primary">Salvar textos</button>
         </form>
         <section className="admin-card" aria-labelledby="branding-assets-title">
           <h3 id="branding-assets-title">Logo e ícones</h3>
@@ -442,7 +442,7 @@ export default function AdminSettingsPage() {
                   {watermarkPositions.map(([value, label]) => <label key={value} title={label}><input aria-label={label} type="radio" name="watermark_position" value={value} defaultChecked={settings.watermark_position === value} /><span aria-hidden="true" /></label>)}
                 </fieldset>
               </fieldset>
-              <button className="primary protection-settings-save">Salvar proteção da sua conta</button>
+              <MarkinaButton type="submit" className="protection-settings-save">Salvar proteção da sua conta</MarkinaButton>
             </div>
             <aside className="protection-settings-preview" aria-labelledby="protection-preview-title" aria-live="polite">
               <div>
@@ -460,13 +460,13 @@ export default function AdminSettingsPage() {
         {message ? <p className="form-message" role="status">{message}</p> : null}
       </SettingsGroup>
 
-      <SettingsGroup id="settings-closure" title="Encerramento da conta" description="Consulte prazos, pendências e consequências antes de solicitar o encerramento.">
+      <SettingsGroup id="settings-closure" icon="folder_open" title="Encerramento da conta" description="Consulte prazos, pendências e consequências antes de solicitar o encerramento.">
         <PhotographerClosurePanel />
       </SettingsGroup>
 
-      <SettingsGroup id="settings-terms" title="Termos de uso" description="Leia os termos vigentes e consulte o histórico de aceites registrados para sua conta.">
+      <SettingsGroup id="settings-terms" icon="folder_shared" title="Termos de uso" description="Leia os termos vigentes e consulte o histórico de aceites registrados para sua conta.">
         <div className={styles.termsSlot} ref={setTermsPortalTarget} />
       </SettingsGroup>
-    </main>
+    </div>
   );
 }

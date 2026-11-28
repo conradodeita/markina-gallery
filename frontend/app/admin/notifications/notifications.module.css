@@ -1,14 +1,24 @@
-.notice { padding:20px; margin:24px 0; border:1px solid var(--mk-border); border-inline-start:5px solid var(--mk-action); border-radius:12px; background:var(--mk-surface-subtle); color:var(--mk-ink); }
-.notice p { margin:8px 0 0; max-width:100ch; line-height:1.55; color:var(--mk-ink-muted); }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,450px),1fr)); gap:24px; align-items:start; }
-.card { min-width:0; padding:clamp(16px,2vw,28px); border:1px solid var(--mk-border); border-radius:20px; background:var(--mk-surface); color:var(--mk-ink); scroll-margin-top:24px; }
-.heading { cursor:pointer; list-style:none; min-height:44px; }
+.page { display:grid; gap:20px; min-width:0; }
+.page :global(.mk-page-heading) { margin:0; }
+.page h1 { margin:0 0 8px; font-size:clamp(1.9rem,3vw,2.35rem); font-weight:800; letter-spacing:-.045em; }
+.notice,.channel { display:flex; align-items:start; gap:12px; padding:16px 18px; border:1px solid var(--mk-border); border-radius:14px; color:var(--mk-ink); background:var(--mk-surface); }
+.notice { border-inline-start:3px solid var(--overview-gold); }
+.notice p,.channel p { margin:5px 0 0; max-width:100ch; line-height:1.55; font-size:.87rem; color:var(--mk-ink-muted); }
+.channel { align-items:center; justify-content:space-between; flex-wrap:wrap; }
+.channel a { color:var(--overview-gold); font-size:.87rem; font-weight:750; }
+.filters { display:flex; flex-wrap:wrap; gap:6px; padding:5px; justify-self:start; border:1px solid var(--mk-border); border-radius:13px; background:var(--mk-surface-subtle); }
+.filters button { min-height:40px; padding:6px 11px; border:1px solid transparent; border-radius:9px; color:var(--mk-ink-muted); background:transparent; font:inherit; font-size:.84rem; font-weight:700; cursor:pointer; }
+.filters button[aria-pressed="true"] { border-color:var(--mk-border); color:var(--overview-gold); background:var(--mk-surface); }
+.grid { display:grid; gap:14px; align-items:start; }
+.card { min-width:0; padding:clamp(14px,2vw,22px); border:1px solid var(--mk-border); border-radius:16px; background:var(--mk-surface); color:var(--mk-ink); scroll-margin-top:76px; }
+.heading { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:12px; cursor:pointer; list-style:none; min-height:44px; }
+.eventIcon { display:grid; flex:none; width:36px; height:36px; place-items:center; border-radius:10px; color:var(--overview-gold); background:var(--overview-gold-soft); }
 .heading::-webkit-details-marker { display:none; }
 .content { display:grid; gap:18px; margin-top:18px; }
-.arrow { display:block; margin-top:12px; font-size:.85rem; width:1em; }
+.arrow { display:block; width:1em; color:var(--overview-gold); font-size:1.2rem; }
 .card[open] > .heading .arrow { transform:rotate(180deg); }
-.card h2 { margin:8px 0 0; font-size:1.3rem; }
-.recipient { background:var(--mk-action); color:var(--mk-action-ink); border-radius:20px; padding:5px 10px; font-size:.75rem; font-weight:750; }
+.card h2 { margin:3px 0 0; font-size:1.05rem; overflow-wrap:anywhere; }
+.recipient { color:var(--overview-gold); font-size:.73rem; font-weight:750; }
 .variables { display:flex; flex-wrap:wrap; gap:8px; color:var(--mk-ink-muted); font-size:.82rem; margin:0; }
 .card fieldset { display:grid; min-width:0; gap:16px; border:0; margin:0; padding:0; }
 .card legend { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
@@ -18,7 +28,7 @@
 .card textarea { resize:vertical; }
 .card :is(input,textarea):disabled { opacity:.55; cursor:not-allowed; }
 .card .toggle { justify-content:flex-start; align-items:center; min-height:44px; padding:10px; border-radius:10px; background:var(--mk-surface-subtle); }
-.toggle input { width:20px; height:20px; accent-color:var(--mk-brand); }
+.toggle input { width:20px; height:20px; accent-color:var(--overview-gold); }
 .fields { display:grid; gap:14px; }
 .preview { min-width:0; padding:16px; border:1px solid var(--mk-border); border-radius:12px; background:var(--mk-surface-subtle); overflow-wrap:anywhere; white-space:pre-wrap; }
 .preview small { display:block; font-size:.66rem; color:var(--mk-ink-muted); letter-spacing:.08em; margin-bottom:8px; }
@@ -26,3 +36,7 @@
 .card footer { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
 .card footer p { font-size:.85rem; margin:0; overflow-wrap:anywhere; }
 .card :is(input,textarea,button,summary):focus-visible { outline:3px solid var(--mk-focus); outline-offset:3px; }
+
+@media (min-width:65rem) {
+  .fields { grid-template-columns:minmax(0,1fr) minmax(0,1.35fr); align-items:start; }
+}

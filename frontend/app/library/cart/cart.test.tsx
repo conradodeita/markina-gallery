@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import CartPage from "./page";
@@ -100,5 +100,25 @@ describe("carrinho após aposentadoria da InfinitePay", () => {
     ]);
     expect(screen.getByText(/Pagamento em processamento · R\$ 1,00/)).toBeTruthy();
     expect(screen.getByText(/Aguardando pagamento · R\$ 105,00/)).toBeTruthy();
+  });
+
+  it("exibe a comunicação aceita como pendente de confirmação e preserva a revisão", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.endsWith("/prepare") ? prepared : url.endsWith("/report") ? {} : cart;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<CartPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Informar pagamento" }));
+    expect(await screen.findByRole("heading", { name: "Pagamento informado" })).toBeTruthy();
+    expect(screen.getByText("Seu pagamento aguarda a confirmação do fotógrafo.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Ver compra" }).getAttribute("href")).toBe("/library/purchases#payment-payment-1");
+    expect(fetch).toHaveBeenCalledWith("/api/library/payments/payment-1/report", expect.objectContaining({
+      method: "POST",
+      body: expect.stringContaining('"revision":"revision-1"'),
+    }));
+    expect(screen.queryByLabelText("PIX copia e cola")).toBeNull();
   });
 });

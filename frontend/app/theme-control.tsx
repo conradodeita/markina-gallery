@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { applyAppearanceFinish, applyTheme, readAppearanceFinish, readTheme, APPEARANCE_FINISH_KEY, THEME_EVENT, THEME_KEY, type AppearanceFinish, type ThemePreference } from "./theme";
 
 function subscribe(onChange: () => void) {
@@ -23,7 +23,7 @@ function subscribe(onChange: () => void) {
   };
 }
 
-export function ThemeControl() {
+export function ThemeControl({ quickIcons }: { quickIcons?: { light: ReactNode; dark: ReactNode } }) {
   const preference = useSyncExternalStore(subscribe, readTheme, () => "system");
   const finish = useSyncExternalStore(subscribe, readAppearanceFinish, () => "neutral");
   function choosePreset(value: string) {
@@ -35,6 +35,14 @@ export function ThemeControl() {
       localStorage.setItem(APPEARANCE_FINISH_KEY, nextFinish);
     } catch { /* O preset continua aplicado durante a página. */ }
     window.dispatchEvent(new Event(THEME_EVENT));
+  }
+  if (quickIcons) {
+    return (
+      <div className="theme-quick-control" role="group" aria-label="Tema">
+        <button type="button" aria-label="Claro" aria-pressed={preference === "light"} onClick={() => choosePreset(`light:${finish}`)}>{quickIcons.light}</button>
+        <button type="button" aria-label="Escuro" aria-pressed={preference === "dark"} onClick={() => choosePreset(`dark:${finish}`)}>{quickIcons.dark}</button>
+      </div>
+    );
   }
   const finishes: { value: AppearanceFinish; label: string }[] = [
     { value: "neutral", label: "Neutro" },

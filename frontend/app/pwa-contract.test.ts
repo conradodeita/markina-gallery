@@ -43,9 +43,9 @@ it("não intercepta API/fotos e responde offline sem armazenar dados privados", 
 it("mantém botão global, sem duplicar os shells, e tokens de contraste", () => {
   const layout = readFileSync(join(process.cwd(), "app/layout.tsx"), "utf8");
   expect(layout.match(/<InstallApp\s*\/>/g)).toHaveLength(1);
-  expect(layout).toMatch(/className="appearance-toolbar"[^]*<ThemeControl\s*\/>[^]*<InstallApp\s*\/>[^]*<\/div>\s*<SessionBoundary>\s*<MonitorActivity\s*\/>\s*\{children\}\s*<\/SessionBoundary>/);
+  expect(layout).toMatch(/<AppearanceToolbar>\s*<InstallApp\s*\/>\s*<\/AppearanceToolbar>\s*<SessionBoundary>\s*<MonitorActivity\s*\/>\s*\{children\}\s*<\/SessionBoundary>/);
   expect(layout.match(/<MonitorActivity\s*\/>/g)).toHaveLength(1);
-  for (const shell of ["app/admin/layout.tsx", "app/client-shell.tsx"]) {
+  for (const shell of ["app/appearance-toolbar.tsx", "app/admin/layout.tsx", "app/admin/overview-shell.tsx", "app/client-shell.tsx"]) {
     expect(readFileSync(join(process.cwd(), shell), "utf8")).not.toMatch(/<InstallApp\b/);
   }
   const tokens = readFileSync(join(process.cwd(), "app/design-tokens.css"), "utf8");

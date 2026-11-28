@@ -42,6 +42,28 @@ describe("Galeria pública da cliente", () => {
     expect(screen.queryByRole("link", { name: "Fale com o suporte" })).toBeNull();
   });
 
+  it("mantém um título de galeria e repete a consulta de fotos após falha", async () => {
+    let attempts = 0;
+    vi.stubGlobal("fetch", vi.fn((path: string) => {
+      if (path.endsWith("/facial-search")) return response({ state: "unavailable", manual_selection_available: true });
+      if (path.endsWith("/comments")) return response({ comments: [] });
+      if (path.endsWith("/photos")) {
+        return ++attempts === 1
+          ? response({}, 503)
+          : response({ photos: [{ id: "portrait", name: "Retrato", preview_url: "/portrait", width: 360, height: 240 }] });
+      }
+      return response({ id: "public-1", name: "Ensaio de outono", event_name: "Retratos", folder_display_mode: "individual" });
+    }));
+    render(<PublicGalleryPage />);
+    expect(await screen.findByText("Não foi possível carregar as fotos")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Ensaio de outono" })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Prévia protegida de Retrato" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(await screen.findByRole("img", { name: "Prévia protegida de Retrato" })).toBeTruthy();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(attempts).toBe(2);
+  });
+
   it("navega pelas pastas comuns e exclusivas de cada cliente sem mostrar as da outra", async () => {
     let recipient = "ana";
     const fetchMock = vi.fn((path: string) => {

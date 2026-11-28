@@ -11,6 +11,8 @@ import {
   SurfaceCard,
   SystemState,
 } from "../ui-kit";
+import { OverviewIcon } from "./overview-icon";
+import styles from "./overview.module.css";
 
 type Summary = {
   storage: {
@@ -63,6 +65,10 @@ type CreditEntry = {
   description: string | null;
   created_at: string;
 };
+
+function OverviewMetric({ icon, ...metric }: Parameters<typeof MetricCard>[0] & { icon: string }) {
+  return <MetricCard {...metric} icon={<OverviewIcon name={icon} />} />;
+}
 
 function creditEntryLabel(type: string): string {
   return {
@@ -157,45 +163,52 @@ export default function AdminPage() {
   const photosInActiveImportFolders =
     summary.counts.photos_in_folders_with_active_imports;
   return (
-    <div className="admin-dashboard">
-      <PageHeading
-        eyebrow="Central de operações"
-        title="Seu próximo passo está à vista."
-        detail="Acompanhe as galerias, conclua as pastas que estão em preparação e mantenha cada entrega no ritmo certo."
-        actions={
-          <>
-            <MarkinaLink href="/admin/galleries/new">Nova galeria</MarkinaLink>
-            <MarkinaLink href="/admin/galleries" variant="secondary">
-              Ver galerias
-            </MarkinaLink>
-          </>
-        }
-      />
-      <section className="dashboard-metrics">
-        <MetricCard
+    <div className={styles.overview}>
+      <div className={styles.intro}>
+        <PageHeading
+          eyebrow="Visão geral"
+          title="Seu próximo passo está à vista."
+          detail="Acompanhe as galerias, conclua as pastas que estão em preparação e mantenha cada entrega no ritmo certo."
+          actions={
+            <>
+              <MarkinaLink href="/admin/galleries" variant="secondary">
+                <OverviewIcon name="folder_open" /> Ver galerias
+              </MarkinaLink>
+              <MarkinaLink href="/admin/galleries/new"><OverviewIcon name="add" /> Nova galeria</MarkinaLink>
+            </>
+          }
+        />
+      </div>
+      <section className={styles.metrics} aria-label="Indicadores operacionais">
+        <OverviewMetric
+          icon="public"
           label="Galerias públicas"
           value={summary.counts.parent_galleries}
           detail="eventos sob seu controle"
         />
-        <MetricCard
+        <OverviewMetric
+          icon="group"
           label="Clientes"
           value={summary.counts.clients}
           detail="cadastros no sistema"
           tone="success"
         />
-        <MetricCard
+        <OverviewMetric
+          icon="drive_folder_upload"
           label="Pastas com importação ativa"
           value={activeImportFolders}
           detail={`${photosInActiveImportFolders} ${photosInActiveImportFolders === 1 ? "foto nas" : "fotos nas"} pastas ativas`}
           tone={activeImportFolders ? "warning" : "success"}
         />
-        <MetricCard
+        <OverviewMetric
+          icon="folder_shared"
           label="Pastas liberadas"
           value={summary.counts.folders_released ?? 0}
           detail="visíveis a clientes autorizadas"
           tone="success"
         />
-        <MetricCard
+        <OverviewMetric
+          icon="collections"
           label="Armazenamento de fotos"
           value={formatStorage(summary.storage.bytes, summary.storage.available)}
           detail={`${summary.storage.photo_count} ${
@@ -204,11 +217,122 @@ export default function AdminPage() {
           tone={summary.storage.available ? "neutral" : "warning"}
         />
       </section>
-      <section className="dashboard-credit-section" aria-label="Carteira de créditos">
+      <div className={styles.operations}>
+        <section className={styles.publication} aria-labelledby="overview-publication">
+          <div className={styles.operationalHeading}>
+            <div className={styles.sectionIcon}><OverviewIcon name="checklist_rtl" /></div>
+            <div>
+              <h2 id="overview-publication">Atenção agora · Ritual de publicação</h2>
+              <p className="dashboard-section-detail">
+                Uma ordem simples para evitar liberar fotos incompletas.
+              </p>
+            </div>
+          </div>
+          <ol className="task-steps">
+            <li>
+              <b>1</b>
+              <div>
+                <strong>Contextualize a galeria</strong>
+                <small>
+                  Confira identidade, prazo e mensagem antes de adicionar fotos.
+                </small>
+              </div>
+            </li>
+            <li>
+              <b>2</b>
+              <div>
+                <strong>Prepare uma pasta completa</strong>
+                <small>
+                  Envie JPEGs e revise as prévias antes de disponibilizar.
+                </small>
+              </div>
+            </li>
+            <li>
+              <b>3</b>
+              <div>
+                <strong>Libere para as clientes certas</strong>
+                <small>
+                  Vincule clientes e publique somente a rodada concluída.
+                </small>
+              </div>
+            </li>
+          </ol>
+        </section>
+        <section className={styles.recent} aria-labelledby="overview-recent">
+          <div className={styles.recentHeading}>
+            <div className={styles.operationalHeading}>
+              <div className={styles.sectionIcon}><OverviewIcon name="history" /></div>
+              <h2 id="overview-recent">Acesso recente · Galerias recentes</h2>
+            </div>
+            <MarkinaLink href="/admin/galleries" variant="quiet">
+              Todas →
+            </MarkinaLink>
+          </div>
+          {summary.recent_galleries.length ? (
+            <div className={styles.galleryGrid}>
+              {summary.recent_galleries.map((gallery) => (
+                <article key={gallery.id} className={styles.galleryCard}>
+                  <div className={styles.galleryPreview}>
+                    <StatusBadge tone={gallery.active ? "success" : "danger"}>{gallery.active ? "Ativa" : "Bloqueada"}</StatusBadge>
+                    <p><OverviewIcon name="collections" /><span>Sem capa</span></p>
+                  </div>
+                  <div className={styles.galleryDetails}>
+                    <MarkinaLink href={`/admin/galleries/sources/${gallery.id}`} variant="quiet">
+                      {gallery.name}<OverviewIcon name="arrow_forward" />
+                    </MarkinaLink>
+                    <small>{gallery.event_name || "Galeria pública"}</small>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <SystemState
+              title="Ainda não há galerias"
+              detail="Comece criando uma Galeria pública e vinculando uma cliente."
+            />
+          )}
+          <div className="dashboard-open-selections">
+            <div className="section-heading">
+              <div>
+                <h3>Clientes com seleção em andamento</h3>
+                <p className="dashboard-section-detail">Horários exibidos no fuso local deste dispositivo.</p>
+              </div>
+            </div>
+            {summary.recent_selections?.length ? (
+              <div className="dashboard-recent">
+                {summary.recent_selections.map((selection) => {
+                  const params = new URLSearchParams({
+                    client_id: selection.client.id,
+                    parent_gallery_id: selection.parent_gallery.id,
+                  });
+                  const anchor = `open-selection-${selection.scope_id}-${selection.client.id}`;
+                  return (
+                    <div key={`${selection.scope_id}:${selection.client.id}`}>
+                      <div>
+                        <MarkinaLink
+                          href={`/admin/payments?${params.toString()}#${anchor}`}
+                          variant="quiet"
+                        >
+                          {selection.client.name}
+                        </MarkinaLink>
+                        <small>{selection.gallery.name} · {selection.parent_gallery.name}</small>
+                        <small>{selection.selected_count} foto(s) · Iniciada em {selectionStartedLabel(selection.selection_started_at)}</small>
+                      </div>
+                      <StatusBadge tone="neutral">Em andamento</StatusBadge>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="dashboard-section-detail">Nenhuma cliente está selecionando fotos agora.</p>
+            )}
+          </div>
+        </section>
+      </div>
+      <section className={styles.wallet} aria-labelledby="overview-wallet-title">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Créditos de fotografia</p>
-            <h2>Carteira</h2>
+            <h2 id="overview-wallet-title">Carteira de créditos</h2>
             <p className="dashboard-section-detail">Saldo, uso recente e operações de upload desta conta.</p>
           </div>
           <MarkinaLink href="/admin/credits" variant="quiet">Ver carteira →</MarkinaLink>
@@ -219,7 +343,7 @@ export default function AdminPage() {
           <SystemState tone="error" title="Saldo indisponível" detail="Não foi possível consultar a carteira. As métricas operacionais acima continuam disponíveis; o saldo não foi tratado como zero." />
         ) : (
           <>
-            <div className="dashboard-metrics dashboard-credit-metrics">
+            <div className={styles.walletMetrics}>
               <MetricCard
                 label="Créditos disponíveis"
                 value={wallet.mode === "unmetered" ? "Ilimitado" : wallet.available_credits ?? "Indisponível"}
@@ -265,122 +389,6 @@ export default function AdminPage() {
             </SurfaceCard>
           </>
         )}
-      </section>
-      <section className="dashboard-columns">
-        <SurfaceCard>
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Atenção agora</p>
-              <h2>Prática de publicação</h2>
-              <p className="dashboard-section-detail">
-                Uma ordem simples para evitar liberar fotos incompletas.
-              </p>
-            </div>
-          </div>
-          <ol className="task-steps">
-            <li>
-              <b>1</b>
-              <div>
-                <strong>Contextualize a galeria</strong>
-                <small>
-                  Confira identidade, prazo e mensagem antes de adicionar fotos.
-                </small>
-              </div>
-            </li>
-            <li>
-              <b>2</b>
-              <div>
-                <strong>Prepare uma pasta completa</strong>
-                <small>
-                  Envie JPEGs e revise as prévias antes de disponibilizar.
-                </small>
-              </div>
-            </li>
-            <li>
-              <b>3</b>
-              <div>
-                <strong>Libere para as clientes certas</strong>
-                <small>
-                Vincule clientes e publique somente a rodada concluída.
-                </small>
-              </div>
-            </li>
-          </ol>
-        </SurfaceCard>
-        <SurfaceCard>
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Acesso recente</p>
-              <h2>Galerias recentes</h2>
-            </div>
-            <MarkinaLink href="/admin/galleries" variant="quiet">
-              Todas →
-            </MarkinaLink>
-          </div>
-          {summary.recent_galleries.length ? (
-            <div className="dashboard-recent">
-              {summary.recent_galleries.map((gallery) => (
-                <div key={gallery.id}>
-                  <div>
-                    <MarkinaLink
-                      href={`/admin/galleries/sources/${gallery.id}`}
-                      variant="quiet"
-                    >
-                      {gallery.name}
-                    </MarkinaLink>
-                    <small>{gallery.event_name || "Galeria pública"}</small>
-                  </div>
-                  <StatusBadge
-                    tone={gallery.active ? "success" : "danger"}
-                  >
-                    {gallery.active ? "Ativa" : "Bloqueada"}
-                  </StatusBadge>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <SystemState
-              title="Ainda não há galerias privadas"
-              detail="Comece criando uma Galeria pública e vinculando uma cliente."
-            />
-          )}
-          <div className="dashboard-open-selections">
-            <div className="section-heading">
-              <div>
-                <h3>Clientes com seleção em andamento</h3>
-                <p className="dashboard-section-detail">Horários exibidos no fuso local deste dispositivo.</p>
-              </div>
-            </div>
-            {summary.recent_selections?.length ? (
-              <div className="dashboard-recent">
-                {summary.recent_selections.map((selection) => {
-                  const params = new URLSearchParams({
-                    client_id: selection.client.id,
-                    parent_gallery_id: selection.parent_gallery.id,
-                  });
-                  const anchor = `open-selection-${selection.scope_id}-${selection.client.id}`;
-                  return (
-                    <div key={`${selection.scope_id}:${selection.client.id}`}>
-                      <div>
-                        <MarkinaLink
-                          href={`/admin/payments?${params.toString()}#${anchor}`}
-                          variant="quiet"
-                        >
-                          {selection.client.name}
-                        </MarkinaLink>
-                        <small>{selection.gallery.name} · {selection.parent_gallery.name}</small>
-                        <small>{selection.selected_count} foto(s) · Iniciada em {selectionStartedLabel(selection.selection_started_at)}</small>
-                      </div>
-                      <StatusBadge tone="neutral">Em andamento</StatusBadge>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="dashboard-section-detail">Nenhuma cliente está selecionando fotos agora.</p>
-            )}
-          </div>
-        </SurfaceCard>
       </section>
     </div>
   );

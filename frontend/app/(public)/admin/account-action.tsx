@@ -1,12 +1,16 @@
 "use client";
 
-import { PRODUCT_NAME } from "../../product-brand";
-
-
 import Link from "next/link";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
+import { BrandLogo } from "../../brand-logo";
+import styles from "../../auth-entry.module.css";
 
 type ActionKind = "password" | "email" | "assisted";
+const actionTitles = {
+  assisted: "Confirme seu e-mail e escolha uma senha",
+  password: "Crie uma nova senha",
+  email: "Confirme o novo e-mail",
+} as const;
 
 function takeTokenFromFragment() {
   const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -101,23 +105,23 @@ export function AdminAccountAction({ kind }: { kind: ActionKind }) {
 
   const tokenReady = token === null ? "loading" : token ? "ready" : "missing";
   return (
-    <main className="auth-shell">
-      <section className="auth-card" aria-labelledby="account-action-title">
-        <p className="eyebrow">{PRODUCT_NAME} · Fotógrafo</p>
-        <h1 id="account-action-title">
-          {kind === "assisted" ? "Confirme seu e-mail e escolha uma senha" : kind === "password" ? "Crie uma nova senha" : "Confirme o novo e-mail"}
-        </h1>
+    <main className={styles.shell}>
+      <header className={styles.brand}><BrandLogo src={null} className="product-logo--entry" /></header>
+      <section className={`${styles.centered} ${styles.card} ${styles.confirmation} ${styles.accountAction}`} aria-labelledby="account-action-title">
+        <header className={styles.heading}>
+          <h1 id="account-action-title">{actionTitles[kind]}</h1>
+        </header>
         {tokenReady === "loading" ? (
           <p className="intro" role="status">Preparando confirmação segura…</p>
         ) : complete ? (
           <div className="auth-form">
-            <p className="intro" role="status">{message}</p>
+            <p className={styles.accountSuccess} role="status">{message}</p>
             <p>{kind === "assisted" ? "O novo e-mail e a nova senha só entrarão em vigor quando o proprietário concluir o atendimento. O status da conta continua sendo respeitado." : "Suas sessões anteriores foram encerradas. Entre novamente para continuar."}</p>
             <Link className="primary account-action-link" href="/">Ir para o login</Link>
           </div>
         ) : tokenReady === "missing" ? (
           <div className="auth-form">
-            <p className="intro" role="alert">Este link está incompleto, expirou ou já foi utilizado.</p>
+            <p className={styles.accountProblem} role="alert">Este link está incompleto, expirou ou já foi utilizado.</p>
             <Link className="secondary account-action-link" href="/">Voltar ao login</Link>
           </div>
         ) : kind !== "email" ? (
@@ -146,7 +150,7 @@ export function AdminAccountAction({ kind }: { kind: ActionKind }) {
             <Link className="secondary account-action-link" href="/">Cancelar e voltar ao login</Link>
           </div>
         )}
-        {message && !complete ? <p className="form-message" role="status">{message}</p> : null}
+        {message && !complete ? <p className={`form-message ${styles.accountProblem}`} role="status">{message}</p> : null}
       </section>
     </main>
   );

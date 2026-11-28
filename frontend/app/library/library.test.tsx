@@ -115,7 +115,7 @@ describe("biblioteca e compras da cliente", () => {
   });
 
   it("mostra um único card por galeria, mesmo quando há seleção e compra", async () => {
-    const fetcher = vi.fn((path: string) => response({ journeys: [1, 2].map((id) => ({
+    const fetcher = vi.fn<(_: string) => Promise<Response>>(() => response({ journeys: [1, 2].map((id) => ({
       id: String(id), name: `Galeria ${id}`, event_name: "Evento", status: "active",
       browse_url: `/public-galleries/${id}`, private_gallery: privateGallery,
       selection: { quantity: 2, total_cents: 1400 }, orders: [{ commercial_state: "purchased" }],
@@ -227,9 +227,39 @@ describe("biblioteca e compras da cliente", () => {
   });
 
   it("não inventa galerias quando a consulta falha", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
+    const fetcher = vi.fn<(_: string) => Promise<Response>>(() => response({ journeys: [] }))
+      .mockImplementationOnce(() => response({}, 500));
+    vi.stubGlobal("fetch", fetcher);
     render(<LibraryPage />);
-    expect(await screen.findByText("Biblioteca indisponível")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toContain("Biblioteca indisponível");
+    expect(screen.queryByRole("article")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(await screen.findByText("Nenhuma galeria disponível")).toBeTruthy();
+    expect(fetcher.mock.calls.map(([path]) => path)).toEqual(["/api/library", "/api/library"]);
+  });
+
+  it("filtra apenas pelos estados retornados e mantém a ordem da biblioteca", async () => {
+    const fetcher = vi.fn(() => response({ journeys: [
+      { id: "expired", name: "Evento anterior", status: "expired", orders: [{ commercial_state: "purchased" }], actions: {} },
+      { id: "active", name: "Evento recente", status: "active", actions: { continue_url: "/public-galleries/recent" } },
+      { id: "pending", name: "Evento pendente", status: "pending_review", actions: {} },
+    ] }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<LibraryPage />);
+    const galleries = screen.getByRole("region", { name: "Galerias" });
+    const names = () => within(galleries).getAllByRole("heading", { level: 2 }).map((item) => item.textContent);
+    const all = await screen.findByRole("button", { name: "Todas (3)" });
+    const active = screen.getByRole("button", { name: "Ativas" });
+    expect(names()).toEqual(["Evento anterior", "Evento recente", "Evento pendente"]);
+    fireEvent.click(active);
+    expect(active.getAttribute("aria-pressed")).toBe("true");
+    expect(names()).toEqual(["Evento recente"]);
+    fireEvent.click(screen.getByRole("button", { name: "Expiradas" }));
+    expect(names()).toEqual(["Evento anterior"]);
+    expect(screen.getByRole("link", { name: "Ver compra" }).getAttribute("href")).toBe("/library/purchases");
+    fireEvent.click(all);
+    expect(names()).toEqual(["Evento anterior", "Evento recente", "Evento pendente"]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("mantém ação legível e expande as fotos dentro de cada pedido em grade", async () => {
