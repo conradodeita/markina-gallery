@@ -206,6 +206,20 @@ describe("console privado da plataforma", () => {
     expect(fetcher.mock.calls.some(([path]) => /restic|rclone|backup-run/i.test(String(path)))).toBe(false);
   });
 
+  it("não infere disponibilidade de mídia a partir de uma operação concluída", async () => {
+    const mediaSources = unknownSources.map((source) => source.key === "restore" ? {
+      ...source, latest_run_status: "completed", observed_at: observed,
+    } : source);
+    const fetcher = mockApi(true, mediaSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Recuperação de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Operação de recuperação registrada: concluída")).toBeTruthy();
+    expect(screen.getByText(/O registro local não confirma disponibilidade remota da mídia/)).toBeTruthy();
+    expect(screen.getByText("Recuperação global do PostgreSQL: estado desconhecido")).toBeTruthy();
+    expect(fetcher.mock.calls.some(([path]) => /restic|rclone|backup-run/i.test(String(path)))).toBe(false);
+  });
+
   it("só libera hostname reservado após hash, confirmação e reautenticação", async () => {
     const reservedDetail = { ...tenant, canonical_host: "synthetic.pickyourpic.com.br", canonical_host_status: "reserved",
       gallery_count: 2, photo_count: 7, observed_at: observed };

@@ -123,3 +123,9 @@
 - A rota `/admin/platform/console/sources` agora lê o status mais recente `restore` de `media_archive_operation`, uma operação durável já existente, e retorna apenas status allowlisted e timestamp. Não inclui tenant, IDs, `details`, erro interno ou conteúdo; falha de banco vira `unavailable` sanitizado, ausência de operação permanece `unknown`.
 - O Console mostra recuperação fria de mídia separada da restauração global PostgreSQL. Não existe hoje modelo/recibo durável para restore global; essa fonte permanece `unknown`, sem origem ou data. A UI não consulta Restic/Rclone/Drive e não declara disponibilidade remota a partir de um registro local.
 - **3.3 permanece aberta.** O status de uma operação histórica não define por si só disponibilidade atual do destino/mídia; não há limite de frescor aprovado nem prova integrada de restore global. Ausência, reconciliação pendente, erro da consulta e recibo de cópia com data futura são mantidos como desconhecidos/indisponíveis sem sucesso inventado.
+
+### Regressão do estado de recuperação concluída — progresso da task 3.3 — 27/11/2026
+
+- A UI tem teste explícito de que um registro local de operação de restauração de mídia com status `completed` ainda deixa a disponibilidade como desconhecida e não implica restauração global PostgreSQL nem consulta remota. Isso protege a distinção entre status da operação e evidência de disponibilidade do objeto.
+- A task 3.3 permanece aberta: recuperação global não tem recibo durável porque o bootstrap protegido ainda não foi integrado; não há regra aprovada de frescor para transformar um registro local em estado atual/desatualizado. Não foi criado modelo, fonte ou política nova.
+- Este incremento alterou somente o teste de UI e documentação; não havia refatoração funcional segura a aplicar nesta fronteira.
