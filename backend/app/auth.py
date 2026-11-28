@@ -5450,6 +5450,10 @@ class GlobalPostgreSQLBackupRun(Base):
             name="ck_global_postgresql_backup_run_status",
         ),
         CheckConstraint(
+            "retention_status IN ('unknown', 'pending', 'complete', 'failed')",
+            name="ck_global_postgresql_backup_run_retention_status",
+        ),
+        CheckConstraint(
             "dump_size_bytes IS NULL OR dump_size_bytes >= 0",
             name="ck_global_postgresql_backup_run_dump_size",
         ),
@@ -5478,4 +5482,7 @@ class GlobalPostgreSQLBackupRun(Base):
     dump_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    retention_status: Mapped[str] = mapped_column(
+        String(12), nullable=False, default="unknown", server_default="unknown"
+    )
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)

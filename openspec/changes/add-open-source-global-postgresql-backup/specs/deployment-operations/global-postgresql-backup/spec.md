@@ -49,11 +49,27 @@ Substituir ou promover o banco global de produção SHALL exigir inventário atu
 - **THEN** o sistema preserva o banco ativo e mantém a recuperação isolada para revisão
 
 ### Requirement: Retenção sem descarte prematuro
-O sistema SHALL preservar ao menos a cópia global mais recente validada e MUST NOT remover cópias automaticamente antes de haver política de retenção aprovada e configurada.
+Para o backup global PostgreSQL, o sistema SHALL manter somente o snapshot mais recente após validação e recibo durável. MUST NOT esquecer nem podar snapshots antes dessa confirmação. Cada recibo SHALL persistir `retention_status` (`unknown`, `pending`, `complete` ou `failed`); `pending` precede qualquer remoção e `complete` exige confirmação final do único alvo restante. A política é diária, separada da mídia fria, e não define RPO/RTO.
 
-#### Scenario: Política ausente ou inválida
-- **WHEN** a política de retenção não está configurada ou não pode ser verificada
-- **THEN** nenhuma cópia é removida automaticamente e o estado informa a limitação
+#### Scenario: Nova cópia global validada
+- **WHEN** o snapshot recém-criado foi relido integralmente, seu hash/tamanho conferem e o recibo durável está `validated`
+- **THEN** o sistema confirma que esse ID permanece no repositório e remove somente snapshots globais PostgreSQL anteriores, preservando o novo snapshot
+
+#### Scenario: Cópia nova falha ou fica incerta
+- **WHEN** criação, readback, verificação ou persistência do recibo falha ou termina incerta
+- **THEN** o sistema não executa `forget` nem `prune` e preserva a última cópia global validada
+
+#### Scenario: Retenção falha ou não pode ser confirmada
+- **WHEN** a remoção de snapshots anteriores ou sua verificação pós-operação falha
+- **THEN** o sistema mantém o snapshot recém-validado quando ele continua verificável, persiste `retention_status=failed` e um código sanitizado de retenção; se o snapshot validado não puder mais ser confirmado, o status da cópia passa a desconhecido
+
+#### Scenario: Processo interrompido durante a retenção
+- **WHEN** o processo é interrompido depois do recibo validado e antes da confirmação final da retenção
+- **THEN** o recibo permanece com `retention_status=pending`, sem apresentar a retenção como concluída
+
+#### Scenario: Outro conjunto de snapshots no repositório
+- **WHEN** a listagem encontra snapshots sem a identidade exclusiva `global-postgresql` ou o alvo validado não pode ser identificado sem ambiguidade
+- **THEN** o sistema falha fechado sem remover snapshots
 
 ### Requirement: Separação por identidade de provider de mídia
 O backup e a restauração PostgreSQL SHALL preservar referências e metadados de mídia, incluindo a identidade de provider presente no catálogo, sem migrar, converter ou excluir objetos remotos. Drive legado permanece no Drive; novos objetos Rclone de mídia têm identidade explícita conforme o contrato de armazenamento de mídia.

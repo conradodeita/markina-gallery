@@ -50,7 +50,7 @@ Falha antes ou durante o restore mantém a base ativa intocada. Preservar snapsh
 
 Este canal não resolve todos os cenários de desastre. Se a UI/API estiver indisponível, um operador autorizado ainda pode iniciar o fluxo protegido, desde que GitHub Actions, aprovação, host, rede, configuração do destino e chave estejam acessíveis. Se o host/volume local também se perdeu ou está inacessível, o workflow SSH existente não consegue executar restore nesse host; a configuração/chave guardada somente nele tampouco pode ser recuperada. Sem destino externo legível, cópia da chave fora do host e procedimento aprovado para provisionar um host substituto, a recuperação é impossível. Se GitHub Actions/environment, SSH ou a identidade de leitura falhar, este desenho também não oferece outro canal. Esses limites precisam estar visíveis na UI/recibos e no runbook; não alegar recuperação autônoma completa.
 
-Permanecem escolhas de segurança/produto para o proprietário: estender o workflow de handoff ou criar um workflow protegido dedicado; quem pode disparar/aprovar e se há controle dual; onde residem config Rclone e senha Restic e qual custódia off-host permite recuperar perda total do host; como prover roles/ACL/extensions sem incluir credenciais; quota/capacidade, retenção e limpeza de alvos isolados; e quais evidências/autorização serão exigidas antes da promoção e rollback do banco ativo. Até essas decisões e um ensaio protegido revisável, 1.4 permanece aberta e nenhuma operação está autorizada por este documento.
+Permanecem escolhas de segurança/produto para o proprietário: estender o workflow de handoff ou criar um workflow protegido dedicado; quem pode disparar/aprovar e se há controle dual; onde residem config Rclone e senha Restic e qual custódia off-host permite recuperar perda total do host; como prover roles/ACL/extensions sem incluir credenciais; quota/capacidade e limpeza de alvos isolados; e quais evidências/autorização serão exigidas antes da promoção e rollback do banco ativo. A política diária de retenção do backup global PostgreSQL já foi aprovada e está especificada acima; ainda requer implementação/prova local na task 2.3 antes de qualquer uso operacional. Até as demais decisões e um ensaio protegido revisável, 1.4 permanece aberta e nenhuma operação está autorizada por este documento.
 
 ## Goals / Non-Goals
 
@@ -74,6 +74,14 @@ Permanecem escolhas de segurança/produto para o proprietário: estender o workf
 ### Restic para snapshots e cifragem; Rclone como transporte
 
 O serviço SHALL usar ferramentas oficiais pinadas e invocadas por uma interface fixa do servidor. Restic entrega repositório cifrado e verificação; Rclone transporta esse repositório ao destino escolhido. A prova sintética já exercitou essa composição sobre storage local. Uma engine própria aumentaria código de criptografia, formato, concorrência e recuperação sem benefício demonstrado. Backrest pode ser avaliado para monitoramento interno, mas não é dependência nem interface de operação do SaaS; sua UI/API não será exposta, sua configuração não será editada diretamente e a autenticação não será desabilitada para contornar limites de API.
+
+### Retenção diária do backup global PostgreSQL — decisão aprovada pelo proprietário
+
+O proprietário aprovou manter somente o snapshot diário global PostgreSQL mais recente, removendo o anterior apenas depois de a cópia nova ter sido relida, verificada e registrada duravelmente como `validated`. Essa decisão substitui a proposta histórica de 7 diários/4 semanais/3 mensais somente para o backup global PostgreSQL; não altera a retenção nem o ciclo do arquivo frio de mídia. A cadência diária não constitui meta RPO/RTO nem SLA.
+
+O scheduler mantém o lock exclusivo e persiste o recibo `validated` antes de iniciar a retenção. O executor lista os snapshots com a identidade exclusiva `global-postgresql`, valida IDs/tags/tempos e confirma que o snapshot recém-validado existe e é o mais recente. Só então esquece IDs anteriores dessa mesma coleção e executa `restic prune`; snapshots de outra tag, um alvo ambíguo ou qualquer falha na listagem bloqueiam a remoção. A implementação segue a semântica de [forget do Restic 0.20.0](https://github.com/restic/restic/blob/v0.20.0/doc/060_forget.rst), sem `keep-*` implícito sobre outros grupos.
+
+Antes de `forget/prune`, o recibo recebe `retention_status=pending`; após verificação pós-operação, recebe `retention_status=complete` e o `error_code` é limpo. Falha de retenção registra somente código estático `retention_failed` e mantém o estado do backup como `validated` se o snapshot-alvo ainda for confirmado; se ele não existir mais, o recibo é rebaixado para `unknown`. Assim, uma falha de prune não invalida uma cópia que continua íntegra, e a UI não afirma que a retenção foi concluída. Snapshot de backup `failed`, `running`, `unknown` ou sem recibo persistido nunca inicia retenção. A aplicação continua desligada por padrão pelo gate de backup existente; esta decisão não autoriza configuração, credencial, Drive, destino real ou produção.
 
 ### Estado inicial do executor fixo — task 2.1, 27/11/2026
 
@@ -129,9 +137,13 @@ A UI poderá solicitar recuperação para um alvo isolado e apresentar cópia de
 
 O Redis/fila não faz parte desta cópia. Após restauração do PostgreSQL, workers permanecem sem processar operações até que o estado das filas e das operações duráveis seja reconciliado. Em particular, restaurar registros `media_archive_*` não pode repetir cobrança, recuperar mídia, excluir objetos, converter provider ou iniciar uma migração. A implementação deve preservar os IDs de provider por objeto presentes no schema então vigente e apresentar divergências para reconciliação explícita.
 
-### Agenda diária e retenção sem remoção automática enquanto pendente
+### Agenda diária e retenção aprovada para PostgreSQL global
 
-A cadência diária continua como direção do roadmap. A regra exata de retenção não está fechada para a implementação nova: o histórico registra 7 diários/4 semanais/3 mensais, e há orientação posterior de descartar a cópia anterior somente depois que a mais recente for validada. Até o proprietário reconciliar essas regras para Restic, o sistema mantém ao menos a cópia validada mais recente e não executa prune/expiração automática. A tarefa de retenção não pode ser marcada como concluída por apenas configurar valores no engine.
+A política aprovada pelo proprietário mantém somente o snapshot diário global PostgreSQL mais recente depois de readback integral e validação. Após persistir o recibo da nova cópia, a rotina Restic lista o repositório dedicado em JSON, exige que todos os snapshots tenham apenas a tag `global-postgresql`, verifica que o ID recém-validado é o mais recente e envia a `forget` somente os IDs anteriores explicitamente listados. Não usar uma política agrupada como `--keep-last`, cujo escopo depende de host/caminhos e dos valores padrão de agrupamento.
+
+A rotina relê a listagem após `forget` e só executa `prune` quando o novo ID está sozinho; depois do `prune`, verifica novamente que ele continua sendo o único snapshot. Tags estranhas, IDs/datas inválidos, alvo ausente ou não mais recente e qualquer falha de comando/verificação impedem a conclusão. O recibo persiste `retention_status=unknown|pending|complete|failed`; `pending` é salvo junto com o recibo `validated`, `complete` somente após readback final e falha permanece sanitizada. Se o ID ainda for verificável após erro, a cópia segue `validated` e retenção `failed`; sem prova de presença, a cópia passa a `unknown`. A UI do proprietário mostra o enum salvo sem consulta remota.
+
+Esta política substitui 7 diários/4 semanais/3 mensais somente para PostgreSQL global; o arquivo frio de mídia mantém contrato separado. A retenção simples não define RPO/RTO nem SLA. A remoção de snapshots é executada por IDs explícitos porque `forget` retira os metadados de snapshots e `prune` remove/reempacota dados que ficaram sem referência, conforme a [documentação fixada do Restic 0.20.0](https://github.com/restic/restic/blob/v0.20.0/doc/060_forget.rst). A task 2.3 continua aberta até a prova sintética com múltiplos snapshots e falhas.
 
 ### Agendamento diário e recibo persistido — decisão técnica para task 2.2, 27/11/2026
 
@@ -151,7 +163,7 @@ Somente erros determinísticos de pré-flight anteriores ao processo de cópia p
 - [UI indisponível durante desastre] → definir o procedimento de bootstrap protegido antes de ativar operação real, sem publicar um segundo painel.
 - [Banco recuperado diverge de mídia/fila atuais] → não processar fila ao iniciar o alvo, comparar estado durável e identities de provider, e reconciliar antes de reabrir workers.
 - [Restic/Rclone mudam sem compatibilidade] → pin de versões/fontes, inventário de licença/origem e testes de backup, check, readback e restore antes de atualização.
-- [Retenção causa exclusão irrecuperável ou acumula cópias sem limite] → não ativar prune antes da decisão de política e do teste que protege a última cópia validada.
+- [Retenção causa exclusão irrecuperável ou acumula cópias sem limite] → aplicar apenas a política diária aprovada, persistir estado antes do prune, remover IDs anteriores somente depois de readback e confirmar o alvo depois da operação; operação real continua sob os gates de produção.
 
 ## Migration Plan
 
@@ -165,7 +177,7 @@ As decisões abaixo são gates, não defaults implícitos. As tasks de código d
 
 1. Qual destino externo e qual conta/identidade de serviço receberão o repositório Restic? Quais limites de acesso, região, custo e disponibilidade são aceitáveis?
 2. Onde fica a chave/senha Restic, como obter cópia de recuperação fora do host e quem controla a custódia? Como revogar/rotacionar credenciais Rclone sem perder leitura do histórico?
-3. Para a nova implementação, o proprietário confirma retenção somente do último diário validado ou mantém 7 diários/4 semanais/3 mensais? Como a política trata dados apagados e snapshots antigos?
+3. **Resolvido pelo proprietário:** manter somente o último snapshot diário validado do backup global PostgreSQL e remover anteriores depois da validação integral. Isso substitui 7 diários/4 semanais/3 mensais apenas para PostgreSQL; não define retenção de mídia. A task 2.3 ainda precisa implementar e provar a política. RPO/RTO permanecem decisão separada.
 4. RPO de 24 h e RTO de 8 h permanecem metas desejadas, ou devem ser alterados? Esses valores históricos não foram medidos e não são SLA.
 5. O workflow `production-app-handoff-recovery` é um control plane independente da UI, mas hoje recupera API/web e consulta o schema do DB; deve receber uma operação fixa de recuperação PostgreSQL ou haverá workflow protegido próprio? Quem pode iniciá-la/aprová-la, é necessário controle dual, e como o bootstrap continua funcionando quando a API/DB não responde?
 6. Qual fonte segura, fora do host, guarda cópia recuperável da senha Restic e configuração/credencial Rclone para perda total do host; quem são os custodiantes autorizados e como revogação/rotação preserva leitura dos snapshots?
@@ -184,7 +196,7 @@ Uma restauração compatível exige que destino, configuração de transporte e 
 
 As decisões abaixo são encaminhadas ao coordenador para coleta de decisão explícita; esta change não as transforma em defaults:
 
-- **Retenção/RPO/RTO:** escolher entre apenas o último diário validado e a política histórica 7 diários/4 semanais/3 mensais; confirmar ou rever as metas desejadas de RPO 24 h/RTO 8 h, hoje não medidas. `prune` continua inativo até decisão e prova da preservação da última cópia validada.
+- **Retenção/RPO/RTO:** a política de apenas o último diário global PostgreSQL já foi aprovada e está em implementação/prova na task 2.3. Confirmar ou rever as metas desejadas de RPO 24 h/RTO 8 h, hoje não medidas. `prune` segue bloqueado em operação até a prova local, revisão/CI e gates de produção próprios.
 - **Destino e custódia:** escolher provedor/conta/identidade e raiz dedicadas, permissões mínimas e região/custo; definir onde a senha/chave de cifragem terá cópia recuperável fora do host, custodiante, rotação e revogação de acesso Rclone. Não registrar valores secretos em Git, banco comum, UI ou recibo.
 - **Bootstrap e aprovação:** decidir se recuperação com DB indisponível e host acessível usa uma nova operação allowlisted no workflow protegido existente ou workflow protegido específico; nomear iniciador/aprovador e eventual controle dual. Perda total do host requer também destino e chave acessíveis independentemente dele. Recuperação isolada não promove o DB ativo.
 

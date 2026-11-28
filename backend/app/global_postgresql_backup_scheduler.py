@@ -27,7 +27,10 @@ from app.global_postgresql_backup import (
     GlobalPostgreSQLBackupConfig,
     GlobalPostgreSQLBackupError,
     GlobalPostgreSQLBackupReceipt,
+    GlobalPostgreSQLBackupRetentionReceipt,
+    apply_global_postgresql_backup_retention,
     create_global_postgresql_backup,
+    global_postgresql_backup_snapshot_is_present,
 )
 
 _LOGGER = logging.getLogger("app.global_postgresql_backup")
@@ -172,12 +175,14 @@ def _finish_run(
     status: str,
     error_code: str | None = None,
     receipt: GlobalPostgreSQLBackupReceipt | None = None,
+    retention_status: str = "unknown",
 ) -> None:
     values: dict[str, Any] = {
         "status": status,
         "finished_at": instant,
         "duration_ms": max(int((instant - started_at).total_seconds() * 1000), 0),
         "verified": bool(receipt and receipt.verified and status == "validated"),
+        "retention_status": retention_status,
         "error_code": _safe_error_code(error_code) if error_code else None,
         "snapshot_id": receipt.snapshot_id if receipt and status == "validated" else None,
         "dump_size_bytes": receipt.dump_size_bytes if receipt and status == "validated" else None,
@@ -197,6 +202,41 @@ def _finish_run(
             db.rollback()
 
 
+def _finish_retention(
+    session_factory,
+    *,
+    run_id: UUID,
+    snapshot_id: str,
+    retention_status: str,
+    snapshot_present: bool = True,
+) -> bool:
+    backup_status = "validated" if snapshot_present else "unknown"
+    values: dict[str, Any] = {
+        "status": backup_status,
+        "verified": snapshot_present,
+        "retention_status": retention_status,
+        "error_code": None if retention_status == "complete" else "retention_failed",
+    }
+    if not snapshot_present:
+        values.update(snapshot_id=None, dump_size_bytes=None)
+    with session_factory() as db:
+        result = db.execute(
+            update(GlobalPostgreSQLBackupRun)
+            .where(
+                GlobalPostgreSQLBackupRun.id == run_id,
+                GlobalPostgreSQLBackupRun.status == "validated",
+                GlobalPostgreSQLBackupRun.verified.is_(True),
+                GlobalPostgreSQLBackupRun.snapshot_id == snapshot_id,
+            )
+            .values(**values)
+        )
+        if result.rowcount == 1:
+            db.commit()
+            return True
+        db.rollback()
+        return False
+
+
 def process_scheduled_global_postgresql_backup(
     *,
     session_factory=SessionLocal,
@@ -209,6 +249,12 @@ def process_scheduled_global_postgresql_backup(
     backup_runner: Callable[
         [str, GlobalPostgreSQLBackupConfig], GlobalPostgreSQLBackupReceipt
     ] = create_global_postgresql_backup,
+    retention_runner: Callable[
+        [GlobalPostgreSQLBackupConfig, str], GlobalPostgreSQLBackupRetentionReceipt
+    ] = apply_global_postgresql_backup_retention,
+    snapshot_presence_checker: Callable[
+        [GlobalPostgreSQLBackupConfig, str], bool
+    ] = global_postgresql_backup_snapshot_is_present,
     lock_provider=_postgres_advisory_lock,
 ) -> bool:
     """Executa no máximo um backup diário e registra somente metadados sanitizados."""
@@ -300,6 +346,31 @@ def process_scheduled_global_postgresql_backup(
                 started_at=observed_at,
                 status="validated",
                 receipt=receipt,
+                retention_status="pending",
+            )
+            retention_status = "complete"
+            snapshot_present = True
+            try:
+                retention_receipt = retention_runner(config, receipt.snapshot_id)
+                if (
+                    retention_receipt.snapshot_id != receipt.snapshot_id
+                    or retention_receipt.removed_snapshot_count < 0
+                ):
+                    raise GlobalPostgreSQLBackupError("retention_receipt_invalid")
+            except Exception:  # noqa: BLE001 - retention errors never invalidate unverified details
+                retention_status = "failed"
+                try:
+                    snapshot_present = (
+                        snapshot_presence_checker(config, receipt.snapshot_id) is True
+                    )
+                except Exception:  # noqa: BLE001 - cannot prove presence, so fail closed
+                    snapshot_present = False
+            _finish_retention(
+                session_factory,
+                run_id=run_id,
+                snapshot_id=receipt.snapshot_id,
+                retention_status=retention_status,
+                snapshot_present=snapshot_present,
             )
             return True
     except SQLAlchemyError:
@@ -319,6 +390,7 @@ def _backup_run_summary(run: GlobalPostgreSQLBackupRun | None) -> dict[str, Any]
         "dump_size_bytes": run.dump_size_bytes,
         "duration_ms": run.duration_ms,
         "verified": run.verified,
+        "retention_status": run.retention_status,
         "error_code": run.error_code,
     }
 
@@ -350,6 +422,7 @@ def _read_global_postgresql_backup_status(db: Session) -> dict[str, Any]:
         "dump_size_bytes": None,
         "duration_ms": None,
         "verified": False,
+        "retention_status": "unknown",
         "error_code": None,
     }
     return {**latest_summary, "last_validated": _backup_run_summary(last_validated)}

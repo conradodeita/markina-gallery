@@ -17,6 +17,7 @@ from app.global_postgresql_backup import (
     GlobalPostgreSQLBackupConfig,
     GlobalPostgreSQLBackupError,
     GlobalPostgreSQLBackupReceipt,
+    GlobalPostgreSQLBackupRetentionReceipt,
 )
 
 _NOW = datetime(2026, 11, 27, 12, 0, tzinfo=UTC)
@@ -55,6 +56,13 @@ def _process(store, runner, *, at=_NOW, **kwargs):
         config_loader=lambda: _CONFIG,
         database_url_loader=lambda: "postgresql://synthetic@app-db:5432/synthetic",
         backup_runner=runner,
+        retention_runner=kwargs.get(
+            "retention_runner",
+            lambda _config, snapshot_id: GlobalPostgreSQLBackupRetentionReceipt(
+                snapshot_id, 0
+            ),
+        ),
+        snapshot_presence_checker=kwargs.get("snapshot_presence_checker", lambda *_: True),
         lock_provider=kwargs.get("lock_provider", _available_lock),
     )
 
@@ -115,6 +123,7 @@ def test_success_is_persisted_once_per_utc_day_and_status_is_local(store, monkey
     assert row.verified is True
     assert row.dump_size_bytes == 1234
     assert row.error_code is None
+    assert row.retention_status == "complete"
 
     def no_execution(*_args, **_kwargs):
         raise AssertionError("status read attempted backup coordination")
@@ -125,6 +134,73 @@ def test_success_is_persisted_once_per_utc_day_and_status_is_local(store, monkey
     assert status["status"] == "validated"
     assert status["snapshot_id"] == "a" * 32
     assert status["verified"] is True
+    assert status["retention_status"] == "complete"
+
+
+def test_retention_pending_is_persisted_before_runner_and_failure_keeps_verified_backup(store):
+    _, session_factory = store
+    receipt = GlobalPostgreSQLBackupReceipt("a" * 32, 1234, True)
+
+    def fail_retention(_config, _snapshot_id):
+        row = _rows(session_factory)[0]
+        assert row.status == "validated"
+        assert row.verified is True
+        assert row.retention_status == "pending"
+        raise GlobalPostgreSQLBackupError("retention_prune_failed")
+
+    assert _process(
+        store,
+        lambda *_: receipt,
+        retention_runner=fail_retention,
+        snapshot_presence_checker=lambda _config, snapshot_id: snapshot_id == receipt.snapshot_id,
+    )
+
+    row = _rows(session_factory)[0]
+    assert row.status == "validated"
+    assert row.verified is True
+    assert row.snapshot_id == receipt.snapshot_id
+    assert row.retention_status == "failed"
+    assert row.error_code == "retention_failed"
+
+
+def test_retention_failure_without_proven_target_downgrades_backup_to_unknown(store):
+    receipt = GlobalPostgreSQLBackupReceipt("b" * 32, 987, True)
+    assert _process(
+        store,
+        lambda *_: receipt,
+        retention_runner=lambda *_: (_ for _ in ()).throw(
+            GlobalPostgreSQLBackupError("retention_result_unverified")
+        ),
+        snapshot_presence_checker=lambda *_: False,
+    )
+    row = _rows(store[1])[0]
+    assert row.status == "unknown"
+    assert row.verified is False
+    assert row.snapshot_id is None
+    assert row.dump_size_bytes is None
+    assert row.retention_status == "failed"
+    assert row.error_code == "retention_failed"
+    assert scheduler.read_global_postgresql_backup_status(session_factory=store[1])[
+        "last_validated"
+    ] is None
+
+
+def test_retention_failure_requires_boolean_presence_proof(store):
+    receipt = GlobalPostgreSQLBackupReceipt("c" * 32, 456, True)
+    assert _process(
+        store,
+        lambda *_: receipt,
+        retention_runner=lambda *_: (_ for _ in ()).throw(
+            GlobalPostgreSQLBackupError("retention_result_unverified")
+        ),
+        snapshot_presence_checker=lambda *_: "present",
+    )
+
+    row = _rows(store[1])[0]
+    assert row.status == "unknown"
+    assert row.verified is False
+    assert row.snapshot_id is None
+    assert row.retention_status == "failed"
 
 
 def test_status_retains_latest_validated_receipt_after_a_later_failed_attempt(store):
@@ -305,6 +381,23 @@ def test_state_constraint_rejects_unverified_success(store):
                 finished_at=_NOW,
                 verified=False,
                 snapshot_id="d" * 32,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+
+
+def test_state_constraint_rejects_unknown_retention_status(store):
+    _, session_factory = store
+    with session_factory() as db:
+        db.add(
+            GlobalPostgreSQLBackupRun(
+                scheduled_day=_NOW.date(),
+                status="failed",
+                started_at=_NOW,
+                finished_at=_NOW,
+                verified=False,
+                retention_status="prune_everything",
             )
         )
         with pytest.raises(IntegrityError):

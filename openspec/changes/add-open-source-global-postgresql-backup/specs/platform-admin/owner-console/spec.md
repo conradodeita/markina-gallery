@@ -14,7 +14,7 @@ A consulta e as ações do backup PostgreSQL SHALL estar disponíveis somente ao
 - **THEN** o servidor agenda somente a operação fixa de cópia global e registra a ação na auditoria
 
 ### Requirement: Estado de backup sanitizado e sem consulta remota na leitura
-A página SHALL apresentar somente evidência persistida e MUST NOT iniciar backup nem consultar o destino remoto numa leitura comum.
+A página SHALL apresentar somente evidência persistida, incluindo o estado allowlisted da retenção do último recibo validado, e MUST NOT iniciar backup nem consultar o destino remoto numa leitura comum.
 
 #### Scenario: Recibo íntegro do dia UTC corrente
 - **WHEN** há recibo local verificado para a data UTC corrente
@@ -35,6 +35,10 @@ A página SHALL apresentar somente evidência persistida e MUST NOT iniciar back
 #### Scenario: Recibo validado com data futura
 - **WHEN** o recibo local informa data posterior ao dia observado
 - **THEN** a interface mantém o estado desconhecido e não expõe snapshot, tamanho ou instante como evidência validada
+
+#### Scenario: Retenção pendente, falha ou desconhecida
+- **WHEN** o último recibo validado registra retenção pendente, falha ou ainda não comprovada
+- **THEN** a interface informa somente o estado correspondente, sem alegar que a retenção terminou nem consultar o repositório
 
 #### Scenario: Tabela local indisponível
 - **WHEN** a consulta do recibo falha

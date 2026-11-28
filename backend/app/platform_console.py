@@ -637,6 +637,7 @@ def _global_backup_source(db, *, observed_at):
             "snapshot_id": None,
             "dump_size_bytes": None,
             "duration_ms": None,
+            "retention_status": "unknown",
         }
 
     latest_status = status.get("status")
@@ -678,6 +679,19 @@ def _global_backup_source(db, *, observed_at):
         elif validated_day < observed_at.date():
             state = "stale"
 
+    retention_status = "unknown"
+    if validated_day is not None and isinstance(receipt, dict):
+        saved_retention_status = receipt.get("retention_status")
+        if isinstance(saved_retention_status, str) and saved_retention_status in {
+            "unknown",
+            "pending",
+            "complete",
+            "failed",
+        }:
+            retention_status = saved_retention_status
+    if latest_status == "unknown" and status.get("retention_status") == "failed":
+        retention_status = "failed"
+
     return {
         "key": "backup",
         "state": state,
@@ -692,6 +706,7 @@ def _global_backup_source(db, *, observed_at):
         "snapshot_id": receipt.get("snapshot_id") if validated_day else None,
         "dump_size_bytes": receipt.get("dump_size_bytes") if validated_day else None,
         "duration_ms": receipt.get("duration_ms") if validated_day else None,
+        "retention_status": retention_status,
     }
 
 

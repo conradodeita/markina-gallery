@@ -676,7 +676,35 @@ def test_backup_source_shows_only_verified_local_receipt_without_remote_query(ht
     assert backup["last_validated_day"] == observed_at.date().isoformat()
     assert backup["snapshot_id"] == "a" * 32
     assert backup["dump_size_bytes"] == 4096
+    assert backup["retention_status"] == "unknown"
     assert "password" not in response.text.lower() and "secret" not in response.text.lower()
+
+
+def test_backup_source_exposes_only_allowlisted_retention_state(http, client_db):
+    client, _session, _tenant_id, _ = http
+    observed_at = now()
+    client_db.add(
+        GlobalPostgreSQLBackupRun(
+            scheduled_day=observed_at.date(),
+            status="validated",
+            started_at=observed_at,
+            finished_at=observed_at,
+            snapshot_id="d" * 32,
+            dump_size_bytes=4096,
+            duration_ms=1000,
+            verified=True,
+            retention_status="failed",
+            error_code="retention_failed",
+        )
+    )
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+
+    assert response.status_code == 200
+    assert backup["retention_status"] == "failed"
+    assert "retention_failed" not in response.text
 
 
 def test_backup_source_keeps_previous_validated_receipt_stale_after_failed_attempt(http, client_db):

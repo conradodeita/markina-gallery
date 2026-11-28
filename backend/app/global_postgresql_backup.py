@@ -17,6 +17,7 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.engine import URL, make_url
@@ -67,6 +68,19 @@ class GlobalPostgreSQLBackupReceipt:
     snapshot_id: str
     dump_size_bytes: int
     verified: bool
+
+
+@dataclass(frozen=True)
+class GlobalPostgreSQLBackupRetentionReceipt:
+    snapshot_id: str
+    removed_snapshot_count: int
+
+
+@dataclass(frozen=True)
+class _ResticSnapshot:
+    snapshot_id: str
+    created_at: datetime
+    tags: tuple[str, ...]
 
 
 def _resolved_external_file(path: Path, repository_root: Path) -> Path:
@@ -131,12 +145,19 @@ def _first_version(value: str) -> tuple[int, int, int]:
 def _validate_tool_versions(config: GlobalPostgreSQLBackupConfig) -> None:
     pg_dump_version = _first_version(_version_text(config.pg_dump_executable, ("--version",)))
     pg_restore_version = _first_version(_version_text(config.pg_restore_executable, ("--version",)))
-    restic_version = _first_version(_version_text(config.restic_executable, ("version",)))
-    rclone_version = _first_version(_version_text(config.rclone_executable, ("version",)))
     if (
         pg_dump_version[0] != PINNED_POSTGRESQL_MAJOR
         or pg_restore_version[0] != PINNED_POSTGRESQL_MAJOR
-        or ".".join(str(part) for part in restic_version) != PINNED_RESTIC_VERSION
+    ):
+        raise GlobalPostgreSQLBackupError("tool_version_mismatch")
+    _validate_restic_rclone_versions(config)
+
+
+def _validate_restic_rclone_versions(config: GlobalPostgreSQLBackupConfig) -> None:
+    restic_version = _first_version(_version_text(config.restic_executable, ("version",)))
+    rclone_version = _first_version(_version_text(config.rclone_executable, ("version",)))
+    if (
+        ".".join(str(part) for part in restic_version) != PINNED_RESTIC_VERSION
         or ".".join(str(part) for part in rclone_version) != PINNED_RCLONE_VERSION
     ):
         raise GlobalPostgreSQLBackupError("tool_version_mismatch")
@@ -461,3 +482,166 @@ def _readback_archive(
     if restic_status != 0:
         raise GlobalPostgreSQLBackupError("snapshot_readback_failed")
     return digest.hexdigest(), size, restore_status
+
+
+def _parse_restic_snapshots(stdout: str) -> list[_ResticSnapshot]:
+    try:
+        payload = json.loads(stdout)
+    except (TypeError, json.JSONDecodeError):
+        raise GlobalPostgreSQLBackupError("retention_inventory_invalid") from None
+    if not isinstance(payload, list):
+        raise GlobalPostgreSQLBackupError("retention_inventory_invalid")
+
+    snapshots: list[_ResticSnapshot] = []
+    seen_ids: set[str] = set()
+    for item in payload:
+        if not isinstance(item, dict):
+            raise GlobalPostgreSQLBackupError("retention_inventory_invalid")
+        snapshot_id = item.get("id")
+        timestamp = item.get("time")
+        tags = item.get("tags")
+        if (
+            not isinstance(snapshot_id, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", snapshot_id)
+            or snapshot_id in seen_ids
+            or not isinstance(timestamp, str)
+            or not isinstance(tags, list)
+            or any(not isinstance(tag, str) for tag in tags)
+        ):
+            raise GlobalPostgreSQLBackupError("retention_inventory_invalid")
+        try:
+            normalized_timestamp = (
+                f"{timestamp[:-1]}+00:00" if timestamp.endswith("Z") else timestamp
+            )
+            created_at = datetime.fromisoformat(normalized_timestamp)
+        except ValueError:
+            raise GlobalPostgreSQLBackupError("retention_inventory_invalid") from None
+        if created_at.tzinfo is None:
+            raise GlobalPostgreSQLBackupError("retention_inventory_invalid")
+        seen_ids.add(snapshot_id)
+        snapshots.append(
+            _ResticSnapshot(
+                snapshot_id=snapshot_id,
+                created_at=created_at.astimezone(UTC),
+                tags=tuple(tags),
+            )
+        )
+    return snapshots
+
+
+def _restic_snapshot_inventory(
+    *, config: GlobalPostgreSQLBackupConfig, restic_environment: dict[str, str]
+) -> list[_ResticSnapshot]:
+    executable = shutil.which(config.restic_executable) or config.restic_executable
+    try:
+        result = subprocess.run(
+            [executable, "-r", config.repository, "snapshots", "--json"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=restic_environment,
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        raise GlobalPostgreSQLBackupError("retention_inventory_failed") from None
+    if result.returncode != 0:
+        raise GlobalPostgreSQLBackupError("retention_inventory_failed")
+    return _parse_restic_snapshots(result.stdout)
+
+
+def _target_snapshot(snapshots: list[_ResticSnapshot], snapshot_id: str) -> _ResticSnapshot:
+    if not re.fullmatch(r"[0-9a-f]{8,64}", snapshot_id):
+        raise GlobalPostgreSQLBackupError("retention_target_invalid")
+    matches = [item for item in snapshots if item.snapshot_id.startswith(snapshot_id)]
+    if len(matches) != 1 or matches[0].tags != (SNAPSHOT_TAG,):
+        raise GlobalPostgreSQLBackupError("retention_target_unverified")
+    return matches[0]
+
+
+def _run_restic_retention_command(
+    *,
+    config: GlobalPostgreSQLBackupConfig,
+    restic_environment: dict[str, str],
+    args: list[str],
+    error_code: str,
+) -> None:
+    executable = shutil.which(config.restic_executable) or config.restic_executable
+    try:
+        result = subprocess.run(
+            [executable, "-r", config.repository, *args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=restic_environment,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise GlobalPostgreSQLBackupError(error_code) from None
+    if result.returncode != 0:
+        raise GlobalPostgreSQLBackupError(error_code)
+
+
+def apply_global_postgresql_backup_retention(
+    config: GlobalPostgreSQLBackupConfig, snapshot_id: str
+) -> GlobalPostgreSQLBackupRetentionReceipt:
+    """Keep only the verified newest global PostgreSQL snapshot in its repo."""
+    password_file, rclone_config = _validate_config(config)
+    _validate_restic_rclone_versions(config)
+    _, restic_environment = _command_environment(password_file, rclone_config, pgpass_file=None)
+    inventory = _restic_snapshot_inventory(config=config, restic_environment=restic_environment)
+    if any(item.tags != (SNAPSHOT_TAG,) for item in inventory):
+        raise GlobalPostgreSQLBackupError("retention_scope_ambiguous")
+
+    target = _target_snapshot(inventory, snapshot_id)
+    older = [item for item in inventory if item.snapshot_id != target.snapshot_id]
+    if any(target.created_at <= item.created_at for item in older):
+        raise GlobalPostgreSQLBackupError("retention_target_not_latest")
+
+    if older:
+        _run_restic_retention_command(
+            config=config,
+            restic_environment=restic_environment,
+            args=["forget", *(item.snapshot_id for item in older)],
+            error_code="retention_forget_failed",
+        )
+        after_forget = _restic_snapshot_inventory(
+            config=config, restic_environment=restic_environment
+        )
+        if len(after_forget) != 1 or _target_snapshot(after_forget, snapshot_id) != target:
+            raise GlobalPostgreSQLBackupError("retention_forget_unverified")
+        _run_restic_retention_command(
+            config=config,
+            restic_environment=restic_environment,
+            args=["prune"],
+            error_code="retention_prune_failed",
+        )
+
+    final_inventory = _restic_snapshot_inventory(
+        config=config, restic_environment=restic_environment
+    )
+    if len(final_inventory) != 1 or _target_snapshot(final_inventory, snapshot_id) != target:
+        raise GlobalPostgreSQLBackupError("retention_result_unverified")
+    return GlobalPostgreSQLBackupRetentionReceipt(
+        snapshot_id=target.snapshot_id,
+        removed_snapshot_count=len(older),
+    )
+
+
+def global_postgresql_backup_snapshot_is_present(
+    config: GlobalPostgreSQLBackupConfig, snapshot_id: str
+) -> bool:
+    """Confirm a target remains a tagged snapshot after a retention failure."""
+    try:
+        password_file, rclone_config = _validate_config(config)
+        _validate_restic_rclone_versions(config)
+        _, restic_environment = _command_environment(password_file, rclone_config, pgpass_file=None)
+        inventory = _restic_snapshot_inventory(config=config, restic_environment=restic_environment)
+        _target_snapshot(inventory, snapshot_id)
+    except GlobalPostgreSQLBackupError:
+        return False
+    return True

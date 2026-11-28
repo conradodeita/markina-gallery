@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -296,3 +298,143 @@ def test_backup_failure_returns_only_static_sanitized_code(tmp_path: Path) -> No
     ):
         backup.create_global_postgresql_backup("postgresql://fixture_user@db.local/testdb", config)
     assert str(error.value) == "pg_dump_failed"
+
+
+def _snapshot(snapshot_id: str, *, time: str, tags: list[str] | None = None) -> dict[str, object]:
+    return {
+        "id": snapshot_id,
+        "time": time,
+        "tags": tags if tags is not None else [backup.SNAPSHOT_TAG],
+    }
+
+
+def test_retention_forgets_only_older_global_ids_then_prunes_and_verifies(
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+    old = "1" * 64
+    current = "2" * 64
+    snapshots = [
+        json.dumps(
+            [
+                _snapshot(old, time="2026-11-26T10:00:00Z"),
+                _snapshot(current, time="2026-11-27T10:00:00Z"),
+            ]
+        ),
+        json.dumps([_snapshot(current, time="2026-11-27T10:00:00Z")]),
+        json.dumps([_snapshot(current, time="2026-11-27T10:00:00Z")]),
+    ]
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> SimpleNamespace:
+        calls.append(args)
+        if "snapshots" in args:
+            return SimpleNamespace(returncode=0, stdout=snapshots.pop(0))
+        return SimpleNamespace(returncode=0, stdout="")
+
+    with (
+        patch.object(backup, "_validate_restic_rclone_versions"),
+        patch.object(backup.subprocess, "run", side_effect=fake_run),
+    ):
+        receipt = backup.apply_global_postgresql_backup_retention(config, current[:16])
+
+    assert receipt.snapshot_id == current
+    assert receipt.removed_snapshot_count == 1
+    assert [call[3] for call in calls] == ["snapshots", "forget", "snapshots", "prune", "snapshots"]
+    forget_call = calls[1]
+    assert old in forget_call
+    assert current not in forget_call
+    assert snapshots == []
+
+
+@pytest.mark.parametrize(
+    ("inventory", "expected_code"),
+    [
+        (
+            [
+                _snapshot("1" * 64, time="2026-11-26T10:00:00Z", tags=["media-archive"]),
+                _snapshot("2" * 64, time="2026-11-27T10:00:00Z"),
+            ],
+            "retention_scope_ambiguous",
+        ),
+        (
+            [
+                _snapshot("1" * 64, time="2026-11-28T10:00:00Z"),
+                _snapshot("2" * 64, time="2026-11-27T10:00:00Z"),
+            ],
+            "retention_target_not_latest",
+        ),
+        (
+            [{"id": "truncated", "time": "bad", "tags": [backup.SNAPSHOT_TAG]}],
+            "retention_inventory_invalid",
+        ),
+    ],
+)
+def test_retention_rejects_ambiguous_inventory_before_mutation(
+    tmp_path: Path,
+    inventory: list[dict[str, object]],
+    expected_code: str,
+) -> None:
+    config = _make_config(tmp_path)
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> SimpleNamespace:
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(inventory))
+
+    with (
+        patch.object(backup, "_validate_restic_rclone_versions"),
+        patch.object(backup.subprocess, "run", side_effect=fake_run),
+        pytest.raises(backup.GlobalPostgreSQLBackupError) as error,
+    ):
+        backup.apply_global_postgresql_backup_retention(config, "2" * 16)
+
+    assert str(error.value) == expected_code
+    assert all("forget" not in call and "prune" not in call for call in calls)
+
+
+def test_retention_failure_never_passes_current_snapshot_to_forget(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    old = "1" * 64
+    current = "2" * 64
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> SimpleNamespace:
+        calls.append(args)
+        if "snapshots" in args:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    [
+                        _snapshot(old, time="2026-11-26T10:00:00Z"),
+                        _snapshot(current, time="2026-11-27T10:00:00Z"),
+                    ]
+                ),
+            )
+        return SimpleNamespace(returncode=1, stdout="")
+
+    with (
+        patch.object(backup, "_validate_restic_rclone_versions"),
+        patch.object(backup.subprocess, "run", side_effect=fake_run),
+        pytest.raises(backup.GlobalPostgreSQLBackupError) as error,
+    ):
+        backup.apply_global_postgresql_backup_retention(config, current)
+
+    assert str(error.value) == "retention_forget_failed"
+    assert old in calls[1]
+    assert current not in calls[1]
+
+
+def test_retention_snapshot_presence_check_is_tagged_and_sanitized(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    current = "2" * 64
+    result = SimpleNamespace(
+        returncode=0,
+        stdout=json.dumps([_snapshot(current, time="2026-11-27T10:00:00Z")]),
+    )
+    with (
+        patch.object(backup, "_validate_restic_rclone_versions"),
+        patch.object(backup.subprocess, "run", return_value=result),
+    ):
+        assert backup.global_postgresql_backup_snapshot_is_present(config, current[:16])
+        assert not backup.global_postgresql_backup_snapshot_is_present(config, "3" * 16)

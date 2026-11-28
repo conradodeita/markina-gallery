@@ -37,6 +37,7 @@ type Source = {
   snapshot_id?: string | null;
   dump_size_bytes?: number | null;
   duration_ms?: number | null;
+  retention_status?: "unknown" | "pending" | "complete" | "failed";
 };
 
 function formatBytes(value: string | number | null | undefined) {
@@ -63,6 +64,13 @@ function backupStateLabel(source: Source) {
   if (source.latest_run_status === "failed") return "A última tentativa falhou; nenhuma cópia atual foi validada";
   if (source.latest_run_status === "running") return "Cópia em andamento; validação ainda não concluída";
   return "Estado desconhecido; nenhuma cópia validada foi confirmada";
+}
+
+function backupRetentionLabel(source: Source) {
+  if (source.retention_status === "complete") return "Concluída no recibo local; a disponibilidade remota atual não foi consultada.";
+  if (source.retention_status === "pending") return "Pendente; a confirmação da retenção ainda não foi registrada.";
+  if (source.retention_status === "failed") return "Falhou ou não pôde ser confirmada; a disponibilidade remota atual não foi consultada.";
+  return "Desconhecida para este recibo.";
 }
 
 function sourceStateLabel(source: Source | undefined, subject: string) {
@@ -353,6 +361,7 @@ function ConsoleContent() {
             <h3>Backup global do PostgreSQL</h3>
             <p>{backupStateLabel(backup)}</p>
             {backup.last_validated_at ? <p>Último recibo validado: {backup.last_validated_day} · {new Date(backup.last_validated_at).toLocaleString("pt-BR")} · {formatBytes(backup.dump_size_bytes)} · {formatDuration(backup.duration_ms)}{backup.snapshot_id ? ` · Snapshot ${backup.snapshot_id.slice(0, 12)}` : ""}</p> : null}
+            {backup.last_validated_at || backup.retention_status === "failed" ? <p>Retenção da cópia global: {backupRetentionLabel(backup)}</p> : null}
             {backup.latest_run_status && backup.latest_run_status !== "validated" ? <p>Estado da tentativa mais recente: {backup.latest_run_status === "failed" ? "falha" : backup.latest_run_status === "running" ? "em andamento" : "desconhecido"}{backup.latest_attempt_day ? ` · ${backup.latest_attempt_day}` : ""}</p> : null}
             <small>Origem: recibos locais no PostgreSQL · estado observado em {backup.observed_at ? new Date(backup.observed_at).toLocaleString("pt-BR") : "instante desconhecido"}. Esta leitura não consulta a disponibilidade atual do destino remoto.</small>
           </div>;
