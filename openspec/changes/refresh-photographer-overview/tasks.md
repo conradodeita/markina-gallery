@@ -63,3 +63,11 @@
 
 - Edge em 1440, 390 e 320 px, com respostas sintéticas, verificou validação nativa sem POST vazio, resposta 422 que mantém o título e a descrição, envio dos três campos, resposta 201 seguida de Ajustes e retorno por Cancelar sem POST. O formulário ocupa 720 px no desktop, cabe no celular e usa os temas claro e escuro.
 - Vitest passou 38 testes em cinco arquivos. Os casos específicos cobrem envio único enquanto ocupado, opcionais vazios como `null`, resultado incerto e cancelamento da espera ao sair. TypeScript, ESLint e OpenSpec estrito passaram. A prova de navegador não persistiu dados; o build final segue na CI.
+
+## 7. Notificações
+
+- [x] 7.1 Aplicar o layout Stitch e os filtros de destinatário à configuração autenticada de notificações.
+- [x] 7.2 Validar filtro, abertura de evento, prévia, salvamento e conexão indisponível em desktop e celular.
+
+- Edge passou em 1440, 390 e 320 px sem rolagem horizontal. O ensaio alternou destinatários sem perder o rascunho, conferiu a prévia local, validou o `PUT` com a versão atual, verificou WhatsApp conectado e desconectado e abriu o evento correto pelo link direto. As respostas foram simuladas e o ensaio não disparou mensagens.
+- Vitest passou 35 testes em cinco arquivos, incluindo configurações, avisos de mídia fria, navegação e PWA. TypeScript, ESLint e OpenSpec estrito passaram.

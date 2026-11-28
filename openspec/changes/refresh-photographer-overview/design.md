@@ -61,6 +61,13 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - `POST /api/admin/parent-galleries` recebe `name`, `event_name` e `description`, com `null` para opcionais vazios. A interface usa somente `id` da resposta para seguir ao editor existente em `/admin/galleries/sources/{id}/edit/ajustes`. A autenticação, a criação e a emissão de acesso continuam com o endpoint atual.
 - A interface apresenta validação nativa do título, envio em andamento, rejeição e erro de resultado incerto. Um envio em andamento aceita uma única solicitação. Campos são preservados após erro. Em resultado incerto, a mensagem orienta conferir o catálogo antes de reenviar.
 
+### Notificações
+
+- Referência Stitch `97c1495c2c88493f8fd77537eb577d58`: cabeçalho, faixa de informações sobre os canais, controle por destinatário e eventos expansíveis. Mostrar o estado de WhatsApp fornecido pela API. Indicadores de volume e conexões demonstrativas ficam fora deste recorte.
+- `GET /api/admin/notification-settings` fornece `settings` e `whatsapp_editable`. A UI usa `recipient` para selecionar eventos de fotógrafo ou cliente e preserva edições ainda não salvas ao alternar o filtro. Deep links existentes podem abrir o evento correspondente.
+- `PUT /api/admin/notification-settings/{event_type}` mantém `version`, habilitação e textos de cada canal, inclusive bloqueio do WhatsApp sem conexão, conflito e erros. A prévia substitui as variáveis de forma local, sem envio.
+- A central de mídia fria mantém os contratos `GET /api/admin/media-archive/notices?limit=50` e `POST /api/admin/media-archive/notices/{id}/read`, com o mesmo vínculo às pastas e estados de leitura.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

@@ -67,3 +67,17 @@ O formulário inicial SHALL reutilizar a estrutura responsiva do fotógrafo e o 
 
 - **WHEN** a solicitação falha ou o identificador da nova galeria não pode ser confirmado
 - **THEN** a UI mantém os valores digitados e apresenta o estado correspondente, orientando a conferência do catálogo em caso de resultado incerto
+
+### Requirement: Apresentação da configuração de notificações
+
+Notificações SHALL usar o painel responsivo do fotógrafo e representar os eventos e as permissões fornecidos pela API autenticada.
+
+#### Scenario: Fotógrafo filtra, edita ou acessa diretamente um evento
+
+- **WHEN** alterna o destinatário, modifica um texto ou abre um evento por link direto
+- **THEN** o painel preserva o rascunho, apresenta prévia local e usa a configuração e versão existentes ao salvar
+
+#### Scenario: Canal de WhatsApp indisponível
+
+- **WHEN** a API indica que o canal de WhatsApp não está disponível para edição
+- **THEN** a UI mantém os controles de WhatsApp bloqueados e permite configurar push independentemente

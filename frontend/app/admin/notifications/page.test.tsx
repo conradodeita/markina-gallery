@@ -74,6 +74,22 @@ it("inicia recolhido e preserva rascunhos e abertura independente sem chamadas a
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
+it("filtra por destinatário sem perder um rascunho nem refazer a consulta", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ settings, whatsapp_editable: true })));
+  vi.stubGlobal("fetch", fetch);
+  render(<NotificationsPage />);
+  await openCard("first_access");
+  const event = within(screen.getByRole("form", { name: "first_access" }));
+  fireEvent.change(event.getByLabelText(/Título do push/), { target: { value: "Rascunho local" } });
+  const filters = screen.getByRole("group", { name: "Filtrar notificações por destinatário" });
+  fireEvent.click(within(filters).getByRole("button", { name: "Para o cliente" }));
+  expect(screen.queryByRole("heading", { name: "first_access" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "payment_confirmed" })).toBeTruthy();
+  fireEvent.click(within(filters).getByRole("button", { name: "Para o fotógrafo" }));
+  expect(event.getByLabelText(/Título do push/)).toHaveProperty("value", "Rascunho local");
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
 it("salva somente o evento escolhido com versão e canais independentes", async () => {
   const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ settings, whatsapp_editable: true })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ ...settings[0], version: 2, push_enabled: false })));
