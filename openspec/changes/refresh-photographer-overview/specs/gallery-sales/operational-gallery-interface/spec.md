@@ -126,3 +126,12 @@ A primeira etapa SHALL apresentar metadados, situação e modos de acesso do edi
 
 - **WHEN** altera a identificação, a situação ativa ou o modo de acesso
 - **THEN** a interface usa as opções fornecidas, mantém o rascunho diante de erro e avança após o salvamento existente
+
+### Requirement: Apresentação da etapa Vendas da galeria
+
+A etapa SHALL apresentar a precificação, os recebimentos e as preferências comerciais autenticadas no editor responsivo.
+
+#### Scenario: Fotógrafo consulta e altera a precificação
+
+- **WHEN** escolhe um modo de preço, simula uma tabela ou salva a configuração
+- **THEN** a página consulta e envia os campos existentes, exibe somente valores fornecidos pelo contrato e mantém as validações e o avanço existentes

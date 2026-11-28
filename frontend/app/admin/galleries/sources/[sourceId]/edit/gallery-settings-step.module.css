@@ -86,3 +86,27 @@
 .fields :global(.gallery-toggle) {
   width: fit-content;
 }
+
+.sales :global(.gallery-pricing-mode) label:has(:checked) {
+  border-color: var(--overview-gold);
+  background: var(--overview-gold-soft);
+}
+
+.sales input:is([type="radio"], [type="checkbox"]) {
+  accent-color: var(--overview-gold);
+}
+
+.sales > [role="alert"] {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 76rem) {
+  .sales {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .prices {
+    grid-row: span 2;
+  }
+}

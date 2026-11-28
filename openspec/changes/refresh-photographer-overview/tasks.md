@@ -111,3 +111,11 @@
 
 - Edge em 1440, 390 e 320 px verificou a etapa ativa e a rota da prévia, cancelou a saída com rascunho e conferiu PATCH sintético. Um HTTP 422 preservou o título; o segundo envio, aceito, avançou para Vendas com os campos e o modo selecionado. As três larguras ficaram sem rolagem horizontal.
 - Vitest passou 97 testes em quatro arquivos, incluindo preservação do modo legado. TypeScript e OpenSpec estrito passaram. ESLint manteve quatro avisos preexistentes de imagens em outras etapas do editor.
+
+## 13. Vendas da galeria
+
+- [x] 13.1 Aplicar o layout Stitch aos controles comerciais existentes.
+- [x] 13.2 Validar a alternância de preço, simulação, persistência e avanço em desktop e celular.
+
+- Edge em 1440, 390 e 320 px verificou a mudança de preço fixo para progressivo, o vínculo a tabela, o GET da simulação por quantidade, o link de Configurações do PIX, o PUT da regra selecionada e o avanço a Detalhes. As operações foram simuladas e a largura da página coube nos três tamanhos.
+- Vitest passou 78 testes em quatro arquivos. TypeScript, OpenSpec estrito e ESLint passaram, com os avisos preexistentes de imagens em outras etapas do editor.

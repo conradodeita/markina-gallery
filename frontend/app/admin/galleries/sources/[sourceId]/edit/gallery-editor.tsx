@@ -849,18 +849,25 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   if (failed) return <SystemState tone="error" title="Galeria indisponível" detail="Não foi possível carregar o editor. Atualize a página ou entre novamente." />;
   if (loading || !editor) return <SystemState tone="loading" title="Abrindo a galeria" detail="Consultando etapas, permissões e conteúdo." />;
 
+  const usesStudioLayout = currentStep === "ajustes" || currentStep === "vendas";
+  const editorDescription = currentStep === "ajustes"
+    ? "Defina a identificação, o modo de acesso e a disponibilidade da galeria."
+    : currentStep === "vendas"
+      ? "Defina os preços, consulte os recebimentos e organize a jornada de compra."
+      : "Organize as pastas, revise as fotos e vincule clientes sem sair desta galeria.";
+
   return (
-    <div className={currentStep === "ajustes" ? styles.page : "admin-shell gallery-editor-shell"}>
+    <div className={usesStudioLayout ? styles.page : "admin-shell gallery-editor-shell"}>
       <div className="gallery-editor-heading">
         <div>
           <Link href="/admin/galleries" onClick={confirmDiscard}>← Galerias</Link>
-          <p className="eyebrow">{currentStep === "ajustes" ? "Galeria pública" : "Galeria do evento · link não listado"}</p>
+          <p className="eyebrow">{usesStudioLayout ? "Galeria pública" : "Galeria do evento · link não listado"}</p>
           <h1>{editor.gallery.name}</h1>
-          <p className="intro">{currentStep === "ajustes" ? "Defina a identificação, o modo de acesso e a disponibilidade da galeria." : "Organize as pastas, revise as fotos e vincule clientes sem sair desta galeria."}</p>
+          <p className="intro">{editorDescription}</p>
         </div>
         <div className={styles.headerActions}>
           <StatusBadge tone={editor.gallery.active ? "success" : "danger"}>{editor.gallery.active ? "Ativa" : "Bloqueada"}</StatusBadge>
-          {currentStep === "ajustes" ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/preview`} onClick={confirmDiscard}>Visualizar galeria pública</Link> : null}
+          {usesStudioLayout ? <Link className="mk-button mk-button--secondary" href={`/admin/galleries/sources/${sourceId}/preview`} onClick={confirmDiscard}>Visualizar galeria pública</Link> : null}
         </div>
       </div>
       <nav className="gallery-stepper" aria-label="Etapas da galeria">
@@ -891,13 +898,12 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       ) : null}
 
       {currentStep === "vendas" ? (
-        <section className="gallery-editor-panel">
-          <p className="eyebrow">Etapa {currentIndex + 1}</p>
-          <h2>Vendas</h2>
+        <section className={styles.form} aria-labelledby="editor-sales-title">
+          <div className={styles.formHeading}><span className={styles.icon}><OverviewIcon name="sell" /></span><div><p className="eyebrow">Etapa {currentIndex + 1}</p><h2 id="editor-sales-title">Vendas</h2></div></div>
           {!sales?.available ? <SystemState title="Configuração comercial indisponível" detail={sales?.reason ?? "O backend não habilitou esta capacidade."} /> : (
-            <form id="gallery-sales-step" className="gallery-sales-editor" onSubmit={saveSales} onChange={() => { setDirty(true); setSalesError(""); }}>
+            <form id="gallery-sales-step" className={`gallery-sales-editor ${styles.sales}`} onSubmit={saveSales} onChange={() => { setDirty(true); setSalesError(""); }}>
               {salesError ? <p className="form-message form-message--error" role="alert">{salesError}</p> : null}
-              <fieldset className="gallery-sales-section">
+              <fieldset className={`gallery-sales-section ${styles.prices}`}>
                 <legend>Preço das fotos</legend>
                 <p>Escolha um valor fixo para qualquer quantidade ou aplique uma tabela progressiva cadastrada na sua conta. Pedidos existentes não são recalculados.</p>
                 {sales.pricing_review_required || sales.pricing_mode === "legacy_volume" ? <div className="notice" role="alert"><strong>Configuração legada precisa de revisão.</strong><span>As faixas antigas não serão convertidas automaticamente. Escolha um dos modos abaixo e confirme a conversão.</span></div> : null}
