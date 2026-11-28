@@ -137,6 +137,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - `GET /api/library` devolve `journeys` com identificação, nome, evento, estado, capa, prazos por pasta, pedidos e destinos calculados pelo servidor. Os filtros Todas, Ativas e Expiradas usam o estado retornado e não alteram a ordem, os prazos nem o acesso. A revalidação continua ao cruzar prazos, inclusive com um filtro ativo. O carrinho mantém sua consulta e contagem na navegação.
 - Links, capa, pedidos e contingência usam somente os destinos existentes. Sem capa autorizada, o cartão exibe a indisponibilidade. Falha de consulta permite repetir a solicitação, e o vazio geral se distingue do vazio de um filtro. Carrinho, compras e autenticação mantêm seus próprios fluxos.
 
+### Galeria da cliente
+
+- Referência Stitch `009c375a9ff64b0bb05365ff49f62876`: cabeçalho compacto, navegação da coleção, controle de seleção por foto e resumo de seleção. A rota única `/public-galleries/{id}` preserva as pastas comuns e atribuídas. O caminho de galeria privada legado continua redirecionando ao destino autorizado.
+- `GET /api/public-galleries/{id}` fornece título, contexto e apresentação. `GET /api/public-galleries/{id}/photos` fornece as pastas autorizadas, os prazos, as prévias, o estado comercial de cada foto e a seleção inicial. A coleção mantém as proteções de mídia, modos e ações existentes. A busca facial, registro de visualização, seleção, favoritos, comentários e solicitação de reabertura conservam os contratos e permissões atuais.
+- O cabeçalho permanece legível durante a consulta das fotos e a grade informa falha com nova tentativa. A prévia usa o título e a configuração da galeria. Prazos, seleção e estado de reabertura derivam do servidor. O protótipo oferece controles demonstrativos que não têm ação equivalente nesse fluxo, como prazo livre e estimativa de prorrogação.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

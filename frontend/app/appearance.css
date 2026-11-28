@@ -89,7 +89,6 @@
 .admin-shell .selection-summary__proceed,.public-gallery-shell .selection-summary__proceed { background:var(--mk-action); color:var(--mk-action-ink); }
 .admin-shell .selection-summary__proceed strong,.public-gallery-shell .selection-summary__proceed strong { color:inherit; }
 .admin-shell .client-cart-link { background:var(--mk-action); color:var(--mk-action-ink); }
-.public-gallery-navigation a.primary { background:var(--mk-action); color:var(--mk-action-ink); }
 .gallery-presentation-marker--favorite { background:#202328; color:#fff; }
 .gallery-presentation-marker--favorite[aria-pressed="true"] { color:#ffaaa3; }
 .task-steps b { background:var(--mk-action); color:var(--mk-action-ink); }

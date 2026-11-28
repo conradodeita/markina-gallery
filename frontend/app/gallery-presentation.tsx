@@ -45,6 +45,7 @@ type GalleryPresentationProps<TPhoto extends GalleryPresentationPhoto> = {
   renderExpandedMedia?: (photo: TPhoto, close: () => void) => ReactNode;
   onExpandedPhotoChange?: (photo: TPhoto | null) => void;
   showCopyrightProtectionDialog?: boolean;
+  showHeader?: boolean;
   showHero?: boolean;
 };
 
@@ -83,6 +84,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   renderExpandedMedia,
   onExpandedPhotoChange,
   showCopyrightProtectionDialog = false,
+  showHeader = true,
   showHero = true,
 }: GalleryPresentationProps<TPhoto>) {
   const availableFolders = folders.filter((folder) => folder.photos.length > 0);
@@ -194,14 +196,14 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
 
   return (
     <section className="gallery-presentation" aria-label={`Apresentação de ${galleryName}`}>
-      <header className="gallery-presentation-header">
+      {showHeader ? <header className="gallery-presentation-header">
         <div className="gallery-presentation-intro">
           <p className="eyebrow">{eyebrow}</p>
           <h1>{galleryName}</h1>
           {context ? <div className="gallery-presentation-context">{context}</div> : null}
         </div>
         {modeLabel ? <aside className="gallery-presentation-mode" aria-label="Contexto da visualização">{modeLabel}</aside> : null}
-      </header>
+      </header> : null}
 
       <p className="gallery-protection-notice" role="status" aria-live="polite"><span aria-hidden="true">◈</span>{protectionMessage}</p>
 

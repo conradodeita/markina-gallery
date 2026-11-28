@@ -1,0 +1,133 @@
+.shell {
+  --collection-canvas: #fbfaf8;
+  --collection-action: linear-gradient(115deg, #735000, #936101);
+  background: var(--collection-canvas);
+  min-height: 100svh;
+  align-content: start;
+}
+
+:global(html[data-theme="dark"]) .shell {
+  --collection-canvas: #0e0d0b;
+}
+
+.header {
+  display: grid;
+  gap: clamp(.75rem, 2vw, 1.25rem);
+  padding: clamp(.9rem, 2vw, 1.5rem);
+  border: 1px solid var(--mk-border);
+  border-radius: 1rem;
+  background: var(--mk-surface);
+}
+
+.navigation,
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+}
+
+.navigation {
+  justify-content: space-between;
+}
+
+.returnLink {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: .45rem;
+  min-height: 44px;
+  color: var(--mk-brand-strong);
+  font-size: .85rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.returnLink:hover {
+  text-decoration: underline;
+}
+
+.title h1,
+.title p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.title h1 {
+  font-size: clamp(1.65rem, 5vw, 2.5rem);
+  line-height: 1.15;
+}
+
+.title p {
+  margin-block-start: .35rem;
+  color: var(--mk-ink-muted);
+  line-height: 1.45;
+}
+
+.deadlines {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+}
+
+.deadlines > h2 {
+  grid-column: 1 / -1;
+  font-size: 1.125rem;
+}
+
+.deadlines > article {
+  align-content: start;
+  margin: 0;
+  padding: .9rem;
+  border-radius: .85rem;
+  background: var(--mk-surface);
+}
+
+.deadlines > article > button {
+  justify-self: start;
+  width: fit-content;
+  min-height: 44px;
+}
+
+.retry {
+  display: grid;
+  gap: .7rem;
+}
+
+.retry > button {
+  justify-self: start;
+}
+
+.shell :global(.gallery-presentation) {
+  background: transparent;
+}
+
+.shell :global(.gallery-presentation-hero),
+.shell :global(.gallery-presentation-photo-image) {
+  border-radius: .9rem;
+}
+
+.shell :global(.gallery-presentation-folders button[aria-pressed="true"]),
+.shell :global(.selection-summary__proceed) {
+  border-color: #735000;
+  background: var(--collection-action);
+  color: #fff;
+}
+
+.shell :global(.gallery-presentation-folders button[aria-pressed="true"] span) {
+  background: rgb(255 255 255 / 15%);
+  color: #fff;
+}
+
+.shell :global(.selection-summary--floating) {
+  border-color: var(--mk-border);
+  background: var(--mk-surface);
+}
+
+@media (max-width: 560px) {
+  .shell :global(.gallery-presentation-hero) {
+    min-height: 0;
+  }
+
+  .header {
+    gap: .6rem;
+  }
+}
