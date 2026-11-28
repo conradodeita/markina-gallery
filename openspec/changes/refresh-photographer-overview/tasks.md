@@ -199,3 +199,11 @@
 
 - Edge em 1440 px abriu a prévia no endpoint protegido. Em 390 px, verificou a mensagem de indisponibilidade e repetiu a mesma consulta; em 320 px, negou acesso e não consultou a mídia. Nos três casos, a navegação indicou a rota, sem escrita nem rolagem horizontal.
 - Vitest passou sete testes de navegação e PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram.
+
+## 24. Visualização da foto
+
+- [x] 24.1 Aplicar o Stitch à ampliação da cliente, com foto, posição, navegação, zoom e seleção existentes.
+- [x] 24.2 Validar desktop e celular, incluindo mudança de foto, zoom, foco e fechamento, sem acesso ao original.
+
+- Edge em 1440, 390 e 320 px verificou 1 de 2 e 2 de 2, zoom de 150%, foco circular com Tab, retorno por Escape e a URL de prévia autorizada. A interceptação registrou apenas as duas visualizações sintéticas esperadas e não houve rolagem horizontal.
+- Vitest passou 77 testes com visualizador, galeria, regiões, busca facial e PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram. Permanecem os avisos anteriores de imagem.

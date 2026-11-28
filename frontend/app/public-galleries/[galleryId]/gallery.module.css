@@ -122,6 +122,48 @@
   background: var(--mk-surface);
 }
 
+.shell :global(.gallery-presentation-dialog-backdrop) {
+  background: rgb(12 9 4 / 88%);
+}
+
+.shell :global(.gallery-presentation-dialog) {
+  padding: 0;
+  border: 1px solid var(--mk-border);
+  border-radius: .95rem;
+}
+
+.shell :global(.gallery-presentation-dialog-header) {
+  padding: .45rem .8rem;
+  background: var(--mk-surface);
+}
+
+.shell :global(.gallery-presentation-photo-position) {
+  display: block;
+  margin-block-start: .15rem;
+  color: var(--mk-ink);
+  font-size: .9rem;
+  text-transform: none;
+}
+
+.shell :global(.gallery-presentation-close),
+.shell :global(.gallery-presentation-dialog-footer button) {
+  min-height: 44px;
+  border-color: var(--mk-border);
+  border-radius: .65rem;
+  background: var(--mk-surface);
+  color: var(--mk-ink);
+}
+
+.shell :global(.gallery-presentation-dialog-actions) {
+  border-block-start: 1px solid var(--mk-border);
+}
+
+.shell :global(.gallery-presentation-dialog-selection > button[aria-pressed="false"]:not(.gallery-presentation-marker--favorite)) {
+  border-color: #735000;
+  background: var(--collection-action);
+  color: #fff;
+}
+
 @media (max-width: 560px) {
   .shell :global(.gallery-presentation-hero) {
     min-height: 0;
@@ -129,5 +171,9 @@
 
   .header {
     gap: .6rem;
+  }
+
+  .shell :global(.gallery-presentation-dialog-backdrop) {
+    padding: .5rem;
   }
 }

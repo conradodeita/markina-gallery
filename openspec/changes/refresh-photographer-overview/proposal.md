@@ -30,6 +30,7 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 - Adaptar a Galeria da cliente ao Stitch, com destaque para a coleção, os prazos e a seleção real.
 - Adaptar Minhas compras, mantendo os pedidos, comprovantes de estado e as entregas autorizadas.
 - Adaptar Conferência de prévias, com consulta por identificador e apresentação da mídia administrativa.
+- Adaptar a ampliação de foto da cliente à tela de visualização, preservando as funções e proteções da galeria.
 
 ## Capabilities
 

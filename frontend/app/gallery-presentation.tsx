@@ -93,6 +93,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   const [protectionMessage, setProtectionMessage] = useState("Prévia protegida: cópias e downloads diretos estão desativados.");
   const [copyrightDialogOpen, setCopyrightDialogOpen] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
+  const previewTrigger = useRef<HTMLButtonElement | null>(null);
   const copyrightDialog = useRef<HTMLDivElement>(null);
   const touchStartX = useRef<number | null>(null);
   const featuredTitle = useRef<HTMLHeadingElement>(null);
@@ -108,6 +109,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
     .map((folder) => separateFeaturedPhotos ? { ...folder, photos: folder.photos.filter((photo) => !featuredIds.has(photo.id)) } : folder);
   const expandedIndex = photos.findIndex((photo) => photo.id === expandedPhotoId);
   const expandedPhoto = expandedIndex >= 0 ? photos[expandedIndex] : null;
+  const previewOpen = expandedPhoto !== null;
 
   useEffect(() => {
     if (!revealFeaturedRequestId || revealedRequest.current === revealFeaturedRequestId || !hasFeaturedPhotos || !featuredTitle.current) return;
@@ -118,8 +120,11 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   }, [revealFeaturedRequestId, hasFeaturedPhotos, onExpandedPhotoChange]);
 
   useEffect(() => {
-    if (expandedPhoto) dialog.current?.focus();
-  }, [expandedPhoto]);
+    if (!previewOpen) return;
+    const trigger = previewTrigger.current;
+    dialog.current?.focus();
+    return () => { trigger?.focus(); };
+  }, [previewOpen]);
 
   useEffect(() => {
     if (copyrightDialogOpen) copyrightDialog.current?.focus();
@@ -189,7 +194,10 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
   };
   const renderPhoto = (photo: TPhoto, markers = renderPhotoMarkers) => <article className="gallery-presentation-photo" key={photo.id} style={photoStyle(photo)}>
     <div className="gallery-presentation-photo-frame">
-    <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={() => openExpanded(photo)} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} loading={deferGridImages ? "lazy" : undefined} decoding={deferGridImages ? "async" : undefined} /></button>
+    <button type="button" className="gallery-presentation-photo-image gallery-protected-media" onClick={(event) => {
+      previewTrigger.current = event.currentTarget;
+      openExpanded(photo);
+    }} onContextMenu={protectPreview} onCopy={protectPreview} onDragStart={protectPreview} aria-label={`Ampliar prévia protegida de ${photo.name}`}><img src={photo.previewUrl} alt={`Prévia protegida de ${photo.name}`} draggable={false} width={photo.width ?? undefined} height={photo.height ?? undefined} loading={deferGridImages ? "lazy" : undefined} decoding={deferGridImages ? "async" : undefined} /></button>
     </div>
     <div className="gallery-presentation-photo-details"><div className="gallery-presentation-photo-caption"><strong title={photo.name}>{photo.name}</strong>{markers ? <div className="gallery-presentation-photo-markers">{markers(photo)}</div> : null}</div>{renderPhotoDetails?.(photo)}</div>
   </article>;
@@ -249,6 +257,20 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
             onMouseDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
               if (event.key === "Escape") closeExpanded();
+              if (event.key === "Tab") {
+                const controls = [...event.currentTarget.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), summary, [tabindex='0']")]
+                  .filter((element) => !element.closest("[hidden]") && (!element.closest("details:not([open])") || element.tagName === "SUMMARY"));
+                const first = controls[0];
+                const last = controls.at(-1);
+                const focused = document.activeElement;
+                if (event.shiftKey && (focused === first || focused === event.currentTarget)) {
+                  event.preventDefault();
+                  last?.focus();
+                } else if (!event.shiftKey && focused === last) {
+                  event.preventDefault();
+                  first?.focus();
+                }
+              }
               if (event.key === "ArrowLeft") moveExpanded(-1);
               if (event.key === "ArrowRight") moveExpanded(1);
             }}
@@ -260,7 +282,7 @@ export function GalleryPresentation<TPhoto extends GalleryPresentationPhoto>({
             }}
           >
             <div className="gallery-presentation-dialog-header">
-              <span>Prévia protegida</span>
+              <span>Prévia protegida <span className="gallery-presentation-photo-position" aria-live="polite">Foto {expandedIndex + 1} de {photos.length}</span></span>
               <button type="button" className="gallery-presentation-close" onClick={closeExpanded}>Fechar</button>
             </div>
             <div className="gallery-presentation-dialog-body">

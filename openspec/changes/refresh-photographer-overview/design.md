@@ -154,6 +154,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - Referência Stitch `921325db234946b2b4fd536cac35a2a0`: item de navegação do fotógrafo, consulta curta por identificador, enquadramento da imagem e estados de carregamento e indisponibilidade.
 - A página usa `GET /api/admin` para confirmar o acesso e solicita somente `GET /api/admin/photo-assets/{photo_id}/preview` para a mídia. O endpoint entrega o derivado autorizado sem marca-d'água, com a resolução de conferência. O simulador e os metadados da amostra não têm dados nesse contrato.
 
+### Visualização da foto
+
+- Referências Stitch `89260da1838e498eb4762b507b83fa04` e `fa091cdab2ff4a59961647686ae4bb59`: posição na sequência, imagem central e controles de seleção, navegação e zoom acessíveis.
+- A ampliação usa a mesma prévia protegida e mantém a consulta da foto, registro de visualização, regiões autorizadas e operações da galeria. O contador mede a sequência de fotos já disponível ao visualizador. Pacotes, limites ou valores demonstrativos não dão origem a novos campos ou ações.
+- O diálogo mantém o foco no conjunto de controles e o devolve ao botão de abertura ao fechar. Comentários e busca por região continuam condicionados ao fluxo existente.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

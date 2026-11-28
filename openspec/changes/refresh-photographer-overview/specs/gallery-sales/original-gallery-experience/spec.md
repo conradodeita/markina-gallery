@@ -39,3 +39,13 @@ Minhas compras SHALL organizar os registros autorizados em cartões responsivos 
 - **WHEN** um pedido autorizado aparece no histórico
 - **THEN** seus itens e estado financeiro permanecem no mesmo registro
 - **AND** a entrega usa somente o destino disponível e validado para o pedido
+
+### Requirement: Ampliação de fotografia com navegação acessível
+
+A ampliação SHALL mostrar a posição na sequência de fotos autorizadas e preservar as proteções da prévia e suas ações existentes. O foco SHALL ficar no diálogo aberto e voltar ao controle de abertura quando o diálogo fechar.
+
+#### Scenario: Cliente navega entre fotos ampliadas
+
+- **WHEN** a cliente amplia uma prévia e avança ou retorna
+- **THEN** o visualizador atualiza a mídia protegida e a posição na sequência
+- **AND** fechar retorna à coleção com foco no botão de origem
