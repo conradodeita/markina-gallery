@@ -24,6 +24,7 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 - Adaptar Imagens e pastas, preservando regras já implementadas de mídia, upload, saldo e arquivo frio.
 - Aplicar o visual à etapa Clientes e acesso do editor, mantendo autenticação e vínculos existentes.
 - Adaptar o detalhe administrativo da Galeria privada, preservando membros, mídias, uploads e ações existentes.
+- Adaptar a consulta de preços herdados da Galeria privada ao Stitch, mantendo edição na origem.
 
 ## Capabilities
 

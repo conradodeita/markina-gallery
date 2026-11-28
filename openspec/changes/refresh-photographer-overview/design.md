@@ -121,6 +121,11 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - Referência Stitch `60ea6f495b6d4564b7cb71b5dfd60d72`: estado do acesso, membros, acervo herdado, arquivos exclusivos e controles de manutenção. A tela usa os contadores retornados, mantém as fotos herdadas separadas e oferece os destinos administrativos existentes.
 - A família `GET /api/admin/derived-galleries/{id}` e os sub-recursos `photos,folders,members,facial-index,upload-batches` fornece estado, acervo e controles. Nenhum processamento, upload, desbloqueio, regra comercial ou permissão é alterado pelo redesign.
 
+### Configuração comercial da Galeria privada
+
+- Referência Stitch `8bf52e18bf2e4cb6976ef4fa06598d0d`: cabeçalho de herança, estado somente leitura e cartões com as condições disponíveis. `GET /api/admin/derived-galleries/{id}/pricing` fornece `inherited_from_parent_gallery_id,editable,pricing_mode,fixed_unit_price_cents,pricing_snapshot,pricing_review_required`. Preço fixo e faixas da tabela progressiva só aparecem quando fornecidos. Uma configuração legada em revisão encaminha para a origem.
+- O PIX é configurado em Configurações. Dados de cobrança, franquias ou valores demonstrativos ficam fora da apresentação da herança. A página não edita nem confirma pedidos.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

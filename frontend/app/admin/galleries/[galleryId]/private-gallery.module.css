@@ -44,3 +44,58 @@
 .detail :global(.auth-form) {
   width: min(100%, 46rem);
 }
+
+.inherited {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  max-width: 50rem;
+  padding: 16px;
+  border: 1px solid var(--overview-border);
+  border-radius: 14px;
+  background: var(--overview-surface);
+}
+
+.inherited :is(h2, h3, p) {
+  margin: 0;
+}
+
+.pricingHeading,
+.pricingActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+}
+
+.pricingHeading h2 {
+  font-size: 1.1rem;
+}
+
+.pricingIcon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--overview-gold);
+  background: var(--overview-gold-soft);
+}
+
+.priceList {
+  margin: 0;
+}
+
+.priceList > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--overview-border);
+}
+
+.priceList dd {
+  margin: 0;
+  font-weight: 750;
+}

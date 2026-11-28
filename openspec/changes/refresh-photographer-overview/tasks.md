@@ -151,3 +151,11 @@
 
 - Edge em 1440, 390 e 320 px verificou membro sintético, referência do acervo público, atalho aos pedidos, âncora de revisão, configuração herdada e cancelamento de bloqueio e exclusão. Não houve mutação e a página coube nos três tamanhos.
 - Vitest passou 19 testes em quatro arquivos, incluindo crédito durante envio e confirmação de bloqueio. TypeScript, OpenSpec estrito e ESLint passaram, com os avisos anteriores de imagem do acervo.
+
+## 18. Configuração comercial da Galeria privada
+
+- [x] 18.1 Aplicar o Stitch à consulta autorizada da herança comercial.
+- [x] 18.2 Validar em desktop e celular preço fixo/progressivo, ausência de dados e links funcionais.
+
+- Edge validou faixa progressiva e versão em 1440 px, preço fixo em 390 px e resposta indisponível em 320 px. Os links levaram à origem e às Configurações do PIX, com consultas GET sintéticas e sem rolagem horizontal.
+- Vitest passou oito testes em três arquivos. TypeScript, ESLint, OpenSpec estrito e a verificação de segredos passaram.

@@ -171,3 +171,12 @@ O detalhe SHALL distinguir fotos herdadas e exclusivas, mostrar membros e dispon
 
 - **WHEN** revisa membros, mídias ou controles de estado da galeria
 - **THEN** a interface apresenta a informação autorizada e mantém os caminhos e confirmações de cada ação
+
+### Requirement: Apresentação da herança comercial da Galeria privada
+
+A consulta SHALL manter os preços herdados em modo de leitura.
+
+#### Scenario: Fotógrafo consulta as condições herdadas
+
+- **WHEN** a API retorna configuração fixa, progressiva, legada ou indisponível
+- **THEN** a tela apresenta somente os valores retornados e oferece acesso à origem e às configurações da conta
