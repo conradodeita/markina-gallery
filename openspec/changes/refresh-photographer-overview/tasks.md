@@ -55,3 +55,11 @@
 
 - Edge com respostas sintéticas confirmou a visualização em 1440, 390 e 320 px, sem rolagem horizontal. O navegador aplicou o provedor PIX, baixou e removeu um CSV sintético, abriu um pedido, alternou para o histórico e confirmou o foco da seleção por link direto.
 - Vitest passou 76 testes em oito arquivos, incluindo pedidos, filtros, exportação, regras financeiras, edição de cliente e contrato PWA. A checagem da faixa de filtros mede o cabeçalho integrado e verifica sua posição após os indicadores. ESLint, TypeScript e OpenSpec estrito passaram. Build final segue na CI.
+
+## 6. Nova galeria
+
+- [x] 6.1 Adaptar o formulário inicial ao Stitch, preservando os campos e a criação autorizada.
+- [x] 6.2 Validar título obrigatório, envio, erro, retorno e transição para Ajustes no desktop e no celular.
+
+- Edge em 1440, 390 e 320 px, com respostas sintéticas, verificou validação nativa sem POST vazio, resposta 422 que mantém o título e a descrição, envio dos três campos, resposta 201 seguida de Ajustes e retorno por Cancelar sem POST. O formulário ocupa 720 px no desktop, cabe no celular e usa os temas claro e escuro.
+- Vitest passou 38 testes em cinco arquivos. Os casos específicos cobrem envio único enquanto ocupado, opcionais vazios como `null`, resultado incerto e cancelamento da espera ao sair. TypeScript, ESLint e OpenSpec estrito passaram. A prova de navegador não persistiu dados; o build final segue na CI.

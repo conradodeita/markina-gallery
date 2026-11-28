@@ -1,0 +1,142 @@
+.page {
+  display: grid;
+  justify-items: start;
+  gap: 22px;
+  min-width: 0;
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  color: var(--overview-gold);
+  font-size: .86rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.back:hover {
+  text-decoration: underline;
+}
+
+.page :global(.mk-page-heading) {
+  margin: 0;
+}
+
+.page h1 {
+  margin: 8px 0;
+  font-size: clamp(1.85rem, 4vw, 2.35rem);
+  font-weight: 800;
+  letter-spacing: -.045em;
+}
+
+.page :global(.eyebrow) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.page :global(.eyebrow)::before {
+  display: block;
+  width: 20px;
+  height: 1px;
+  background: var(--overview-gold);
+  content: "";
+}
+
+.form {
+  position: relative;
+  display: grid;
+  width: min(100%, 720px);
+  gap: 24px;
+  padding: clamp(16px, 3.3vw, 36px);
+  overflow: hidden;
+  border: 1px solid var(--overview-border);
+  border-radius: 16px;
+  background: var(--overview-surface);
+  box-shadow: 0 4px 24px #7a52000c;
+}
+
+.form::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--overview-gradient);
+  content: "";
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+}
+
+.fieldHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fieldHeading label {
+  color: var(--mk-ink);
+  font-size: .9rem;
+  font-weight: 750;
+}
+
+.fieldHeading span,
+.field p {
+  margin: 0;
+  color: var(--mk-ink-muted);
+  font-size: .76rem;
+  line-height: 1.45;
+}
+
+.fieldHeading .required {
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: var(--overview-gold);
+  background: var(--overview-gold-soft);
+  font-weight: 750;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--overview-border);
+  border-radius: 10px;
+  color: var(--mk-ink);
+  background: var(--overview-subtle);
+  font: inherit;
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.field :is(input, textarea):focus-visible {
+  outline: 2px solid var(--overview-gold);
+  outline-offset: 2px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--overview-border);
+}
+
+@media (max-width: 34rem) {
+  .page {
+    gap: 16px;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+}

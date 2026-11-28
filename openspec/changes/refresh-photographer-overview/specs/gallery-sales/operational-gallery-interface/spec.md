@@ -53,3 +53,17 @@ Vendas e pagamentos SHALL reutilizar a estrutura visual responsiva do painel do 
 
 - **WHEN** o fotógrafo acessa a consulta, exporta um resultado ou abre um pedido
 - **THEN** a UI exibe valores do filtro real, preserva busca e paginação, e delega decisões, notificações e entregas às permissões e aos controles existentes
+
+### Requirement: Apresentação do formulário Nova galeria
+
+O formulário inicial SHALL reutilizar a estrutura responsiva do fotógrafo e o endpoint autenticado de criação de galeria.
+
+#### Scenario: Fotógrafo cria uma galeria
+
+- **WHEN** o fotógrafo envia o título e os campos opcionais válidos
+- **THEN** a UI envia uma solicitação de criação, apresenta o andamento e abre Ajustes a partir do identificador retornado
+
+#### Scenario: Criação é rejeitada ou fica sem confirmação
+
+- **WHEN** a solicitação falha ou o identificador da nova galeria não pode ser confirmado
+- **THEN** a UI mantém os valores digitados e apresenta o estado correspondente, orientando a conferência do catálogo em caso de resultado incerto

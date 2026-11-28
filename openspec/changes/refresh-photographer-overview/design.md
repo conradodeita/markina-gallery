@@ -6,7 +6,7 @@ Referência visual aprovada no Google Stitch: projeto Pick your Pic — Visual R
 
 ## Goals / Non-Goals
 
-Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. Reutilizar a estrutura visual nas listas de Galerias e Clientes e na área de Vendas e pagamentos. Preservar aparência, sessão e links com permissões existentes. Criação e edição de galerias, upload, cliente móvel e checkout mantêm suas interfaces até seus incrementos.
+Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. Reutilizar a estrutura visual nas listas de Galerias e Clientes, em Vendas e pagamentos e no formulário inicial de Nova galeria. Preservar aparência, sessão e links com permissões existentes. Edição de galerias, upload, cliente móvel e checkout mantêm suas interfaces até seus incrementos.
 
 ## Decisions
 
@@ -54,6 +54,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 | Clientes para filtro e exportação | `GET /api/admin/clients?query=...` e `GET /api/admin/payment-communications/export.csv` | Busca depende dos dados da conta; exportação reutiliza os filtros aplicados e mantém estados de sucesso/erro. |
 | Reabertura e ações do pedido | `GET /api/admin/gallery-reopening-requests`, `POST /api/admin/payment-communications/{id}/{decision\|correction}` e `/api/admin/orders/{id}/delivery` | Decisão autorizada, repetição de notificações e ações financeiras permanecem nos componentes e contratos atuais. |
 | Histórico de acervo excluído | `GET /api/admin/removed-photo-movements` no componente `RemovedHistory` | O histórico mantém filtros, paginação e comprovantes autorizados. |
+
+### Nova galeria
+
+- Referência Dourado Claro `b8b084ff16534752a299c6789f6d2e55`: link de retorno, cabeçalho editorial e formulário com três campos e ações. Os temas claro e escuro usam os tokens das outras telas do fotógrafo.
+- `POST /api/admin/parent-galleries` recebe `name`, `event_name` e `description`, com `null` para opcionais vazios. A interface usa somente `id` da resposta para seguir ao editor existente em `/admin/galleries/sources/{id}/edit/ajustes`. A autenticação, a criação e a emissão de acesso continuam com o endpoint atual.
+- A interface apresenta validação nativa do título, envio em andamento, rejeição e erro de resultado incerto. Um envio em andamento aceita uma única solicitação. Campos são preservados após erro. Em resultado incerto, a mensagem orienta conferir o catálogo antes de reenviar.
 
 ## Risks / Trade-offs
 

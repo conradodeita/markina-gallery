@@ -12,6 +12,7 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 - Estender essa estrutura aos catálogos autenticados de Galerias e Clientes conforme suas referências no Stitch, com busca, apresentação responsiva dos registros e ações existentes.
 - Clarear o fundo em Dourado Claro e manter a rolagem do editor de cliente dentro do próprio diálogo.
 - Aplicar a direção a Vendas e pagamentos com os indicadores, filtros e ações financeiras existentes.
+- Aplicar o visual de Nova galeria ao formulário inicial, com encaminhamento para as etapas existentes de configuração.
 
 ## Capabilities
 
@@ -21,4 +22,4 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 
 ## Impact
 
-Estrutura visual de `/admin`, `/admin/galleries`, `/admin/clients` e `/admin/payments`, adaptada com estilos e fontes locais. Endpoints e permissões existentes são reutilizados. Criação e edição de galerias, upload e checkout seguem em incrementos próprios.
+Estrutura visual de `/admin`, `/admin/galleries`, `/admin/galleries/new`, `/admin/clients` e `/admin/payments`, adaptada com estilos e fontes locais. Endpoints e permissões existentes são reutilizados. As etapas de edição, upload e checkout seguem em incrementos próprios.
