@@ -51,6 +51,27 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
 
     def test_fixture_inventories_additional_safe_gallery_states(self) -> None:
         self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["private_upload_batches"],
+            ("private_upload_batch", "private_upload_batch_asset"),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["derived_gallery_relationships"],
+            (
+                "derived_gallery",
+                "derived_gallery_membership",
+                "derived_gallery_photo",
+                "derived_gallery_photo_origin",
+            ),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["cold_media_notices"],
+            ("media_archive_notice",),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["cold_media_space_reservation"],
+            ("media_archive_space_reservation",),
+        )
+        self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["photographer_profile"],
             ("photographer_business_profile",),
         )

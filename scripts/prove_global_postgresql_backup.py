@@ -68,6 +68,15 @@ APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
         "media_archive_recovery_credit_reservation",
         "media_archive_recovery_credit_allocation_event",
     ),
+    "cold_media_space_reservation": ("media_archive_space_reservation",),
+    "cold_media_notices": ("media_archive_notice",),
+    "derived_gallery_relationships": (
+        "derived_gallery",
+        "derived_gallery_membership",
+        "derived_gallery_photo",
+        "derived_gallery_photo_origin",
+    ),
+    "private_upload_batches": ("private_upload_batch", "private_upload_batch_asset"),
     "privacy_and_consent": (
         "gallery_facial_policy",
         "facial_search_request",
@@ -1710,6 +1719,11 @@ def _seed_application_fixture(
                     "gallery",
                     "folder",
                     "photo",
+                    "derived-gallery",
+                    "derived-gallery-membership",
+                    "derived-gallery-photo",
+                    "derived-gallery-photo-origin",
+                    "private-upload-batch",
                     "payment-group",
                     "order",
                     "archive-cycle",
@@ -1841,6 +1855,89 @@ def _seed_application_fixture(
                     "storage_key": storage_key,
                     "available": True,
                     "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "derived_gallery",
+                {
+                    "id": ids["derived-gallery"],
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "client_id": ids["client"],
+                    "name": f"Synthetic private gallery {tenant_index}",
+                    "custom_message": None,
+                    "selection_expires_at": expires_at,
+                    "access_enabled": True,
+                    "favorites_enabled": True,
+                    "comments_enabled": False,
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "derived_gallery_membership",
+                {
+                    "tenant_id": tenant_id,
+                    "id": ids["derived-gallery-membership"],
+                    "derived_gallery_id": ids["derived-gallery"],
+                    "parent_gallery_id": ids["gallery"],
+                    "client_id": ids["client"],
+                    "status": "active",
+                    "blocked_at": None,
+                    "unlinked_at": None,
+                    "actor_admin_id": admin_id,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "derived_gallery_photo",
+                {
+                    "tenant_id": tenant_id,
+                    "id": ids["derived-gallery-photo"],
+                    "derived_gallery_id": ids["derived-gallery"],
+                    "photo_asset_id": ids["photo"],
+                    "origin": "admin",
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "derived_gallery_photo_origin",
+                {
+                    "tenant_id": tenant_id,
+                    "id": ids["derived-gallery-photo-origin"],
+                    "derived_gallery_photo_id": ids["derived-gallery-photo"],
+                    "origin": "admin",
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
+                "private_upload_batch",
+                {
+                    "tenant_id": tenant_id,
+                    "id": ids["private-upload-batch"],
+                    "derived_gallery_id": ids["derived-gallery"],
+                    "parent_gallery_id": None,
+                    "folder_id": None,
+                    "actor_admin_id": admin_id,
+                    "status": "closed",
+                    "recipient_ids": [str(ids["client"])],
+                    "created_at": now,
+                    "closed_at": now,
+                    "announced_at": None,
+                },
+            )
+            insert(
+                connection,
+                "private_upload_batch_asset",
+                {
+                    "tenant_id": tenant_id,
+                    "batch_id": ids["private-upload-batch"],
+                    "photo_asset_id": ids["photo"],
                 },
             )
             insert(
@@ -2180,6 +2277,23 @@ def _seed_application_fixture(
             )
             insert(
                 connection,
+                "media_archive_notice",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "media-archive-notice"),
+                    "tenant_id": tenant_id,
+                    "cycle_id": cycle_id,
+                    "notice_type": "archive_reconciliation_required",
+                    "idempotency_key": f"synthetic-media-notice-{proof_id}-{tenant_index}",
+                    "title": "Synthetic archive state",
+                    "body": "Synthetic fixture notice; no remote action was sent.",
+                    "deadline_at": None,
+                    "created_at": now,
+                    "read_at": None,
+                    "superseded_at": None,
+                },
+            )
+            insert(
+                connection,
                 "media_archive_operation",
                 {
                     "id": operation_id,
@@ -2201,6 +2315,24 @@ def _seed_application_fixture(
                     "completed_at": now,
                     "created_at": now,
                     "updated_at": now,
+                },
+            )
+            insert(
+                connection,
+                "media_archive_space_reservation",
+                {
+                    "id": _fixture_uuid(
+                        proof_id, tenant_id, "released-media-space-reservation"
+                    ),
+                    "tenant_id": tenant_id,
+                    "operation_id": operation_id,
+                    "volume_key": _sha256(
+                        f"synthetic-volume:{proof_id}:{tenant_index}".encode()
+                    ),
+                    "reserved_bytes": len(photo_bytes),
+                    "status": "released",
+                    "created_at": now,
+                    "released_at": now,
                 },
             )
             insert(

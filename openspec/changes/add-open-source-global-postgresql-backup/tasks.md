@@ -116,7 +116,7 @@
 
 - A prova local posterior ampliou a fixture de 33 para 41 tabelas tenant-scoped com uma linha sintética em cada um dos dois fotógrafos. Foram acrescentados `gallery_preview_settings`, `folder_processing_settings`, `notification_milestone`, `gallery_reopening_request` e `gallery_reopening_notification_outbox`; configurações e estados permanecem inertes, sem envio externo, cobrança ou processamento. `credit_package` continua global e inativo.
 - `APPLICATION_FIXTURE_DOMAINS` explicita os grupos de domínio da fixture, e um teste focado verifica as novas tabelas e a ausência de duplicatas. A prova também semeia na tabela global `global_postgresql_backup_run` um recibo `validated` e um `unknown`, para verificar que ambos sobrevivem ao dump/restore. A comparação continua incluindo inventário/schema das relações não semeadas; isso não equivale a cobertura de dados representativos em todas as tabelas.
-- **1.1 permanece aberta.** A fixture mais recente contém dados sintéticos em 42 tabelas representativas tenant-scoped para os dois fotógrafos, além dos dois recibos globais de backup; o inventário do banco permanece em 139 tabelas e 967 relações. Ainda faltam dados representativos em outras relações, reconciliar versão/extensões/roles do runtime por inventário autorizado e definir/provar provisionamento de globals/ACL. A evidência desta atualização está em `validation-results.md`; o ensaio é estritamente local e sintético.
+- **1.1 permanece aberta.** A fixture mais recente contém dados sintéticos em 50 tabelas representativas tenant-scoped para os dois fotógrafos, além dos dois recibos globais de backup; o inventário do banco permanece em 139 tabelas e 967 relações. Ainda faltam reconciliar dados representativos nas relações fora do mapa explícito da fixture, versão/extensões/roles do runtime por inventário autorizado e provisionamento de globals/ACL. A evidência desta atualização está em `validation-results.md`; o ensaio é estritamente local e sintético.
 
 ### Console: progresso do estado de recuperação — task 3.3 — 27/11/2026
 
@@ -129,3 +129,16 @@
 - A UI tem teste explícito de que um registro local de operação de restauração de mídia com status `completed` ainda deixa a disponibilidade como desconhecida e não implica restauração global PostgreSQL nem consulta remota. Isso protege a distinção entre status da operação e evidência de disponibilidade do objeto.
 - A task 3.3 permanece aberta: recuperação global não tem recibo durável porque o bootstrap protegido ainda não foi integrado; não há regra aprovada de frescor para transformar um registro local em estado atual/desatualizado. Não foi criado modelo, fonte ou política nova.
 - Este incremento alterou somente o teste de UI e documentação; não havia refatoração funcional segura a aplicar nesta fronteira.
+
+### Relações sintéticas de galeria derivada e ciclo de arquivo frio — progresso da task 1.1 — 27/11/2026
+
+- A fixture agora inclui uma reserva de staging `released`, um aviso interno `archive_reconciliation_required` e a cadeia `derived_gallery` → vínculo do fotógrafo/cliente → foto → origem. Todos os IDs/referências são sintéticos e tenant-scoped; a reserva não permanece ativa e o aviso não é enviado.
+- `Base.metadata` neste checkout declara 137 tabelas, 114 com `tenant_id`; 48 tabelas tenant-scoped estão no mapa explícito de dados representativos. As outras 66 estão fora desse mapa; parte do bootstrap sintético é inserida separadamente, então essa diferença não afirma que todas estejam vazias. Segurança/sessões, credenciais e operações externas, pagamentos e outros estados de ciclo de vida ainda precisam de reconciliação por categoria antes de declarar cobertura de fixture.
+- **1.1 continua aberta** até fechar a reconciliação das relações e do runtime/provisionamento PostgreSQL; a validação segue local e sintética.
+
+### Lote de upload privado sintético no dump/restore — 28/11/2026
+
+- A fixture acrescenta um `private_upload_batch` sintético em estado `closed`, seu item ligado à foto da mesma galeria derivada e destinatário. Não há lote aberto, anúncio, envio, worker ou efeito externo.
+- A prova integrada foi repetida após todas as adições desta atualização. A fixture tem agora **50 tabelas tenant-scoped** com dados para cada um dos dois fotógrafos e dois recibos globais; veja o hash e o inventário em `validation-results.md`. Isso valida essas relações selecionadas, não a população de todas as 114 tabelas tenant-scoped do ORM.
+- A revisão de manutenção reutilizou o mapa `APPLICATION_FIXTURE_DOMAINS` e o helper `insert` existentes; as novas linhas ampliam a prova sem substituir outro fluxo, e não foi identificada refatoração segura adicional neste escopo.
+- A task 1.1 continua aberta para a reconciliação das relações restantes e inventário/provisionamento do runtime real.
