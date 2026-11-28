@@ -5,6 +5,7 @@ const photographerShellRoutes = new Set([
   "/admin/clients",
   "/admin/payments",
   "/admin/notifications",
+  "/admin/pricing",
 ]);
 
 export function usesPhotographerShell(pathname: string) {

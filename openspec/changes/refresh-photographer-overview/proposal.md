@@ -14,6 +14,7 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 - Aplicar a direção a Vendas e pagamentos com os indicadores, filtros e ações financeiras existentes.
 - Aplicar o visual de Nova galeria ao formulário inicial, com encaminhamento para as etapas existentes de configuração.
 - Adaptar Notificações com filtros por destinatário, configurações e prévias de cada canal.
+- Adaptar a lista e o formulário de Tabelas de preço progressivo, preservando versões, faixas e estados das tabelas.
 
 ## Capabilities
 
@@ -23,4 +24,4 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 
 ## Impact
 
-Estrutura visual do painel, dos catálogos, de Nova galeria, de Vendas e pagamentos e de Notificações, adaptada com estilos e fontes locais. Endpoints e permissões existentes são reutilizados. As etapas de edição, upload e checkout seguem em incrementos próprios.
+Estrutura visual do painel, dos catálogos, de Nova galeria, de Vendas e pagamentos, de Notificações e de Tabelas de preço, adaptada com estilos e fontes locais. Endpoints e permissões existentes são reutilizados. As etapas de edição de galerias, upload e checkout seguem em incrementos próprios.

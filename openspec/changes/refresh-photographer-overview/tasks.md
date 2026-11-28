@@ -71,3 +71,11 @@
 
 - Edge passou em 1440, 390 e 320 px sem rolagem horizontal. O ensaio alternou destinatários sem perder o rascunho, conferiu a prévia local, validou o `PUT` com a versão atual, verificou WhatsApp conectado e desconectado e abriu o evento correto pelo link direto. As respostas foram simuladas e o ensaio não disparou mensagens.
 - Vitest passou 35 testes em cinco arquivos, incluindo configurações, avisos de mídia fria, navegação e PWA. TypeScript, ESLint e OpenSpec estrito passaram.
+
+## 8. Tabelas de preço progressivo
+
+- [x] 8.1 Adaptar o catálogo e o editor conforme Stitch, com contagens reais e operações existentes por tabela.
+- [x] 8.2 Validar desktop e celular, faixas em centavos, edição versionada, desativação confirmada e reativação.
+
+- Edge em 1440, 390 e 320 px validou o atalho de criação, foco do editor, envio de faixas contíguas em centavos, versão seguinte após edição, cancelamento de desativação sem solicitação, confirmação de desativação e reativação. O teste interceptou as requisições e não utilizou dados reais. Todas as larguras couberam sem rolagem horizontal.
+- TypeScript, ESLint, OpenSpec estrito e os testes de catálogo de preços, regras de precificação, navegação, PWA e layout passaram.

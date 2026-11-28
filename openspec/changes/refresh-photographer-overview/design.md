@@ -68,6 +68,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - `PUT /api/admin/notification-settings/{event_type}` mantém `version`, habilitação e textos de cada canal, inclusive bloqueio do WhatsApp sem conexão, conflito e erros. A prévia substitui as variáveis de forma local, sem envio.
 - A central de mídia fria mantém os contratos `GET /api/admin/media-archive/notices?limit=50` e `POST /api/admin/media-archive/notices/{id}/read`, com o mesmo vínculo às pastas e estados de leitura.
 
+### Tabelas de preço progressivo
+
+- Referência Stitch `05c0a1e7df4f471e8bc4d8c88b2fd58c`: título com atalho de criação, explicação da progressão, resumo do catálogo e cartões junto ao editor. A interface usa contagens do catálogo carregado. Indicadores demonstrativos de conversão e uso por galeria ficam fora do recorte.
+- `GET /api/admin/pricing-presets?include_inactive=true` fornece `presets[].id,code,name,label,version,active,tiers`; os cartões mostram valores em reais, versão e disponibilidade. O resumo indica tabelas ativas, desativadas e total do catálogo.
+- O editor envia `code,name,tiers[].minimum_quantity,maximum_quantity,unit_price_cents` no `POST /api/admin/pricing-presets` ou `PUT /api/admin/pricing-presets/{id}`. As regras de faixas e centavos continuam existentes. `DELETE /api/admin/pricing-presets/{id}` e `POST /api/admin/pricing-presets/{id}/activate` mantêm os comportamentos de desativação confirmada e reativação.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

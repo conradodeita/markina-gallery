@@ -81,3 +81,12 @@ Notificações SHALL usar o painel responsivo do fotógrafo e representar os eve
 
 - **WHEN** a API indica que o canal de WhatsApp não está disponível para edição
 - **THEN** a UI mantém os controles de WhatsApp bloqueados e permite configurar push independentemente
+
+### Requirement: Apresentação das tabelas de preço progressivo
+
+Tabelas de preço progressivo SHALL usar a estrutura visual responsiva do fotógrafo e preservar as operações administrativas existentes.
+
+#### Scenario: Fotógrafo consulta ou modifica tabelas
+
+- **WHEN** consulta o catálogo, configura as faixas de uma tabela ou muda sua disponibilidade
+- **THEN** a interface mostra os dados autorizados, usa valores em centavos nas operações, mantém a confirmação de desativação e apresenta a versão e os estados retornados

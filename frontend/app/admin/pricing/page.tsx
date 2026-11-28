@@ -1,8 +1,11 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
-import { MarkinaButton, PageHeading, StatusBadge, SurfaceCard, SystemState } from "../../ui-kit";
+import { MarkinaButton, MetricCard, PageHeading, StatusBadge, SurfaceCard, SystemState } from "../../ui-kit";
+import { OverviewIcon } from "../overview-icon";
+import catalogStyles from "../catalog.module.css";
+import styles from "./pricing.module.css";
 import {
   formatBrazilianCurrency,
   maskBrazilianCurrencyInput,
@@ -28,6 +31,7 @@ export default function PricingPresetsPage() {
   const [tiers, setTiers] = useState<PriceTier[]>([emptyTier]);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const editor = useRef<HTMLElement>(null);
 
   const load = useCallback(async () => {
     const response = await fetch("/api/admin/pricing-presets?include_inactive=true", {
@@ -52,11 +56,17 @@ export default function PricingPresetsPage() {
     setEditing(preset);
     setTiers(preset.tiers.map((tier) => ({ ...tier })));
     setMessage("");
+    focusEditor();
   }
 
   function resetForm() {
     setEditing(null);
     setTiers([{ ...emptyTier }]);
+  }
+
+  function focusEditor() {
+    editor.current?.scrollIntoView?.({ block: "start" });
+    editor.current?.focus({ preventScroll: true });
   }
 
   function addTier() {
@@ -139,16 +149,40 @@ export default function PricingPresetsPage() {
   }
 
   return (
-    <div className="admin-shell pricing-presets-page">
+    <div className={catalogStyles.catalog}>
       <PageHeading
-        eyebrow="Configuração comercial da sua conta"
         title="Tabelas de preço progressivo"
         detail="Cadastre uma vez e selecione a tabela desejada na etapa Vendas de cada Galeria pública."
+        actions={<MarkinaButton type="button" onClick={() => {
+          if (editing) resetForm();
+          focusEditor();
+        }}><OverviewIcon name="add" /> Nova tabela de preço</MarkinaButton>}
       />
+      <aside className={styles.progression} aria-labelledby="pricing-progression">
+        <div className={styles.icon}><OverviewIcon name="sell" /></div>
+        <div><h2 id="pricing-progression">Como funciona a progressão</h2><p>Cada foto é cobrada pelo preço da faixa em que entra. A última faixa recebe todas as fotos acima do limite anterior.</p></div>
+      </aside>
+      {presets && <section className={catalogStyles.metrics} aria-label="Resumo das tabelas">
+        <MetricCard label="Tabelas cadastradas" icon={<OverviewIcon name="collections" />} value={presets.length} detail="no catálogo da sua conta" />
+        <MetricCard label="Disponíveis para novas galerias" icon={<OverviewIcon name="public" />} value={presets.filter((preset) => preset.active).length} detail="tabelas ativas" />
+        <MetricCard label="Tabelas desativadas" icon={<OverviewIcon name="folder_open" />} value={presets.filter((preset) => !preset.active).length} detail="galerias existentes mantêm seus valores" />
+      </section>}
       {message ? <p className="form-message" role="status">{message}</p> : null}
-      <div className="pricing-presets-layout">
-        <SurfaceCard>
-          <h2>{editing ? `Editar ${editing.label}` : "Nova tabela"}</h2>
+      <div className={styles.workspace}>
+        <section className={styles.list} aria-labelledby="pricing-list">
+          <h2 id="pricing-list">Tabelas cadastradas</h2>
+          {presets === null && !message ? <SystemState tone="loading" title="Carregando tabelas" detail="Consultando versões e faixas." /> : null}
+          {presets?.length === 0 ? <SystemState title="Nenhuma tabela cadastrada" detail="Use Nova tabela de preço para cadastrar a primeira." /> : null}
+          {presets?.map((preset) => (
+            <SurfaceCard className={`pricing-preset-card ${styles.preset}`} key={preset.id}>
+              <header><div><h3>{preset.label}</h3><small>Versão {preset.version}</small></div><StatusBadge tone={preset.active ? "success" : "neutral"}>{preset.active ? "Ativa" : "Desativada"}</StatusBadge></header>
+              <dl>{preset.tiers.map((tier) => <div key={tier.minimum_quantity}><dt>{tier.minimum_quantity}–{tier.maximum_quantity ?? "∞"} fotos</dt><dd>{formatBrazilianCurrency(tier.unit_price_cents)} cada</dd></div>)}</dl>
+              <div className="pricing-form-actions"><MarkinaButton variant="secondary" onClick={() => startEdit(preset)}>Editar</MarkinaButton>{preset.active ? <MarkinaButton variant="quiet" onClick={() => setActive(preset, false)}>Desativar</MarkinaButton> : <MarkinaButton variant="secondary" onClick={() => setActive(preset, true)}>Ativar</MarkinaButton>}</div>
+            </SurfaceCard>
+          ))}
+        </section>
+        <section ref={editor} tabIndex={-1} className={styles.editor} aria-labelledby="pricing-editor">
+          <h2 id="pricing-editor">{editing ? `Editar ${editing.label}` : "Nova tabela"}</h2>
           <form className="pricing-preset-form" onSubmit={submit}>
             <div className="pricing-preset-identity">
               <label>Código<input defaultValue={editing?.code ?? ""} key={`code-${editing?.id ?? "new"}`} name="code" placeholder="01" required /></label>
@@ -157,7 +191,7 @@ export default function PricingPresetsPage() {
             <div className="pricing-tier-editor">
               <div><strong>Faixas progressivas</strong><small>Cada intervalo cobra somente as fotos contidas nele.</small></div>
               {tiers.map((tier, index) => (
-                <div className="pricing-tier-row" key={`${editing?.id ?? "new"}-${index}`}>
+                <div className={`pricing-tier-row ${styles.tier}`} key={`${editing?.id ?? "new"}-${index}`}>
                   <span>{tier.minimum_quantity}–{tier.maximum_quantity ?? "∞"} fotos</span>
                   <label>Valor unitário<input value={formatBrazilianCurrency(tier.unit_price_cents)} name={`price_${index}`} inputMode="numeric" onChange={(event) => updateTierPrice(index, event.target.value)} required /></label>
                   {index < tiers.length - 1 ? <label>Até<input min={tier.minimum_quantity} type="number" value={tier.maximum_quantity ?? tier.minimum_quantity} onChange={(event) => setTiers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, maximum_quantity: Number(event.target.value) } : itemIndex === index + 1 ? { ...item, minimum_quantity: Number(event.target.value) + 1 } : item))} /></label> : <small>Última faixa sem limite</small>}
@@ -170,17 +204,6 @@ export default function PricingPresetsPage() {
               <MarkinaButton disabled={saving} type="submit">{saving ? "Salvando…" : "Salvar tabela"}</MarkinaButton>
             </div>
           </form>
-        </SurfaceCard>
-        <section className="pricing-preset-list" aria-label="Tabelas cadastradas">
-          {presets === null && !message ? <SystemState tone="loading" title="Carregando tabelas" detail="Consultando versões e faixas." /> : null}
-          {presets?.length === 0 ? <SystemState title="Nenhuma tabela cadastrada" detail="Crie a primeira tabela progressiva ao lado." /> : null}
-          {presets?.map((preset) => (
-            <SurfaceCard className="pricing-preset-card" key={preset.id}>
-              <header><div><strong>{preset.label}</strong><small>Versão {preset.version}</small></div><StatusBadge tone={preset.active ? "success" : "neutral"}>{preset.active ? "Ativa" : "Desativada"}</StatusBadge></header>
-              <dl>{preset.tiers.map((tier) => <div key={tier.minimum_quantity}><dt>{tier.minimum_quantity}–{tier.maximum_quantity ?? "∞"} fotos</dt><dd>{formatBrazilianCurrency(tier.unit_price_cents)} cada</dd></div>)}</dl>
-              <div className="pricing-form-actions"><MarkinaButton variant="secondary" onClick={() => startEdit(preset)}>Editar</MarkinaButton>{preset.active ? <MarkinaButton variant="quiet" onClick={() => setActive(preset, false)}>Desativar</MarkinaButton> : <MarkinaButton variant="secondary" onClick={() => setActive(preset, true)}>Ativar</MarkinaButton>}</div>
-            </SurfaceCard>
-          ))}
         </section>
       </div>
     </div>

@@ -385,8 +385,7 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 }
 .admin-frame .gallery-editor-panel { gap:24px; min-height:0; padding:clamp(20px,3vw,32px); }
 
-.pricing-presets-layout { display:grid; grid-template-columns:minmax(0,1.08fr) minmax(320px,.92fr); gap:20px; align-items:start; }
-.pricing-preset-form,.pricing-tier-editor,.pricing-preset-list { display:grid; gap:14px; }
+.pricing-preset-form,.pricing-tier-editor { display:grid; gap:14px; }
 .pricing-preset-identity { display:grid; grid-template-columns:minmax(100px,.3fr) minmax(0,1fr); gap:12px; }
 .pricing-preset-form label,.pricing-tier-row label { display:grid; gap:6px; color:var(--mk-ink); font-size:.84rem; font-weight:750; }
 .pricing-preset-form input { width:100%; min-height:44px; padding:10px 12px; border:1px solid var(--mk-border); border-radius:9px; background:var(--mk-surface); color:var(--mk-ink); }
@@ -405,8 +404,7 @@ button, input { font: inherit; }.auth-shell { width:100%; min-height:100svh; dis
 .pricing-preset-card dl > div:first-child { border-top:0; }
 .pricing-preset-card dt { color:var(--mk-ink-muted); }
 .pricing-preset-card dd { margin:0; color:var(--mk-ink); font-weight:800; }
-@media (max-width:820px) { .pricing-presets-layout { grid-template-columns:1fr; }.pricing-preset-list { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-@media (max-width:600px) { .pricing-preset-list,.pricing-preset-identity { grid-template-columns:1fr; }.pricing-tier-row { grid-template-columns:1fr 1fr; }.pricing-tier-row > span { grid-column:1/-1; } }
+@media (max-width:600px) { .pricing-preset-identity { grid-template-columns:1fr; }.pricing-tier-row { grid-template-columns:1fr 1fr; }.pricing-tier-row > span { grid-column:1/-1; } }
 .admin-frame .mk-button--primary,
 .admin-frame button.primary { border:1px solid var(--mk-border); background:#171717; color:#fff; }
 .admin-frame .mk-button--primary:hover,
@@ -1122,7 +1120,6 @@ html:has(.client-edit-backdrop) { overflow:hidden; scrollbar-gutter:stable; }
 .public-gallery-shell,
 .gallery-editor-shell,
 .gallery-preview-page,
-.pricing-presets-page,
 .client-checkout-review,
 .private-gallery-detail,
 .admin-notifications-page,
