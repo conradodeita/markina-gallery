@@ -51,6 +51,14 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
 
     def test_fixture_inventories_additional_safe_gallery_states(self) -> None:
         self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["revoked_gallery_capabilities"],
+            ("gallery_access_capability",),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["private_gallery_notifications"],
+            ("gallery_membership_notification_outbox",),
+        )
+        self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["private_upload_batches"],
             ("private_upload_batch", "private_upload_batch_asset"),
         )

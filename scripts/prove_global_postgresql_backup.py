@@ -77,6 +77,8 @@ APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
         "derived_gallery_photo_origin",
     ),
     "private_upload_batches": ("private_upload_batch", "private_upload_batch_asset"),
+    "private_gallery_notifications": ("gallery_membership_notification_outbox",),
+    "revoked_gallery_capabilities": ("gallery_access_capability",),
     "privacy_and_consent": (
         "gallery_facial_policy",
         "facial_search_request",
@@ -1719,11 +1721,13 @@ def _seed_application_fixture(
                     "gallery",
                     "folder",
                     "photo",
+                    "revoked-gallery-capability",
                     "derived-gallery",
                     "derived-gallery-membership",
                     "derived-gallery-photo",
                     "derived-gallery-photo-origin",
                     "private-upload-batch",
+                    "private-gallery-notification",
                     "payment-group",
                     "order",
                     "archive-cycle",
@@ -1876,6 +1880,31 @@ def _seed_application_fixture(
             )
             insert(
                 connection,
+                "gallery_access_capability",
+                {
+                    "id": ids["revoked-gallery-capability"],
+                    "tenant_id": tenant_id,
+                    "parent_gallery_id": ids["gallery"],
+                    "derived_gallery_id": ids["derived-gallery"],
+                    "client_id": None,
+                    "scope": "private_gallery_link",
+                    "token_hash": _sha256(
+                        f"synthetic-revoked-gallery-link:{proof_id}:{tenant_index}".encode()
+                    ),
+                    "token_mode": "legacy_random",
+                    "token_version": 1,
+                    "status": "revoked",
+                    "expires_at": None,
+                    "last_used_at": None,
+                    "consumed_at": None,
+                    "revoked_at": now,
+                    "rotated_from_id": None,
+                    "actor_admin_id": admin_id,
+                    "created_at": now,
+                },
+            )
+            insert(
+                connection,
                 "derived_gallery_membership",
                 {
                     "tenant_id": tenant_id,
@@ -1938,6 +1967,31 @@ def _seed_application_fixture(
                     "tenant_id": tenant_id,
                     "batch_id": ids["private-upload-batch"],
                     "photo_asset_id": ids["photo"],
+                },
+            )
+            insert(
+                connection,
+                "gallery_membership_notification_outbox",
+                {
+                    "tenant_id": tenant_id,
+                    "id": ids["private-gallery-notification"],
+                    "event_key": (
+                        f"synthetic-private-gallery-created-{proof_id}-{tenant_index}"
+                    ),
+                    "event_type": "private_created",
+                    "parent_gallery_id": ids["gallery"],
+                    "derived_gallery_id": ids["derived-gallery"],
+                    "client_id": ids["client"],
+                    "parent_name_snapshot": f"Synthetic gallery {tenant_index}",
+                    "derived_name_snapshot": f"Synthetic private gallery {tenant_index}",
+                    "client_name_snapshot": f"Synthetic Client {tenant_index}",
+                    "admin_status": "read",
+                    "external_status": "skipped",
+                    "attempts": 0,
+                    "last_error": None,
+                    "next_attempt_at": None,
+                    "created_at": now,
+                    "updated_at": now,
                 },
             )
             insert(
