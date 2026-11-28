@@ -32,4 +32,18 @@ describe("prévia administrativa da galeria", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+  it("avisa sobre pasta indisponível e mantém a prévia das pastas acessíveis", async () => {
+    const fetch = vi.fn((path: string) => {
+      if (path.endsWith("/editor")) return Promise.resolve(Response.json({ gallery: { name: "Galeria disponível", folder_display_mode: "sequential" } }));
+      if (path.endsWith("/folders")) return Promise.resolve(Response.json({ folders: [{ id: "folder-1", name: "Pasta disponível" }, { id: "folder-2", name: "Pasta indisponível" }] }));
+      if (path.includes("/folder-1/")) return Promise.resolve(Response.json({ photos: [{ id: "photo", name: "FOTO.jpg", preview_url: "/preview" }] }));
+      return Promise.resolve(new Response(null, { status: 503 }));
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<AdminGalleryPreviewPage />);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Prévia parcial"));
+    expect(screen.getByRole("img", { name: "Prévia protegida de FOTO.jpg" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Editar apresentação" }).getAttribute("href")).toBe("/admin/galleries/sources/source-1/edit/detalhes");
+  });
 });

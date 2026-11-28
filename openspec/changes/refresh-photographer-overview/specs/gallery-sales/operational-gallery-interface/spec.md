@@ -180,3 +180,12 @@ A consulta SHALL manter os preços herdados em modo de leitura.
 
 - **WHEN** a API retorna configuração fixa, progressiva, legada ou indisponível
 - **THEN** a tela apresenta somente os valores retornados e oferece acesso à origem e às configurações da conta
+
+### Requirement: Apresentação da prévia administrativa da Galeria pública
+
+A prévia SHALL usar a apresentação compartilhada e indicar o modo fotógrafo.
+
+#### Scenario: Fotógrafo revisa capa, pastas e fotografias
+
+- **WHEN** os dados autorizados carregam ou uma seção está indisponível
+- **THEN** a interface apresenta as prévias e estados correspondentes, preservando as proteções e os caminhos de retorno

@@ -159,3 +159,11 @@
 
 - Edge validou faixa progressiva e versão em 1440 px, preço fixo em 390 px e resposta indisponível em 320 px. Os links levaram à origem e às Configurações do PIX, com consultas GET sintéticas e sem rolagem horizontal.
 - Vitest passou oito testes em três arquivos. TypeScript, ESLint, OpenSpec estrito e a verificação de segredos passaram.
+
+## 19. Prévia administrativa da Galeria pública
+
+- [x] 19.1 Aplicar a apresentação Stitch sem alterar as proteções de mídia e a apresentação compartilhada.
+- [x] 19.2 Validar capa, pastas, ampliação, modo fotógrafo e estados de consulta em desktop e celular.
+
+- Edge em 1440 px verificou capa e ampliação com fechamento por Escape; em 390 px, prévia parcial com a foto disponível; em 320 px, falha total e retorno. As respostas foram sintéticas e não houve mutações nem rolagem horizontal.
+- Vitest passou 22 testes em três arquivos. ESLint, TypeScript, OpenSpec estrito, diff-check e a verificação de segredos passaram.

@@ -126,6 +126,11 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - Referência Stitch `8bf52e18bf2e4cb6976ef4fa06598d0d`: cabeçalho de herança, estado somente leitura e cartões com as condições disponíveis. `GET /api/admin/derived-galleries/{id}/pricing` fornece `inherited_from_parent_gallery_id,editable,pricing_mode,fixed_unit_price_cents,pricing_snapshot,pricing_review_required`. Preço fixo e faixas da tabela progressiva só aparecem quando fornecidos. Uma configuração legada em revisão encaminha para a origem.
 - O PIX é configurado em Configurações. Dados de cobrança, franquias ou valores demonstrativos ficam fora da apresentação da herança. A página não edita nem confirma pedidos.
 
+### Prévia administrativa da Galeria pública
+
+- Referência Stitch `1e08923ff7214627875b011b41977680`: capa em destaque, navegação por pastas e coleção. O modo fotógrafo usa o mesmo componente de apresentação, com indicação de prévia e links de volta ao resumo e ao editor. Os controles exclusivos da cliente continuam na sessão correspondente.
+- A prévia carrega `GET /api/admin/parent-galleries/{id}/editor`, `GET /api/admin/parent-galleries/{id}/folders` e `GET /api/admin/photo-folders/{id}/photos` para as pastas retornadas. Usa somente URLs de prévia autorizadas, respeita a ordem recebida e mantém carregamento, falha e ausência de imagem visíveis.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.
