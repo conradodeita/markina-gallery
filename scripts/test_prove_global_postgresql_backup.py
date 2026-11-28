@@ -51,6 +51,10 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
 
     def test_fixture_inventories_additional_safe_gallery_states(self) -> None:
         self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["photographer_profile"],
+            ("photographer_business_profile",),
+        )
+        self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["gallery_processing_settings"],
             ("gallery_preview_settings", "folder_processing_settings"),
         )

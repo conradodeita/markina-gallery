@@ -90,6 +90,7 @@ APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
         "gallery_reopening_request",
         "gallery_reopening_notification_outbox",
     ),
+    "photographer_profile": ("photographer_business_profile",),
 }
 RUNNER_RESTIC_WINDOWS_ARCHIVE_SHA256 = (
     "bba9061c3dce081701ab353ec8cb73a78be73b71a538aad560f2d1067602b7fe"
@@ -1685,6 +1686,22 @@ def _seed_application_fixture(
                         {"tenant": tenant_id},
                     ).scalar_one()
                 )
+            )
+            insert(
+                connection,
+                "photographer_business_profile",
+                {
+                    "id": _fixture_uuid(proof_id, tenant_id, "business-profile"),
+                    "admin_user_id": admin_id,
+                    "tenant_id": tenant_id,
+                    "full_name": f"Synthetic Photographer {tenant_index}",
+                    "cpf_envelope": None,
+                    "cpf_fingerprint": None,
+                    "cpf_fingerprint_key_version": None,
+                    "address_envelope": None,
+                    "created_at": now,
+                    "updated_at": now,
+                },
             )
             ids = {
                 name: _fixture_uuid(proof_id, tenant_id, name)
