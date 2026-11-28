@@ -2,6 +2,7 @@
 import { confirmDuplicateJpegs, isJpegFilename, jpegStorageKey, uploadJpeg } from "../../../../../upload-jpeg";
 import { notifyPhotographerOnboardingGate } from "../../../../../photographer-onboarding-gate";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -849,12 +850,13 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
   if (failed) return <SystemState tone="error" title="Galeria indisponível" detail="Não foi possível carregar o editor. Atualize a página ou entre novamente." />;
   if (loading || !editor) return <SystemState tone="loading" title="Abrindo a galeria" detail="Consultando etapas, permissões e conteúdo." />;
 
-  const usesStudioLayout = currentStep === "ajustes" || currentStep === "vendas";
-  const editorDescription = currentStep === "ajustes"
-    ? "Defina a identificação, o modo de acesso e a disponibilidade da galeria."
-    : currentStep === "vendas"
-      ? "Defina os preços, consulte os recebimentos e organize a jornada de compra."
-      : "Organize as pastas, revise as fotos e vincule clientes sem sair desta galeria.";
+  const descriptions: Partial<Record<StepId, string>> = {
+    ajustes: "Defina a identificação, o modo de acesso e a disponibilidade da galeria.",
+    vendas: "Defina os preços, consulte os recebimentos e organize a jornada de compra.",
+    detalhes: "Personalize a imagem de abertura e o título apresentado às suas clientes.",
+  };
+  const editorDescription = descriptions[currentStep];
+  const usesStudioLayout = Boolean(editorDescription);
 
   return (
     <div className={usesStudioLayout ? styles.page : "admin-shell gallery-editor-shell"}>
@@ -863,7 +865,7 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
           <Link href="/admin/galleries" onClick={confirmDiscard}>← Galerias</Link>
           <p className="eyebrow">{usesStudioLayout ? "Galeria pública" : "Galeria do evento · link não listado"}</p>
           <h1>{editor.gallery.name}</h1>
-          <p className="intro">{editorDescription}</p>
+          <p className="intro">{editorDescription ?? "Organize as pastas, revise as fotos e vincule clientes sem sair desta galeria."}</p>
         </div>
         <div className={styles.headerActions}>
           <StatusBadge tone={editor.gallery.active ? "success" : "danger"}>{editor.gallery.active ? "Ativa" : "Bloqueada"}</StatusBadge>
@@ -949,16 +951,21 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
       ) : null}
 
       {currentStep === "detalhes" ? (
-        <section className="gallery-editor-panel">
-          <div className="section-heading">
+        <section className={styles.form} aria-labelledby="editor-details-title">
+          <div className={styles.formHeading}>
+            <span className={styles.icon}><OverviewIcon name="photo_camera" /></span>
             <div>
               <p className="eyebrow">Etapa 3</p>
-              <h2>Detalhes e apresentação</h2>
-              <p className="gallery-scope-note">Configure como esta galeria será apresentada. A marca-d’água vale para as galerias da sua conta e fica em Configurações.</p>
+              <h2 id="editor-details-title">Detalhes e apresentação</h2>
             </div>
           </div>
+          <p className={styles.detailsNote}>A marca-d’água vale para as galerias da sua conta e fica em <Link href="/admin/settings#settings-brand" onClick={confirmDiscard}>Configurações</Link>. A capa fica sem marca-d’água.</p>
           <form id="gallery-details-step" className="gallery-settings-form gallery-visual-settings" onSubmit={saveVisualSettings} onChange={(event) => { setDirty(true); updateVisualPreview(event); }}>
-            <div className="gallery-customization-layout">
+            <div className={`gallery-customization-layout ${styles.details}`}>
+              <aside className="gallery-customization-preview" aria-live="polite">
+                <h3>Prévia da capa</h3>
+                {coverPreviewUrl ? <div className="gallery-customization-preview-image"><Image src={`/api${coverPreviewUrl}`} alt="Prévia da capa da galeria" fill unoptimized /><strong className={`title-${visualPreview?.cover_title_position ?? "bottom-left"}`} style={{ color: visualPreview?.cover_title_color, fontFamily: titleFontFamily, fontSize: `${Math.min(visualPreview?.cover_title_size ?? 24, 34)}px` }}>{editor.gallery.name}</strong></div> : <div className="gallery-customization-preview-empty"><strong>Envie uma capa para visualizar o título</strong><span>A capa ficará sem marca-d’água e continuará fora das pastas de conteúdo.</span></div>}
+              </aside>
               <div className="gallery-customization-panels">
                 <fieldset className="gallery-customization-panel">
                   <legend>Capa e título</legend>
@@ -974,10 +981,6 @@ export default function GalleryEditor({ sourceId, step, initialFolderId = "" }: 
                   <label>Posição do título<select name="cover_title_position" defaultValue={editor.gallery.cover_title_position}><option value="top-left">Superior esquerdo</option><option value="top-center">Superior centro</option><option value="top-right">Superior direito</option><option value="middle-left">Centro esquerdo</option><option value="middle-center">Centro</option><option value="middle-right">Centro direito</option><option value="bottom-left">Inferior esquerdo</option><option value="bottom-center">Inferior centro</option><option value="bottom-right">Inferior direito</option></select></label>
                 </fieldset>
               </div>
-              <aside className="gallery-customization-preview" aria-live="polite">
-                <p className="eyebrow">Prévia da capa</p>
-                {coverPreviewUrl ? <div className="gallery-customization-preview-image"><img src={`/api${coverPreviewUrl}`} alt="Prévia da capa da galeria" /><strong className={`title-${visualPreview?.cover_title_position ?? "bottom-left"}`} style={{ color: visualPreview?.cover_title_color, fontFamily: titleFontFamily, fontSize: `${Math.min(visualPreview?.cover_title_size ?? 24, 34)}px` }}>{editor.gallery.name}</strong></div> : <div className="gallery-customization-preview-empty"><strong>Envie uma capa para visualizar o título</strong><span>A capa ficará sem marca-d’água e continuará fora das pastas de conteúdo.</span></div>}
-              </aside>
             </div>
           </form>
         </section>

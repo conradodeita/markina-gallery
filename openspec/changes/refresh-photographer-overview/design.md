@@ -101,6 +101,11 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - Referência Stitch `16f4e7e2a7084819b60ab22b353eeb8e`: trilha do editor, escolha de precificação, simulação, PIX somente leitura e jornada da cliente. As opções são as existentes, com valores e disponibilidade da API.
 - `GET /api/admin/parent-galleries/{id}/sales` e `GET /api/admin/pricing-presets` fornecem a configuração e as tabelas ativas. `GET /api/admin/pricing-presets/{id}/quote?quantity=...` calcula a prévia do preço progressivo. O `PUT /api/admin/parent-galleries/{id}/sales` mantém centavos, modo, tabela selecionada, conversão legada, exigência de pagamento, mensagem e preferências. Nenhum pagamento é realizado nessa etapa.
 
+### Detalhes e apresentação da galeria
+
+- Referência Stitch `7cb288945dd54e928e4b243248b75574`: trilha do editor, prévia da capa em destaque e controles de imagem e título. A fotografia vem da capa autorizada, sem ativos de demonstração nem filtros de cor. Os controles existentes determinam fonte, cor, posição e tamanho da prévia.
+- `GET /api/admin/parent-galleries/{id}/details` fornece `cover_readiness,font_options,cover_options,settings`. O fluxo mantém as operações existentes de upload JPEG e processamento. A etapa avança após salvar os ajustes com capa pronta e mantém os estados de capa ausente, processando ou com falha.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

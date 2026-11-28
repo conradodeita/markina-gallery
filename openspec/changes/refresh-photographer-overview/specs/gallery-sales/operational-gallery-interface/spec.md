@@ -135,3 +135,12 @@ A etapa SHALL apresentar a precificação, os recebimentos e as preferências co
 
 - **WHEN** escolhe um modo de preço, simula uma tabela ou salva a configuração
 - **THEN** a página consulta e envia os campos existentes, exibe somente valores fornecidos pelo contrato e mantém as validações e o avanço existentes
+
+### Requirement: Apresentação da etapa Detalhes da galeria
+
+A etapa SHALL exibir a prévia e os controles autorizados da capa e do título no editor responsivo.
+
+#### Scenario: Fotógrafo ajusta a apresentação da galeria
+
+- **WHEN** a capa está ausente, em processamento, com falha ou pronta
+- **THEN** a interface apresenta o estado correspondente, mantém as proteções existentes e mostra os ajustes do título na prévia disponível

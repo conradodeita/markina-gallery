@@ -20,6 +20,7 @@ A direção Dourado Claro aprovada no Stitch reúne navegação, ações e indic
 - Aplicar a direção visual à consulta de pedidos da galeria, mantendo snapshots e navegação operacional.
 - Adaptar a primeira etapa do editor de galeria, com os mesmos modos de acesso e salvamento.
 - Aplicar o visual à etapa Vendas do editor, com os controles de preço, recebimento e jornada existentes.
+- Adaptar Detalhes e apresentação, mantendo capa, prévia, estados de processamento e configuração do título.
 
 ## Capabilities
 

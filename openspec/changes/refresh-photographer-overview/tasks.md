@@ -119,3 +119,11 @@
 
 - Edge em 1440, 390 e 320 px verificou a mudança de preço fixo para progressivo, o vínculo a tabela, o GET da simulação por quantidade, o link de Configurações do PIX, o PUT da regra selecionada e o avanço a Detalhes. As operações foram simuladas e a largura da página coube nos três tamanhos.
 - Vitest passou 78 testes em quatro arquivos. TypeScript, OpenSpec estrito e ESLint passaram, com os avisos preexistentes de imagens em outras etapas do editor.
+
+## 14. Detalhes e apresentação
+
+- [x] 14.1 Adaptar a etapa ao Stitch, com capa e tipografia, prévia em destaque e estados do processamento.
+- [x] 14.2 Validar desktop e celular, bloqueio de capa ausente e atualização da prévia e do salvamento.
+
+- Edge em 1440 e 390 px confirmou imagem de teste, atualização imediata de posição/tamanho, envio sintético e avanço. Em 320 px a capa ausente desabilitou o salvamento e mostrou instruções. Não houve rolagem horizontal nem upload real.
+- Vitest passou 97 testes em quatro arquivos, incluindo fluxo de processamento e foto de capa obrigatória. TypeScript, OpenSpec estrito e ESLint passaram. Os três avisos de imagens do editor pertencem às outras etapas.
