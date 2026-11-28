@@ -221,6 +221,11 @@ class RealPreparation(unittest.TestCase):
         second = plan(inventory(), SHA, {"api": {"image_id": NEW}}, NOW)
         self.assertNotEqual(first["planning_fingerprint"], second["planning_fingerprint"])
 
+        target_inventory = inventory()
+        target_inventory["services"]["worker"]["image"]["build_target"] = "backup-worker"
+        target_sensitive = plan(target_inventory, SHA, {}, NOW)
+        self.assertNotEqual(first["planning_fingerprint"], target_sensitive["planning_fingerprint"])
+
     def test_legacy_entry_dispatch_precedes_legacy_parser(self):
         source = Path(__file__).with_name("deploy-prod-app-services.sh").read_text()
         body = source.split("main() {", 1)[1]

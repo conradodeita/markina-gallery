@@ -17,6 +17,8 @@ type Detail = Omit<Tenant, "admin_email"> & { gallery_count: number; photo_count
 type Page = { items: Tenant[]; has_more: boolean; observed_at: string };
 type Mode = "" | "all" | "alphabetical" | "recent";
 type Audit = { id: string; action: string; result: string; created_at: string; reason_code?: string; evidence_sha256?: string };
+const EXPECTED_SOURCE_KEYS = ["backup", "drive", "archive", "restore", "postgres_restore"] as const;
+
 type Source = {
   key: string;
   state: string;
@@ -28,10 +30,18 @@ type Source = {
   quota_limit?: string | null;
   quota_usage?: string | null;
   quota_observed_at?: string | null;
+  latest_run_status?: string | null;
+  latest_attempt_day?: string | null;
+  last_validated_day?: string | null;
+  last_validated_at?: string | null;
+  snapshot_id?: string | null;
+  dump_size_bytes?: number | null;
+  duration_ms?: number | null;
+  retention_status?: "unknown" | "pending" | "complete" | "failed";
 };
 
-function formatBytes(value: string | null | undefined) {
-  if (!value || !/^\d+$/.test(value)) return "não informado";
+function formatBytes(value: string | number | null | undefined) {
+  if (value == null || !/^\d+$/.test(String(value))) return "não informado";
   const bytes = Number(value);
   if (!Number.isSafeInteger(bytes)) return `${value} B`;
   const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
@@ -40,6 +50,76 @@ function formatBytes(value: string | null | undefined) {
   while (unit < units.length - 1 && bytes >= divisor * 1024) { divisor *= 1024; unit++; }
   if (unit === 0) return `${value} B`;
   return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(bytes / divisor)} ${units[unit]}`;
+}
+
+function formatDuration(value: number | null | undefined) {
+  if (value == null || !Number.isSafeInteger(value) || value < 0) return "não informado";
+  return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value / 1000)} s`;
+}
+
+function backupStateLabel(source: Source) {
+  if (source.state === "current") return "Cópia global validada hoje";
+  if (source.state === "stale") return "A última cópia validada está desatualizada";
+  if (source.state === "unavailable") return "Estado do backup indisponível";
+  if (source.latest_run_status === "failed") return "A última tentativa falhou; nenhuma cópia atual foi validada";
+  if (source.latest_run_status === "running") return "Cópia em andamento; validação ainda não concluída";
+  return "Estado desconhecido; nenhuma cópia validada foi confirmada";
+}
+
+function backupRetentionLabel(source: Source) {
+  if (source.retention_status === "complete") return "Concluída no recibo local; a disponibilidade remota atual não foi consultada.";
+  if (source.retention_status === "pending") return "Pendente; a confirmação da retenção ainda não foi registrada.";
+  if (source.retention_status === "failed") return "Falhou ou não pôde ser confirmada; a disponibilidade remota atual não foi consultada.";
+  return "Desconhecida para este recibo.";
+}
+
+function sourceStateLabel(source: Source | undefined, subject: string) {
+  if (source?.state === "current") return `${subject}: estado atual registrado`;
+  if (source?.state === "stale") return `${subject}: estado desatualizado`;
+  if (source?.state === "unavailable") return `${subject}: estado indisponível`;
+  return `${subject}: estado desconhecido`;
+}
+
+function sourceOriginLabel(source: Source | undefined) {
+  if (!source?.source) return "Origem não registrada";
+  if (source.key === "archive") return "Origem: catálogo local do arquivo frio";
+  if (source.key === "restore") return "Origem: registros locais de recuperação";
+  return "Origem: registro local do serviço";
+}
+
+function sourceEvidenceDateLabel(source: Source | undefined) {
+  const timestamp = source?.last_validated_at ?? source?.observed_at;
+  if (typeof timestamp !== "string") return "Idade e evidência não informadas";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Idade e evidência não informadas";
+  return `${source?.last_validated_at ? "Última evidência" : "Estado observado"} em ${date.toLocaleString("pt-BR")}`;
+}
+
+function mediaRestoreOperationLabel(source: Source | undefined) {
+  const labels: Record<string, string> = {
+    queued: "aguardando processamento",
+    processing: "em processamento",
+    failed: "falha",
+    reconciliation_required: "reconciliação necessária",
+    completed: "concluída",
+    cancelled: "cancelada",
+  };
+  if (!source?.latest_run_status) return null;
+  return labels[source.latest_run_status] ?? "desconhecida";
+}
+
+function mediaArchiveCycleLabel(source: Source | undefined) {
+  const labels: Record<string, string> = {
+    local: "local",
+    archiving: "em arquivamento",
+    archived: "arquivado",
+    restoring: "em recuperação",
+    reconciliation_required: "reconciliação necessária",
+    deleting: "em exclusão",
+    deleted: "excluído",
+  };
+  if (!source?.latest_run_status) return null;
+  return labels[source.latest_run_status] ?? "desconhecido";
 }
 
 function driveStateLabel(source: Source) {
@@ -109,7 +189,10 @@ function ConsoleContent() {
       if (!response.ok) throw new Error();
       const result = await response.json();
       if (!sourceController.signal.aborted) {
-        if (Array.isArray(result.items) && result.items.length === 4) setSources(result.items as Source[]);
+        const hasExpectedSources = Array.isArray(result.items)
+          && result.items.length === EXPECTED_SOURCE_KEYS.length
+          && EXPECTED_SOURCE_KEYS.every((key) => result.items.some((item: { key?: unknown }) => item?.key === key));
+        if (hasExpectedSources) setSources(result.items as Source[]);
         else setSourcesFailed(true);
       }
     }).catch(() => { if (!sourceController.signal.aborted) setSourcesFailed(true); });
@@ -271,7 +354,49 @@ function ConsoleContent() {
             {drive.availability !== "authorization_recorded" ? <GoogleDriveConnectForm /> : null}
           </div>;
         })()}
-        <p>Estado do arquivo de mídia e da restauração indisponível.</p>
+        {(() => {
+          const backup = sources.find((item) => item.key === "backup");
+          if (!backup) return <p>Estado do backup global desconhecido.</p>;
+          return <div>
+            <h3>Backup global do PostgreSQL</h3>
+            <p>{backupStateLabel(backup)}</p>
+            {backup.last_validated_at ? <p>Último recibo validado: {backup.last_validated_day} · {new Date(backup.last_validated_at).toLocaleString("pt-BR")} · {formatBytes(backup.dump_size_bytes)} · {formatDuration(backup.duration_ms)}{backup.snapshot_id ? ` · Snapshot ${backup.snapshot_id.slice(0, 12)}` : ""}</p> : null}
+            {backup.last_validated_at || backup.retention_status === "failed" ? <p>Retenção da cópia global: {backupRetentionLabel(backup)}</p> : null}
+            {backup.latest_run_status && backup.latest_run_status !== "validated" ? <p>Estado da tentativa mais recente: {backup.latest_run_status === "failed" ? "falha" : backup.latest_run_status === "running" ? "em andamento" : "desconhecido"}{backup.latest_attempt_day ? ` · ${backup.latest_attempt_day}` : ""}</p> : null}
+            <small>Origem: recibos locais no PostgreSQL · estado observado em {backup.observed_at ? new Date(backup.observed_at).toLocaleString("pt-BR") : "instante desconhecido"}. Esta leitura não consulta a disponibilidade atual do destino remoto.</small>
+          </div>;
+        })()}
+        {(() => {
+          const restore = sources.find((item) => item.key === "postgres_restore");
+          return <div>
+            <h3>Recuperação global do PostgreSQL</h3>
+            <p>{sourceStateLabel(restore, "Recuperação global do PostgreSQL")}</p>
+            <p>{sourceOriginLabel(restore)}</p>
+            <small>{sourceEvidenceDateLabel(restore)}. Nenhum restore é iniciado nesta consulta.</small>
+          </div>;
+        })()}
+        {(() => {
+          const archive = sources.find((item) => item.key === "archive");
+          const cycleStatus = mediaArchiveCycleLabel(archive);
+          return <div>
+            <h3>Arquivo frio de mídia</h3>
+            <p>{sourceStateLabel(archive, "Arquivo frio de mídia")}</p>
+            {cycleStatus ? <p>Último estado do ciclo registrado: {cycleStatus}</p> : null}
+            <p>{sourceOriginLabel(archive)}</p>
+            <small>{sourceEvidenceDateLabel(archive)}. O catálogo local não confirma disponibilidade remota.</small>
+          </div>;
+        })()}
+        {(() => {
+          const restore = sources.find((item) => item.key === "restore");
+          const operationStatus = mediaRestoreOperationLabel(restore);
+          return <div>
+            <h3>Recuperação de mídia</h3>
+            <p>{sourceStateLabel(restore, "Recuperação de mídia")}</p>
+            {operationStatus ? <p>Operação de recuperação registrada: {operationStatus}</p> : null}
+            <p>{sourceOriginLabel(restore)}</p>
+            <small>{sourceEvidenceDateLabel(restore)}. O registro local não confirma disponibilidade remota da mídia.</small>
+          </div>;
+        })()}
       </> : null}
     </SurfaceCard>
   </div>;

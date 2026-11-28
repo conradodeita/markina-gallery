@@ -73,7 +73,7 @@ GLOBAL_PRESERVED = SAAS_PROTECTED_TABLES | frozenset({
     "google_drive_oauth_attempt",
     "facial_embedding_experiment_setting", "platform_owner", "system_monitor_bucket", "system_monitor_sample",
     "system_monitor_worker", "system_monitor_incident", "system_monitor_transition",
-    "photographer_credit_package",
+    "photographer_credit_package", "global_postgresql_backup_run",
 })
 OWNER_SCOPED = frozenset({
     "admin_action_token", "admin_security_challenge", "admin_totp_recovery_code", "admin_user",

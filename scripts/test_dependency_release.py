@@ -182,10 +182,24 @@ class DependencyReleaseTests(unittest.TestCase):
         record["packages"] = {"aiohttp": "3.14.4", "multidict": "6.9.1", "urllib3": "2.8.0", "yarl": "1.25.1"}
         inventory["services"]["api"].update(copy.deepcopy(record))
         inventory["services"]["worker"] = copy.deepcopy(record)
+        inventory["services"]["worker"]["image"]["build_target"] = "backup-worker"
+        inventory["services"]["worker"]["backup_tools"] = {
+            "postgresql_client_package": "17.12-1.pgdg13+1",
+            "pg_dump": "pg_dump (PostgreSQL) 17.12",
+            "pg_restore": "pg_restore (PostgreSQL) 17.12",
+            "restic": "restic 0.20.0",
+            "rclone": "rclone v1.76.0",
+        }
         inventory["services"]["face-search-worker"] = copy.deepcopy(record)
         inventory["services"]["migrate"] = dict(record, status="exited")
         plan = policy.plan(self.root, self.base, target, inventory, "python")
         self.assertEqual(set(plan["selected_services"]), {"api", "worker", "face-search-worker"})
+        self.assertEqual(plan["selected_services"]["worker"]["candidate_build_target"], "backup-worker")
+        self.assertEqual(plan["selected_services"]["worker"]["previous_build_target"], "backup-worker")
+        self.assertEqual(
+            plan["selected_services"]["worker"]["previous_backup_tools"]["postgresql_client_package"],
+            "17.12-1.pgdg13+1",
+        )
         self.assertIn("migrate", plan["excluded_inactive_services"])
         self.assertIn("face-search-worker:specialized_homologation_and_rollback_required", plan["blockers"])
         self.assertFalse(plan["ready_for_operational_inventory"])
@@ -263,6 +277,21 @@ class DependencyReleaseTests(unittest.TestCase):
         self.assertEqual(report["images"]["nginx:1.31-alpine"]["services"], ["nginx"])
         self.assertEqual(classify({file}), "protected")
 
+    def test_compose_build_target_is_reported_and_unknown_options_still_fail(self):
+        compose = "services:\n  worker:\n    build:\n      context: ../backend\n      target: backup-worker\n"
+        parsed = policy.parse_compose(compose)
+        self.assertEqual(parsed["worker"]["build"]["target"], "backup-worker")
+        with self.assertRaisesRegex(ValueError, "unsupported_compose_build_option"):
+            policy.parse_compose(compose.replace("target: backup-worker", "mystery: unsafe"))
+
+        dockerfile = "backend/Dockerfile"
+        self.write(dockerfile, (self.root / dockerfile).read_text(encoding="utf-8") + "\n# build target fixture\n")
+        report = policy.impact(self.root, self.base, self.commit())
+        targets = report["images"][dockerfile]["build_targets"]
+        self.assertIsNone(targets["api"])
+        self.assertIsNone(targets["migrate"])
+        self.assertEqual(targets["worker"], "backup-worker")
+
     def test_constraints_are_build_inputs_and_escaping_includes_fail(self):
         file = "backend/requirements.txt"
         self.write(file, (self.root / file).read_text(encoding="utf-8") + "\n-c constraints.txt\n")
@@ -299,21 +328,41 @@ class DependencyReleaseTests(unittest.TestCase):
             if args[0] == "git":
                 return self.base
             if args[:3] == ["docker", "ps", "-aq"]:
-                return "web-id\nmigrate-id"
+                return "web-id\nmigrate-id\nworker-id"
             if args[:2] == ["docker", "inspect"]:
-                service = "web" if args[-1] == "web-id" else "migrate"
-                return json.dumps({"service": service, "status": "running" if service == "web" else "exited", "image_id": SHA256})
+                service = {"web-id": "web", "migrate-id": "migrate", "worker-id": "worker"}[args[-1]]
+                image_id = "sha256:" + "b" * 64 if service == "worker" else SHA256
+                return json.dumps({"service": service, "status": "exited" if service == "migrate" else "running", "image_id": image_id})
             if args[:3] == ["docker", "image", "inspect"]:
-                return json.dumps({"id": SHA256, "architecture": "arm64", "repo_digests": []})
+                build_target = "backup-worker" if args[-1] == "sha256:" + "b" * 64 else None
+                return json.dumps({"id": args[-1], "architecture": "arm64", "repo_digests": [], "build_target": build_target})
             if args[:2] == ["docker", "exec"]:
-                self.assertEqual(args[3:5], ["node", "-e"])
-                return json.dumps({"next": "16.4.0", "react": "19.2.8", "react-dom": "19.2.8"})
+                if args[3:5] == ["pg_dump", "--version"]:
+                    return "pg_dump (PostgreSQL) 17.12"
+                if args[3:5] == ["pg_restore", "--version"]:
+                    return "pg_restore (PostgreSQL) 17.12"
+                if args[3:5] == ["restic", "version"]:
+                    return "restic 0.20.0 compiled with go version"
+                if args[3:5] == ["rclone", "version"]:
+                    return "rclone v1.76.0\n- os/version: debian 13"
+                if args[3] == "dpkg-query":
+                    return "17.12-1.pgdg13+1"
+                if "node" in args:
+                    return json.dumps({"next": "16.4.0", "react": "19.2.8", "react-dom": "19.2.8"})
+                if "python" in args:
+                    return json.dumps({"aiohttp": "3.14.4", "multidict": "6.9.1", "urllib3": "2.8.0", "yarl": "1.25.1"})
+                self.fail("unexpected package metadata command")
             self.fail("unexpected operational command: " + str(args))
 
         with patch.object(collector, "run", side_effect=fake_run), patch.object(collector.pathlib.Path, "is_file", return_value=False):
             result = collector.collect()
-        self.assertEqual(set(result["services"]), {"web", "migrate"})
+        self.assertEqual(set(result["services"]), {"web", "migrate", "worker"})
         self.assertEqual(result["services"]["migrate"]["status"], "exited")
+        self.assertEqual(result["services"]["worker"]["image"]["build_target"], "backup-worker")
+        self.assertEqual(
+            result["services"]["worker"]["backup_tools"]["postgresql_client_package"],
+            "17.12-1.pgdg13+1",
+        )
         for args in commands:
             self.assertNotIn(".Config.Env", " ".join(args))
             self.assertFalse(set(args) & {"up", "stop", "restart", "prune", "run", "build"})

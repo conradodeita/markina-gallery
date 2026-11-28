@@ -1,6 +1,8 @@
 """Console global privado: leitura mínima, sem ampliar concessões técnicas."""
 
+import re
 from contextlib import contextmanager
+from datetime import date, datetime, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -13,6 +15,8 @@ from app.admin_account import AdminAccountError, reauthenticate_admin
 from app.auth import (
     AdminUser,
     GoogleDriveConnection,
+    MediaArchiveCycle,
+    MediaArchiveOperation,
     ParentGallery,
     PhotoAsset,
     PlatformAdminEvent,
@@ -26,6 +30,7 @@ from app.auth import (
     enforce_rate_limit,
     now,
 )
+from app.global_postgresql_backup_scheduler import read_global_postgresql_backup_status
 from app.mercadopago_api import SensitiveRoute
 from app.system_monitor.access import is_owner
 from app.system_monitor.store import bounded
@@ -612,6 +617,261 @@ def reopen_tenant_account(
         return result
 
 
+def _global_backup_source(db, *, observed_at):
+    source = "application_database.global_postgresql_backup_run"
+    try:
+        status = read_global_postgresql_backup_status(db=db)
+    except SQLAlchemyError:
+        db.rollback()
+        return {
+            "key": "backup",
+            "state": "unavailable",
+            "availability": "unavailable",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": observed_at,
+            "latest_run_status": None,
+            "latest_attempt_day": None,
+            "last_validated_day": None,
+            "last_validated_at": None,
+            "snapshot_id": None,
+            "dump_size_bytes": None,
+            "duration_ms": None,
+            "retention_status": "unknown",
+        }
+
+    latest_status = status.get("status")
+    if not isinstance(latest_status, str) or latest_status not in {
+        "running",
+        "validated",
+        "failed",
+        "unknown",
+    }:
+        latest_status = "unknown"
+    receipt = status.get("last_validated")
+    validated_day = None
+    if (
+        isinstance(receipt, dict)
+        and receipt.get("status") == "validated"
+        and receipt.get("verified") is True
+        and isinstance(receipt.get("snapshot_id"), str)
+        and re.fullmatch(r"[0-9a-f]{8,64}", receipt["snapshot_id"])
+        and isinstance(receipt.get("dump_size_bytes"), int)
+        and not isinstance(receipt.get("dump_size_bytes"), bool)
+        and receipt["dump_size_bytes"] > 0
+        and isinstance(receipt.get("duration_ms"), int)
+        and not isinstance(receipt.get("duration_ms"), bool)
+        and receipt["duration_ms"] >= 0
+        and isinstance(receipt.get("finished_at"), str)
+        and isinstance(receipt.get("scheduled_day"), str)
+    ):
+        try:
+            validated_day = date.fromisoformat(receipt["scheduled_day"])
+        except ValueError:
+            validated_day = None
+        if validated_day is not None and validated_day > observed_at.date():
+            validated_day = None
+
+    state = "unknown"
+    if validated_day is not None:
+        if validated_day == observed_at.date():
+            state = "current"
+        elif validated_day < observed_at.date():
+            state = "stale"
+
+    retention_status = "unknown"
+    if validated_day is not None and isinstance(receipt, dict):
+        saved_retention_status = receipt.get("retention_status")
+        if isinstance(saved_retention_status, str) and saved_retention_status in {
+            "unknown",
+            "pending",
+            "complete",
+            "failed",
+        }:
+            retention_status = saved_retention_status
+    if latest_status == "unknown" and status.get("retention_status") == "failed":
+        retention_status = "failed"
+
+    return {
+        "key": "backup",
+        "state": state,
+        "availability": state,
+        "source": source,
+        "scope": "platform_owner",
+        "observed_at": observed_at,
+        "latest_run_status": latest_status,
+        "latest_attempt_day": status.get("scheduled_day"),
+        "last_validated_day": validated_day.isoformat() if validated_day else None,
+        "last_validated_at": receipt.get("finished_at") if validated_day else None,
+        "snapshot_id": receipt.get("snapshot_id") if validated_day else None,
+        "dump_size_bytes": receipt.get("dump_size_bytes") if validated_day else None,
+        "duration_ms": receipt.get("duration_ms") if validated_day else None,
+        "retention_status": retention_status,
+    }
+
+
+def _media_archive_cycle_source(db, *, observed_at):
+    source = "application_database.media_archive_cycle"
+    try:
+        cycle = db.scalar(
+            select(MediaArchiveCycle)
+            .order_by(
+                MediaArchiveCycle.updated_at.desc(),
+                MediaArchiveCycle.created_at.desc(),
+            )
+            .limit(1)
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        return {
+            "key": "archive",
+            "state": "unavailable",
+            "availability": "unavailable",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": observed_at,
+            "latest_run_status": None,
+            "last_validated_at": None,
+            "reason": "source_unavailable",
+        }
+
+    if cycle is None:
+        return {
+            "key": "archive",
+            "state": "unknown",
+            "availability": "unknown",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": None,
+            "latest_run_status": None,
+            "last_validated_at": None,
+            "reason": "no_archive_cycle",
+        }
+
+    allowed_states = {
+        "local",
+        "archiving",
+        "archived",
+        "restoring",
+        "reconciliation_required",
+        "deleting",
+        "deleted",
+    }
+    status = cycle.state if cycle.state in allowed_states else "unknown"
+    evidence_at = None
+    archive_time = cycle.archived_at
+    if (
+        status == "archived"
+        and isinstance(cycle.manifest_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", cycle.manifest_sha256)
+        and type(cycle.object_count) is int
+        and cycle.object_count > 0
+        and type(cycle.total_bytes) is int
+        and cycle.total_bytes > 0
+        and isinstance(archive_time, datetime)
+    ):
+        archive_time_utc = (
+            archive_time.replace(tzinfo=timezone.utc)  # noqa: UP017
+            if archive_time.tzinfo is None
+            else archive_time.astimezone(timezone.utc)  # noqa: UP017
+        )
+        observed_time_utc = (
+            observed_at.replace(tzinfo=timezone.utc)  # noqa: UP017
+            if observed_at.tzinfo is None
+            else observed_at.astimezone(timezone.utc)  # noqa: UP017
+        )
+        if archive_time_utc <= observed_time_utc:
+            evidence_at = archive_time_utc
+
+    updated_at = cycle.updated_at or cycle.created_at
+    if isinstance(updated_at, datetime):
+        updated_at = (
+            updated_at.replace(tzinfo=timezone.utc)  # noqa: UP017
+            if updated_at.tzinfo is None
+            else updated_at.astimezone(timezone.utc)  # noqa: UP017
+        )
+    return {
+        "key": "archive",
+        "state": "unknown",
+        "availability": "unknown",
+        "source": source,
+        "scope": "platform_owner",
+        "observed_at": updated_at,
+        "latest_run_status": status,
+        "last_validated_at": evidence_at,
+    }
+
+
+def _media_archive_restore_source(db, *, observed_at):
+    source = "application_database.media_archive_operation"
+    try:
+        operation = db.scalar(
+            select(MediaArchiveOperation)
+            .where(MediaArchiveOperation.operation_type == "restore")
+            .order_by(
+                MediaArchiveOperation.updated_at.desc(),
+                MediaArchiveOperation.created_at.desc(),
+            )
+            .limit(1)
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        return {
+            "key": "restore",
+            "state": "unavailable",
+            "availability": "unavailable",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": observed_at,
+            "latest_run_status": None,
+            "reason": "source_unavailable",
+        }
+
+    if operation is None:
+        return {
+            "key": "restore",
+            "state": "unknown",
+            "availability": "unknown",
+            "source": source,
+            "scope": "platform_owner",
+            "observed_at": None,
+            "latest_run_status": None,
+            "reason": "no_recovery_operation",
+        }
+
+    allowed_statuses = {
+        "queued",
+        "processing",
+        "failed",
+        "reconciliation_required",
+        "completed",
+        "cancelled",
+    }
+    status = operation.status if operation.status in allowed_statuses else "unknown"
+    return {
+        "key": "restore",
+        "state": "unknown",
+        "availability": "unknown",
+        "source": source,
+        "scope": "platform_owner",
+        "observed_at": operation.updated_at or operation.created_at,
+        "latest_run_status": status,
+    }
+
+
+def _global_postgresql_restore_source():
+    return {
+        "key": "postgres_restore",
+        "state": "unknown",
+        "availability": "unknown",
+        "source": None,
+        "scope": "platform_owner",
+        "observed_at": None,
+        "latest_run_status": None,
+        "reason": "restore_bootstrap_not_integrated",
+    }
+
+
 @router.get("/sources")
 def sources(request: Request, response: Response):
     response.headers.update(HEADERS)
@@ -636,10 +896,11 @@ def sources(request: Request, response: Response):
             "quota_observed_at": connection.quota_observed_at if connection
             and connection.state == "connected" else None,
         }
-        unknown = [{"key": key, "state": "unknown", "availability": "unknown", "source": None,
-                    "scope": "platform", "observed_at": None, "reason": "source_not_integrated"}
-                   for key in ("backup", "archive", "restore")]
-        return {"items": [*unknown[:1], drive, *unknown[1:]]}
+        backup = _global_backup_source(db, observed_at=observed_at)
+        archive = _media_archive_cycle_source(db, observed_at=observed_at)
+        restore = _media_archive_restore_source(db, observed_at=observed_at)
+        postgres_restore = _global_postgresql_restore_source()
+        return {"items": [backup, drive, archive, restore, postgres_restore]}
 
 
 class StatusInput(BaseModel):

@@ -378,6 +378,20 @@ jobs:
       - name: Build local da API (sem publicar ou iniciar serviços)
         if: ${{ matrix.arch == 'amd64' && needs.ci-scope.outputs.backend_image == 'true' }}
         run: docker build --tag backend:validation --file backend/Dockerfile backend
+      - name: Build do target isolado do worker de backup
+        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        run: >-
+          docker buildx build --platform linux/${{ matrix.arch }} --load
+          --tag pyp-backup-worker:validation-${{ matrix.arch }}
+          --target backup-worker --file backend/Dockerfile backend
+      - name: Smoke offline das ferramentas empacotadas
+        if: ${{ needs.ci-scope.outputs.backend_image == 'true' }}
+        shell: bash
+        run: >-
+          docker run --rm --interactive --network none --read-only
+          --tmpfs /tmp:rw,noexec,nosuid,size=128m
+          --entrypoint sh pyp-backup-worker:validation-${{ matrix.arch }} -eu
+          < scripts/smoke_backup_worker_tools.sh
       - name: Build local da imagem frontend (sem publicar ou iniciar serviços)
         if: ${{ matrix.arch == 'amd64' && needs.ci-scope.outputs.frontend_image == 'true' }}
         run: docker build --tag frontend:validation --file frontend/Dockerfile frontend

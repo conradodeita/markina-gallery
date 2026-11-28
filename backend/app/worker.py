@@ -1034,6 +1034,7 @@ def process_next_tenant_closure() -> bool:
 
 @observe_work("general")
 def run_cycle() -> bool:
+    from app.global_postgresql_backup_scheduler import process_scheduled_global_postgresql_backup
     from app.mercadopago_credit_purchases import process_next_mercadopago_credit_purchase
     from app.mercadopago_webhook import (
         process_next_mercadopago_event,
@@ -1070,6 +1071,7 @@ def run_cycle() -> bool:
         or payment_worked
         or closure_worked
         or signup_expired
+        or process_scheduled_global_postgresql_backup()
     )
 
 

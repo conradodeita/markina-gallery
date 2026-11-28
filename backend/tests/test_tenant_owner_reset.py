@@ -21,6 +21,12 @@ from tests.schema_fixtures import create_test_schema
 OWNER_EMAIL = "owner@example.test"
 
 
+def test_global_backup_receipt_is_classified_as_preserved_owner_state():
+    assert "global_postgresql_backup_run" in reset.GLOBAL_PRESERVED
+    assert "global_postgresql_backup_run" not in reset.OPERATIONAL
+    assert "global_postgresql_backup_run" not in reset.SAAS_PROTECTED_TABLES
+
+
 @pytest.fixture
 def graph(monkeypatch, tmp_path):
     url = os.getenv("PHOTOGRAPHER_TEST_DATABASE_URL")
@@ -217,6 +223,14 @@ def test_reset_rechecks_new_saas_history_after_initial_inventory(graph, monkeypa
 
 def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(graph):
     db, admins, _tenants, media, brand, key = graph
+    backup_run = auth.GlobalPostgreSQLBackupRun(
+        scheduled_day=auth.now().date(),
+        status="unknown",
+        started_at=auth.now(),
+        error_code="snapshot_readback_failed",
+    )
+    db.add(backup_run)
+    db.commit()
     report = reset.inventory(db, OWNER_EMAIL)
     assert report["delete"]["tenant"] == 4
     assert report["delete"]["admin_user"] == 4
@@ -228,6 +242,8 @@ def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(grap
     assert report["delete"]["mercadopago_account"] == report["delete"]["payment_preferences"] == 4
     assert report["delete"]["tenant_credit_wallet"] == 4
     assert report["preserved"]["photographer_credit_package"] == 1
+    assert report["preserved"]["global_postgresql_backup_run"] == 1
+    assert str(backup_run.id) not in str(report)
     assert report["delete"]["admin_totp_recovery_code"] == 4
     assert report["owner_branding_files"] == 1
     assert OWNER_EMAIL not in str(report)
@@ -242,6 +258,7 @@ def test_reset_five_accounts_preserves_owner_settings_credentials_and_brand(grap
     assert count(db, auth.TenantCreditWallet) == 1
     assert db.scalar(select(auth.TenantCreditWallet.mode)) == "unmetered"
     assert count(db, auth.PhotographerCreditPackage) == 1
+    assert count(db, auth.GlobalPostgreSQLBackupRun) == 1
     assert count(db, auth.AdminTotpRecoveryCode) == 1
     assert db.scalar(select(auth.AdminTotpRecoveryCode.code_hash)) == "synthetic-recovery-hash-0"
     account = db.scalar(select(auth.MercadoPagoAccount))

@@ -1,0 +1,78 @@
+# Spec Delta
+
+## ADDED Requirements
+
+### Requirement: Operação de backup restrita ao proprietário
+A consulta e as ações do backup PostgreSQL SHALL estar disponíveis somente ao `PlatformOwner` autenticado. Iniciar cópia, solicitar verificação ou preparar recuperação SHALL exigir a reautenticação vigente para ações sensíveis e SHALL registrar ator, ação, instante e resultado em auditoria sem incluir dump, chave ou credencial.
+
+#### Scenario: Fotógrafo ou sessão sem reautenticação
+- **WHEN** uma conta sem papel de proprietário ou sessão sem reautenticação tenta operar o backup
+- **THEN** o servidor recusa a ação, preserva o destino e registra somente o resultado sanitizado
+
+#### Scenario: Proprietário inicia uma cópia
+- **WHEN** o proprietário autenticado confirma a ação após reautenticação
+- **THEN** o servidor agenda somente a operação fixa de cópia global e registra a ação na auditoria
+
+### Requirement: Estado de backup sanitizado e sem consulta remota na leitura
+A página SHALL apresentar somente evidência persistida, incluindo o estado allowlisted da retenção do último recibo validado, e MUST NOT iniciar backup nem consultar o destino remoto numa leitura comum.
+
+#### Scenario: Recibo íntegro do dia UTC corrente
+- **WHEN** há recibo local verificado para a data UTC corrente
+- **THEN** a interface mostra o estado atual sem afirmar disponibilidade atual do repositório remoto
+
+#### Scenario: Último recibo íntegro é anterior
+- **WHEN** o recibo validado mais recente pertence a uma data UTC anterior
+- **THEN** a interface mostra estado desatualizado e não afirma que a cópia está atual
+
+#### Scenario: Tentativa posterior falha após uma cópia validada
+- **WHEN** há um recibo validado de dia anterior e a tentativa mais recente terminou com falha ou resultado incerto
+- **THEN** a UI mostra o último recibo validado como desatualizado e a tentativa mais recente separadamente, sem consultar o destino remoto
+
+#### Scenario: Nenhum recibo íntegro
+- **WHEN** não há recibo local validado
+- **THEN** a interface mostra estado desconhecido e não afirma sucesso
+
+#### Scenario: Recibo validado com data futura
+- **WHEN** o recibo local informa data posterior ao dia observado
+- **THEN** a interface mantém o estado desconhecido e não expõe snapshot, tamanho ou instante como evidência validada
+
+#### Scenario: Retenção pendente, falha ou desconhecida
+- **WHEN** o último recibo validado registra retenção pendente, falha ou ainda não comprovada
+- **THEN** a interface informa somente o estado correspondente, sem alegar que a retenção terminou nem consultar o repositório
+
+#### Scenario: Tabela local indisponível
+- **WHEN** a consulta do recibo falha
+- **THEN** a interface mostra estado indisponível sem expor detalhes do erro
+
+### Requirement: Ações de backup com escopo fechado
+A interface SHALL oferecer somente ações de cópia, validação e preparação de recuperação definidas pelo sistema. Usuários MUST NOT fornecer executável, comando, remote, caminho arbitrário ou segredo por formulário ou parâmetro da ação.
+
+#### Scenario: Tentativa de alterar o escopo da operação
+- **WHEN** uma requisição contém remote, caminho, opção ou segredo fora do contrato fixo
+- **THEN** o backend recusa a operação sem executar subprocesso ou transmitir conteúdo
+
+### Requirement: Configuração não secreta do ciclo
+A UI SHALL permitir somente configurar cadência e retenção previamente aprovadas, com validação, reautenticação e auditoria. Credenciais do destino e chave/senha Restic MUST NOT ser digitadas, exibidas ou armazenadas pela UI.
+
+#### Scenario: Política ainda não aprovada
+- **WHEN** não existe política de retenção aprovada
+- **THEN** a UI mantém a retenção automática desativada e não oferece uma escolha implícita
+
+#### Scenario: Tentativa de configurar segredo ou destino arbitrário
+- **WHEN** uma requisição inclui chave, senha, token, remote ou caminho de destino
+- **THEN** o backend recusa a alteração e não registra o valor recebido
+
+### Requirement: Recuperação visível sem promoção implícita
+A interface SHALL mostrar origem, alvo isolado, resultado de verificação e estado da recuperação. Ela MUST NOT substituir o banco ativo por uma ação comum da UI; promoção continua condicionada ao gate operacional específico.
+
+#### Scenario: Recuperação isolada concluída
+- **WHEN** a restauração isolada termina
+- **THEN** a interface mostra a evidência sanitizada e mantém o banco ativo sem alteração até a autorização operacional correspondente
+
+#### Scenario: Operação de recuperação de mídia registrada
+- **WHEN** existe uma operação local `restore` no catálogo de operações de mídia
+- **THEN** a interface apresenta somente o status allowlisted e o instante do registro, sem tenant, identificador de operação, detalhes ou erro interno, e não interpreta esse registro como disponibilidade remota da mídia ou recuperação global do PostgreSQL
+
+#### Scenario: Restauração global sem recibo durável
+- **WHEN** o bootstrap protegido ainda não grava um recibo durável de restauração PostgreSQL
+- **THEN** o Console mostra a restauração global como desconhecida, sem origem, idade ou evidência de sucesso, mantendo-a distinta da recuperação de mídia

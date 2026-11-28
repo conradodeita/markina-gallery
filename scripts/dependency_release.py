@@ -86,7 +86,7 @@ def parse_compose(text):
             if line.strip() == "args:":
                 result[service]["build"]["args"] = {}
                 continue
-            match = re.fullmatch(r"      (context|dockerfile):\s*(\S+)\s*", line)
+            match = re.fullmatch(r"      (context|dockerfile|target):\s*(\S+)\s*", line)
             if not match:
                 raise ValueError("unsupported_compose_build_option")
             result[service]["build"][match.group(1)] = match.group(2)
@@ -182,8 +182,10 @@ def impact(root, base, target):
         if affected or config != before.get(service):
             entry = images.setdefault(dockerfile, {"services": [], "changed_inputs": sorted(affected),
                 "context": context, "dockerfile": dockerfile, "requirements": sorted(required),
-                "specialized": dockerfile not in {"frontend/Dockerfile", "backend/Dockerfile"}})
+                "specialized": dockerfile not in {"frontend/Dockerfile", "backend/Dockerfile"},
+                "build_targets": {}})
             entry["services"].append(service)
+            entry["build_targets"][service] = config.get("build", {}).get("target")
     return {"base_sha": git(root, "rev-parse", base), "target_sha": git(root, "rev-parse", target),
             "changed_manifests": sorted(p for p in changed if is_dependency_manifest(p)), "protected_changes": protected,
             "images": images, "automatic_deploy": False}
@@ -267,7 +269,10 @@ def plan(root, base, target, inventory, group):
             if any(not isinstance(current.get("packages", {}).get(name), str) for name in desired):
                 raise ValueError("installed_package_versions_missing")
             selected[service] = {"previous_image_id": image_id, "repo_digests": metadata.get("repo_digests", []),
-                                 "architecture": arch, "installed_packages": current.get("packages", {})}
+                                 "architecture": arch, "installed_packages": current.get("packages", {}),
+                                 "previous_backup_tools": current.get("backup_tools"),
+                                 "previous_build_target": metadata.get("build_target"),
+                                 "candidate_build_target": data.get("build_targets", {}).get(service)}
             if group == "python":
                 # The existing app executor only updates api/web. Do not silently omit worker consumers.
                 blockers.append("{}:{}".format(service, "specialized_homologation_and_rollback_required" if data["specialized"] else "dependency_executor_and_rollback_required"))

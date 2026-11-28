@@ -334,7 +334,9 @@ services:
       - internal
 
   worker:
-    build: ../backend
+    build:
+      context: ../backend
+      target: backup-worker
     command: ["python", "-m", "app.worker"]
     env_file:
       - path: ${WHATSAPP_BINDINGS_ENV_FILE:-.env.whatsapp-bindings}

@@ -9,11 +9,14 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
+from app import global_postgresql_backup_scheduler as backup_scheduler
 from app import photographer_terms as terms
 from app import platform_console as console
 from app.auth import (
     AdminUser,
+    GlobalPostgreSQLBackupRun,
     GoogleDriveConnection,
     InstallationOperator,
     MediaArchiveCycle,
@@ -418,10 +421,24 @@ def test_session_and_membership_are_revalidated_and_sources_do_not_claim_health(
     client, session, _tenant_id, _ = http
     response = client.get("/admin/platform/console/sources")
     assert response.status_code == 200
-    assert {item["key"] for item in response.json()["items"]} == {"backup", "drive", "archive", "restore"}
+    assert {item["key"] for item in response.json()["items"]} == {
+        "backup", "drive", "archive", "restore", "postgres_restore",
+    }
     sources = {item["key"]: item for item in response.json()["items"]}
-    assert all(sources[key]["state"] == "unknown" and sources[key]["source"] is None
-               and sources[key]["observed_at"] is None for key in ("backup", "archive", "restore"))
+    assert sources["backup"]["state"] == "unknown"
+    assert sources["backup"]["source"] == "application_database.global_postgresql_backup_run"
+    assert sources["backup"]["observed_at"] is not None
+    assert sources["archive"]["state"] == "unknown"
+    assert sources["archive"]["source"] == "application_database.media_archive_cycle"
+    assert sources["archive"]["observed_at"] is None
+    assert sources["archive"]["reason"] == "no_archive_cycle"
+    assert sources["restore"]["state"] == "unknown"
+    assert sources["restore"]["source"] == "application_database.media_archive_operation"
+    assert sources["restore"]["observed_at"] is None
+    assert sources["restore"]["reason"] == "no_recovery_operation"
+    assert sources["postgres_restore"]["state"] == "unknown"
+    assert sources["postgres_restore"]["source"] is None
+    assert sources["postgres_restore"]["reason"] == "restore_bootstrap_not_integrated"
     assert sources["drive"]["state"] == sources["drive"]["availability"] == "unknown"
     assert sources["drive"]["source"] == "application_database.google_drive_connection"
     assert sources["drive"]["scope"] == "platform_owner"
@@ -431,6 +448,159 @@ def test_session_and_membership_are_revalidated_and_sources_do_not_claim_health(
     membership.active = False
     client_db.commit()
     assert client.get("/admin/platform/console/tenants?mode=all").status_code == 403
+
+
+def test_archive_source_shows_validated_catalog_timestamp_without_remote_availability(http, client_db):
+    client, _session, tenant_id, _photographer_id = http
+    photo = create_photo(client_db, tenant_id)
+    folder = client_db.get(PhotoFolder, photo.folder_id)
+    archived_at = now() - timedelta(minutes=5)
+    cycle = MediaArchiveCycle(
+        tenant_id=tenant_id,
+        parent_gallery_id=photo.parent_gallery_id,
+        folder_id=folder.id,
+        cycle_number=1,
+        state="archived",
+        manifest_sha256="a" * 64,
+        object_count=1,
+        total_bytes=1024,
+        archived_at=archived_at,
+    )
+    client_db.add(cycle)
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    sources = {item["key"]: item for item in response.json()["items"]}
+    archive = sources["archive"]
+    assert archive["state"] == archive["availability"] == "unknown"
+    assert archive["source"] == "application_database.media_archive_cycle"
+    assert archive["latest_run_status"] == "archived"
+    assert archive["last_validated_at"] is not None
+    assert "tenant_id" not in archive and "cycle_id" not in archive
+    assert "manifest_sha256" not in archive and "remote_object_id" not in archive
+    assert "availability remota confirmada" not in response.text.lower()
+
+
+def test_archive_source_does_not_validate_future_or_incomplete_cycle(http, client_db):
+    client, _session, tenant_id, _photographer_id = http
+    photo = create_photo(client_db, tenant_id)
+    folder = client_db.get(PhotoFolder, photo.folder_id)
+    cycle = MediaArchiveCycle(
+        tenant_id=tenant_id,
+        parent_gallery_id=photo.parent_gallery_id,
+        folder_id=folder.id,
+        cycle_number=1,
+        state="archived",
+        manifest_sha256="z" * 64,
+        object_count=0,
+        total_bytes=0,
+        archived_at=now() + timedelta(days=1),
+    )
+    client_db.add(cycle)
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    archive = next(item for item in response.json()["items"] if item["key"] == "archive")
+    assert archive["state"] == archive["availability"] == "unknown"
+    assert archive["latest_run_status"] == "archived"
+    assert archive["last_validated_at"] is None
+
+
+def test_media_archive_source_reports_unavailable_without_database_error_details():
+    observed_at = now()
+
+    class BrokenSession:
+        def scalar(self, _statement):
+            raise SQLAlchemyError("synthetic_private_database_detail")
+
+        def rollback(self):
+            return None
+
+    result = console._media_archive_cycle_source(BrokenSession(), observed_at=observed_at)
+
+    assert result["state"] == result["availability"] == "unavailable"
+    assert result["source"] == "application_database.media_archive_cycle"
+    assert result["observed_at"] == observed_at
+    assert result["reason"] == "source_unavailable"
+    assert result["latest_run_status"] is None
+    assert result["last_validated_at"] is None
+    assert "synthetic_private_database_detail" not in str(result)
+
+
+def test_sources_expose_only_allowlisted_media_restore_status(http, client_db):
+    client, _session, tenant_id, photographer_id = http
+    photo = create_photo(client_db, tenant_id)
+    folder = client_db.get(PhotoFolder, photo.folder_id)
+    cycle = MediaArchiveCycle(
+        tenant_id=tenant_id,
+        parent_gallery_id=photo.parent_gallery_id,
+        folder_id=folder.id,
+        cycle_number=1,
+        state="archived",
+        manifest_sha256="a" * 64,
+        object_count=1,
+        total_bytes=1,
+        archived_at=now(),
+    )
+    client_db.add(cycle)
+    client_db.flush()
+    client_db.add(
+        MediaArchiveOperation(
+            tenant_id=tenant_id,
+            cycle_id=cycle.id,
+            operation_type="restore",
+            status="reconciliation_required",
+            idempotency_key="synthetic-owner-console-restore",
+            actor_type="tenant",
+            actor_admin_id=photographer_id,
+            details={"synthetic_private_detail": "must_not_leave_database"},
+            last_error="synthetic_internal_detail_must_not_leave_database",
+        )
+    )
+    client_db.flush()
+
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    sources = {item["key"]: item for item in response.json()["items"]}
+    restore = sources["restore"]
+    assert restore["state"] == restore["availability"] == "unknown"
+    assert restore["source"] == "application_database.media_archive_operation"
+    assert restore["latest_run_status"] == "reconciliation_required"
+    assert restore["observed_at"] is not None
+    assert "tenant_id" not in restore
+    assert "last_error" not in restore and "details" not in restore
+    assert sources["postgres_restore"]["state"] == "unknown"
+    assert sources["postgres_restore"]["source"] is None
+    assert "must_not_leave_database" not in response.text
+    assert "synthetic_internal_detail" not in response.text
+
+
+def test_media_restore_source_reports_unavailable_without_database_error_details():
+    observed_at = now()
+
+    class BrokenSession:
+        def scalar(self, _statement):
+            raise SQLAlchemyError("synthetic_private_database_detail")
+
+        def rollback(self):
+            return None
+
+    result = console._media_archive_restore_source(BrokenSession(), observed_at=observed_at)
+
+    assert result["state"] == result["availability"] == "unavailable"
+    assert result["source"] == "application_database.media_archive_operation"
+    assert result["observed_at"] == observed_at
+    assert result["reason"] == "source_unavailable"
+    assert set(result) == {
+        "key", "state", "availability", "source", "scope", "observed_at",
+        "latest_run_status", "reason",
+    }
+    assert "synthetic_private_database_detail" not in str(result)
 
 
 def test_drive_source_exposes_only_persisted_owner_state_and_quota_without_claiming_health(http, client_db):
@@ -470,6 +640,149 @@ def test_drive_source_exposes_only_persisted_owner_state_and_quota_without_claim
     client_db.commit()
     drive = next(item for item in client.get("/admin/platform/console/sources").json()["items"] if item["key"] == "drive")
     assert drive["state"] == drive["availability"] == "reauthorization_required"
+
+
+def test_backup_source_shows_only_verified_local_receipt_without_remote_query(http, client_db, monkeypatch):
+    client, _session, _tenant_id, _ = http
+    observed_at = now()
+    client_db.add(
+        GlobalPostgreSQLBackupRun(
+            scheduled_day=observed_at.date(),
+            status="validated",
+            started_at=observed_at - timedelta(seconds=4),
+            finished_at=observed_at,
+            snapshot_id="a" * 32,
+            dump_size_bytes=4096,
+            duration_ms=4000,
+            verified=True,
+        )
+    )
+    client_db.commit()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("read endpoint accessed backup destination/configuration")
+
+    monkeypatch.setattr(backup_scheduler, "create_global_postgresql_backup", forbidden)
+    monkeypatch.setattr(backup_scheduler, "_config_from_environment", forbidden)
+    monkeypatch.setattr(backup_scheduler, "_postgres_advisory_lock", forbidden)
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    assert {"private", "no-store"} <= set(response.headers["cache-control"].split(", "))
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+    assert backup["state"] == backup["availability"] == "current"
+    assert backup["source"] == "application_database.global_postgresql_backup_run"
+    assert backup["scope"] == "platform_owner"
+    assert backup["latest_run_status"] == "validated"
+    assert backup["last_validated_day"] == observed_at.date().isoformat()
+    assert backup["snapshot_id"] == "a" * 32
+    assert backup["dump_size_bytes"] == 4096
+    assert backup["retention_status"] == "unknown"
+    assert "password" not in response.text.lower() and "secret" not in response.text.lower()
+
+
+def test_backup_source_exposes_only_allowlisted_retention_state(http, client_db):
+    client, _session, _tenant_id, _ = http
+    observed_at = now()
+    client_db.add(
+        GlobalPostgreSQLBackupRun(
+            scheduled_day=observed_at.date(),
+            status="validated",
+            started_at=observed_at,
+            finished_at=observed_at,
+            snapshot_id="d" * 32,
+            dump_size_bytes=4096,
+            duration_ms=1000,
+            verified=True,
+            retention_status="failed",
+            error_code="retention_failed",
+        )
+    )
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+
+    assert response.status_code == 200
+    assert backup["retention_status"] == "failed"
+    assert "retention_failed" not in response.text
+
+
+def test_backup_source_keeps_previous_validated_receipt_stale_after_failed_attempt(http, client_db):
+    client, _session, _tenant_id, _ = http
+    observed_at = now()
+    client_db.add_all(
+        [
+            GlobalPostgreSQLBackupRun(
+                scheduled_day=observed_at.date() - timedelta(days=1),
+                status="validated",
+                started_at=observed_at - timedelta(days=1, seconds=4),
+                finished_at=observed_at - timedelta(days=1),
+                snapshot_id="b" * 32,
+                dump_size_bytes=2048,
+                duration_ms=4000,
+                verified=True,
+            ),
+            GlobalPostgreSQLBackupRun(
+                scheduled_day=observed_at.date(),
+                status="failed",
+                started_at=observed_at,
+                finished_at=observed_at,
+                verified=False,
+                error_code="synthetic_private_error",
+            ),
+        ]
+    )
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+    assert response.status_code == 200
+    assert backup["state"] == backup["availability"] == "stale"
+    assert backup["latest_run_status"] == "failed"
+    assert backup["latest_attempt_day"] == observed_at.date().isoformat()
+    assert backup["last_validated_day"] == (observed_at.date() - timedelta(days=1)).isoformat()
+    assert "synthetic_private_error" not in response.text
+
+
+def test_backup_source_does_not_treat_future_receipt_as_current_or_stale(http, client_db):
+    client, _session, _tenant_id, _ = http
+    observed_at = now()
+    future_day = observed_at.date() + timedelta(days=1)
+    client_db.add(
+        GlobalPostgreSQLBackupRun(
+            scheduled_day=future_day,
+            status="validated",
+            started_at=observed_at,
+            finished_at=observed_at,
+            snapshot_id="c" * 32,
+            dump_size_bytes=1024,
+            duration_ms=1000,
+            verified=True,
+        )
+    )
+    client_db.commit()
+
+    response = client.get("/admin/platform/console/sources")
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+    assert response.status_code == 200
+    assert backup["state"] == backup["availability"] == "unknown"
+    assert backup["snapshot_id"] is None
+
+
+def test_backup_source_reports_unavailable_on_local_receipt_read_error(http, monkeypatch):
+    client, _session, _tenant_id, _ = http
+
+    def fail_read(**_kwargs):
+        raise SQLAlchemyError("synthetic database credential detail")
+
+    monkeypatch.setattr(console, "read_global_postgresql_backup_status", fail_read)
+    response = client.get("/admin/platform/console/sources")
+
+    assert response.status_code == 200
+    backup = next(item for item in response.json()["items"] if item["key"] == "backup")
+    assert backup["state"] == backup["availability"] == "unavailable"
+    assert "synthetic database credential detail" not in response.text
 
 
 def test_session_change_after_collection_is_denied(http, monkeypatch):

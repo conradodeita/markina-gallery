@@ -9,9 +9,13 @@ const tenant = { tenant_id: "00000000-0000-4000-8000-000000000100", status: "act
 const json = (data: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } }));
 const unknownSources: Array<{ key: string; state: string; availability: string; source: string | null; scope: string;
   observed_at: string | null; connection_updated_at?: string | null; quota_limit: string | null;
-  quota_usage: string | null; quota_observed_at: string | null }> = ["backup", "drive", "archive", "restore"].map((key) => ({
-  key, state: "unknown", availability: "unknown", source: key === "drive" ? "application_database.google_drive_connection" : null,
-  scope: key === "drive" ? "platform_owner" : "platform", observed_at: key === "drive" ? observed : null,
+  quota_usage: string | null; quota_observed_at: string | null }> = ["backup", "drive", "archive", "restore", "postgres_restore"].map((key) => ({
+  key, state: "unknown", availability: "unknown",
+  source: key === "drive" ? "application_database.google_drive_connection"
+    : key === "restore" ? "application_database.media_archive_operation"
+      : key === "archive" ? "application_database.media_archive_cycle" : null,
+  scope: ["drive", "archive", "restore"].includes(key) ? "platform_owner" : "platform",
+  observed_at: key === "drive" ? observed : null,
   quota_limit: null, quota_usage: null, quota_observed_at: null,
 }));
 
@@ -40,6 +44,18 @@ describe("console privado da plataforma", () => {
     expect(fetcher.mock.calls.map(([path]) => String(path))).toEqual(["/api/admin/platform/console/capabilities"]);
   });
 
+  it("falha fechado quando fontes retorna chave extra ou incompleta", async () => {
+    const fetcher = mockApi(true, [...unknownSources, {
+      key: "unexpected", state: "current", availability: "current", source: "synthetic",
+      scope: "platform", observed_at: observed, quota_limit: null, quota_usage: null, quota_observed_at: null,
+    }]);
+    render(<PlatformConsole />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Não foi possível consultar as fontes de acompanhamento.");
+    expect(screen.queryByText("Recuperação global do PostgreSQL: estado desconhecido")).toBeNull();
+    expect(fetcher.mock.calls.some(([path]) => String(path).endsWith("/sources"))).toBe(true);
+  });
+
   it("inicia limpo, consulta explicitamente e apresenta somente o resumo selecionado", async () => {
     const fetcher = mockApi();
     render(<PlatformConsole />);
@@ -54,7 +70,12 @@ describe("console privado da plataforma", () => {
     expect(await screen.findByText("Galerias: 2 · Fotografias: 7")).toBeTruthy();
     expect(await screen.findByText(/Sem registro de conexão; quota desconhecida/)).toBeTruthy();
     expect(screen.getByText(/Registro consultado em/)).toBeTruthy();
-    expect(screen.getByText(/Estado do arquivo de mídia e da restauração indisponível/)).toBeTruthy();
+    expect(screen.getByText("Arquivo frio de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Recuperação de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Recuperação global do PostgreSQL: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Origem: registros locais de recuperação")).toBeTruthy();
+    expect(screen.getAllByText("Origem não registrada")).toHaveLength(1);
+    expect(screen.getAllByText(/Idade e evidência não informadas/)).toHaveLength(3);
     expect(screen.queryByText(/backup saudável/i)).toBeNull();
   });
 
@@ -71,6 +92,147 @@ describe("console privado da plataforma", () => {
     expect(screen.getByText(/A disponibilidade atual do Drive não foi verificada/)).toBeTruthy();
     expect(screen.getByText(/50 TiB usados de 100 TiB/)).toBeTruthy();
     expect(screen.queryByText(/Drive saudável|Drive disponível/i)).toBeNull();
+  });
+
+  it("apresenta evidência local de uma cópia validada sem afirmar disponibilidade do destino", async () => {
+    const backupSources = unknownSources.map((source) => source.key === "backup" ? {
+      ...source, state: "current", availability: "current",
+      source: "application_database.global_postgresql_backup_run", scope: "platform_owner",
+      observed_at: observed, latest_run_status: "validated", latest_attempt_day: "2026-11-03",
+      last_validated_day: "2026-11-03", last_validated_at: observed,
+      snapshot_id: "a".repeat(32), dump_size_bytes: 4096, duration_ms: 1500,
+    } : source);
+    mockApi(true, backupSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Cópia global validada hoje")).toBeTruthy();
+    expect(screen.getByText(/Último recibo validado: 2026-11-03/)).toBeTruthy();
+    expect(screen.getByText(/Snapshot a{12}/)).toBeTruthy();
+    expect(screen.getByText(/esta leitura não consulta a disponibilidade atual do destino remoto/i)).toBeTruthy();
+  });
+
+  it("mostra uma cópia anterior como desatualizada e mantém visível a última falha", async () => {
+    const backupSources = unknownSources.map((source) => source.key === "backup" ? {
+      ...source, state: "stale", availability: "stale",
+      source: "application_database.global_postgresql_backup_run", scope: "platform_owner",
+      observed_at: observed, latest_run_status: "failed", latest_attempt_day: "2026-11-04",
+      last_validated_day: "2026-11-03", last_validated_at: observed,
+      snapshot_id: "b".repeat(32), dump_size_bytes: 2048, duration_ms: 4000,
+    } : source);
+    mockApi(true, backupSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("A última cópia validada está desatualizada")).toBeTruthy();
+    expect(screen.getByText(/Estado da tentativa mais recente: falha · 2026-11-04/)).toBeTruthy();
+  });
+
+  it("mantém desconhecido quando não existe recibo local validado", async () => {
+    const backupSources = unknownSources.map((source) => source.key === "backup" ? {
+      ...source, state: "unknown", availability: "unknown", scope: "platform_owner",
+      latest_run_status: "unknown", latest_attempt_day: "2026-11-05",
+    } : source);
+    const fetcher = mockApi(true, backupSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Estado desconhecido; nenhuma cópia validada foi confirmada")).toBeTruthy();
+    expect(screen.queryByText(/Último recibo validado/)).toBeNull();
+    expect(screen.queryByText(/Snapshot/)).toBeNull();
+    expect(fetcher.mock.calls.some(([path]) => /restic|rclone|backup-run/i.test(String(path)))).toBe(false);
+  });
+
+  it("mostra backup indisponível sem expor detalhes de erro", async () => {
+    const backupSources = unknownSources.map((source) => source.key === "backup" ? {
+      ...source, state: "unavailable", availability: "unavailable", scope: "platform_owner",
+      latest_run_status: "unknown", error_code: "synthetic_database_credential_detail",
+    } : source);
+    mockApi(true, backupSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Estado do backup indisponível")).toBeTruthy();
+    expect(screen.queryByText(/synthetic_database_credential_detail/)).toBeNull();
+    expect(screen.queryByText(/Último recibo validado/)).toBeNull();
+  });
+
+  it("apresenta origem e idade dos registros de arquivo e recuperação sem afirmar conclusão", async () => {
+    const mediaSources = unknownSources.map((source) => {
+      if (source.key === "archive") return {
+        ...source, state: "stale", availability: "stale", source: "application_database.media_archive_object",
+        observed_at: observed, last_validated_at: observed,
+      };
+      if (source.key === "restore") return {
+        ...source, state: "unavailable", availability: "unavailable",
+        source: "application_database.media_archive_recovery_request", observed_at: observed,
+      };
+      return source;
+    });
+    const fetcher = mockApi(true, mediaSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Arquivo frio de mídia: estado desatualizado")).toBeTruthy();
+    expect(screen.getByText("Origem: catálogo local do arquivo frio")).toBeTruthy();
+    expect(screen.getByText(/Última evidência em/)).toBeTruthy();
+    expect(screen.getByText("Recuperação de mídia: estado indisponível")).toBeTruthy();
+    expect(screen.getByText("Origem: registros locais de recuperação")).toBeTruthy();
+    expect(screen.getByText(/Estado observado em/)).toBeTruthy();
+    expect(screen.queryByText(/recuperação concluída/i)).toBeNull();
+    expect(screen.queryByText(/application_database\./)).toBeNull();
+    expect(fetcher.mock.calls.some(([path]) => /restic|rclone|backup-run/i.test(String(path)))).toBe(false);
+  });
+
+  it("mostra estado atual registrado do arquivo frio sem alegar disponibilidade remota", async () => {
+    const mediaSources = unknownSources.map((source) => source.key === "archive" ? {
+      ...source, state: "current", availability: "current", source: "application_database.media_archive_object",
+      observed_at: observed, last_validated_at: observed,
+    } : source);
+    mockApi(true, mediaSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Arquivo frio de mídia: estado atual registrado")).toBeTruthy();
+    expect(screen.getByText("Origem: catálogo local do arquivo frio")).toBeTruthy();
+    expect(screen.getByText(/Última evidência em/)).toBeTruthy();
+    expect(screen.queryByText(/disponibilidade remota confirmada/i)).toBeNull();
+  });
+
+  it("exibe o último estado persistido do ciclo sem convertê-lo em disponibilidade", async () => {
+    const mediaSources = unknownSources.map((source) => source.key === "archive" ? {
+      ...source, latest_run_status: "archived", observed_at: observed, last_validated_at: observed,
+    } : source);
+    const fetcher = mockApi(true, mediaSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Arquivo frio de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Último estado do ciclo registrado: arquivado")).toBeTruthy();
+    expect(screen.getByText("Origem: catálogo local do arquivo frio")).toBeTruthy();
+    expect(screen.getByText(/O catálogo local não confirma disponibilidade remota/)).toBeTruthy();
+    expect(fetcher.mock.calls.some(([path]) => /restic|rclone|drive/i.test(String(path)))).toBe(false);
+  });
+
+  it("mostra status persistido da operação de mídia sem tratá-lo como restauração global", async () => {
+    const mediaSources = unknownSources.map((source) => source.key === "restore" ? {
+      ...source, latest_run_status: "reconciliation_required", observed_at: observed,
+    } : source);
+    const fetcher = mockApi(true, mediaSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Recuperação de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Operação de recuperação registrada: reconciliação necessária")).toBeTruthy();
+    expect(screen.getByText("Recuperação global do PostgreSQL: estado desconhecido")).toBeTruthy();
+    expect(screen.queryByText(/restauração global concluída/i)).toBeNull();
+    expect(fetcher.mock.calls.some(([path]) => /restic|rclone|backup-run/i.test(String(path)))).toBe(false);
+  });
+
+  it("não infere disponibilidade de mídia a partir de uma operação concluída", async () => {
+    const mediaSources = unknownSources.map((source) => source.key === "restore" ? {
+      ...source, latest_run_status: "completed", observed_at: observed,
+    } : source);
+    const fetcher = mockApi(true, mediaSources);
+    render(<PlatformConsole />);
+
+    expect(await screen.findByText("Recuperação de mídia: estado desconhecido")).toBeTruthy();
+    expect(screen.getByText("Operação de recuperação registrada: concluída")).toBeTruthy();
+    expect(screen.getByText(/O registro local não confirma disponibilidade remota da mídia/)).toBeTruthy();
+    expect(screen.getByText("Recuperação global do PostgreSQL: estado desconhecido")).toBeTruthy();
+    expect(fetcher.mock.calls.some(([path]) => /restic|rclone|backup-run/i.test(String(path)))).toBe(false);
   });
 
   it("só libera hostname reservado após hash, confirmação e reautenticação", async () => {
