@@ -114,6 +114,7 @@ APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
     "tenant_membership": ("tenant_admin",),
     "gallery_lifecycle_history": ("gallery_lifecycle_operation",),
     "disabled_legacy_preview_adjustment": ("preview_adjustment_settings",),
+    "cancelled_preview_adjustment_queue": ("preview_adjustment",),
 }
 RUNNER_RESTIC_WINDOWS_ARCHIVE_SHA256 = (
     "bba9061c3dce081701ab353ec8cb73a78be73b71a538aad560f2d1067602b7fe"
@@ -1659,6 +1660,30 @@ def _completed_asset_file_cleanup_fixture(
     }
 
 
+def _cancelled_preview_adjustment_fixture(
+    proof_id: str,
+    tenant_id: uuid.UUID,
+    photo_asset_id: uuid.UUID,
+    observed_at: datetime,
+) -> dict[str, Any]:
+    """Representa um ajuste cancelado porque o processamento está desligado."""
+    return {
+        "photo_asset_id": photo_asset_id,
+        "tenant_id": tenant_id,
+        "generation": 1,
+        "fingerprint": _sha256(
+            f"synthetic-cancelled-preview:{proof_id}:{tenant_id}".encode()
+        ),
+        "status": "cancelled",
+        "attempts": 0,
+        "claim_token": None,
+        "relative_path": None,
+        "elapsed_ms": None,
+        "last_error": None,
+        "updated_at": observed_at,
+    }
+
+
 def _fixture_row_summary(
     populated: dict[str, dict[str, int]],
 ) -> dict[str, dict[str, Any]]:
@@ -2012,6 +2037,13 @@ def _seed_application_fixture(
                     "available": True,
                     "created_at": now,
                 },
+            )
+            insert(
+                connection,
+                "preview_adjustment",
+                _cancelled_preview_adjustment_fixture(
+                    proof_id, tenant_id, ids["photo"], now
+                ),
             )
             insert(
                 connection,

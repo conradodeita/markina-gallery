@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.prove_global_postgresql_backup import (
     APPLICATION_FIXTURE_DOMAINS,
     ProofFailure,
+    _cancelled_preview_adjustment_fixture,
     _completed_asset_file_cleanup_fixture,
     _copy_synthetic_repository,
     _fixture_row_summary,
@@ -67,6 +68,10 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
         self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["completed_asset_file_cleanup"],
             ("asset_file_cleanup",),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["cancelled_preview_adjustment_queue"],
+            ("preview_adjustment",),
         )
         self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["tenant_branding"],
@@ -182,6 +187,29 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
             ],
         )
         self.assertEqual(row["completed_at"], observed_at)
+
+    def test_preview_adjustment_fixture_is_cancelled_without_output_or_lease(
+        self,
+    ) -> None:
+        tenant_id = uuid.UUID("00000000-0000-4000-8000-000000000001")
+        photo_id = uuid.UUID("00000000-0000-4000-8000-000000000002")
+        observed_at = datetime(2026, 11, 28, 12, tzinfo=timezone.utc)
+
+        row = _cancelled_preview_adjustment_fixture(
+            "synthetic-proof", tenant_id, photo_id, observed_at
+        )
+
+        self.assertEqual(row["status"], "cancelled")
+        self.assertEqual(row["attempts"], 0)
+        self.assertEqual(
+            row["fingerprint"],
+            hashlib.sha256(
+                f"synthetic-cancelled-preview:synthetic-proof:{tenant_id}".encode()
+            ).hexdigest(),
+        )
+        self.assertIsNone(row["claim_token"])
+        self.assertIsNone(row["relative_path"])
+        self.assertIsNone(row["last_error"])
 
 
 class SyntheticFixtureIdTests(unittest.TestCase):
