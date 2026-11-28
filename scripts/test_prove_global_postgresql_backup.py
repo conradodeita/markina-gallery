@@ -59,6 +59,14 @@ class ApplicationFixtureDomainTests(unittest.TestCase):
             ("payment_preferences",),
         )
         self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["tenant_branding"],
+            ("branding_settings",),
+        )
+        self.assertEqual(
+            APPLICATION_FIXTURE_DOMAINS["inactive_progressive_pricing"],
+            ("progressive_pricing_preset", "progressive_pricing_tier"),
+        )
+        self.assertEqual(
             APPLICATION_FIXTURE_DOMAINS["revoked_gallery_capabilities"],
             ("gallery_access_capability",),
         )

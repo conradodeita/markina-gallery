@@ -81,6 +81,11 @@ APPLICATION_FIXTURE_DOMAINS: dict[str, tuple[str, ...]] = {
     "revoked_gallery_capabilities": ("gallery_access_capability",),
     "disabled_payment_preferences": ("payment_preferences",),
     "tenant_credit_wallet_modes": ("tenant_credit_wallet",),
+    "tenant_branding": ("branding_settings",),
+    "inactive_progressive_pricing": (
+        "progressive_pricing_preset",
+        "progressive_pricing_tier",
+    ),
     "privacy_and_consent": (
         "gallery_facial_policy",
         "facial_search_request",
@@ -1749,6 +1754,10 @@ def _seed_application_fixture(
                     "photo",
                     "revoked-gallery-capability",
                     "disabled-payment-preferences",
+                    "branding-settings",
+                    "progressive-pricing-preset",
+                    "progressive-pricing-tier-1",
+                    "progressive-pricing-tier-2",
                     "derived-gallery",
                     "derived-gallery-membership",
                     "derived-gallery-photo",
@@ -1942,6 +1951,61 @@ def _seed_application_fixture(
                     "mercadopago_enabled": False,
                 },
             )
+            insert(
+                connection,
+                "branding_settings",
+                {
+                    "id": ids["branding-settings"],
+                    "tenant_id": tenant_id,
+                    "login_title": "Galeria sintética",
+                    "login_intro": "Acesso de prova sem dados reais.",
+                    "login_helper": "Fixture isolada.",
+                    "logo_key": None,
+                    "app_icon_key": None,
+                    "favicon_key": None,
+                    "watermark_text": "Prévia sintética",
+                    "watermark_font": "sans-serif",
+                    "watermark_color": "#FFFFFF",
+                    "watermark_size": 24,
+                    "watermark_direction": "diagonal",
+                    "watermark_opacity": 42,
+                    "watermark_position": "middle-center",
+                    "watermark_shadow": True,
+                    "watermark_security_lines": False,
+                    "updated_at": now,
+                },
+            )
+            preset_id = ids["progressive-pricing-preset"]
+            insert(
+                connection,
+                "progressive_pricing_preset",
+                {
+                    "id": preset_id,
+                    "tenant_id": tenant_id,
+                    "code": f"synthetic-proof-v1-{tenant_index}",
+                    "name": "Tarifa sintética inativa",
+                    "version": 1,
+                    "active": False,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            for tier_index, (minimum, maximum, unit_price_cents) in enumerate(
+                ((1, 10, 125), (11, None, 100)), start=1
+            ):
+                insert(
+                    connection,
+                    "progressive_pricing_tier",
+                    {
+                        "id": ids[f"progressive-pricing-tier-{tier_index}"],
+                        "tenant_id": tenant_id,
+                        "preset_id": preset_id,
+                        "minimum_quantity": minimum,
+                        "maximum_quantity": maximum,
+                        "unit_price_cents": unit_price_cents,
+                        "created_at": now,
+                    },
+                )
             insert(
                 connection,
                 "derived_gallery_membership",
@@ -2758,7 +2822,10 @@ def _seed_application_fixture(
                         .where(table.c.tenant_id == tenant_id)
                     ).scalar_one()
                 )
-                expected_count = 2 if table_name == "media_archive_operation" else 1
+                expected_count = {
+                    "media_archive_operation": 2,
+                    "progressive_pricing_tier": 2,
+                }.get(table_name, 1)
                 if count < 1 or (
                     table_name != "notification_setting" and count != expected_count
                 ):
