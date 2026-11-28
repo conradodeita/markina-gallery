@@ -143,6 +143,12 @@ Reconstruir a composição da rota `/admin` e manter seus fluxos autenticados. R
 - `GET /api/public-galleries/{id}` fornece título, contexto e apresentação. `GET /api/public-galleries/{id}/photos` fornece as pastas autorizadas, os prazos, as prévias, o estado comercial de cada foto e a seleção inicial. A coleção mantém as proteções de mídia, modos e ações existentes. A busca facial, registro de visualização, seleção, favoritos, comentários e solicitação de reabertura conservam os contratos e permissões atuais.
 - O cabeçalho permanece legível durante a consulta das fotos e a grade informa falha com nova tentativa. A prévia usa o título e a configuração da galeria. Prazos, seleção e estado de reabertura derivam do servidor. O protótipo oferece controles demonstrativos que não têm ação equivalente nesse fluxo, como prazo livre e estimativa de prorrogação.
 
+### Minhas compras
+
+- Referência Stitch `44c40b122af8421f8ad5ed920e08df2b`: cabeçalho compacto, cartões de consulta e indicação das entregas liberadas.
+- `GET /api/library/purchases` fornece pedidos individuais, grupos PIX, Mercado Pago, registros legados InfinitePay e movimentos removidos. A interface preserva esses grupos, seus estados existentes, links por âncora e a sequência da resposta. As etapas financeiras seguem em seus próprios destinos.
+- Fotos ficam reunidas no pedido correspondente. As prévias mantêm proteção e a abertura do álbum usa a URL autorizada já validada. A demonstração de download ZIP e os filtros de pedido do Stitch ficam fora deste recorte, pois disponibilidade de prévia, entrega externa e confirmação de pagamento têm contratos distintos.
+
 ## Risks / Trade-offs
 
 O cabeçalho e a navegação aparecem em tamanhos diferentes conforme a janela, com um único menu de navegação ativo e foco visível. Sem resumo autorizado disponível a estrutura visual permanece acessível, e o conteúdo informa carregamento ou erro. Preferências de movimento reduzido e tema são preservadas.

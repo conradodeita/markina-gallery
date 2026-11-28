@@ -1,0 +1,57 @@
+.history :global(.library-order),
+.group {
+  padding: clamp(.85rem, 2vw, 1.35rem);
+  border: 1px solid var(--mk-border);
+  border-radius: 1rem;
+  background: var(--mk-surface);
+  box-shadow: var(--mk-shadow-sm);
+  scroll-margin-block-start: 5rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.history :global(.library-order) {
+  gap: .65rem .95rem;
+}
+
+.group {
+  display: grid;
+  gap: .5rem;
+}
+
+.group > h2,
+.group > p {
+  margin: 0;
+}
+
+.group > h2 {
+  font-size: 1.05rem;
+}
+
+.group > p {
+  color: var(--mk-ink-muted);
+  line-height: 1.45;
+}
+
+.group > a {
+  justify-self: start;
+}
+
+.group > article {
+  margin-block-start: .25rem;
+}
+
+.footer {
+  margin-block-start: 1.25rem;
+}
+
+.history :global(.order-album-hint) {
+  max-width: 56ch;
+}
+
+@media (max-width: 560px) {
+  .group > a,
+  .footer > a {
+    width: 100%;
+  }
+}

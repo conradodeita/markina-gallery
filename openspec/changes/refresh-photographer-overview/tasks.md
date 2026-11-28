@@ -183,3 +183,11 @@
 
 - Edge em 1440, 390 e 320 px verificou capa, navegação de pastas, seleção e acesso ao carrinho. Em 1440 px, abriu e fechou a prévia protegida; em 390 px, confirmou a solicitação sintética da pasta expirada; em 320 px, recuperou a grade após falha. A interceptação confirmou os POSTs previstos. Houve zero rolagem horizontal.
 - Vitest passou 75 testes, incluindo proteção de mídia, isolamento de pastas, busca facial, reabertura e contrato PWA. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram. Permanecem os avisos de imagem da apresentação compartilhada.
+
+## 22. Minhas compras
+
+- [x] 22.1 Adaptar o histórico ao Stitch mantendo agrupamento, estado financeiro e entrega autorizada.
+- [x] 22.2 Validar desktop e celular, pagamento ativo, compra histórica, entrega, prévia e erro de consulta.
+
+- Edge em 1440 e 390 px verificou grupos Mercado Pago e InfinitePay, link autorizado de álbum e ampliação/fechamento por Escape com retorno do foco. Em 320 px, repetiu uma consulta com falha e exibiu o histórico vazio. As respostas foram sintéticas, sem escrita nem rolagem horizontal.
+- Vitest passou 29 testes, incluindo entrega, histórico e integração de apresentação Mercado Pago. TypeScript, ESLint, OpenSpec estrito, diff-check e verificação de segredos passaram.

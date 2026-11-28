@@ -29,3 +29,13 @@ A Galeria da cliente SHALL organizar o cabeçalho, os prazos, a coleção e o re
 
 - **WHEN** a consulta das fotos falha depois da autorização da galeria
 - **THEN** a tela mantém o cabeçalho da galeria e oferece nova tentativa para atualizar a coleção
+
+### Requirement: Histórico responsivo de compras e entregas
+
+Minhas compras SHALL organizar os registros autorizados em cartões responsivos e preservar os agrupamentos, estados e links existentes de cada pedido.
+
+#### Scenario: Cliente consulta a entrega
+
+- **WHEN** um pedido autorizado aparece no histórico
+- **THEN** seus itens e estado financeiro permanecem no mesmo registro
+- **AND** a entrega usa somente o destino disponível e validado para o pedido
